@@ -31,6 +31,17 @@
           "color": {
             "mode": "thresholds"
           },
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -49,28 +60,15 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 3,
+        "h": 5,
         "w": 9,
         "x": 0,
         "y": 0
       },
       "id": 13,
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "name",
-        "wideLayout": true
+        "cellHeight": "sm",
+        "showHeader": true
       },
       "pluginVersion": "12.2.0",
       "targets": [
@@ -81,17 +79,37 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "max by (version)(eth_exe_web3_client_version{instance=~\"$instance(:\\\\d+)?$\"})",
+          "exemplar": false,
+          "expr": "max by (instance, client, version)(eth_exe_web3_client_version{instance=~\"$instance(:\\\\d+)?$\"})",
+          "format": "table",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
+          "instant": true,
           "legendFormat": "__auto",
-          "range": true,
+          "range": false,
           "refId": "A",
           "useBackend": false
         }
       ],
       "title": "Execution Client",
-      "type": "stat"
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            },
+            "includeByName": {},
+            "indexByName": {},
+            "renameByName": {
+              "instance": "Instance",
+              "version": "Version"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "datasource": {
@@ -102,6 +120,17 @@
         "defaults": {
           "color": {
             "mode": "thresholds"
+          },
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
           },
           "mappings": [],
           "thresholds": {
@@ -122,28 +151,15 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 3,
+        "h": 5,
         "w": 7,
         "x": 9,
         "y": 0
       },
       "id": 15,
       "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "name",
-        "wideLayout": true
+        "cellHeight": "sm",
+        "showHeader": true
       },
       "pluginVersion": "12.2.0",
       "targets": [
@@ -153,14 +169,40 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
+          "exemplar": false,
           "expr": "eth_con_spec_config_name{instance=~\"$instance(:\\\\d+)?$\"}",
+          "format": "table",
+          "instant": true,
           "legendFormat": "{{name}}",
-          "range": true,
+          "range": false,
           "refId": "A"
         }
       ],
       "title": "Consensus Config",
-      "type": "stat"
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "instance": false,
+              "job": true,
+              "module": true,
+              "node": true
+            },
+            "includeByName": {},
+            "indexByName": {},
+            "renameByName": {
+              "__name__": "",
+              "instance": "Instance",
+              "name": "Config"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "datasource": {
@@ -171,6 +213,17 @@
         "defaults": {
           "color": {
             "mode": "thresholds"
+          },
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
           },
           "mappings": [],
           "thresholds": {
@@ -190,28 +243,15 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 3,
+        "h": 5,
         "w": 8,
         "x": 16,
         "y": 0
       },
       "id": 17,
       "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "name",
-        "wideLayout": true
+        "cellHeight": "sm",
+        "showHeader": true
       },
       "pluginVersion": "12.2.0",
       "targets": [
@@ -221,14 +261,48 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
+          "exemplar": false,
           "expr": "eth_con_fork_current{instance=~\"$instance(:\\\\d+)?$\"}",
+          "format": "table",
+          "instant": true,
           "legendFormat": "{{fork}}",
-          "range": true,
+          "range": false,
           "refId": "A"
         }
       ],
       "title": "Consensus Fork",
-      "type": "stat"
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "fork": false,
+              "job": true,
+              "module": true,
+              "node": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "Time": 0,
+              "Value": 7,
+              "__name__": 1,
+              "fork": 3,
+              "instance": 2,
+              "job": 4,
+              "module": 5,
+              "node": 6
+            },
+            "renameByName": {
+              "fork": "Fork",
+              "instance": "Instance"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "datasource": {
@@ -313,7 +387,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 3
+        "y": 5
       },
       "id": 2,
       "options": {
@@ -463,7 +537,7 @@
         "h": 8,
         "w": 7,
         "x": 6,
-        "y": 3
+        "y": 5
       },
       "id": 11,
       "options": {
@@ -568,7 +642,7 @@
         "h": 8,
         "w": 11,
         "x": 13,
-        "y": 3
+        "y": 5
       },
       "id": 1,
       "options": {
@@ -731,7 +805,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 13
       },
       "id": 12,
       "options": {
@@ -980,7 +1054,7 @@
         "h": 3,
         "w": 5,
         "x": 0,
-        "y": 23
+        "y": 25
       },
       "id": 34,
       "options": {
@@ -1049,7 +1123,7 @@
         "h": 3,
         "w": 2,
         "x": 5,
-        "y": 23
+        "y": 25
       },
       "id": 33,
       "options": {
@@ -1117,7 +1191,7 @@
         "h": 3,
         "w": 5,
         "x": 7,
-        "y": 23
+        "y": 25
       },
       "id": 43,
       "options": {
@@ -1179,7 +1253,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 23
+        "y": 25
       },
       "id": 18,
       "options": {
@@ -1276,7 +1350,7 @@
         "h": 5,
         "w": 12,
         "x": 0,
-        "y": 26
+        "y": 28
       },
       "id": 32,
       "options": {
@@ -1378,7 +1452,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 31
+        "y": 33
       },
       "id": 46,
       "options": {
@@ -1482,7 +1556,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 37
+        "y": 39
       },
       "id": 45,
       "options": {
@@ -1620,7 +1694,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 37
+        "y": 39
       },
       "id": 42,
       "options": {
@@ -1729,7 +1803,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 45
+        "y": 47
       },
       "id": 30,
       "options": {
@@ -1856,7 +1930,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 45
+        "y": 47
       },
       "id": 31,
       "options": {
@@ -1975,5 +2049,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 10
+  "version": 11
 }
