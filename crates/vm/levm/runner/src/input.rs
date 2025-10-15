@@ -93,7 +93,7 @@ impl From<InputTransaction> for ethrex_common::types::LegacyTransaction {
     fn from(tx: InputTransaction) -> Self {
         ethrex_common::types::LegacyTransaction {
             nonce: 0,
-            gas_price: tx.gas_price.try_into().unwrap(),
+            gas_price: tx.gas_price,
             gas: tx.gas_limit,
             to: match tx.to {
                 Some(address) => ethrex_common::types::TxKind::Call(address),

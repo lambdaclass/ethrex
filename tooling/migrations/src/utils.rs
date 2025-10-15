@@ -82,7 +82,7 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
         LibmdbxTransaction::LegacyTransaction(tx) => {
             Transaction::LegacyTransaction(LegacyTransaction {
                 nonce: tx.nonce,
-                gas_price: tx.gas_price,
+                gas_price: tx.gas_price.into(),
                 gas: tx.gas,
                 to: match tx.to {
                     LibmdbxTxKind::Create => TxKind::Create,
@@ -100,7 +100,7 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
             Transaction::EIP2930Transaction(EIP2930Transaction {
                 chain_id: tx.chain_id,
                 nonce: tx.nonce,
-                gas_price: tx.gas_price,
+                gas_price: tx.gas_price.into(),
                 gas_limit: tx.gas_limit,
                 to: match tx.to {
                     LibmdbxTxKind::Create => TxKind::Create,

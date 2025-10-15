@@ -90,8 +90,7 @@ impl LEVM {
             .effective_gas_price(block_header.base_fee_per_gas)
             .ok_or(VMError::TxValidation(
                 TxValidationError::InsufficientMaxFeePerGas,
-            ))?
-            .into();
+            ))?;
 
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
