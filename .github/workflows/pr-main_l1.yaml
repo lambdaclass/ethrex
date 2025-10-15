@@ -162,12 +162,12 @@ jobs:
             hive_repository: ethereum/hive
             hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
             artifact_prefix: engine_auth_ec
-          # - name: "Cancun Engine tests"
-          #   simulation: ethereum/engine
-          #   limit: "engine-cancun"
-          #   hive_repository: ethereum/hive
-          #   hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
-          #   artifact_prefix: engine_cancun
+          - name: "Cancun Engine tests"
+            simulation: ethereum/engine
+            limit: "engine-cancun"
+            hive_repository: ethereum/hive
+            hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
+            artifact_prefix: engine_cancun
           - name: "Paris Engine tests"
             simulation: ethereum/engine
             limit: "engine-api"
