@@ -84,10 +84,15 @@ P2P options:
 
           [default: 30303]
     
-        --p2p.tx-broadcasting-interval <INTERVAL_MS>
-            Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
+      --p2p.tx-broadcasting-interval <INTERVAL_MS>
+          Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
 
-            [default: 1000]
+          [default: 1000]
+
+      --target.peers <MAX_PEERS>
+          Max amount of connected peers.
+
+          [default: 100]
 
 RPC options:
       --http.addr <ADDRESS>
