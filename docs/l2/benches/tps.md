@@ -27,7 +27,7 @@ Validium L2 (no blobs):
 | 3 | 63 | 755k | 8m 49s | ✅ | ethrex-gpu-4090-1 |
 | 5 | 63 | 1.25M | 13m 12s | ❌ | ethrex-gpu-4090-1 |
 
-## ERC20 Transfers only
+## ERC20 Deployment+Claim+Transfer
 
 Validium L2 (no blobs):
 
