@@ -497,7 +497,7 @@ async fn regenerate_head_state(store: &Store, blockchain: &Arc<Blockchain>) -> e
 
     while !store.has_state_root(current_last_header.state_root)? {
         let parent_number = current_last_header.number - 1;
-        info!("Need to regenerate state for block {parent_number}");
+        debug!("Need to regenerate state for block {parent_number}");
         let Some(parent_header) = store.get_block_header(parent_number)? else {
             return Err(eyre::eyre!(
                 "Parent header for block {parent_number} not found"
@@ -506,8 +506,16 @@ async fn regenerate_head_state(store: &Store, blockchain: &Arc<Blockchain>) -> e
         current_last_header = parent_header;
     }
 
-    for i in (current_last_header.number + 1)..=head_block_number {
-        info!("Re-applying block {i} to regenerate state");
+    let last_state_number = current_last_header.number;
+
+    if last_state_number == head_block_number {
+        debug!("State is already up to date");
+        return Ok(());
+    }
+    info!("Regenerating state from block {last_state_number} to {head_block_number}");
+
+    for i in (last_state_number + 1)..=head_block_number {
+        debug!("Re-applying block {i} to regenerate state");
 
         let block = store
             .get_block_by_number(i)
@@ -515,5 +523,6 @@ async fn regenerate_head_state(store: &Store, blockchain: &Arc<Blockchain>) -> e
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
         blockchain.add_block(block).await?;
     }
+    info!("Finished regenerating state");
     Ok(())
 }
