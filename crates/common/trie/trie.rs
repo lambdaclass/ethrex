@@ -456,6 +456,56 @@ impl Trie {
         let db = InMemoryTrieDB::new(Default::default());
         Trie::new(Box::new(db))
     }
+
+    /// Validates a trie T for the following invariants:
+    /// - If T is a leaf node, its finalized hash is the root hash;
+    /// - If T is an extension node, its hash is the root hash, and its child
+    ///   interpreted as a distinct trie also passes validation;
+    /// - If T is a branch node, its hash is the root hash and all of its children
+    ///   interpreted as distinct tries also pass validation.
+    /// - If a child is an inline node, it's skipped, as its hash is checked as
+    ///   part of its parent.
+    ///
+    /// In other words, it exploits the recursive nature of trees to simplify
+    /// and speed up MPT validation.
+    /// Works only via direct DB access and should be called only for debugging
+    /// purposes (debug_asserts included) and for "clean" structures.
+    pub fn validate(&self) -> Result<(), TrieError> {
+        // Cap: each level might insert up to 16 extra nodes, and we have
+        // on average 8 levels, so this should be the only alloc for this
+        // vec in most cases.
+        if self.root.compute_hash().finalize() == *EMPTY_TRIE_HASH {
+            return Ok(());
+        }
+        let mut hashnode_stack = Vec::<(NodeHash, Vec<u8>)>::with_capacity(1024);
+        let root_hash = self.root.compute_hash();
+        let root_node = self.db.get(root_hash)?;
+        hashnode_stack.push((root_hash, root_node.ok_or(TrieError::InconsistentTree)?));
+        while let Some((hash, node)) = hashnode_stack.pop() {
+            let decoded = Node::decode(&node)?;
+            if hash != decoded.compute_hash() {
+                return Err(TrieError::InconsistentTree);
+            }
+            match decoded {
+                Node::Branch(branch) => {
+                    for c in branch.choices {
+                        let c = c.compute_hash();
+                        if c.as_ref().len() != 32 {
+                            continue;
+                        }
+                        // TODO: we should extend TrieDB to support fetching many nodes per call.
+                        hashnode_stack.push((c, self.db.get(c)?.unwrap_or_default()));
+                    }
+                }
+                Node::Extension(ext) => {
+                    let c = ext.child.compute_hash();
+                    hashnode_stack.push((c, self.db.get(c)?.unwrap_or_default()));
+                }
+                Node::Leaf(_leaf) => (), // Nothing to do, already checked hash
+            }
+        }
+        Ok(())
+    }
 }
 
 impl IntoIterator for Trie {
