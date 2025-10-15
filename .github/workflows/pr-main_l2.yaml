@@ -413,7 +413,7 @@ jobs:
       - name: Start ethrex
         run: |
           cd crates/l2
-          make init-l2-dev &
+          make init-l2-dev || tee ethrex.log &
 
       - name: Wait for ethrex l2
         run: |
@@ -430,7 +430,7 @@ jobs:
 
       - name: Init prover
         run: |
-          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 &
+          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 || tee prover.log & 
 
       - name: Run test
         run: |
@@ -438,6 +438,18 @@ jobs:
           INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true \
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           cargo test l2 --release -- --nocapture --test-threads=1
+
+      - name: Show ethrex logs on failure
+        if: failure()
+        run: |
+          echo "Dumping ethrex logs..."
+          cat crates/l2/ethrex.log || echo "No logs found"
+
+      - name: Show prover logs on failure
+        if: failure()
+        run: |
+          echo "Dumping prover logs..."
+          cat prover.log || echo "No logs found"
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
