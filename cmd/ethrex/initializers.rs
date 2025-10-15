@@ -21,9 +21,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_trie::EMPTY_TRIE_HASH;
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -387,48 +385,11 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
-/// Rollback the chain to the latest block we have the state for.
-async fn reset_to_head(store: &Store) -> eyre::Result<()> {
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
-    let Some(root) = trie.db().get(Default::default())? else {
-        return Ok(());
-    };
-    let root = ethrex_trie::Node::decode(&root)?;
-    let state_root = root.compute_hash().finalize();
-
-    // TODO: store latest state metadata in the DB to avoid this loop
-    for block_number in (0..=store.get_latest_block_number().await?).rev() {
-        if let Some(header) = store.get_block_header(block_number)?
-            && header.state_root == state_root
-        {
-            info!("Resetting head to {block_number}");
-            let last_kept_block = block_number;
-            let mut block_to_delete = last_kept_block + 1;
-            while store
-                .get_canonical_block_hash(block_to_delete)
-                .await?
-                .is_some()
-            {
-                debug!("Deleting block {block_to_delete}");
-                store.remove_block(block_to_delete).await?;
-                block_to_delete += 1;
-            }
-            let last_kept_header = store
-                .get_block_header(last_kept_block)?
-                .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
-            store
-                .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
-                .await?;
-            break;
-        }
-    }
-    Ok(())
-}
-
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(
+    Store,
     PathBuf,
     CancellationToken,
     PeerTable,
@@ -445,8 +406,6 @@ pub async fn init_l1(
     raise_fd_limit()?;
 
     let store = init_store(datadir, genesis).await;
-
-    reset_to_head(&store).await?;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
@@ -520,6 +479,7 @@ pub async fn init_l1(
     }
 
     Ok((
+        store,
         datadir.clone(),
         cancel_token,
         peer_handler.peer_table,
