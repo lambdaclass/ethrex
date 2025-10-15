@@ -418,9 +418,11 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             .iter_accounts(state_root)
             .expect("Couldn't open state trie")
         {
-            store
-                .open_locked_storage_trie(hashed_address, account_state.storage_root)?
-                .validate()?;
+            if account_state.storage_root != *EMPTY_TRIE_HASH {
+                store
+                    .open_locked_storage_trie(hashed_address, account_state.storage_root)?
+                    .validate()?;
+            }
             if account_state.code_hash != *EMPTY_KECCACK_HASH {
                 let code = store
                     .get_account_code(account_state.code_hash)?
