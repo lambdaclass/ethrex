@@ -121,7 +121,7 @@ Block producer options:
       --block-producer.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 0.1.0"]
+          [default: "ethrex 3.0.0"]
 ```
 
 <!-- END_CLI_HELP -->
