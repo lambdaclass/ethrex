@@ -287,7 +287,7 @@ impl GuestProgramState {
                 }
 
                 state_trie
-                    .insert(hashed_address.clone(), account_state.encode_to_vec())
+                    .insert(hashed_address.clone(), account_state.encode_to_vec()) // ok-clone: copy of hash address is needed in trie, and account_updates can't be consumed by this point
                     .expect("failed to insert into storage");
             }
         }

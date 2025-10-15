@@ -98,6 +98,6 @@ mod tests {
         let decoded = Receipts68::decode(&buf).unwrap();
 
         assert_eq!(decoded.get_id(), 1);
-        assert_eq!(decoded.get_receipts(), Vec::<Vec<Receipt>>::new());
+        assert_eq!(decoded.into_receipts(), Vec::<Vec<Receipt>>::new());
     }
 }
