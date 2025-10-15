@@ -419,6 +419,8 @@ pub async fn init_l1(
         },
     );
 
+    regenerate_head_state(&store, &blockchain).await?;
+
     let signer = get_signer(datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
@@ -485,4 +487,36 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+async fn regenerate_head_state(store: &Store, blockchain: &Arc<Blockchain>) -> eyre::Result<()> {
+    info!("Regenerating head state if necessary");
+    let head_block_number = store.get_latest_block_number().await?;
+    let Some(last_header) = store.get_block_header(head_block_number)? else {
+        unreachable!("Database is empty, genesis block should be present");
+    };
+
+    let mut current_last_header = last_header;
+
+    while !store.has_state_root(current_last_header.state_root)? {
+        let parent_number = current_last_header.number - 1;
+        info!("Need to regenerate state for block {parent_number}");
+        let Some(parent_header) = store.get_block_header(parent_number)? else {
+            return Err(eyre::eyre!(
+                "Parent header for block {parent_number} not found"
+            ));
+        };
+        current_last_header = parent_header;
+    }
+
+    for i in (current_last_header.number + 1)..=head_block_number {
+        info!("Re-applying block {i} to regenerate state");
+
+        let block = store
+            .get_block_by_number(i)
+            .await?
+            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+        blockchain.add_block(block).await?;
+    }
+    Ok(())
 }
