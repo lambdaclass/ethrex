@@ -368,17 +368,20 @@ impl RpcHandler for GetRawTransaction {
             )));
         };
 
-        let transaction_hash: H256 =
-            serde_json::from_value(params.pop().ok_or(RpcErr::BadParams(format!(
-                "Expected one param and {} were provided",
-                params.len()
-            )))?)?;
+        let raw_hash_value = params.pop().ok_or(RpcErr::BadParams(format!(
+            "Expected one param and {} were provided",
+            params.len()
+        )))?;
 
-        if !transaction_hash.to_string().starts_with("0x") {
+        let transaction_str: String = serde_json::from_value(raw_hash_value.clone())?; // ok-clone: we need two copies, one to parse as string and one as H256
+
+        if !transaction_str.starts_with("0x") {
             return Err(RpcErr::BadHexFormat(0));
         }
 
-        Ok(GetRawTransaction { transaction_hash })
+        Ok(GetRawTransaction {
+            transaction_hash: serde_json::from_value(raw_hash_value)?,
+        })
     }
 
     async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
