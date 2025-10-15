@@ -20,7 +20,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Fork, Log, Transaction},
+    types::{AccessListEntry, Fork, Log, Transaction, fee_config::FeeConfig},
 };
 use std::{
     cell::RefCell,
@@ -35,7 +35,7 @@ pub type Storage = HashMap<U256, H256>;
 pub enum VMType {
     #[default]
     L1,
-    L2,
+    L2(FeeConfig),
 }
 
 /// Information that changes during transaction execution.
