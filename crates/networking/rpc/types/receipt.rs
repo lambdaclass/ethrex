@@ -123,7 +123,7 @@ impl From<Log> for RpcLogInfo {
     }
 }
 
-#[derive(Debug, Serialize, Clone, Deserialize)]
+#[derive(Debug, Copy, Serialize, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcReceiptBlockInfo {
     pub block_hash: BlockHash,
