@@ -275,6 +275,13 @@ impl RpcHandler for GetTransactionReceiptRequest {
     fn parse(params: Option<Vec<Value>>) -> Result<GetTransactionReceiptRequest, RpcErr> {
         let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams(format!(
+                "Expected one param and {} were provided",
+                params.len()
+            )));
+        };
+
         let transaction_hash = serde_json::from_value(params.pop().ok_or(RpcErr::BadParams(
             format!("Expected one param and {} were provided", params.len()),
         ))?)?;
