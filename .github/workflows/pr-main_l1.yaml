@@ -148,6 +148,7 @@ jobs:
             hive_repository: ethereum/hive
             hive_version: 9b3851fcb52a862bcf2a88309db5825961051b2b
             artifact_prefix: rpc_compat
+            node_type: snap
           - name: "Devp2p tests"
             simulation: devp2p
             limit: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|NewPooledTxs|GetBlockReceipts|BlockRangeUpdate|GetTrieNodes
@@ -156,6 +157,7 @@ jobs:
             hive_repository: ethereum/hive
             hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
             artifact_prefix: devp2p
+            node_type: snap
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             limit: engine-(auth|exchange-capabilities)/
@@ -233,6 +235,8 @@ jobs:
       - name: Run Hive Simulation
         id: run-hive-action
         uses: ethpandaops/hive-github-action@v0.5.0
+        env:
+          HIVE_NODETYPE: ${{ matrix.node_type }}
         with:
           hive_repository: ${{ matrix.hive_repository }}
           hive_version: ${{ matrix.hive_version }}
