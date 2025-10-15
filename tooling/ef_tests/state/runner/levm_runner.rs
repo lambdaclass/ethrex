@@ -224,7 +224,7 @@ pub fn prepare_vm_for_tx<'a>(
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
-        let account_info = world_state.get_account_info(*address).map_err(|e| {
+        let account_info = world_state.get_account_state(*address).map_err(|e| {
             EFTestRunnerError::Internal(InternalError::Custom(format!(
                 "Failed to read account {address:#x} from world state: {e}",
             )))
