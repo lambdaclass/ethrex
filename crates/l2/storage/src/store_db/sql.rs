@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -28,7 +28,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 15] = [
+const DB_SCHEMA: [&str; 16] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -44,6 +44,7 @@ const DB_SCHEMA: [&str; 15] = [
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE fee_config (block_number INT PRIMARY KEY, fee_config BLOB)",
 ];
 
 impl SQLStore {
@@ -780,6 +781,43 @@ impl StoreEngineRollup for SQLStore {
             .await?
             .map(|row| read_from_row_int(&row, 0))
             .transpose()
+    }
+
+    async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        let serialized = bincode::serialize(&fee_config)?;
+        let queries = vec![
+            (
+                "DELETE FROM fee_config WHERE block_number = ?1",
+                vec![block_number].into_params()?,
+            ),
+            (
+                "INSERT INTO fee_config VALUES (?1, ?2)",
+                (block_number, serialized).into_params()?,
+            ),
+        ];
+        self.execute_in_tx(queries, None).await
+    }
+
+    async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT fee_config FROM fee_config WHERE block_number = ?1",
+                vec![block_number],
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 1)?;
+            return Ok(Some(bincode::deserialize(&vec)?));
+        }
+        Ok(None)
     }
 }
 

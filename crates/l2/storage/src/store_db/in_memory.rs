@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -46,6 +46,8 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
+    /// Map of block number to FeeConfig
+    fee_config_by_block: HashMap<BlockNumber, FeeConfig>,
 }
 
 impl Store {
@@ -333,6 +335,28 @@ impl StoreEngineRollup for Store {
 
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
         Ok(self.inner()?.state_roots.keys().max().cloned())
+    }
+
+    async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .fee_config_by_block
+            .insert(block_number, fee_config);
+        Ok(())
+    }
+
+    async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .fee_config_by_block
+            .get(&block_number)
+            .cloned())
     }
 }
 

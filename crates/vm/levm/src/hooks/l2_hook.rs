@@ -1,6 +1,13 @@
 use crate::{
     errors::{ContextResult, InternalError, TxValidationError},
-    hooks::{DefaultHook, default_hook, hook::Hook},
+    hooks::{
+        DefaultHook,
+        default_hook::{
+            self, compute_actual_gas_used, compute_gas_refunded, delete_self_destruct_accounts,
+            pay_coinbase, refund_sender, undo_value_transfer,
+        },
+        hook::Hook,
+    },
     opcodes::Opcode,
     vm::VM,
 };
@@ -23,9 +30,12 @@ impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if !vm.env.is_privileged {
             DefaultHook.prepare_execution(vm)?;
+
             // Different from L1:
-            // Operator fee is deducted from the sender before execution
-            deduct_operator_fee(vm, &self.fee_config.operator_fee_config)?;
+
+            // Max fee per gas must be sufficient to cover base fee + operator fee
+            validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
+
             return Ok(());
         }
 
@@ -116,14 +126,33 @@ impl Hook for L2Hook {
         ctx_result: &mut ContextResult,
     ) -> Result<(), crate::errors::VMError> {
         if !vm.env.is_privileged {
-            DefaultHook.finalize_execution(vm, ctx_result)?;
+            if !ctx_result.is_success() {
+                undo_value_transfer(vm)?;
+            }
+
+            let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
+            let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+            refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
+
+            delete_self_destruct_accounts(vm)?;
+
             // Different from L1:
+
+            pay_coinbase_l2(
+                vm,
+                ctx_result.gas_used,
+                &self.fee_config.operator_fee_config,
+            )?;
 
             // Base fee is not burned
             pay_base_fee_vault(vm, ctx_result.gas_used, self.fee_config.base_fee_vault)?;
 
             // Operator fee is paid to the chain operator
-            pay_operator_fee(vm, self.fee_config.operator_fee_config)?;
+            pay_operator_fee(
+                vm,
+                ctx_result.gas_used,
+                &self.fee_config.operator_fee_config,
+            )?;
 
             return Ok(());
         }
@@ -140,18 +169,51 @@ impl Hook for L2Hook {
     }
 }
 
-fn deduct_operator_fee(
+fn validate_sufficient_max_fee_per_gas_l2(
     vm: &mut VM<'_>,
+    operator_fee_config: &Option<OperatorFeeConfig>,
+) -> Result<(), TxValidationError> {
+    let Some(fee_config) = operator_fee_config else {
+        // No operator fee configured, this check was done in default hook
+        return Ok(());
+    };
+
+    let total_fee = vm
+        .env
+        .base_fee_per_gas
+        .checked_add(U256::from(fee_config.operator_fee_per_gas))
+        .ok_or(TxValidationError::InsufficientMaxFeePerGas)?;
+
+    if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee {
+        return Err(TxValidationError::InsufficientMaxFeePerGas);
+    }
+    Ok(())
+}
+
+fn pay_coinbase_l2(
+    vm: &mut VM<'_>,
+    gas_to_pay: u64,
     operator_fee_config: &Option<OperatorFeeConfig>,
 ) -> Result<(), crate::errors::VMError> {
     let Some(fee_config) = operator_fee_config else {
         // No operator fee configured, operator fee is not paid
-        return Ok(());
+        return pay_coinbase(vm, gas_to_pay);
     };
-    let sender_address = vm.env.origin;
 
-    vm.decrease_account_balance(sender_address, fee_config.operator_fee_per_gas)
-        .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+    let priority_fee_per_gas = vm
+        .env
+        .gas_price
+        .checked_sub(vm.env.base_fee_per_gas)
+        .ok_or(InternalError::Underflow)?
+        .checked_sub(U256::from(fee_config.operator_fee_per_gas))
+        .ok_or(InternalError::Underflow)?;
+
+    let coinbase_fee = U256::from(gas_to_pay)
+        .checked_mul(priority_fee_per_gas)
+        .ok_or(InternalError::Overflow)?;
+
+    vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+
     Ok(())
 }
 
@@ -175,16 +237,18 @@ fn pay_base_fee_vault(
 
 fn pay_operator_fee(
     vm: &mut VM<'_>,
-    operator_fee_config: Option<OperatorFeeConfig>,
+    gas_to_pay: u64,
+    operator_fee_config: &Option<OperatorFeeConfig>,
 ) -> Result<(), crate::errors::VMError> {
     let Some(fee_config) = operator_fee_config else {
         // No operator fee configured, operator fee is not paid
         return Ok(());
     };
 
-    vm.increase_account_balance(
-        fee_config.operator_fee_vault,
-        fee_config.operator_fee_per_gas,
-    )?;
+    let operator_fee = U256::from(gas_to_pay)
+        .checked_mul(U256::from(fee_config.operator_fee_per_gas))
+        .ok_or(InternalError::Overflow)?;
+
+    vm.increase_account_balance(fee_config.operator_fee_vault, operator_fee)?;
     Ok(())
 }

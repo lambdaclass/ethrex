@@ -412,7 +412,7 @@ pub struct BlockProducerOptions {
         help_heading = "Block producer options",
         help = "Fee per gas that the operator will receive for each transaction included in a block."
     )]
-    pub operator_fee_per_gas: Option<U256>,
+    pub operator_fee_per_gas: Option<u64>,
     #[arg(
         long,
         default_value = "2",

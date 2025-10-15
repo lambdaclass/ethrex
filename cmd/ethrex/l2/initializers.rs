@@ -8,11 +8,9 @@ use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::U256;
 use ethrex_common::types::fee_config::{FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
-use ethrex_l2::{SequencerConfig, sequencer};
-use ethrex_l2_sdk::get_operator_fee;
+use ethrex_l2::SequencerConfig;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     peer_handler::PeerHandler,
@@ -20,8 +18,6 @@ use ethrex_p2p::{
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
-use ethrex_rpc::EthClient;
-use ethrex_rpc::clients::EthClientError;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::SecretKey;
@@ -313,10 +309,10 @@ pub async fn get_operator_fee_config(
         .operator_fee_vault_address;
 
     let operator_fee_config =
-        if let (Some(operator_fee_per_gas), Some(operator_fee_vault)) = (address, fee) {
+        if let (Some(operator_fee_vault), Some(operator_fee_per_gas)) = (address, fee) {
             Some(OperatorFeeConfig {
-                operator_fee_per_gas,
                 operator_fee_vault,
+                operator_fee_per_gas,
             })
         } else {
             None
