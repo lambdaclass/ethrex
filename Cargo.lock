@@ -3844,6 +3844,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "hmac",
+ "indexmap 2.11.4",
  "lazy_static",
  "prometheus 0.14.0",
  "rand 0.8.5",
