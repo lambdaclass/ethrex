@@ -355,7 +355,7 @@ impl GuestProgramState {
             .ok_or(GuestProgramStateError::MissingParentHeaderOf(block_number))
     }
 
-    /// Retrieves the account info based on what is stored in the state trie.
+    /// Retrieves the account state from the state trie.
     /// Returns an error if the state trie is not rebuilt or if decoding the account state fails.
     pub fn get_account_state(
         &mut self,

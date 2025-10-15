@@ -1,15 +1,13 @@
-use std::time::Duration;
-
+use crate::{
+    discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext,
+    rlpx::connection::server::PeerConnection,
+};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, send_after},
 };
-
+use std::time::Duration;
 use tracing::{debug, error, info};
-
-use crate::{discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext};
-
-use crate::rlpx::connection::server::RLPxConnection;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RLPxInitiatorError {
@@ -56,15 +54,18 @@ impl RLPxInitiator {
     async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
         info!("Looking for peers");
 
-        let contacts = self
-            .context
-            .table
-            .get_contacts_to_initiate(self.new_connections_per_lookup)
-            .await?;
-
-        for contact in contacts {
-            RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
-            METRICS.record_new_rlpx_conn_attempt().await;
+        if !self.context.table.target_peers_reached().await? {
+            let contacts = self
+                .context
+                .table
+                .get_contacts_to_initiate(self.new_connections_per_lookup)
+                .await?;
+            for contact in contacts {
+                PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
+                METRICS.record_new_rlpx_conn_attempt().await;
+            }
+        } else {
+            info!("Target peer connections reached, no need to initiate new connections.");
         }
         Ok(())
     }
