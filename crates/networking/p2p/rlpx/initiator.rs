@@ -54,15 +54,18 @@ impl RLPxInitiator {
     async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
         info!("Looking for peers");
 
-        let contacts = self
-            .context
-            .table
-            .get_contacts_to_initiate(self.new_connections_per_lookup)
-            .await?;
-
-        for contact in contacts {
-            PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
-            METRICS.record_new_rlpx_conn_attempt().await;
+        if !self.context.table.target_peers_reached().await? {
+            let contacts = self
+                .context
+                .table
+                .get_contacts_to_initiate(self.new_connections_per_lookup)
+                .await?;
+            for contact in contacts {
+                PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
+                METRICS.record_new_rlpx_conn_attempt().await;
+            }
+        } else {
+            info!("Target peer connections reached, no need to initiate new connections.");
         }
         Ok(())
     }
