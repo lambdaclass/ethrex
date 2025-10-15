@@ -1,4 +1,5 @@
 # Roadmap
+
 This project is under active development. Over the next **two months**, our **primary objective is to finalize and audit the first version of the stack**.
 This means every component — from L1 syncing to L2 bridging and prover integration — must meet stability, performance, and security standards.
 
@@ -8,18 +9,18 @@ The roadmap below outlines the remaining work required to achieve this milestone
 
 ## L2 Roadmap
 
-| Feature                     | Description                                                                                                                                                                                                                          | Status       |
-|----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
-| Native Bridge              | Secure and trust-minimized ERC-20 bridge between Ethereum L1 and L2 using canonical messaging and smart contracts.                                                                                                                   | In Progress  |
-| Based Rollup               | Launch the rollup as a based permissionless rollup. Leverages Ethereum for sequencing and DA. For more information check [ethrex roadmap for becoming based](https://hackmd.io/TCa-bQisToW46enF58_3Vw?view)                                                          | In Progress    |
-| Aligned Integration        | Optimize integration with Aligned’s aggregation mode.                                                                                                                                                                              | In Progress |
-| Risc0 Support              | Integrate RISC Zero as an alternative zkVM to SP1, enabling configurable proving backends.                                                                                                                                                    | In Progress     |
-| Battle-Test the Prover     |                                                               Ensure the prover (e.g., SP1, Risc0) is robust, correct, and performant under production-level  conditions.                                                                                 | In Progress    |
-| One-Click L2 Deployment    | Deploy a fully operational rollup with a single command. Includes TDX, Prover, integrated Grafana metrics, alerting system, block explorer, bridge hub, backups and default configuration for rapid developer spin-up.                        | In Progress |
-| Shared Bridge              | Direct bridging between multiple L2s to improve UX and avoid L1 costs.                                                                                                                                                           | Planned      |
-| Custom Native Token        | Define a native token (non-ETH) for gas, staking, incentives, and governance. Fully integrated into fee mechanics and bridging.                                                                                                      | Planned  |
-| Validiums & DACs           | Enhance Validium mode with Data Availability Committees.                                                                                                                                       | Planned      |
-| Gas & Fees   | Set up a custom fee model to price deposits or any forced-included transaction, including data availability costs.                                                                                                                                                | Planned  |
+| Feature                 | Description                                                                                                                                                                                                            | Status      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Native Bridge           | Secure and trust-minimized ERC-20 bridge between Ethereum L1 and L2 using canonical messaging and smart contracts.                                                                                                     | Done        |
+| Based Rollup            | Launch the rollup as a based permissionless rollup. Leverages Ethereum for sequencing and DA. For more information check [ethrex roadmap for becoming based](https://hackmd.io/TCa-bQisToW46enF58_3Vw?view)            | In Progress |
+| Aligned Integration     | Optimize integration with Aligned’s aggregation mode.                                                                                                                                                                  | In Progress |
+| Risc0 Support           | Integrate RISC Zero as an alternative zkVM to SP1, enabling configurable proving backends.                                                                                                                             | Done        |
+| Battle-Test the Prover  | Ensure the prover (e.g., SP1, Risc0) is robust, correct, and performant under production-level conditions.                                                                                                             | In Progress |
+| One-Click L2 Deployment | Deploy a fully operational rollup with a single command. Includes TDX, Prover, integrated Grafana metrics, alerting system, block explorer, bridge hub, backups and default configuration for rapid developer spin-up. | In Progress |
+| Shared Bridge           | Direct bridging between multiple L2s to improve UX and avoid L1 costs.                                                                                                                                                 | In Progress |
+| Custom Native Token     | Define a native token (non-ETH) for gas, staking, incentives, and governance. Fully integrated into fee mechanics and bridging.                                                                                        | In Progress |
+| Validiums & DACs        | Enhance Validium mode with Data Availability Committees.                                                                                                                                                               | Planned     |
+| Gas & Fees              | Set up a custom fee model to price deposits or any forced-included transaction, including data availability costs.                                                                                                     | In Progress |
 
 ---
 
