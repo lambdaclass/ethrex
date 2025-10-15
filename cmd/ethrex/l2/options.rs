@@ -860,7 +860,6 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub aligned: bool,
-    #[cfg(all(feature = "sp1", feature = "gpu"))]
     #[arg(
         long,
         value_name = "URL",
@@ -878,7 +877,6 @@ impl From<ProverClientOptions> for ProverConfig {
             proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
             aligned_mode: config.aligned,
-            #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: config.sp1_server,
         }
     }
@@ -894,7 +892,6 @@ impl Default for ProverClientOptions {
             log_level: Level::INFO,
             aligned: false,
             backend: Backend::Exec,
-            #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }
     }

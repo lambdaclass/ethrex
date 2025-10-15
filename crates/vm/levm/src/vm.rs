@@ -4,7 +4,7 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
+    errors::{ContextResult, ExecutionReport, InternalError, VMError},
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
@@ -457,6 +457,8 @@ impl<'a> VM<'a> {
         }
 
         loop {
+            use crate::errors::OpcodeResult;
+
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
 

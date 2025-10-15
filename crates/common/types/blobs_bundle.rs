@@ -100,6 +100,12 @@ impl BlobsBundle {
         })
     }
 
+    // FIXME
+    #[cfg(feature = "kzg-rs")]
+    pub fn create_from_blobs(_blobs: &Vec<Blob>) -> Result<Self, BlobsBundleError> {
+        unimplemented!()
+    }
+
     pub fn generate_versioned_hashes(&self) -> Vec<H256> {
         self.commitments
             .iter()
@@ -168,6 +174,16 @@ impl BlobsBundle {
         }
 
         Ok(())
+    }
+
+    // FIXME
+    #[cfg(feature = "kzg-rs")]
+    pub fn validate(
+        &self,
+        _tx: &crate::types::EIP4844Transaction,
+        _fork: crate::types::Fork,
+    ) -> Result<(), BlobsBundleError> {
+        unimplemented!()
     }
 }
 

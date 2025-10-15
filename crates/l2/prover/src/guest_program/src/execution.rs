@@ -12,20 +12,20 @@ use ethrex_common::types::{
     block_execution_witness::GuestProgramState, block_execution_witness::GuestProgramStateError,
 };
 use ethrex_common::{Address, U256};
-use ethrex_common::{
-    H256,
-    types::{Block, BlockHeader},
-};
+use ethrex_common::{H256, types::Block};
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-use std::collections::{BTreeMap, HashMap};
+#[cfg(feature = "l2")]
+use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
     kzg_commitment_to_versioned_hash,
 };
+#[cfg(feature = "l2")]
 use ethrex_l2_common::{
     l1_messages::get_block_l1_messages,
     privileged_transactions::{
@@ -101,7 +101,8 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blocks,
         execution_witness,
         elasticity_multiplier,
-        fee_config: _fee_config,
+        #[cfg(feature = "l2")]
+        fee_config,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
@@ -116,7 +117,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &blocks,
             execution_witness,
             elasticity_multiplier,
-            _fee_config,
+            fee_config,
             blob_commitment,
             blob_proof,
             chain_id,
@@ -239,11 +240,14 @@ pub fn stateless_validation_l2(
 }
 
 struct StatelessResult {
+    #[cfg(feature = "l2")]
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,
     final_state_hash: H256,
+    #[cfg(feature = "l2")]
     account_updates: HashMap<Address, AccountUpdate>,
-    last_block_header: BlockHeader,
+    #[cfg(feature = "l2")]
+    last_block_header: ethrex_common::types::BlockHeader,
     last_block_hash: H256,
     non_privileged_count: U256,
 
@@ -255,14 +259,14 @@ struct StatelessResult {
     #[cfg(feature = "l2")]
     pub codes_hashed: BTreeMap<H256, Vec<u8>>,
     #[cfg(feature = "l2")]
-    pub parent_block_header: BlockHeader,
+    pub parent_block_header: ethrex_common::types::BlockHeader,
 }
 
 fn execute_stateless(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_config: Option<FeeConfig>,
+    _fee_config: Option<FeeConfig>,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let guest_program_state: GuestProgramState = execution_witness
         .try_into()
@@ -330,7 +334,7 @@ fn execute_stateless(
         #[cfg(feature = "l2")]
         let mut vm = Evm::new_for_l2(
             wrapped_db.clone(),
-            fee_config.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
+            _fee_config.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
         )?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(wrapped_db.clone());
@@ -358,7 +362,10 @@ fn execute_stateless(
         }
 
         non_privileged_count += block.body.transactions.len()
-            - get_block_privileged_transactions(&block.body.transactions).len();
+            - ethrex_l2_common::privileged_transactions::get_block_privileged_transactions(
+                &block.body.transactions,
+            )
+            .len();
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
@@ -387,10 +394,13 @@ fn execute_stateless(
     }
 
     Ok(StatelessResult {
+        #[cfg(feature = "l2")]
         receipts: acc_receipts,
         initial_state_hash,
         final_state_hash,
+        #[cfg(feature = "l2")]
         account_updates: acc_account_updates,
+        #[cfg(feature = "l2")]
         last_block_header: last_block.header.clone(),
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
