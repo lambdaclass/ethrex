@@ -799,10 +799,6 @@ impl AlignedOptions {
             .aligned_network
             .clone()
             .or(defaults.aligned_network.clone());
-        self.aligned_sp1_elf_path = self
-            .aligned_sp1_elf_path
-            .clone()
-            .or(defaults.aligned_sp1_elf_path.clone());
     }
 }
 
