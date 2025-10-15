@@ -514,7 +514,7 @@ impl From<Transaction> for LegacyTransaction {
     fn from(val: Transaction) -> Self {
         LegacyTransaction {
             nonce: val.nonce.as_u64(),
-            gas_price: val.gas_price.unwrap_or_default().as_u64(), // TODO: Consider converting this into Option
+            gas_price: val.gas_price.unwrap_or_default(), // TODO: Consider converting this into Option
             gas: val.gas_limit.as_u64(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
@@ -536,7 +536,7 @@ impl From<Transaction> for EIP2930Transaction {
         EIP2930Transaction {
             chain_id: val.chain_id.map(|id: U256| id.as_u64()).unwrap_or(1),
             nonce: val.nonce.as_u64(),
-            gas_price: val.gas_price.unwrap_or_default().as_u64(),
+            gas_price: val.gas_price.unwrap_or_default(),
             gas_limit: val.gas_limit.as_u64(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
