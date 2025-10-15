@@ -24,7 +24,7 @@ use std::{
     sync::RwLock,
 };
 use std::{fmt::Debug, path::Path};
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
@@ -787,6 +787,14 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
+        match new_canonical_blocks {
+            Some(ref n_h_s) => {
+                for (n, h) in n_h_s {
+                    info!("Marking block {n} with hash {h} as canonical");
+                }
+            },
+            None => warn!("FCU with no new canonical blocks"),
+        }
         // Updates first the latest_block_header
         // to avoid nonce inconsistencies #3927.
         *self
