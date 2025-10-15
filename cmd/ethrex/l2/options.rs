@@ -820,8 +820,7 @@ impl BasedOptions {
     fn populate_with_defaults(&mut self, defaults: &Self) {
         self.state_updater_opts
             .populate_with_defaults(&defaults.state_updater_opts);
-        self.block_fetcher
-            .populate_with_defaults(&defaults.block_fetcher);
+        // block fetcher contains only non-optional fields.
     }
 }
 
@@ -886,12 +885,6 @@ impl Default for BlockFetcherOptions {
             fetch_interval_ms: 5000,
             fetch_block_step: 5000,
         }
-    }
-}
-
-impl BlockFetcherOptions {
-    fn populate_with_defaults(&mut self, _defaults: &Self) {
-        // No optional fields to hydrate.
     }
 }
 
