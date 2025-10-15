@@ -144,6 +144,7 @@ jobs:
         include:
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
+            # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
             buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
             hive_repository: ethereum/hive
             hive_version: 7709e5892146c793307da072e1593f48039a7e4b
