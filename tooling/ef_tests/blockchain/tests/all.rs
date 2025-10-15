@@ -10,20 +10,10 @@ const TEST_FOLDER: &str = "vectors/";
 
 // Base skips shared by all runs.
 const SKIPPED_BASE: &[&str] = &[
-    // These tests contain accounts without nonce or code but have storage, which is a virtually impossible scenario. That's why we fail, but that's okay.
-    // When creating an account we don't check the storage root but just if it has nonce or code.
-    // Fix is on its way on https://github.com/lambdaclass/ethrex/pull/4813
-    "InitCollisionParis",
-    "RevertInCreateInInitCreate2Paris",
-    "create2collisionStorageParis",
-    "dynamicAccountOverwriteEmpty_Paris",
-    "RevertInCreateInInit_Paris",
     // Skip because they take too long to run, but they pass
     "static_Call50000_sha256",
     "CALLBlake2f_MaxRounds",
     "loopMul",
-    // Gas price higher than u64::MAX; impractical scenario. Fix is on its way on https://github.com/lambdaclass/ethrex/pull/4823
-    "HighGasPriceParis",
     // Skip because it tries to deserialize number > U256::MAX
     "ValueOverflowParis",
     // Skip because it's a "Create" Blob Transaction, which doesn't actually exist. It never reaches the EVM because we can't even parse it as an actual Transaction.
