@@ -88,6 +88,18 @@ impl RpcHandler for ExecutionWitnessRequest {
             )));
         }
 
+        let to = if params.len() == 2 {
+            Some(BlockIdentifier::parse(
+                params.pop().ok_or(RpcErr::BadParams(format!(
+                    "Expected one or two params and {} were provided",
+                    params.len()
+                )))?,
+                1,
+            )?)
+        } else {
+            None
+        };
+
         let from = BlockIdentifier::parse(
             params.pop().ok_or(RpcErr::BadParams(format!(
                 "Expected one or two params and {} were provided",
@@ -95,11 +107,6 @@ impl RpcHandler for ExecutionWitnessRequest {
             )))?,
             0,
         )?;
-        let to = if let Some(param) = params.pop() {
-            Some(BlockIdentifier::parse(param, 1)?)
-        } else {
-            None
-        };
 
         Ok(ExecutionWitnessRequest { from, to })
     }
