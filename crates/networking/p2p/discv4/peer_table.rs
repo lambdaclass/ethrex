@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::debug;
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
@@ -597,7 +597,7 @@ impl PeerTableServer {
         }
 
         if tried_connections < max_amount {
-            info!("Resetting list of tried peers.");
+            debug!("Resetting list of tried peers.");
             self.already_tried_peers.clear();
         }
 
@@ -978,7 +978,6 @@ impl GenServer for PeerTableServer {
                 connection,
                 capabilities,
             } => {
-                debug!("New peer connected");
                 let new_peer_id = node.node_id();
                 let new_peer = PeerData::new(node, None, Some(connection), capabilities);
                 self.peers.insert(new_peer_id, new_peer);

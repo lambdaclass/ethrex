@@ -43,17 +43,13 @@ impl RLPxInitiator {
 
     pub async fn spawn(context: P2PContext) {
         info!("Starting RLPx Initiator");
-
         let state = RLPxInitiator::new(context);
-
         let mut server = RLPxInitiator::start(state.clone());
-
         let _ = server.cast(InMessage::LookForPeers).await;
     }
 
     async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
-        info!("Looking for peers");
-
+        debug!("Looking for peers");
         if !self.context.table.target_peers_reached().await? {
             let contacts = self
                 .context
@@ -65,7 +61,7 @@ impl RLPxInitiator {
                 METRICS.record_new_rlpx_conn_attempt().await;
             }
         } else {
-            info!("Target peer connections reached, no need to initiate new connections.");
+            debug!("Target peer connections reached, no need to initiate new connections.");
         }
         Ok(())
     }
@@ -76,7 +72,7 @@ impl RLPxInitiator {
         if num_peers < self.target_peers {
             self.initial_lookup_interval
         } else {
-            info!("Reached target number of peers. Using longer lookup interval.");
+            debug!("Reached target number of peers. Using longer lookup interval.");
             self.lookup_interval
         }
     }
@@ -106,7 +102,6 @@ impl GenServer for RLPxInitiator {
         match message {
             Self::CastMsg::LookForPeers => {
                 debug!(received = "Look for peers");
-
                 let _ = self
                     .look_for_peers()
                     .await
