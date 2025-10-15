@@ -16,6 +16,8 @@ use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use k256::elliptic_curve::Field;
 use lambdaworks_math::cyclic_group::IsGroup;
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{BN254FieldElement, BN254TwistCurveFieldElement};
+use lambdaworks_math::elliptic_curve::short_weierstrass::point::ShortWeierstrassProjectivePoint;
 use lambdaworks_math::{
     elliptic_curve::{
         short_weierstrass::curves::{
@@ -780,7 +782,7 @@ fn parse_bn254_coords(buf: &[u8; 192]) -> (G1, G2) {
 }
 
 #[inline]
-fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<(), VMError> {
+fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<bool, VMError> {
     // check each element is in field
     if g1.0 >= ALT_BN128_PRIME || g1.1 >= ALT_BN128_PRIME {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
@@ -794,7 +796,7 @@ fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<(), VMError> {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
 
-    Ok(())
+    Ok(true)
 }
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
@@ -813,7 +815,10 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
         #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
         let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
         let (g1, g2) = parse_bn254_coords(&input);
-        validate_bn254_coords(&g1, &g2).inspect(|_| batch.push((g1, g2)))?;
+        if validate_bn254_coords(&g1, &g2)? {
+            batch.push((g1, g2));
+        } else {
+        }
     }
 
     #[allow(unreachable_code)]
@@ -885,35 +890,47 @@ pub fn pairing_substrate(batch: &[(G1, G2)]) -> Result<bool, VMError> {
 
 #[inline]
 pub fn pairing_lambdaworks(batch: &[(G1, G2)]) -> Result<bool, VMError> {
-    type Fq = FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>;
-    type Fq2 = FieldElement<Degree2ExtensionField>;
+    type Fq = BN254FieldElement;
+    type Fq2 = BN254TwistCurveFieldElement;
     type LambdaworksG1 = BN254Curve;
     type LambdaworksG2 = BN254TwistCurve;
+    type ProjectiveG1 = ShortWeierstrassProjectivePoint<LambdaworksG1>;
+    type ProjectiveG2 = ShortWeierstrassProjectivePoint<LambdaworksG2>;
 
     let result = if batch.is_empty() {
         QuadraticExtensionFieldElement::one()
     } else {
         let mut valid_batch = Vec::with_capacity(batch.len());
         for (g1, g2) in batch {
-            let (g1_x, g1_y) = (
-                Fq::from_bytes_be(&g1.0.to_big_endian())
-                    .map_err(|_| PrecompileError::ParsingInputError)?,
-                Fq::from_bytes_be(&g1.1.to_big_endian())
-                    .map_err(|_| PrecompileError::ParsingInputError)?,
-            );
-            let (g2_x, g2_y) = {
-                let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
-                let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
-                let (x, y) = (
-                    Fq2::from_bytes_be(&x_bytes).map_err(|_| PrecompileError::ParsingInputError)?,
-                    Fq2::from_bytes_be(&y_bytes).map_err(|_| PrecompileError::ParsingInputError)?,
+            let g1 = if g1.0.is_zero() && g1.1.is_zero() {
+                ProjectiveG1::neutral_element()
+            } else {
+                let (g1_x, g1_y) = (
+                    Fq::from_bytes_be(&g1.0.to_big_endian())
+                        .map_err(|_| InternalError::msg("failed to parse g1 x"))?,
+                    Fq::from_bytes_be(&g1.1.to_big_endian())
+                        .map_err(|_| InternalError::msg("failed to parse g1 y"))?,
                 );
-                (x, y)
+                LambdaworksG1::create_point_from_affine(g1_x, g1_y)
+                    .map_err(|_| PrecompileError::InvalidPoint)?
             };
-            let g1 = LambdaworksG1::create_point_from_affine(g1_x, g1_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-            let g2 = LambdaworksG2::create_point_from_affine(g2_x, g2_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
+            let g2 = if g2.0.is_zero() && g2.1.is_zero() && g2.2.is_zero() && g2.3.is_zero() {
+                ProjectiveG2::neutral_element()
+            } else {
+                let (g2_x, g2_y) = {
+                    let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
+                    let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
+                    let (x, y) = (
+                        Fq2::from_bytes_be(&x_bytes)
+                            .map_err(|_| InternalError::msg("failed to parse g2 x"))?,
+                        Fq2::from_bytes_be(&y_bytes)
+                            .map_err(|_| InternalError::msg("failed to parse g2 y"))?,
+                    );
+                    (x, y)
+                };
+                LambdaworksG2::create_point_from_affine(g2_x, g2_y)
+                    .map_err(|_| PrecompileError::InvalidPoint)?
+            };
             if !g2.is_in_subgroup() {
                 return Err(PrecompileError::PointNotInSubgroup.into());
             }
