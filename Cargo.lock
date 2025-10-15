@@ -3811,7 +3811,7 @@ dependencies = [
 name = "ethrex-metrics"
 version = "3.0.0"
 dependencies = [
- "axum 0.8.6",
+ "axum 0.8.4",
  "ethrex-common 3.0.0",
  "prometheus 0.13.4",
  "serde",
