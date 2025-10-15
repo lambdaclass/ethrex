@@ -42,33 +42,35 @@ pub struct LogsFilter {
 }
 impl RpcHandler for LogsFilter {
     fn parse(params: Option<Vec<Value>>) -> Result<LogsFilter, RpcErr> {
-        match params.as_deref() {
-            Some([param]) => {
-                let param = param
+        match params {
+            Some(mut params) if params.len() == 1 => {
+                let mut param = params
+                    .remove(0)
                     .as_object()
-                    .ok_or(RpcErr::BadParams("Param is not a object".to_owned()))?;
+                    .ok_or(RpcErr::BadParams("Param is not a object".to_owned()))?
+                    .to_owned();
                 let from_block = param
-                    .get("fromBlock")
+                    .remove("fromBlock")
                     .ok_or_else(|| RpcErr::MissingParam("fromBlock".to_string()))
-                    .and_then(|block_number| BlockIdentifier::parse(block_number.clone(), 0))?;
+                    .and_then(|block_number| BlockIdentifier::parse(block_number, 0))?;
                 let to_block = param
-                    .get("toBlock")
+                    .remove("toBlock")
                     .ok_or_else(|| RpcErr::MissingParam("toBlock".to_string()))
-                    .and_then(|block_number| BlockIdentifier::parse(block_number.clone(), 0))?;
+                    .and_then(|block_number| BlockIdentifier::parse(block_number, 0))?;
                 let address_filters = param
-                    .get("address")
+                    .remove("address")
                     .ok_or_else(|| RpcErr::MissingParam("address".to_string()))
                     .and_then(|address| {
-                        match serde_json::from_value::<Option<AddressFilter>>(address.clone()) {
+                        match serde_json::from_value::<Option<AddressFilter>>(address) {
                             Ok(filters) => Ok(filters),
                             _ => Err(RpcErr::WrongParam("address".to_string())),
                         }
                     })?;
                 let topics_filters = param
-                    .get("topics")
+                    .remove("topics")
                     .ok_or_else(|| RpcErr::MissingParam("topics".to_string()))
                     .and_then(|topics| {
-                        match serde_json::from_value::<Option<Vec<TopicFilter>>>(topics.clone()) {
+                        match serde_json::from_value::<Option<Vec<TopicFilter>>>(topics) {
                             Ok(filters) => Ok(filters),
                             _ => Err(RpcErr::WrongParam("topics".to_string())),
                         }
@@ -159,12 +161,12 @@ pub(crate) async fn fetch_logs_with_filter(
                 .ok_or(RpcErr::Internal("Could not get receipt".to_owned()))?;
 
             if receipt.succeeded {
-                for log in &receipt.logs {
+                for log in receipt.logs {
                     if address_filter.is_empty() || address_filter.contains(&log.address) {
                         // Some extra data is needed when
                         // forming the RPC response.
                         logs.push(RpcLog {
-                            log: log.clone().into(),
+                            log: log.into(),
                             log_index: block_log_index,
                             transaction_hash: tx_hash,
                             transaction_index: tx_index as u64,

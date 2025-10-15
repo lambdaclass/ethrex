@@ -185,7 +185,7 @@ impl RpcHandler for SponsoredTx {
             })
         };
 
-        let mut generic = match tx.to_transaction() {
+        let mut generic = match tx.clone().to_transaction() {
             ethrex_common::types::Transaction::EIP1559Transaction(tx) => {
                 GenericTransaction::from(tx)
             }

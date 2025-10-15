@@ -309,7 +309,7 @@ async fn handle_http_request(
             let mut responses = Vec::new();
             for mut req in requests {
                 let req_id = req.take_id();
-                let res = map_http_requests(req, service_context.clone()).await;
+                let res = map_http_requests(req, service_context.clone()).await; // ok-clone: each request needs an owned copy of the context
                 responses.push(rpc_response(req_id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
             }
             serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?

@@ -45,7 +45,7 @@ impl RpcTransaction {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SendRawTransactionRequest {
     Legacy(LegacyTransaction),
     EIP2930(EIP2930Transaction),
@@ -56,16 +56,14 @@ pub enum SendRawTransactionRequest {
 }
 
 impl SendRawTransactionRequest {
-    pub fn to_transaction(&self) -> Transaction {
+    pub fn to_transaction(self) -> Transaction {
         match self {
-            SendRawTransactionRequest::Legacy(t) => Transaction::LegacyTransaction(t.clone()),
-            SendRawTransactionRequest::EIP1559(t) => Transaction::EIP1559Transaction(t.clone()),
-            SendRawTransactionRequest::EIP2930(t) => Transaction::EIP2930Transaction(t.clone()),
-            SendRawTransactionRequest::EIP4844(t) => Transaction::EIP4844Transaction(t.tx.clone()),
-            SendRawTransactionRequest::EIP7702(t) => Transaction::EIP7702Transaction(t.clone()),
-            SendRawTransactionRequest::PrivilegedL2(t) => {
-                Transaction::PrivilegedL2Transaction(t.clone())
-            }
+            SendRawTransactionRequest::Legacy(t) => Transaction::LegacyTransaction(t),
+            SendRawTransactionRequest::EIP1559(t) => Transaction::EIP1559Transaction(t),
+            SendRawTransactionRequest::EIP2930(t) => Transaction::EIP2930Transaction(t),
+            SendRawTransactionRequest::EIP4844(t) => Transaction::EIP4844Transaction(t.tx),
+            SendRawTransactionRequest::EIP7702(t) => Transaction::EIP7702Transaction(t),
+            SendRawTransactionRequest::PrivilegedL2(t) => Transaction::PrivilegedL2Transaction(t),
         }
     }
 

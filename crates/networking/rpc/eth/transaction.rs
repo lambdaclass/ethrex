@@ -442,7 +442,7 @@ impl RpcHandler for EstimateGasRequest {
             _ => return Ok(Value::Null),
         };
 
-        let transaction = match self.transaction.nonce {
+        let mut transaction = match self.transaction.nonce {
             Some(_nonce) => self.transaction,
             None => {
                 let transaction_nonce = storage
@@ -462,10 +462,10 @@ impl RpcHandler for EstimateGasRequest {
                 .await?;
             let code = account_info.map(|info| storage.get_account_code(info.code_hash));
             if code.is_none() {
-                let mut value_transfer_transaction = transaction.clone();
-                value_transfer_transaction.gas = Some(TRANSACTION_GAS);
+                let previous_gas = transaction.gas;
+                transaction.gas = Some(TRANSACTION_GAS);
                 let result: Result<ExecutionResult, RpcErr> = simulate_tx(
-                    &value_transfer_transaction,
+                    &transaction,
                     &block_header,
                     storage.clone(), // ok-clone: store fields are all arcs, so this just increases their reference count
                     blockchain.clone(), // ok-clone: increase arc reference count
@@ -474,6 +474,7 @@ impl RpcHandler for EstimateGasRequest {
                     return serde_json::to_value(format!("{TRANSACTION_GAS:#x}"))
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 }
+                transaction.gas = previous_gas;
             }
         }
 
@@ -494,7 +495,7 @@ impl RpcHandler for EstimateGasRequest {
         }
 
         // Check whether the execution is possible
-        let mut transaction = transaction.clone();
+        let previous_gas = transaction.gas;
         transaction.gas = Some(highest_gas_limit);
         let result = simulate_tx(
             &transaction,
@@ -502,6 +503,7 @@ impl RpcHandler for EstimateGasRequest {
             storage.clone(), // ok-clone: store fields are all arcs, so this just increases their reference count
             blockchain.clone(), // ok-clone: increase arc reference count
         )?;
+        transaction.gas = previous_gas;
 
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
