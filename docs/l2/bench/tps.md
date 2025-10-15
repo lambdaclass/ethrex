@@ -45,11 +45,19 @@ Rollup L2 (publishes blobs)
 | 2 | 63 | 1.38M | 10m 52s | ✅ | ethrex-gpu-4090-1 |
 | 3 | 63 | 2.10M | 17m 12s | ❌ | l2-gpu-3 |
 
+Rollup L2 (publishes blobs), with 1.000.000 genesis accounts (big state)
+
+| TPS | Avg. batch size (blocks) | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
+| --- | --- | --- | --- | --- | --- |
+| 2 | 63 | 1.07M | 10m 6s | ✅ | l2-gpu-3 |
+| 3 | 63 |  |  |  | l2-gpu-3 |
+
 **Note:**
 
 1. Validium doesn’t include blob KZG verification, which adds some overhead.
 2. Validium doesn’t publishes blobs, which can limit batch size.
 3. The L2 state is small. A bigger state means a bigger trie, which implies more trie/hashing operations that increase proving time.
+4. For the big state case, the accounts don’t have storage nor code.
 
 ### How to reproduce
 
