@@ -69,9 +69,10 @@ Rollup L2 (publishes blobs)
         5. `ETHREX_COMMITTER_COMMIT_TIME=768000`
 5. In a different terminal (cd `tooling/load_test/` ) execute the TPS test
     ```rust
-    cargo r -r -- tps \
-    	--node http://127.0.0.1:1729 \
-    	--pkeys ../../fixtures/keys/private_keys.txt \
-    	--test-type <eth-transfers,erc20> \
-    	--rate <tx per second>
+    cargo r -r -- load \
+	--node http://127.0.0.1:1729 \
+	--pkeys ../../fixtures/keys/private_keys.txt \
+	--test-type <eth-transfers,erc20> \
+	tps \
+	--rate <tx per second>
     ```
