@@ -31,6 +31,10 @@ const SCORE_WEIGHT: i64 = 1;
 const REQUESTS_WEIGHT: i64 = 1;
 /// Max amount of ongoing requests per peer.
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
+/// The target number of RLPx connections to reach.
+pub const TARGET_PEERS: usize = 100;
+/// The target number of contacts to maintain in peer_table.
+const TARGET_CONTACTS: usize = 100_000;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -121,9 +125,9 @@ pub struct PeerTable {
 }
 
 impl PeerTable {
-    pub fn spawn() -> PeerTable {
+    pub fn spawn(target_peers: usize) -> PeerTable {
         PeerTable {
-            handle: PeerTableServer::default().start(),
+            handle: PeerTableServer::new(target_peers).start(),
         }
     }
 
@@ -301,17 +305,22 @@ impl PeerTable {
     }
 
     /// Check if target number of contacts and connected peers is reached
-    pub async fn target_reached(
-        &mut self,
-        target_contacts: usize,
-        target_peers: usize,
-    ) -> Result<bool, PeerTableError> {
+    pub async fn target_reached(&mut self) -> Result<bool, PeerTableError> {
         match self
             .handle
-            .call(CallMessage::TargetReached {
-                target_contacts,
-                target_peers,
-            })
+            .call(CallMessage::TargetReached)
+            .await?
+        {
+            OutMessage::TargetReached(result) => Ok(result),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Check if target number of connected peers is reached
+    pub async fn target_peers_reached(&mut self) -> Result<bool, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::TargetPeersReached)
             .await?
         {
             OutMessage::TargetReached(result) => Ok(result),
@@ -501,15 +510,25 @@ impl PeerTable {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct PeerTableServer {
     contacts: IndexMap<H256, Contact>,
     peers: IndexMap<H256, PeerData>,
     already_tried_peers: HashSet<H256>,
     discarded_contacts: HashSet<H256>,
+    target_peers: usize,
 }
 
 impl PeerTableServer {
+    pub(crate) fn new(target_peers: usize) -> Self {
+        Self {
+            contacts: Default::default(),
+            peers: Default::default(),
+            already_tried_peers: Default::default(),
+            discarded_contacts: Default::default(),
+            target_peers,
+        }
+    }
     // Internal functions //
 
     // Weighting function used to select best peer
@@ -802,10 +821,8 @@ enum CallMessage {
     PeerCountByCapabilities {
         capabilities: Vec<Capability>,
     },
-    TargetReached {
-        target_contacts: usize,
-        target_peers: usize,
-    },
+    TargetReached,
+    TargetPeersReached,
     GetContactsToInitiate(usize),
     GetContactsForLookup,
     GetContactsToRevalidate(Duration),
@@ -882,11 +899,11 @@ impl GenServer for PeerTableServer {
             CallMessage::PeerCountByCapabilities { capabilities } => CallResponse::Reply(
                 OutMessage::PeerCount(self.peer_count_by_capabilities(capabilities)),
             ),
-            CallMessage::TargetReached {
-                target_contacts,
-                target_peers,
-            } => CallResponse::Reply(Self::OutMsg::TargetReached(
-                self.contacts.len() < target_contacts && self.peers.len() < target_peers,
+            CallMessage::TargetReached => CallResponse::Reply(Self::OutMsg::TargetReached(
+                self.contacts.len() >= TARGET_CONTACTS && self.peers.len() >= self.target_peers,
+            )),
+            CallMessage::TargetPeersReached => CallResponse::Reply(Self::OutMsg::TargetReached(
+                self.peers.len() >= self.target_peers,
             )),
             CallMessage::GetContactsToInitiate(amount) => CallResponse::Reply(
                 Self::OutMsg::Contacts(self.get_contacts_to_initiate(amount)),

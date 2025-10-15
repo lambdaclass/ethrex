@@ -1,13 +1,12 @@
 use crate::{
-    discv4::peer_table::{PeerData, PeerTable, PeerTableError},
+    discv4::peer_table::{PeerData, PeerTable, PeerTableError, TARGET_PEERS},
     metrics::{CurrentStepValue, METRICS},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
         eth::{
             blocks::{
-                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
-                HashOrNumber,
+                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber, BLOCK_HEADER_LIMIT
             },
             receipts::GetReceipts,
         },
@@ -19,10 +18,9 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
+    sync::{block_is_stale, update_pivot, AccountStorageRoots, BlockSyncState},
     utils::{
-        AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
-        get_account_state_snapshot_file, get_account_storages_snapshot_file,
+        dump_accounts_to_file, dump_storages_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file, AccountsWithStorage
     },
 };
 use bytes::Bytes;
@@ -149,8 +147,7 @@ impl PeerHandler {
     /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
     /// This should only be used in tests as it won't be able to interact with the node's connected peers
     pub fn dummy() -> PeerHandler {
-        let dummy_peer_table = PeerTable::spawn();
-        PeerHandler::new(dummy_peer_table)
+        PeerHandler::new(PeerTable::spawn(TARGET_PEERS))
     }
 
     async fn make_request(

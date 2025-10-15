@@ -1,5 +1,5 @@
 use crate::{
-    discv4::{peer_table::PeerTableError, server::TARGET_PEERS},
+    discv4::peer_table::PeerTableError,
     metrics::METRICS,
     network::P2PContext,
     rlpx::connection::server::PeerConnection,
@@ -56,7 +56,7 @@ impl RLPxInitiator {
     async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
         info!("Looking for peers");
 
-        if self.context.table.peer_count().await? < TARGET_PEERS {
+        if !self.context.table.target_peers_reached().await? {
             let contacts = self
                 .context
                 .table

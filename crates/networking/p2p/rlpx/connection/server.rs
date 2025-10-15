@@ -1,5 +1,5 @@
 use crate::{
-    discv4::{peer_table::PeerTable, server::TARGET_PEERS},
+    discv4::peer_table::PeerTable,
     metrics::METRICS,
     network::P2PContext,
     rlpx::{
@@ -475,7 +475,7 @@ async fn initialize_connection<S>(
 where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
 {
-    if state.peer_table.peer_count().await? >= TARGET_PEERS {
+    if state.peer_table.target_peers_reached().await? {
         log_peer_warn(&state.node, "Reached target peer connections, discarding.");
         return Err(PeerConnectionError::TooManyPeers);
     }
