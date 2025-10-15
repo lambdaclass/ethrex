@@ -132,27 +132,34 @@ fn parse(
     params: Option<Vec<Value>>,
     is_v3: bool,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV3>), RpcErr> {
-    let params = params
-        .as_ref()
-        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
     if params.len() != 2 && params.len() != 1 {
-        return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
+        return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
     }
 
-    let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
     let mut payload_attributes: Option<PayloadAttributesV3> = None;
+
     if params.len() == 2 {
         // if there is an error when parsing (or the parameter is missing), set to None
-        payload_attributes =
-            match serde_json::from_value::<Option<PayloadAttributesV3>>(params[1].clone()) {
-                Ok(attributes) => attributes,
-                Err(error) => {
-                    warn!("Could not parse payload attributes {}", error);
-                    None
-                }
-            };
+        payload_attributes = match serde_json::from_value::<Option<PayloadAttributesV3>>(
+            params
+                .pop()
+                .ok_or(RpcErr::BadParams("Expected 1 or 2 params".to_owned()))?,
+        ) {
+            Ok(attributes) => attributes,
+            Err(error) => {
+                warn!("Could not parse payload attributes {}", error);
+                None
+            }
+        };
     }
+
+    let forkchoice_state: ForkChoiceState = serde_json::from_value(
+        params
+            .pop()
+            .ok_or(RpcErr::BadParams("Expected 1 or 2 params".to_owned()))?,
+    )?;
 
     if payload_attributes
         .as_ref()

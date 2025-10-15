@@ -33,7 +33,7 @@ impl RpcReceipt {
     ) -> Self {
         let mut logs = vec![];
         let mut log_index = init_log_index;
-        for log in std::mem::take(receipt.logs) {
+        for log in std::mem::take(&mut receipt.logs) {
             logs.push(RpcLog::new(log, log_index, &tx_info, &block_info));
             log_index += 1;
         }
