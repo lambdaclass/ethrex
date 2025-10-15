@@ -73,7 +73,7 @@ dependencies = [
 [[package]]
 name = "aligned-sdk"
 version = "0.1.0"
-source = "git+https://github.com/yetanotherco/aligned_layer?tag=v0.17.0#86cfefdd98568b9d440c1d1cab38e7dce53b08c3"
+source = "git+https://github.com/yetanotherco/aligned_layer?tag=v0.19.1#030e1285889e144b53275cf3922a851e046e5916"
 dependencies = [
  "ciborium",
  "dialoguer",
@@ -84,6 +84,7 @@ dependencies = [
  "log",
  "reqwest 0.12.23",
  "serde",
+ "serde_bytes",
  "serde_json",
  "serde_repr",
  "sha3",
@@ -2219,6 +2220,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "hex",
  "lambdaworks-crypto 0.11.0",
  "secp256k1",
  "serde",
@@ -5525,6 +5527,15 @@ name = "serde_arrays"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94a16b99c5ea4fe3daccd14853ad260ec00ea043b2708d1fd1da3106dcd8d9df"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8437fd221bde2d4ca316d61b90e337e9e702b3820b87d63caa9ba6c02bd06d96"
 dependencies = [
  "serde",
 ]
