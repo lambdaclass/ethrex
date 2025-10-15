@@ -339,6 +339,7 @@ pub enum MonitorError {
     GetLastFetchedL1,
     #[error("Failed to get pending privileged transactions")]
     GetPendingPrivilegedTx,
+
     #[error("Failed to get transaction pool")]
     TxPoolError,
     #[error("Failed to encode calldata: {0}")]
