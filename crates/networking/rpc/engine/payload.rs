@@ -107,24 +107,24 @@ impl RpcHandler for NewPayloadV3Request {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         }
         Ok(NewPayloadV3Request {
-            payload: serde_json::from_value(
-                params
-                    .pop()
-                    .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
-            )
-            .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(
-                params
-                    .pop()
-                    .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
-            )
-            .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
             parent_beacon_block_root: serde_json::from_value(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
             )
             .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            payload: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
         })
     }
 
@@ -183,30 +183,30 @@ impl RpcHandler for NewPayloadV4Request {
             return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
         }
         Ok(NewPayloadV4Request {
-            payload: serde_json::from_value(
-                params
-                    .pop()
-                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
-            )
-            .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(
-                params
-                    .pop()
-                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
-            )
-            .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(
-                params
-                    .pop()
-                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
-            )
-            .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
             execution_requests: serde_json::from_value(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
             )
             .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            payload: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
         })
     }
 

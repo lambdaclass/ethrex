@@ -77,16 +77,14 @@ impl RpcHandler for TraceTransactionRequest {
         if params.len() != 2 {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         }
+
+        let tx_hash = serde_json::from_value(params.remove(0))?;
+
         let trace_config = match params.pop() {
             Some(param) => serde_json::from_value(param)?,
             None => TraceConfig::default(),
         };
 
-        let tx_hash = serde_json::from_value(
-            params
-                .pop()
-                .ok_or(RpcErr::BadParams("Expected 1 or 2 params".to_owned()))?,
-        )?;
         Ok(TraceTransactionRequest {
             tx_hash,
             trace_config,
@@ -129,11 +127,8 @@ impl RpcHandler for TraceBlockByNumberRequest {
     fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
-        let number = serde_json::from_value(
-            params
-                .pop()
-                .ok_or(RpcErr::BadParams("Expected 1 or 2 params".to_owned()))?,
-        )?;
+        let number = serde_json::from_value(params.remove(0))?;
+
         let trace_config = match params.pop() {
             Some(param) => serde_json::from_value(param)?,
             None => TraceConfig::default(),

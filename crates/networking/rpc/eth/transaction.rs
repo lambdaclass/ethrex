@@ -176,16 +176,16 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
         params: Option<Vec<Value>>,
     ) -> Result<GetTransactionByBlockHashAndIndexRequest, RpcErr> {
         let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        let block = serde_json::from_value(
-            params
-                .pop()
-                .ok_or(RpcErr::BadParams("No params provided".to_owned()))?,
-        )?;
         let index_as_string: String =
             serde_json::from_value(params.pop().ok_or(RpcErr::BadParams(format!(
                 "Expected two params and {} were provided",
                 params.len()
             )))?)?;
+        let block = serde_json::from_value(
+            params
+                .pop()
+                .ok_or(RpcErr::BadParams("No params provided".to_owned()))?,
+        )?;
         Ok(GetTransactionByBlockHashAndIndexRequest {
             block,
             transaction_index: usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)

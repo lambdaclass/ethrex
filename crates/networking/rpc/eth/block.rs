@@ -58,16 +58,16 @@ impl RpcHandler for GetBlockByNumberRequest {
             return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
         };
         Ok(GetBlockByNumberRequest {
+            hydrated: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
+            )?,
             block: BlockIdentifier::parse(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
                 0,
-            )?,
-            hydrated: serde_json::from_value(
-                params
-                    .pop()
-                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
             )?,
         })
     }
@@ -99,12 +99,12 @@ impl RpcHandler for GetBlockByHashRequest {
             return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
         };
         Ok(GetBlockByHashRequest {
-            block: serde_json::from_value(
+            hydrated: serde_json::from_value(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
             )?,
-            hydrated: serde_json::from_value(
+            block: serde_json::from_value(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,

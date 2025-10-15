@@ -41,16 +41,16 @@ impl RpcHandler for GetBalanceRequest {
             return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
         };
         Ok(GetBalanceRequest {
-            address: serde_json::from_value(
-                params
-                    .pop()
-                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
-            )?,
             block: BlockIdentifierOrHash::parse(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
                 1,
+            )?,
+            address: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
             )?,
         })
     }
@@ -84,16 +84,16 @@ impl RpcHandler for GetCodeRequest {
             return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
         };
         Ok(GetCodeRequest {
-            address: serde_json::from_value(
-                params
-                    .pop()
-                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
-            )?,
             block: BlockIdentifierOrHash::parse(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
                 1,
+            )?,
+            address: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
             )?,
         })
     }
@@ -126,24 +126,22 @@ impl RpcHandler for GetStorageAtRequest {
         if params.len() != 3 {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         };
-        let address = serde_json::from_value(
-            params
-                .pop()
-                .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
-        )?;
-        let storage_slot_u256 = serde_utils::u256::deser_hex_or_dec_str(
-            params
-                .pop()
-                .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
-        )?;
         Ok(GetStorageAtRequest {
-            address,
-            storage_slot: H256::from_uint(&storage_slot_u256),
             block: BlockIdentifierOrHash::parse(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
                 2,
+            )?,
+            storage_slot: H256::from_uint(&serde_utils::u256::deser_hex_or_dec_str(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
+            )?),
+            address: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
             )?,
         })
     }
@@ -177,16 +175,16 @@ impl RpcHandler for GetTransactionCountRequest {
             return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
         };
         Ok(GetTransactionCountRequest {
-            address: serde_json::from_value(
-                params
-                    .pop()
-                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
-            )?,
             block: BlockIdentifierOrHash::parse(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
                 1,
+            )?,
+            address: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
             )?,
         })
     }
@@ -231,10 +229,11 @@ impl RpcHandler for GetProofRequest {
         if params.len() != 3 {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         };
-        let address = serde_json::from_value(
+        let block = BlockIdentifierOrHash::parse(
             params
                 .pop()
                 .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
+            2,
         )?;
         let storage_keys: Vec<U256> = serde_json::from_value(
             params
@@ -243,13 +242,12 @@ impl RpcHandler for GetProofRequest {
         )?;
         let storage_keys = storage_keys.iter().map(H256::from_uint).collect();
         Ok(GetProofRequest {
-            address,
+            block,
             storage_keys,
-            block: BlockIdentifierOrHash::parse(
+            address: serde_json::from_value(
                 params
                     .pop()
                     .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
-                2,
             )?,
         })
     }
