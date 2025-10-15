@@ -21,9 +21,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_trie::EMPTY_TRIE_HASH;
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -387,44 +385,6 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
-/// Rollback the chain to the latest block we have the state for.
-async fn reset_to_head(store: &Store) -> eyre::Result<()> {
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
-    let Some(root) = trie.db().get(Default::default())? else {
-        return Ok(());
-    };
-    let root = ethrex_trie::Node::decode(&root)?;
-    let state_root = root.compute_hash().finalize();
-
-    // TODO: store latest state metadata in the DB to avoid this loop
-    for block_number in (0..=store.get_latest_block_number().await?).rev() {
-        if let Some(header) = store.get_block_header(block_number)?
-            && header.state_root == state_root
-        {
-            info!("Resetting head to {block_number}");
-            let last_kept_block = block_number;
-            let mut block_to_delete = last_kept_block + 1;
-            while store
-                .get_canonical_block_hash(block_to_delete)
-                .await?
-                .is_some()
-            {
-                debug!("Deleting block {block_to_delete}");
-                store.remove_block(block_to_delete).await?;
-                block_to_delete += 1;
-            }
-            let last_kept_header = store
-                .get_block_header(last_kept_block)?
-                .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
-            store
-                .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
-                .await?;
-            break;
-        }
-    }
-    Ok(())
-}
-
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -446,8 +406,6 @@ pub async fn init_l1(
 
     let store = init_store(datadir, genesis).await;
 
-    reset_to_head(&store).await?;
-
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
@@ -459,6 +417,8 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
         },
     );
+
+    regenerate_head_state(&store, &blockchain).await?;
 
     let signer = get_signer(datadir);
 
@@ -525,4 +485,44 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+async fn regenerate_head_state(store: &Store, blockchain: &Arc<Blockchain>) -> eyre::Result<()> {
+    let head_block_number = store.get_latest_block_number().await?;
+    let Some(last_header) = store.get_block_header(head_block_number)? else {
+        unreachable!("Database is empty, genesis block should be present");
+    };
+
+    let mut current_last_header = last_header;
+
+    while !store.has_state_root(current_last_header.state_root)? {
+        let parent_number = current_last_header.number - 1;
+        debug!("Need to regenerate state for block {parent_number}");
+        let Some(parent_header) = store.get_block_header(parent_number)? else {
+            return Err(eyre::eyre!(
+                "Parent header for block {parent_number} not found"
+            ));
+        };
+        current_last_header = parent_header;
+    }
+
+    let last_state_number = current_last_header.number;
+
+    if last_state_number == head_block_number {
+        debug!("State is already up to date");
+        return Ok(());
+    }
+    info!("Regenerating state from block {last_state_number} to {head_block_number}");
+
+    for i in (last_state_number + 1)..=head_block_number {
+        debug!("Re-applying block {i} to regenerate state");
+
+        let block = store
+            .get_block_by_number(i)
+            .await?
+            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+        blockchain.add_block(block).await?;
+    }
+    info!("Finished regenerating state");
+    Ok(())
 }
