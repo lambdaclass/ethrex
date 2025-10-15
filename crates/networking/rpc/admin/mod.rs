@@ -35,7 +35,7 @@ enum Protocol {
     Eth(ChainConfig),
 }
 
-pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
+pub fn node_info(storage: Store, node_data: NodeData) -> Result<Value, RpcErr> {
     let enode_url = node_data.local_p2p_node.enode_url();
     let enr_url = match node_data.local_node_record.enr_url() {
         Ok(enr) => enr,
@@ -52,7 +52,7 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
         enode: enode_url,
         enr: enr_url,
         id: hex::encode(node_data.local_p2p_node.node_id()),
-        name: node_data.client_version.clone(),
+        name: node_data.client_version,
         ip: node_data.local_p2p_node.ip.to_string(),
         ports: Ports {
             discovery: node_data.local_p2p_node.udp_port,
@@ -69,7 +69,6 @@ pub async fn set_log_level(
 ) -> Result<Value, RpcErr> {
     let params = req
         .params
-        .clone()
         .ok_or(RpcErr::MissingParam("log level".to_string()))?;
     let log_level = params
         .first()
