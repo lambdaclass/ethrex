@@ -204,16 +204,19 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             Some(number) => number,
             _ => return Ok(Value::Null),
         };
-        let block_body = match context.storage.get_block_body(block_number).await? {
+        let mut block_body = match context.storage.get_block_body(block_number).await? {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
-        let tx = match block_body.transactions.get(self.transaction_index) {
-            Some(tx) => tx,
-            None => return Ok(Value::Null),
-        };
+
+        if block_body.transactions.len() >= self.transaction_index {
+            return Ok(Value::Null);
+        }
+
+        let tx = block_body.transactions.remove(self.transaction_index);
+
         let tx = RpcTransaction::build(
-            tx.clone(),
+            tx,
             Some(block_number),
             Some(self.block),
             Some(self.transaction_index),

@@ -36,14 +36,14 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
     async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, &context, 1).await?;
-        if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
+        if let (Some(head_block), Some(attributes)) = (head_block_opt, self.payload_attributes) {
             let chain_config = context.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV1 used to build Cancun payload".to_string(),
                 ));
             }
-            validate_attributes_v1(attributes, &head_block)?;
+            validate_attributes_v1(&attributes, &head_block)?;
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 1).await?;
             response.set_id(payload_id);
         }
@@ -69,17 +69,17 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
     async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, &context, 2).await?;
-        if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
+        if let (Some(head_block), Some(attributes)) = (head_block_opt, self.payload_attributes) {
             let chain_config = context.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV2 used to build Cancun payload".to_string(),
                 ));
             } else if chain_config.is_shanghai_activated(attributes.timestamp) {
-                validate_attributes_v2(attributes, &head_block)?;
+                validate_attributes_v2(&attributes, &head_block)?;
             } else {
                 // Behave as a v1
-                validate_attributes_v1(attributes, &head_block)?;
+                validate_attributes_v1(&attributes, &head_block)?;
             }
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 2).await?;
             response.set_id(payload_id);
@@ -119,8 +119,8 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
     async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, &context, 3).await?;
-        if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            validate_attributes_v3(attributes, &head_block, &context)?;
+        if let (Some(head_block), Some(attributes)) = (head_block_opt, self.payload_attributes) {
+            validate_attributes_v3(&attributes, &head_block, &context)?;
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 3).await?;
             response.set_id(payload_id);
         }
@@ -366,7 +366,7 @@ fn validate_timestamp(
 }
 
 async fn build_payload(
-    attributes: &PayloadAttributesV3,
+    attributes: PayloadAttributesV3,
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,
     version: u8,
@@ -377,7 +377,7 @@ async fn build_payload(
         timestamp: attributes.timestamp,
         fee_recipient: attributes.suggested_fee_recipient,
         random: attributes.prev_randao,
-        withdrawals: attributes.withdrawals.clone(),
+        withdrawals: attributes.withdrawals,
         beacon_root: attributes.parent_beacon_block_root,
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,

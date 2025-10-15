@@ -65,7 +65,7 @@ impl NewFilterRequest {
     }
 
     pub async fn handle(
-        &self,
+        self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
@@ -101,7 +101,7 @@ impl NewFilterRequest {
                 timestamp,
                 PollableFilter {
                     last_block_number,
-                    filter_data: self.request_data.clone(),
+                    filter_data: self.request_data,
                 },
             ),
         );
@@ -216,7 +216,7 @@ impl FilterChangesRequest {
                 // starts from the last polled block.
                 filter.filter_data.from_block = BlockIdentifier::Number(filter.last_block_number);
                 filter.last_block_number = latest_block_num;
-                let mut filter = filter.clone();
+                let mut filter = filter.clone(); // ok-clone: needed to drop the mutex guard early
                 filter.filter_data.to_block = BlockIdentifier::Number(latest_block_num);
                 // Drop the lock early to process this filter's query
                 // and not keep the lock more than we should.
@@ -293,10 +293,10 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await; // ok-clone: increase arc reference count
+        let id = run_new_filter_request_test(raw_json, filters.clone()).await; // ok-clone: increase arc reference count
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
-        let (_, filter) = filters.clone().get(&id).unwrap().clone();
+        let (_, filter) = filters.clone().get(&id).unwrap().clone(); // ok-clone: clone used in test
         assert!(matches!(
             filter.filter_data.from_block,
             BlockIdentifier::Number(1)
@@ -330,10 +330,10 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        let id = run_new_filter_request_test(raw_json, filters.clone()).await; // ok-clone: increase arc reference count
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
-        let (_, filter) = filters.clone().get(&id).unwrap().clone();
+        let (_, filter) = filters.clone().get(&id).unwrap().clone(); // ok-clone: clone used in test
         assert!(matches!(
             filter.filter_data.from_block,
             BlockIdentifier::Number(1)
@@ -364,10 +364,10 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        let id = run_new_filter_request_test(raw_json, filters.clone()).await; // ok-clone: increase arc reference count
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
-        let (_, filter) = filters.clone().get(&id).unwrap().clone();
+        let (_, filter) = filters.get(&id).unwrap().clone(); // ok-clone: increase arc reference count
         assert!(matches!(
             filter.filter_data.from_block,
             BlockIdentifier::Number(1)
@@ -401,7 +401,7 @@ mod tests {
             ]
                 ,"id":1
         });
-        run_new_filter_request_test(raw_json.clone(), Default::default()).await;
+        run_new_filter_request_test(raw_json, Default::default()).await;
     }
 
     #[tokio::test]
@@ -423,7 +423,7 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        run_new_filter_request_test(raw_json, filters.clone()).await; // ok-clone: increase arc reference count
     }
 
     async fn run_new_filter_request_test(
@@ -509,7 +509,7 @@ mod tests {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
         let mut context = default_context_with_storage(storage).await;
-        context.active_filters = active_filters.clone();
+        context.active_filters = active_filters.clone(); // ok-clone: increase arc reference count
 
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
