@@ -25,7 +25,7 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
-use ethrex_trie::{Trie, TrieError};
+use ethrex_trie::{Node, Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
