@@ -5,13 +5,14 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
+use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
 };
 use std::{
-    collections::{BTreeMap, HashSet, btree_map::Entry},
+    collections::HashSet,
     net::IpAddr,
     time::{Duration, Instant},
 };
@@ -30,6 +31,10 @@ const SCORE_WEIGHT: i64 = 1;
 const REQUESTS_WEIGHT: i64 = 1;
 /// Max amount of ongoing requests per peer.
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
+/// The target number of RLPx connections to reach.
+pub const TARGET_PEERS: usize = 100;
+/// The target number of contacts to maintain in peer_table.
+const TARGET_CONTACTS: usize = 100_000;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -120,9 +125,9 @@ pub struct PeerTable {
 }
 
 impl PeerTable {
-    pub fn spawn() -> PeerTable {
+    pub fn spawn(target_peers: usize) -> PeerTable {
         PeerTable {
-            handle: PeerTableServer::default().start(),
+            handle: PeerTableServer::new(target_peers).start(),
         }
     }
 
@@ -300,19 +305,16 @@ impl PeerTable {
     }
 
     /// Check if target number of contacts and connected peers is reached
-    pub async fn target_reached(
-        &mut self,
-        target_contacts: usize,
-        target_peers: usize,
-    ) -> Result<bool, PeerTableError> {
-        match self
-            .handle
-            .call(CallMessage::TargetReached {
-                target_contacts,
-                target_peers,
-            })
-            .await?
-        {
+    pub async fn target_reached(&mut self) -> Result<bool, PeerTableError> {
+        match self.handle.call(CallMessage::TargetReached).await? {
+            OutMessage::TargetReached(result) => Ok(result),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Check if target number of connected peers is reached
+    pub async fn target_peers_reached(&mut self) -> Result<bool, PeerTableError> {
+        match self.handle.call(CallMessage::TargetPeersReached).await? {
             OutMessage::TargetReached(result) => Ok(result),
             _ => unreachable!(),
         }
@@ -500,21 +502,38 @@ impl PeerTable {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct PeerTableServer {
-    contacts: BTreeMap<H256, Contact>,
-    peers: BTreeMap<H256, PeerData>,
+    contacts: IndexMap<H256, Contact>,
+    peers: IndexMap<H256, PeerData>,
     already_tried_peers: HashSet<H256>,
     discarded_contacts: HashSet<H256>,
+    target_peers: usize,
 }
 
 impl PeerTableServer {
+    pub(crate) fn new(target_peers: usize) -> Self {
+        Self {
+            contacts: Default::default(),
+            peers: Default::default(),
+            already_tried_peers: Default::default(),
+            discarded_contacts: Default::default(),
+            target_peers,
+        }
+    }
     // Internal functions //
 
     // Weighting function used to select best peer
     // TODO: Review this formula and weight constants.
     fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
         score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
+    }
+
+    // Returns if the peer has room for more connections given the current score
+    // and amount of inflight requests
+    fn can_try_more_requests(&self, score: &i64, requests: &i64) -> bool {
+        let score_ratio = (score - MIN_SCORE) as f64 / (MAX_SCORE - MIN_SCORE) as f64;
+        (*requests as f64) < MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio
     }
 
     fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
@@ -524,7 +543,7 @@ impl PeerTableServer {
             .filter_map(|(id, peer_data)| {
                 // Skip the peer if it has too many ongoing requests or if it doesn't match
                 // the capabilities
-                if peer_data.requests > MAX_CONCURRENT_REQUESTS_PER_PEER
+                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
                     || !capabilities
                         .iter()
                         .any(|cap| peer_data.supported_capabilities.contains(cap))
@@ -550,7 +569,7 @@ impl PeerTableServer {
             .collect::<Vec<_>>();
 
         for contact_to_discard_id in disposable_contacts {
-            self.contacts.remove(&contact_to_discard_id);
+            self.contacts.swap_remove(&contact_to_discard_id);
             self.discarded_contacts.insert(contact_to_discard_id);
         }
     }
@@ -791,41 +810,22 @@ enum CastMessage {
 #[derive(Clone, Debug)]
 enum CallMessage {
     PeerCount,
-    PeerCountByCapabilities {
-        capabilities: Vec<Capability>,
-    },
-    TargetReached {
-        target_contacts: usize,
-        target_peers: usize,
-    },
+    PeerCountByCapabilities { capabilities: Vec<Capability> },
+    TargetReached,
+    TargetPeersReached,
     GetContactsToInitiate(usize),
     GetContactsForLookup,
     GetContactsToRevalidate(Duration),
-    GetBestPeer {
-        capabilities: Vec<Capability>,
-    },
-    GetScore {
-        node_id: H256,
-    },
+    GetBestPeer { capabilities: Vec<Capability> },
+    GetScore { node_id: H256 },
     GetConnectedNodes,
     GetPeersWithCapabilities,
-    GetPeerConnections {
-        capabilities: Vec<Capability>,
-    },
-    InsertIfNew {
-        node: Node,
-    },
-    ValidateContact {
-        node_id: H256,
-        sender_ip: IpAddr,
-    },
-    GetClosestNodes {
-        node_id: H256,
-    },
+    GetPeerConnections { capabilities: Vec<Capability> },
+    InsertIfNew { node: Node },
+    ValidateContact { node_id: H256, sender_ip: IpAddr },
+    GetClosestNodes { node_id: H256 },
     GetPeersData,
-    GetRandomPeer {
-        capabilities: Vec<Capability>,
-    },
+    GetRandomPeer { capabilities: Vec<Capability> },
 }
 
 #[derive(Debug)]
@@ -874,11 +874,11 @@ impl GenServer for PeerTableServer {
             CallMessage::PeerCountByCapabilities { capabilities } => CallResponse::Reply(
                 OutMessage::PeerCount(self.peer_count_by_capabilities(capabilities)),
             ),
-            CallMessage::TargetReached {
-                target_contacts,
-                target_peers,
-            } => CallResponse::Reply(Self::OutMsg::TargetReached(
-                self.contacts.len() < target_contacts && self.peers.len() < target_peers,
+            CallMessage::TargetReached => CallResponse::Reply(Self::OutMsg::TargetReached(
+                self.contacts.len() >= TARGET_CONTACTS && self.peers.len() >= self.target_peers,
+            )),
+            CallMessage::TargetPeersReached => CallResponse::Reply(Self::OutMsg::TargetReached(
+                self.peers.len() >= self.target_peers,
             )),
             CallMessage::GetContactsToInitiate(amount) => CallResponse::Reply(
                 Self::OutMsg::Contacts(self.get_contacts_to_initiate(amount)),
@@ -984,7 +984,7 @@ impl GenServer for PeerTableServer {
                 self.peers.insert(new_peer_id, new_peer);
             }
             CastMessage::RemovePeer { node_id } => {
-                self.peers.remove(&node_id);
+                self.peers.swap_remove(&node_id);
             }
             CastMessage::IncRequests { node_id } => {
                 self.peers
