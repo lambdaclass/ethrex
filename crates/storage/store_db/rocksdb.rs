@@ -306,8 +306,15 @@ impl Store {
         }
 
         let trie_cache_file = path.join(TRIE_CACHE_FILE);
-        let file = std::fs::File::open(trie_cache_file).expect("failed to read diff layer file");
-        let trie_cache = serde_json::from_reader(file).expect("failed to parse diff layer file");
+        let trie_cache = if trie_cache_file.exists() {
+            info!("Loading existing trie cache from {trie_cache_file:?}");
+            let file =
+                std::fs::File::open(trie_cache_file).expect("failed to read diff layer file");
+            serde_json::from_reader(file).expect("failed to parse diff layer file")
+        } else {
+            info!("No existing trie cache found, starting fresh");
+            Default::default()
+        };
 
         Ok(Self {
             datadir: path.to_path_buf(),
