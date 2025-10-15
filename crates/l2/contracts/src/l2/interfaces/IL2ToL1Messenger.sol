@@ -21,6 +21,7 @@ interface IL2ToL1Messenger {
         address from,
         address to,
         uint256 value,
+        uint256 gasLimit,
         bytes data,
         uint256 messageId
     );
@@ -33,6 +34,7 @@ interface IL2ToL1Messenger {
         uint256 chainId,
         address from,
         address to,
+        uint256 gasLimit,
         bytes calldata data
     ) external payable;
 }

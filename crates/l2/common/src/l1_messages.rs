@@ -51,6 +51,7 @@ pub struct L2Message {
     pub from: Address,
     pub to: Address,
     pub value: U256,
+    pub gas_limit: U256,
     pub data: Bytes,
     /// Message id emitted by the bridge contract
     pub message_id: U256,
@@ -62,7 +63,7 @@ impl From<L2Message> for Value {
             Value::Uint(msg.chain_id),
             Value::Address(msg.to),
             Value::Uint(msg.value),
-            Value::Uint(U256::from(10000000)),
+            Value::Uint(msg.gas_limit),
             Value::Bytes(msg.data),
         ])
     }
@@ -106,7 +107,7 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
 
 pub fn get_l2_to_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
     static L2_MESSAGE_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
-        keccak("L2ToL2Message(uint256,address,address,uint256,bytes,uint256)".as_bytes())
+        keccak("L2ToL2Message(uint256,address,address,uint256,uint256,bytes,uint256)".as_bytes())
     });
 
     receipts
@@ -124,19 +125,35 @@ pub fn get_l2_to_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
 }
 
 fn l2_message_from_log_data(log_data: &[u8]) -> Option<L2Message> {
-    let chain_id = U256::from_big_endian(log_data.get(..32)?);
-    let from = Address::from_slice(log_data.get(44..64)?);
-    let to = Address::from_slice(log_data.get(76..96)?);
-    let value = U256::from_big_endian(log_data.get(96..128)?);
-    let message_id = U256::from_big_endian(log_data.get(160..192)?);
-    let data_len: usize = U256::from_big_endian(log_data.get(192..224)?).as_usize();
-    let data = Bytes::copy_from_slice(log_data.get(224..224 + data_len)?);
+    let mut offset = 0;
+
+    let chain_id = U256::from_big_endian(log_data.get(offset..offset + 32)?);
+    offset += 32;
+
+    let from = Address::from_slice(log_data.get(offset + 12..offset + 32)?);
+    offset += 32;
+
+    let to = Address::from_slice(log_data.get(offset + 12..offset + 32)?);
+    offset += 32;
+
+    let value = U256::from_big_endian(log_data.get(offset..offset + 32)?);
+    offset += 32;
+
+    let gas_limit = U256::from_big_endian(log_data.get(offset..offset + 32)?);
+    offset += 64; // 32 from gas_limit + 32 from data offset
+
+    let message_id = U256::from_big_endian(log_data.get(offset..offset + 32)?);
+    offset += 32;
+
+    let data_len: usize = U256::from_big_endian(log_data.get(offset..offset + 32)?).as_usize();
+    let data = Bytes::copy_from_slice(log_data.get(offset + 32..offset + 32 + data_len)?);
 
     Some(L2Message {
         chain_id,
         from,
         to,
         value,
+        gas_limit,
         data,
         message_id,
     })

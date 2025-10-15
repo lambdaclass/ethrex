@@ -105,7 +105,14 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         );
     }
 
-    function sendToL2(uint256 chainId, address to, bytes calldata data) public payable {
-        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2{value: msg.value}(chainId, msg.sender, to, data);
+    function sendToL2(uint256 chainId, address to, uint256 destGasLimit, bytes calldata data) public payable {
+        _burnGas(destGasLimit);
+        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2{value: msg.value}(chainId, msg.sender, to, destGasLimit, data);
+    }
+
+    /// Burns at least {amount} gas
+    function _burnGas(uint256 amount) private view {
+        uint256 startingGas = gasleft();
+        while (startingGas - gasleft() < amount) {}
     }
 }

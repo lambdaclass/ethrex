@@ -181,8 +181,6 @@ contract CommonBridge is
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
-        _burnGas(sendValues.gasLimit);
-
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes20(from),
@@ -215,6 +213,7 @@ contract CommonBridge is
     function sendToL2(
         SendValues calldata sendValues
     ) public override whenNotPaused {
+        _burnGas(sendValues.gasLimit);
         _sendToL2(_getSenderAlias(), sendValues);
     }
 
@@ -223,6 +222,11 @@ contract CommonBridge is
         uint256 _amount,
         address l2Recipient
     ) public payable override whenNotPaused {
+        _burnGas(21000 * 5);
+        _deposit(_amount, l2Recipient);
+    }
+
+    function _deposit(uint256 _amount, address l2Recipient) private {
         uint256 value;
 
         // Here we define value depending on whether the native token is ETH or an ERC20
@@ -304,6 +308,7 @@ contract CommonBridge is
             value: 0,
             data: callData
         });
+        _burnGas(sendValues.gasLimit);
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
@@ -494,11 +499,27 @@ contract CommonBridge is
             );
     }
 
-    function sendMessage(uint256 chainId, SendValues memory message) public override onlyOnChainProposer {
-        address bridge = IRouter(sharedBridgeRouter).bridge(chainId);
-        address senderAlias = address(uint160(uint256(uint160(address(this))) + ADDRESS_ALIASING));
-        ICommonBridge(bridge).deposit{value: message.value}(message.value, senderAlias);
-        ICommonBridge(bridge).sendToL2(message);
+    function receiveMessage(uint256 srcChainId, SendValues calldata message) public override payable {
+        if (message.value != 0) {
+            require(
+                message.value == msg.value,
+                "CommonBridge: message.value does not match msg.value"
+            );
+            _deposit(0, _getSenderAlias());
+        }
+        if (message.data.length != 0) {
+            require(
+                IRouter(sharedBridgeRouter).bridge(srcChainId) == msg.sender,
+                "CommonBridge: sender does not match chain's bridge"
+            );
+            _sendToL2(_getSenderAlias(), message);
+        }
+    }
+
+    function sendMessage(uint256 dstChainId, SendValues memory message) public override onlyOnChainProposer {
+        address bridge = IRouter(sharedBridgeRouter).bridge(dstChainId);
+        uint256 srcChainId = IOnChainProposer(ON_CHAIN_PROPOSER).CHAIN_ID();
+        ICommonBridge(bridge).receiveMessage{value: message.value}(srcChainId, message);
     }
 
     function upgradeL2Contract(
@@ -517,6 +538,7 @@ contract CommonBridge is
             value: 0,
             data: callData
         });
+        _burnGas(sendValues.gasLimit);
         _sendToL2(L2_PROXY_ADMIN, sendValues);
     }
 

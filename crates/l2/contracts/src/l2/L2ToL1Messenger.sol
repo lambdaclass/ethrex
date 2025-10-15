@@ -18,8 +18,8 @@ contract L2ToL1Messenger is IL2ToL1Messenger {
         emit L1Message(msg.sender, data, lastMessageId);
     }
 
-    function sendMessageToL2(uint256 chainId, address from, address to, bytes calldata data) external payable {
+    function sendMessageToL2(uint256 chainId, address from, address to, uint256 gasLimit, bytes calldata data) external payable {
         lastMessageIdL2 += 1;
-        emit L2ToL2Message(chainId, from, to, msg.value, data, lastMessageIdL2);
+        emit L2ToL2Message(chainId, from, to, msg.value, gasLimit, data, lastMessageIdL2);
     }
 }
