@@ -223,7 +223,7 @@ jobs:
         env:
           SIM_LIMIT: ${{ matrix.limit }}
         run: |
-          FLAGS='--sim.parallelism 16 --sim.loglevel 1'
+          FLAGS='--sim.parallelism 16 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
