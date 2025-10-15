@@ -792,7 +792,7 @@ impl Store {
                 for (n, h) in n_h_s {
                     info!("Marking block {n} with hash {h} as canonical");
                 }
-            },
+            }
             None => warn!("FCU with no new canonical blocks"),
         }
         // Updates first the latest_block_header

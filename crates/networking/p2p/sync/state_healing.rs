@@ -162,8 +162,6 @@ async fn heal_state_trie(
         }
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
-            // Mark the peer as available
-            peers.peer_table.free_peer(&peer_id).await?;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -181,9 +179,12 @@ async fn heal_state_trie(
                             }
 
                             storage_accounts.healed_accounts.insert(account_hash);
-                            storage_accounts
+                            let old_value = storage_accounts
                                 .accounts_with_storage_root
-                                .remove(&account_hash);
+                                .get_mut(&account_hash);
+                            if let Some((old_root, _)) = old_value {
+                                *old_root = None;
+                            }
                         }
                     }
                     leafs_healed += nodes
@@ -222,9 +223,9 @@ async fn heal_state_trie(
                         .unwrap_or_default(),
                     longest_path_seen,
                 );
-                let Some((peer_id, mut peer_channel)) = peers
+                let Some((peer_id, connection)) = peers
                     .peer_table
-                    .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                    .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                     .await
                     .inspect_err(
                         |err| error!(err= ?err, "Error requesting a peer to perform state healing"),
@@ -239,10 +240,13 @@ async fn heal_state_trie(
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
 
+                let peer_table = peers.peer_table.clone();
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
-                        &mut peer_channel,
+                        peer_id,
+                        connection,
+                        peer_table,
                         state_root,
                         batch.clone(),
                     )
