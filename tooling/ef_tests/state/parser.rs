@@ -20,7 +20,7 @@ pub enum EFTestParseError {
     FailedToParseTestFile(String),
 }
 
-const IGNORED_TESTS: [&str; 11] = [
+const IGNORED_TESTS: &[&str] = &[
     "static_Call50000_sha256.json", // Skip because it takes longer to run than some tests, but not a huge deal.
     "CALLBlake2f_MaxRounds.json",   // Skip because it takes extremely long to run, but passes.
     "ValueOverflow.json",           // Skip because it tries to deserialize number > U256::MAX
