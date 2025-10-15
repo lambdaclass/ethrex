@@ -27,6 +27,9 @@ use tracing::Level;
 
 pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
 
+/// Sets the value of an Option<T> to a default if it is currently None.
+/// If the target already contains a value, it is left unchanged.
+/// Useful for populating option fields with defaults when not specified by the user.
 fn fill_option<T: Clone>(target: &mut Option<T>, default: &Option<T>) {
     if let (None, Some(value)) = (target.as_ref(), default) {
         *target = Some(value.clone());
