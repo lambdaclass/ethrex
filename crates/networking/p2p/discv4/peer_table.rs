@@ -5,13 +5,14 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
+use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
 };
 use std::{
-    collections::{BTreeMap, HashSet, btree_map::Entry},
+    collections::HashSet,
     net::IpAddr,
     time::{Duration, Instant},
 };
@@ -502,8 +503,8 @@ impl PeerTable {
 
 #[derive(Debug, Default)]
 struct PeerTableServer {
-    contacts: BTreeMap<H256, Contact>,
-    peers: BTreeMap<H256, PeerData>,
+    contacts: IndexMap<H256, Contact>,
+    peers: IndexMap<H256, PeerData>,
     already_tried_peers: HashSet<H256>,
     discarded_contacts: HashSet<H256>,
 }
@@ -557,7 +558,7 @@ impl PeerTableServer {
             .collect::<Vec<_>>();
 
         for contact_to_discard_id in disposable_contacts {
-            self.contacts.remove(&contact_to_discard_id);
+            self.contacts.swap_remove(&contact_to_discard_id);
             self.discarded_contacts.insert(contact_to_discard_id);
         }
     }
@@ -991,7 +992,7 @@ impl GenServer for PeerTableServer {
                 self.peers.insert(new_peer_id, new_peer);
             }
             CastMessage::RemovePeer { node_id } => {
-                self.peers.remove(&node_id);
+                self.peers.swap_remove(&node_id);
             }
             CastMessage::IncRequests { node_id } => {
                 self.peers
