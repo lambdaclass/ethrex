@@ -190,10 +190,7 @@ pub async fn map_http_requests(req: RpcRequest, context: RpcApiContext) -> Resul
     }
 }
 
-pub async fn map_eth_requests(
-    mut req: RpcRequest,
-    context: RpcApiContext,
-) -> Result<Value, RpcErr> {
+pub async fn map_eth_requests(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "eth_sendRawTransaction" => {
             let tx = SendRawTransactionRequest::parse(req.params.clone())?; // ok-clone: we need a separate owned copy of the parameters to parse them

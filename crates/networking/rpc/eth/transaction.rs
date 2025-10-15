@@ -428,7 +428,7 @@ impl RpcHandler for EstimateGasRequest {
     async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let blockchain = &context.blockchain;
-        let block = self.block.clone().unwrap_or_default();
+        let block = self.block.unwrap_or_default();
         debug!("Requested estimate on block: {}", block);
         let block_header = match block.resolve_block_header(storage).await? {
             Some(header) => header,

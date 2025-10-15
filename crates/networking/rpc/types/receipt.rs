@@ -26,14 +26,14 @@ pub struct RpcReceipt {
 
 impl RpcReceipt {
     pub fn new(
-        receipt: Receipt,
+        mut receipt: Receipt,
         tx_info: RpcReceiptTxInfo,
         block_info: RpcReceiptBlockInfo,
         init_log_index: u64,
     ) -> Self {
         let mut logs = vec![];
         let mut log_index = init_log_index;
-        for log in receipt.logs.clone() {
+        for log in std::mem::take(receipt.logs) {
             logs.push(RpcLog::new(log, log_index, &tx_info, &block_info));
             log_index += 1;
         }

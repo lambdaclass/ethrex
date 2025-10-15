@@ -60,7 +60,6 @@ impl BlockIdentifier {
         // Check if it is a BlockTag
         // ok-clone: serde needs owned value
         if let Ok(tag) = serde_json::from_value::<BlockTag>(serde_value.clone()) {
-            // ok-clone: serde needs owned value
             return Ok(BlockIdentifier::Tag(tag));
         };
         // Parse BlockNumber
