@@ -209,7 +209,7 @@ impl Syncer {
                 "One of the folders used for temporary leaves during snap is still used. Delete them in {}",
                 &self.datadir.to_str().unwrap_or_default()
             );
-            std::process::exit(-1);
+            std::process::exit(1);
             // Cloning a single string, the node should stop after this
             // return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
         }
@@ -1450,7 +1450,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     .all(|valid| valid);
     info!("Finished validate_storage_root");
     if !is_valid {
-        std::process::exit(-1);
+        std::process::exit(1);
     }
     is_valid
 }
@@ -1475,7 +1475,7 @@ pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
         }
     }
     if !is_valid {
-        std::process::exit(-1);
+        std::process::exit(1);
     }
     is_valid
 }
