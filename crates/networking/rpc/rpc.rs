@@ -258,7 +258,7 @@ pub async fn start_api(
         )
         .route("/", post(handle_http_request))
         .layer(cors)
-        .with_state(service_context.clone());
+        .with_state(service_context.clone()); // ok-clone: router requires owned copy of the context
     let http_listener = TcpListener::bind(http_addr)
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
@@ -563,7 +563,7 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.node_data.local_p2p_node.clone();
+        let local_p2p_node = context.node_data.local_p2p_node.clone(); // ok-clone: clone used in test
 
         let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let request_id = request.take_id();
