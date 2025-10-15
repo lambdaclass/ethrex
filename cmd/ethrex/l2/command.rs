@@ -45,7 +45,6 @@ pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
 const UNPAUSE_CONTRACT_SELECTOR: &str = "unpause()";
 const REVERT_BATCH_SELECTOR: &str = "revertBatch(uint256)";
-
 #[derive(Parser)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct L2Command {
@@ -87,10 +86,8 @@ impl L2Command {
             let contract_addresses =
                 l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;
 
-            l2_options = l2::options::Options {
-                node_opts: crate::cli::Options::default_l2(),
-                ..Default::default()
-            };
+            l2_options.node_opts = crate::cli::Options::default_l2();
+            l2_options.populate_with_defaults();
             l2_options
                 .sequencer_opts
                 .committer_opts
