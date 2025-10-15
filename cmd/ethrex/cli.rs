@@ -7,8 +7,11 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
-use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::{sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node};
+use ethrex_common::types::{Block, Genesis, fee_config::FeeConfig};
+use ethrex_p2p::{
+    discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
+    types::Node,
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use tracing::{Level, info, warn};
@@ -183,6 +186,14 @@ pub struct Options {
     )]
     pub tx_broadcasting_time_interval: u64,
     #[arg(
+        long = "target.peers",
+        default_value_t = TARGET_PEERS,
+        value_name = "MAX_PEERS",
+        help = "Max amount of connected peers.",
+        help_heading = "P2P options"
+    )]
+    pub target_peers: usize,
+    #[arg(
         long = "block-producer.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
@@ -256,6 +267,7 @@ impl Default for Options {
             force: false,
             mempool_max_size: Default::default(),
             tx_broadcasting_time_interval: Default::default(),
+            target_peers: Default::default(),
             extra_data: get_minimal_client_version(),
         }
     }
@@ -346,7 +358,7 @@ impl Subcommand {
                 let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
-                    BlockchainType::L2
+                    BlockchainType::L2(FeeConfig::default())
                 } else {
                     BlockchainType::L1
                 };
