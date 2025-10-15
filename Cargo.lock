@@ -6322,6 +6322,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common 0.1.0",
+ "ethrex-config",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-rpc",
@@ -6330,6 +6331,8 @@ dependencies = [
  "futures",
  "hex",
  "secp256k1",
+ "serde_json",
+ "sha3",
  "tokio",
 ]
 
