@@ -39,7 +39,7 @@ let
       lockFile = ./Cargo.lock;
       outputHashes = {
         "bls12_381-0.8.0" = "sha256-8/pXRA7hVAPeMKCZ+PRPfQfxqstw5Ob4MJNp85pv5WQ=";
-        "aligned-sdk-0.1.0" = "sha256-EuiuuYiyjZ+M+wS5Ayqqcvw0CfUBOhFrLrbdD4SYFM0=";
+        "aligned-sdk-0.1.0" = "sha256-42Fl2ta3bq0OeyiPu/vW5ohCqpOASTWBSDrS4S03UYc=";
         "lambdaworks-crypto-0.12.0" = "sha256-4vgW/O85zVLhhFrcZUwcPjavy/rRWB8LGTabAkPNrDw=";
       };
     };
