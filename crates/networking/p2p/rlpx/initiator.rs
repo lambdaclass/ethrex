@@ -1,7 +1,5 @@
 use crate::{
-    discv4::peer_table::PeerTableError,
-    metrics::METRICS,
-    network::P2PContext,
+    discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext,
     rlpx::connection::server::PeerConnection,
 };
 use spawned_concurrency::{

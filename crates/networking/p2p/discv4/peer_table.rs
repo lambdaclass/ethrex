@@ -306,11 +306,7 @@ impl PeerTable {
 
     /// Check if target number of contacts and connected peers is reached
     pub async fn target_reached(&mut self) -> Result<bool, PeerTableError> {
-        match self
-            .handle
-            .call(CallMessage::TargetReached)
-            .await?
-        {
+        match self.handle.call(CallMessage::TargetReached).await? {
             OutMessage::TargetReached(result) => Ok(result),
             _ => unreachable!(),
         }
@@ -318,11 +314,7 @@ impl PeerTable {
 
     /// Check if target number of connected peers is reached
     pub async fn target_peers_reached(&mut self) -> Result<bool, PeerTableError> {
-        match self
-            .handle
-            .call(CallMessage::TargetPeersReached)
-            .await?
-        {
+        match self.handle.call(CallMessage::TargetPeersReached).await? {
             OutMessage::TargetReached(result) => Ok(result),
             _ => unreachable!(),
         }
@@ -818,39 +810,22 @@ enum CastMessage {
 #[derive(Clone, Debug)]
 enum CallMessage {
     PeerCount,
-    PeerCountByCapabilities {
-        capabilities: Vec<Capability>,
-    },
+    PeerCountByCapabilities { capabilities: Vec<Capability> },
     TargetReached,
     TargetPeersReached,
     GetContactsToInitiate(usize),
     GetContactsForLookup,
     GetContactsToRevalidate(Duration),
-    GetBestPeer {
-        capabilities: Vec<Capability>,
-    },
-    GetScore {
-        node_id: H256,
-    },
+    GetBestPeer { capabilities: Vec<Capability> },
+    GetScore { node_id: H256 },
     GetConnectedNodes,
     GetPeersWithCapabilities,
-    GetPeerConnections {
-        capabilities: Vec<Capability>,
-    },
-    InsertIfNew {
-        node: Node,
-    },
-    ValidateContact {
-        node_id: H256,
-        sender_ip: IpAddr,
-    },
-    GetClosestNodes {
-        node_id: H256,
-    },
+    GetPeerConnections { capabilities: Vec<Capability> },
+    InsertIfNew { node: Node },
+    ValidateContact { node_id: H256, sender_ip: IpAddr },
+    GetClosestNodes { node_id: H256 },
     GetPeersData,
-    GetRandomPeer {
-        capabilities: Vec<Capability>,
-    },
+    GetRandomPeer { capabilities: Vec<Capability> },
 }
 
 #[derive(Debug)]

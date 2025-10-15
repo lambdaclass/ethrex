@@ -6,7 +6,8 @@ use crate::{
         error::PeerConnectionError,
         eth::{
             blocks::{
-                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber, BLOCK_HEADER_LIMIT
+                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+                HashOrNumber,
             },
             receipts::GetReceipts,
         },
@@ -18,9 +19,10 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{block_is_stale, update_pivot, AccountStorageRoots, BlockSyncState},
+    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
-        dump_accounts_to_file, dump_storages_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file, AccountsWithStorage
+        AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
+        get_account_state_snapshot_file, get_account_storages_snapshot_file,
     },
 };
 use bytes::Bytes;

@@ -236,12 +236,7 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        if !self
-            .peer_table
-            .target_reached()
-            .await
-            .unwrap_or(false)
-        {
+        if !self.peer_table.target_reached().await.unwrap_or(false) {
             INITIAL_LOOKUP_INTERVAL
         } else {
             trace!("Reached target number of peers or contacts. Using longer lookup interval.");
