@@ -1,0 +1,223 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 20,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "si:gas"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "builder",
+          "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
+          "legendFormat": "reth",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "gigagas{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} * 1000000000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "{{ instance }}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Ethrex vs Reth Ggas/s",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^([^:]+):\\d+$",
+            "renamePattern": "$1"
+          }
+        }
+      ],
+      "type": "timeseries"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 42,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "allowCustomValue": false,
+        "current": {
+          "text": [
+            "ethrex-hoodi-rpc",
+            "ethrex-sepolia-rpc",
+            "ethrex-snapsync-1",
+            "ethrex-snapsync-2",
+            "ethrex-snapsync-big-13",
+            "ethrex-snapsync-big-14",
+            "ethrex-snapsync-big-15",
+            "ethrex-snapsync-big-1",
+            "ethrex-snapsync-big-2",
+            "ethrex-snapsync-big-6",
+            "ethrex-snapsync-big-7",
+            "ethrex-snapsync-big-9",
+            "ethrex-snapsync-notifications-10",
+            "ethrex-snapsync-notifications-12",
+            "ethrex-snapsync-notifications-1",
+            "ethrex-snapsync-notifications-2",
+            "ethrex-snapsync-notifications-3",
+            "ethrex-snapsync-notifications-4",
+            "ethrex-snapsync-notifications-9"
+          ],
+          "value": [
+            "ethrex-hoodi-rpc",
+            "ethrex-sepolia-rpc",
+            "ethrex-snapsync-1",
+            "ethrex-snapsync-2",
+            "ethrex-snapsync-big-13",
+            "ethrex-snapsync-big-14",
+            "ethrex-snapsync-big-15",
+            "ethrex-snapsync-big-1",
+            "ethrex-snapsync-big-2",
+            "ethrex-snapsync-big-6",
+            "ethrex-snapsync-big-7",
+            "ethrex-snapsync-big-9",
+            "ethrex-snapsync-notifications-10",
+            "ethrex-snapsync-notifications-12",
+            "ethrex-snapsync-notifications-1",
+            "ethrex-snapsync-notifications-2",
+            "ethrex-snapsync-notifications-3",
+            "ethrex-snapsync-notifications-4",
+            "ethrex-snapsync-notifications-9"
+          ]
+        },
+        "definition": "label_values(gigagas,instance)",
+        "includeAll": true,
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(gigagas,instance)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "/^(?<text>[^:]+)(?::\\d+)?$/",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Ethrex Comparison",
+  "uid": "ads9rd7",
+  "version": 3
+}
