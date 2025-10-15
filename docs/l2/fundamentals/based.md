@@ -334,7 +334,7 @@ A list of all the configurable parameters of the network.
 ### Batch commitment/proposal
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md) as this only details the diff with what we already have.
 
 - Only lead Sequencer can post batches.
 - Lead Sequencer batches are accepted during their sequencing period and rejected outside this period.
@@ -343,7 +343,7 @@ A list of all the configurable parameters of the network.
 ### Batch verification
 
 > [!TIP]
-> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/architecture/overview.md) as this only details the diff with what we already have.
 
 - Anyone can verify batches.
 - Only one valid verification is required to advance the network.
