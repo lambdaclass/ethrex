@@ -3,7 +3,7 @@ use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB, SnapshotWithThreadMode};
 use std::sync::Arc;
 
-use crate::trie_db::layering::apply_prefix;
+use crate::{store_db::rocksdb::CF_FLATKEYVALUE, trie_db::layering::apply_prefix};
 
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
 pub struct RocksDBLockedTrieDB {
@@ -34,7 +34,7 @@ impl RocksDBLockedTrieDB {
             TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
         })?;
         // Verify column family exists
-        let cf_snapshots = db.cf_handle("snapshots").ok_or_else(|| {
+        let cf_snapshots = db.cf_handle(CF_FLATKEYVALUE).ok_or_else(|| {
             TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
         })?;
 

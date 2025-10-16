@@ -687,8 +687,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn generate_snapshot(&self) -> Result<(), StoreError> {
-        todo!()
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        // FlatKeyValue currently not supported for the InMemory DB
+        // Silently ignoring the request to build the FlatKeyValue is harmless
+        Ok(())
     }
 }
 

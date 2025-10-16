@@ -363,5 +363,5 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_codes: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError>;
 
-    fn generate_snapshot(&self) -> Result<(), StoreError>;
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 }

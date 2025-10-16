@@ -23,7 +23,7 @@ use std::{
     path::Path,
     sync::{Arc, RwLock},
 };
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
@@ -101,14 +101,13 @@ const CF_PENDING_BLOCKS: &str = "pending_blocks";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(latest_valid).bytes().clone()`
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
-const CF_SNAPSHOTS: &str = "snapshots";
+pub const CF_FLATKEYVALUE: &str = "flatkeyvalue";
 
 const CF_MISC_VALUES: &str = "misc_values";
 
 #[derive(Debug, PartialEq)]
 enum SnapshotControlMessage {
     Stop,
-    WaitUntilStopped,
     Continue,
 }
 
@@ -175,7 +174,7 @@ impl Store {
             CF_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
-            CF_SNAPSHOTS,
+            CF_FLATKEYVALUE,
             CF_MISC_VALUES,
         ];
 
@@ -323,14 +322,22 @@ impl Store {
         std::thread::spawn(move || {
             let mut rx = rx;
             while rx.recv() != Ok(SnapshotControlMessage::Continue) {}
+            loop {
+                match rx.recv() {
+                    Ok(SnapshotControlMessage::Continue) => break,
+                    Ok(SnapshotControlMessage::Stop) => {}
+                    Err(_) => {
+                        debug!("Closing snapshooter.");
+                        return;
+                    }
+                }
+            }
             info!("Snapshooter started.");
             match store_clone.snapshoting_loop(&mut rx) {
                 Ok(_) => info!("Snapshooter finished."),
                 Err(err) => error!("Error while generating snapshot: {err}"),
             }
-            // Snapshot complete, we can simply discard further control messages.
-            while rx.recv().is_ok() {}
-            // Transmitter disconnected, shutting down thread
+            // rx channel is dropped, closing it
         });
         Ok(store)
     }
@@ -473,13 +480,18 @@ impl Store {
         snapshot_pivot_rx: &mut std::sync::mpsc::Receiver<SnapshotControlMessage>,
     ) -> Result<(), StoreError> {
         let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
-        let cf_snapshot = self.cf_handle(CF_SNAPSHOTS)?;
+        let cf_snapshot = self.cf_handle(CF_FLATKEYVALUE)?;
 
+        let last_written = self
+            .db
+            .get_cf(&cf_misc, "last_written")?
+            .unwrap_or_default();
         self.db
-            .delete_range_cf(&cf_snapshot, vec![], vec![0xff; 131])?;
+            .delete_range_cf(&cf_snapshot, last_written, vec![0xff])?;
+
         loop {
             let root = self
-                .read_sync(CF_TRIE_NODES, &[])?
+                .read_sync(CF_TRIE_NODES, [])?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
@@ -497,12 +509,12 @@ impl Store {
                 .map(|v| Nibbles::from_hex(v.to_vec()))
                 .unwrap_or_default();
 
-            println!("Starting snapshooting loop pivot={last_written:?} SR={state_root:x}");
+            debug!("Starting snapshooting loop pivot={last_written:?} SR={state_root:x}");
 
+            let mut ctr = 0;
             let mut batch = WriteBatchWithTransaction::default();
             let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
             if last_written_account > Nibbles::default() {
-                println!("Advancing state iterator to {last_written_account:?}");
                 iter.advance(last_written_account.to_bytes())?;
             }
             let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
@@ -513,12 +525,15 @@ impl Store {
                 let account_hash = H256::from_slice(&path.to_bytes());
                 batch.put_cf(&cf_misc, "last_written", path.as_ref());
                 batch.put_cf(&cf_snapshot, path.as_ref(), node.value);
+                ctr += 1;
+                if ctr > 10_000 {
+                    self.db.write(std::mem::take(&mut batch))?;
+                }
 
                 let mut iter_inner = self
                     .open_direct_storage_trie(account_hash, account_state.storage_root)?
                     .into_iter();
                 if last_written_storage > Nibbles::default() {
-                    println!("Advancing storage iterator to {last_written_storage:?}");
                     iter_inner.advance(last_written_storage.to_bytes())?;
                     last_written_storage = Nibbles::default();
                 }
@@ -529,8 +544,12 @@ impl Store {
                     let key = apply_prefix(Some(account_hash), path);
                     batch.put_cf(&cf_misc, "last_written", key.as_ref());
                     batch.put_cf(&cf_snapshot, key.as_ref(), node.value);
+                    ctr += 1;
+                    if ctr > 10_000 {
+                        self.db.write(std::mem::take(&mut batch))?;
+                    }
                     if let Ok(value) = snapshot_pivot_rx.try_recv() {
-                        match dbg!(value) {
+                        match value {
                             SnapshotControlMessage::Stop => {
                                 return Err(StoreError::PivotChanged);
                             }
@@ -542,7 +561,7 @@ impl Store {
                     Ok(())
                 })?;
                 if let Ok(value) = snapshot_pivot_rx.try_recv() {
-                    match dbg!(value) {
+                    match value {
                         SnapshotControlMessage::Stop => return Err(StoreError::PivotChanged),
                         _ => {
                             return Err(StoreError::Custom("Unexpected message".to_string()));
@@ -554,12 +573,10 @@ impl Store {
             if res.is_ok() {
                 batch.put_cf(&cf_misc, "last_written", vec![0xff]);
             }
-            self.db.write(batch)?;
-            dbg!(snapshot_pivot_rx.recv().unwrap());
-            match dbg!(res) {
+            match res {
                 Err(StoreError::PivotChanged) => {
                     if let Ok(value) = snapshot_pivot_rx.recv() {
-                        match dbg!(value) {
+                        match value {
                             SnapshotControlMessage::Continue => {}
                             _ => {
                                 return Err(StoreError::Custom("Unexpected messafe".to_string()));
@@ -615,7 +632,7 @@ impl StoreEngine for Store {
                 &db,
                 [
                     CF_TRIE_NODES,
-                    CF_SNAPSHOTS,
+                    CF_FLATKEYVALUE,
                     CF_RECEIPTS,
                     CF_ACCOUNT_CODES,
                     CF_BLOCK_NUMBERS,
@@ -634,12 +651,8 @@ impl StoreEngine for Store {
             let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
             if let Some(root) = trie.get_commitable(parent_state_root) {
                 updated_trie = true;
-                snapshot_pivot_tx
-                    .send(SnapshotControlMessage::Stop)
-                    .unwrap();
-                snapshot_pivot_tx
-                    .send(SnapshotControlMessage::WaitUntilStopped)
-                    .unwrap();
+                // If the channel is closed, there's nobody to notify
+                let _ = snapshot_pivot_tx.send(SnapshotControlMessage::Stop);
 
                 let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
                 let nodes = trie.commit(root).unwrap_or_default();
@@ -717,12 +730,12 @@ impl StoreEngine for Store {
             }
 
             // Single write operation
-            let ret = db.write(batch)
+            let ret = db
+                .write(batch)
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)));
             if updated_trie {
-                snapshot_pivot_tx
-                    .send(SnapshotControlMessage::Continue)
-                    .unwrap();
+                // If the channel is closed, there's nobody to notify
+                let _ = snapshot_pivot_tx.send(SnapshotControlMessage::Continue);
             }
             ret
         })
@@ -1642,7 +1655,7 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    fn generate_snapshot(&self) -> Result<(), StoreError> {
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
         self.snapshot_pivot_tx
             .send(SnapshotControlMessage::Continue)
             .map_err(|_| StoreError::Custom("Snapshooting thread disconnected.".to_string()))

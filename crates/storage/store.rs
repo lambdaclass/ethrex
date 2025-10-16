@@ -1309,8 +1309,8 @@ impl Store {
         self.engine.write_account_code_batch(account_codes).await
     }
 
-    pub fn generate_snapshot(&self) -> Result<(), StoreError> {
-        self.engine.generate_snapshot()
+    pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        self.engine.generate_flatkeyvalue()
     }
 }
 
