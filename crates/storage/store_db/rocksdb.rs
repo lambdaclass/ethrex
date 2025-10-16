@@ -626,8 +626,11 @@ impl StoreEngine for Store {
             let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatchWithTransaction::default();
 
+            let mut updated_trie = false;
+
             let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
             if let Some(root) = trie.get_commitable(parent_state_root) {
+                updated_trie = true;
                 snapshot_pivot_tx
                     .send(SnapshotControlMessage::Stop)
                     .unwrap();
@@ -654,9 +657,6 @@ impl StoreEngine for Store {
                         batch.put_cf(cf, key, value);
                     }
                 }
-                snapshot_pivot_tx
-                    .send(SnapshotControlMessage::Continue)
-                    .unwrap();
             }
             trie.put_batch(
                 parent_state_root,
@@ -714,8 +714,14 @@ impl StoreEngine for Store {
             }
 
             // Single write operation
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            let ret = db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)));
+            if updated_trie {
+                snapshot_pivot_tx
+                    .send(SnapshotControlMessage::Continue)
+                    .unwrap();
+            }
+            ret
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
