@@ -29,7 +29,7 @@ impl ExtensionNode {
             let child_node = self
                 .child
                 .get_node(db, path.current())?
-                .ok_or_else(|| TrieError::InconsistentTree(self.child.clone()))?;
+                .ok_or_else(|| TrieError::InconsistentTree(self.child.compute_hash().finalize()))?;
 
             child_node.get(db, path)
         } else {
@@ -61,7 +61,7 @@ impl ExtensionNode {
             let child_node = self
                 .child
                 .get_node(db, path.current())?
-                .ok_or_else(|| TrieError::InconsistentTree(self.child))?;
+                .ok_or_else(|| TrieError::InconsistentTree(self.child.compute_hash().finalize()))?;
             let new_child_node = child_node.insert(db, path, value)?;
             self.child = new_child_node.into();
             Ok(self.into())
@@ -76,7 +76,9 @@ impl ExtensionNode {
                 match new_node.get_node(db, path.current())? {
                     Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
                     _ => {
-                        return Err(TrieError::InconsistentTree(new_node));
+                        return Err(TrieError::InconsistentTree(
+                            new_node.compute_hash().finalize(),
+                        ));
                     }
                 }
             } else {
@@ -111,7 +113,7 @@ impl ExtensionNode {
             let child_node = self
                 .child
                 .get_node(db, path.current())?
-                .ok_or_else(|| TrieError::InconsistentTree(self.child))?;
+                .ok_or_else(|| TrieError::InconsistentTree(self.child.compute_hash().finalize()))?;
             // Remove value from child subtrie
             let (child_node, old_value) = child_node.remove(db, path)?;
             // Restructure node based on removal
@@ -175,10 +177,9 @@ impl ExtensionNode {
         };
         // Continue to child
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .ok_or_else(|| TrieError::InconsistentTree(self.child.clone()))?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(self.child.clone().compute_hash().finalize())
+            })?;
             child_node.get_path(db, path, node_path)?;
         }
         Ok(())

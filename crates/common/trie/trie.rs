@@ -404,7 +404,7 @@ impl Trie {
                             let child_node =
                                 child_ref.get_node(db, child_path.clone())?.ok_or_else(|| {
                                     TrieError::IntermediateNodeNotFound(
-                                        child_ref.clone(),
+                                        child_ref.compute_hash().finalize(),
                                         branch_node.compute_hash().finalize(),
                                     )
                                 })?;
@@ -425,7 +425,7 @@ impl Trie {
                             .get_node(db, child_path.clone())?
                             .ok_or_else(|| {
                                 TrieError::IntermediateNodeNotFound(
-                                    extension_node.child.clone(),
+                                    extension_node.child.compute_hash().finalize(),
                                     extension_node.compute_hash().finalize(),
                                 )
                             })?;
