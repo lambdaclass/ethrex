@@ -469,11 +469,11 @@ impl PeerHandler {
                     )
                     .await
                     {
-                        if are_block_headers_chained(&block_headers, &order) {
+                        if are_block_headers_chained(&block_headers, &order) && !block_headers.is_empty() {
                             return Ok(Some(block_headers));
                         } else {
                             warn!(
-                                "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
+                                "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
                             );
                         }
                     }

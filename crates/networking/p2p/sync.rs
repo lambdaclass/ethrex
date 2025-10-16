@@ -366,7 +366,7 @@ impl Syncer {
             end_block_number = end_block_number.max(first_header.number);
             start_block_number = last_header.number;
 
-            sync_head = block_headers.last().ok_or(SyncError::NoBlocks)?.parent_hash;
+            sync_head = last_header.parent_hash;
             if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
                 // Incoming chain merged with current chain
                 // Filter out already canonical blocks from batch
