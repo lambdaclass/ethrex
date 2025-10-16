@@ -220,7 +220,7 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-l2,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
           build_args: BUILD_FLAGS=--features l2,l2-sql
 
-  # Creates a draft release on GitHub with the binaries
+  # Creates a release on GitHub with the binaries
   finalize-release:
     needs:
       - build-ethrex
@@ -245,6 +245,9 @@ jobs:
           echo "PREVIOUS_TAG: $name"
           echo "PREVIOUS_TAG=$name" >> $GITHUB_ENV
 
+      - name: Check release type
+        run: echo "TAG_SUFFIX=$(echo ${{ github.ref_name }}- | cut -d- -f2)" >> $GITHUB_ENV
+
       - name: Update CHANGELOG
         id: changelog
         uses: requarks/changelog-action@v1
@@ -260,8 +263,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: ./bin/**/*
-          draft: false
-          prerelease: false
+          draft: ${{ startsWith(env.TAG_SUFFIX, 'rc') }}
+          prerelease: ${{ startsWith(env.TAG_SUFFIX, 'rc') }}
           tag_name: ${{ github.ref_name }}
           name: "ethrex: ${{ github.ref_name }}"
           body: >
