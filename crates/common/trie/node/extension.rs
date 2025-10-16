@@ -63,7 +63,7 @@ impl ExtensionNode {
             self.child
                 .get_node_mut(db, path.current())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(db, path.offset(match_index), value)?;
+                .insert(db, path, value)?;
             self.child.clear_hash();
             Ok(None)
         } else if match_index == 0 {
