@@ -499,7 +499,12 @@ contract CommonBridge is
             );
     }
 
-    function receiveMessage(uint256 srcChainId, SendValues calldata message) public override payable {
+    function receiveMessage(SendValues calldata message) public override payable {
+        require(
+            msg.sender == sharedBridgeRouter,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+
         if (message.value != 0) {
             require(
                 message.value == msg.value,
@@ -507,19 +512,14 @@ contract CommonBridge is
             );
             _deposit(0, _getSenderAlias());
         }
+
         if (message.data.length != 0) {
-            require(
-                IRouter(sharedBridgeRouter).bridge(srcChainId) == msg.sender,
-                "CommonBridge: sender does not match chain's bridge"
-            );
             _sendToL2(_getSenderAlias(), message);
         }
     }
 
     function sendMessage(uint256 dstChainId, SendValues memory message) public override onlyOnChainProposer {
-        address bridge = IRouter(sharedBridgeRouter).bridge(dstChainId);
-        uint256 srcChainId = IOnChainProposer(ON_CHAIN_PROPOSER).CHAIN_ID();
-        ICommonBridge(bridge).receiveMessage{value: message.value}(srcChainId, message);
+        IRouter(sharedBridgeRouter).sendMessage{value: message.value}(dstChainId, message);
     }
 
     function upgradeL2Contract(

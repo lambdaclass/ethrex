@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { IRouter } from "./interfaces/IRouter.sol";
+import { ICommonBridge } from "../interfaces/ICommonBridge.sol";
 
 /// @title Router contract.
 /// @author LambdaClass
@@ -67,6 +68,14 @@ contract Router is
         delete chains[chainId];
 
         emit ChainDeregistered(chainId);
+    }
+
+    function sendMessage(uint256 chainId, ICommonBridge.SendValues calldata message) public override payable {
+        if (chains[chainId].commonBridge == address(0)) {
+            revert ChainNotRegistered(chainId);
+        }
+
+        ICommonBridge(chains[chainId].commonBridge).receiveMessage{value: msg.value}(message);
     }
 
     /// @notice Allow owner to upgrade the contract.

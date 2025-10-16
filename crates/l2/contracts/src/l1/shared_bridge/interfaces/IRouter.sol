@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
+import { ICommonBridge } from "../../interfaces/ICommonBridge.sol";
+
 interface IRouter {
     struct ChainInfo {
         address onChainProposer;
@@ -14,6 +16,8 @@ interface IRouter {
     function register(uint256 chainId, address onChainProposer, address commonBridge) external;
 
     function deregister(uint256 chainId) external;
+
+    function sendMessage(uint256 chainId, ICommonBridge.SendValues calldata message) external payable;
 
     event ChainRegistered(uint256 indexed chainId, address onChainProposer, address commonBridge);
 

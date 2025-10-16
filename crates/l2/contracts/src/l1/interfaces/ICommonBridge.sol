@@ -148,7 +148,7 @@ interface ICommonBridge {
     ) external;
 
     function sendMessage(uint256 dstChainId, SendValues memory message) external;
-    function receiveMessage(uint256 srcChainId, SendValues memory message) external payable;
+    function receiveMessage(SendValues memory message) external payable;
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines
     function hasExpiredPrivilegedTransactions() external view returns (bool);
