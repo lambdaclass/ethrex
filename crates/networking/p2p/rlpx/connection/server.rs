@@ -26,6 +26,7 @@ use crate::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
+        snap::TrieNodes,
         utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
     snap::{
@@ -1022,8 +1023,11 @@ async fn handle_incoming_message(
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
-            let response = process_trie_nodes_request(req, state.storage.clone()).await?;
-            send(state, Message::TrieNodes(response)).await?
+            let id = req.id;
+            match process_trie_nodes_request(req, state.storage.clone()).await {
+                Ok(response) => send(state, Message::TrieNodes(response)).await?,
+                Err(_) => send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?,
+            }
         }
         Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;

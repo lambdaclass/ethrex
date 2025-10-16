@@ -403,6 +403,8 @@ pub async fn init_l1(
     display_chain_initialization(&genesis);
 
     raise_fd_limit()?;
+    debug!("Preloading KZG trusted setup");
+    ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store = init_store(datadir, genesis).await;
 
@@ -417,6 +419,8 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
         },
     );
+
+    regenerate_head_state(&store, &blockchain).await?;
 
     let signer = get_signer(datadir);
 
@@ -483,4 +487,44 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+async fn regenerate_head_state(store: &Store, blockchain: &Arc<Blockchain>) -> eyre::Result<()> {
+    let head_block_number = store.get_latest_block_number().await?;
+    let Some(last_header) = store.get_block_header(head_block_number)? else {
+        unreachable!("Database is empty, genesis block should be present");
+    };
+
+    let mut current_last_header = last_header;
+
+    while !store.has_state_root(current_last_header.state_root)? {
+        let parent_number = current_last_header.number - 1;
+        debug!("Need to regenerate state for block {parent_number}");
+        let Some(parent_header) = store.get_block_header(parent_number)? else {
+            return Err(eyre::eyre!(
+                "Parent header for block {parent_number} not found"
+            ));
+        };
+        current_last_header = parent_header;
+    }
+
+    let last_state_number = current_last_header.number;
+
+    if last_state_number == head_block_number {
+        debug!("State is already up to date");
+        return Ok(());
+    }
+    info!("Regenerating state from block {last_state_number} to {head_block_number}");
+
+    for i in (last_state_number + 1)..=head_block_number {
+        debug!("Re-applying block {i} to regenerate state");
+
+        let block = store
+            .get_block_by_number(i)
+            .await?
+            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+        blockchain.add_block(block).await?;
+    }
+    info!("Finished regenerating state");
+    Ok(())
 }
