@@ -14,8 +14,6 @@ interface IOnChainProposer {
     /// @return The latest verified batch number as a uint256.
     function lastVerifiedBatch() external view returns (uint256);
 
-    function CHAIN_ID() external view returns (uint256);
-
     struct L2toL2Message {
         uint256 chainId;
         address to;

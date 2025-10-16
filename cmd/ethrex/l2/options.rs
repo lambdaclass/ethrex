@@ -105,8 +105,6 @@ pub struct SequencerOptions {
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
-    #[clap(long, default_value = "1729")]
-    pub port: u16,
 }
 
 pub fn parse_signer(
@@ -199,7 +197,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
-                l2_rpc: Url::parse(&format!("http://localhost:{}", opts.port)).unwrap(),
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,

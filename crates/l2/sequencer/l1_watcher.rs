@@ -77,7 +77,7 @@ impl L1Watcher {
         sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
-        let l2_client = EthClient::new(watcher_config.l2_rpc.as_str())?;
+        let l2_client = EthClient::new("http://localhost:1729")?;
         let last_block_fetched = U256::zero();
         Ok(Self {
             store,
