@@ -185,6 +185,7 @@ jobs:
 
       - name: Deploy contracts
         run: |
+          sleep 120
           touch cmd/.env
           cd crates/l2
           if [ "${{ matrix.use_native_token }}" = true ]; then
