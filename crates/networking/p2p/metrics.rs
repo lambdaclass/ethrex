@@ -341,9 +341,15 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::NoMatchingCapabilities() => {
+            PeerConnectionError::NoMatchingCapabilities => {
                 failures_grouped_by_reason
                     .entry("NoMatchingCapabilities".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            PeerConnectionError::TooManyPeers => {
+                failures_grouped_by_reason
+                    .entry("TooManyPeers".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
@@ -371,19 +377,19 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::InvalidPeerId() => {
+            PeerConnectionError::InvalidPeerId => {
                 failures_grouped_by_reason
                     .entry("InvalidPeerId".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::InvalidRecoveryId() => {
+            PeerConnectionError::InvalidRecoveryId => {
                 failures_grouped_by_reason
                     .entry("InvalidRecoveryId".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::InvalidMessageLength() => {
+            PeerConnectionError::InvalidMessageLength => {
                 failures_grouped_by_reason
                     .entry("InvalidMessageLength".to_owned())
                     .and_modify(|e| *e += 1)

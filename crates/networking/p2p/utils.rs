@@ -39,6 +39,22 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
     H512::from_slice(&encoded[1..])
 }
 
+/// Returns true if the folders used for the partial download of the leaves exists. if they do exist, it
+/// should be deleted. We don't auto delete them on the off chance we want to backup the files
+pub fn validate_folders(datadir: &Path) -> bool {
+    let folder_doesnt_exist = !std::fs::exists(get_account_state_snapshots_dir(datadir))
+        .is_ok_and(|exists| exists)
+        && !std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|exists| exists)
+        && !std::fs::exists(get_code_hashes_snapshots_dir(datadir)).is_ok_and(|exists| exists);
+    #[cfg(feature = "rocksdb")]
+    let folder_doesnt_exist = {
+        folder_doesnt_exist
+            && !std::fs::exists(get_rocksdb_temp_accounts_dir(datadir)).is_ok_and(|exists| exists)
+            && !std::fs::exists(get_rocksdb_temp_storage_dir(datadir)).is_ok_and(|exists| exists)
+    };
+    folder_doesnt_exist
+}
+
 pub fn get_account_storages_snapshots_dir(datadir: &Path) -> PathBuf {
     datadir.join("account_storages_snapshots")
 }
@@ -83,9 +99,9 @@ pub fn dump_accounts_to_rocks_db(
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     writer.open(std::path::Path::new(&path))?;
-    for (key, acccount) in contents {
+    for (key, account) in contents {
         buffer.clear();
-        acccount.encode(&mut buffer);
+        account.encode(&mut buffer);
         writer.put(key.0.as_ref(), buffer.as_slice())?;
     }
     writer.finish()
