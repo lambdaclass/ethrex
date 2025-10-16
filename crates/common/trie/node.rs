@@ -31,41 +31,49 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
-    pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Arc<Node>>, TrieError> {
+    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 Ok(Some(Arc::new(Node::decode_raw(hash.as_ref())?)))
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(*hash)?
-                .map(|rlp| {
-                    Node::decode(&rlp)
-                        .map_err(TrieError::RLPDecode)
-                        .map(Arc::new)
+                .get(path)?
+                .filter(|rlp| !rlp.is_empty())
+                .and_then(|rlp| match Node::decode(&rlp) {
+                    Ok(node) => (node.compute_hash() == *hash).then_some(Ok(Arc::new(node))),
+                    Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
                 .transpose(),
         }
     }
 
-    pub fn get_node_mut(&mut self, db: &dyn TrieDB) -> Result<Option<&mut Node>, TrieError> {
+    pub fn get_node_mut(
+        &mut self,
+        db: &dyn TrieDB,
+        path: Nibbles,
+    ) -> Result<Option<&mut Node>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(Arc::make_mut(node))),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 let node = Node::decode_raw(hash.as_ref())?;
                 *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
-                self.get_node_mut(db)
+                self.get_node_mut(db, path)
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
                 let Some(node) = db
-                    .get(*hash)?
-                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                    .get(path.clone())?
+                    .filter(|rlp| !rlp.is_empty())
+                    .and_then(|rlp| match Node::decode(&rlp) {
+                        Ok(node) => (node.compute_hash() == *hash).then_some(Ok(node)),
+                        Err(err) => Some(Err(TrieError::RLPDecode(err))),
+                    })
                     .transpose()?
                 else {
                     return Ok(None);
                 };
                 *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
-                self.get_node_mut(db)
+                self.get_node_mut(db, path)
             }
         }
     }
@@ -77,25 +85,23 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
+    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
-                        for node in &mut node.choices {
-                            node.commit(acc);
+                        for (choice, node) in &mut node.choices.iter_mut().enumerate() {
+                            node.commit(path.append_new(choice as u8), acc);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(acc);
+                        node.child.commit(path.concat(&node.prefix), acc);
                     }
                     Node::Leaf(_) => {}
                 }
+                let hash = *hash.get_or_init(|| node.compute_hash());
+                acc.push((path.clone(), node.encode_to_vec()));
 
-                let hash = hash.get_or_init(|| node.compute_hash());
-                acc.push((*hash, node.encode_to_vec()));
-
-                let hash = *hash;
                 *self = hash.into();
 
                 hash

@@ -8,10 +8,11 @@ use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, PeerTableHandle},
+    discv4::peer_table::PeerTable,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
@@ -31,7 +32,7 @@ use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: PeerTableHandle,
+    peer_table: PeerTable,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -49,7 +50,7 @@ async fn init_rpc_api(
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        &opts.syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
@@ -155,9 +156,14 @@ pub async fn init_l2(
     let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
+    let fee_config = FeeConfig {
+        fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
+        ..Default::default()
+    };
+
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
         max_mempool_size: opts.node_opts.mempool_max_size,
-        r#type: BlockchainType::L2,
+        r#type: BlockchainType::L2(fee_config),
         perf_logs_enabled: true,
     };
 
@@ -173,7 +179,7 @@ pub async fn init_l2(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(PeerTable::spawn());
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();

@@ -49,7 +49,9 @@ impl BranchNode {
             // Delegate to children if present
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child_node = child_ref
+                    .get_node(db, path.current())?
+                    .ok_or(TrieError::InconsistentTree)?;
                 child_node.get(db, path)
             } else {
                 Ok(None)
@@ -79,7 +81,7 @@ impl BranchNode {
                 // Insert into existing child and then update it
                 (choice_ref, ValueOrHash::Value(value)) => {
                     choice_ref
-                        .get_node_mut(db)?
+                        .get_node_mut(db, path.current())?
                         .ok_or(TrieError::InconsistentTree)?
                         .insert(db, path, value)?;
                     choice_ref.clear_hash();
@@ -94,7 +96,7 @@ impl BranchNode {
                         ));
                     } else {
                         choice_ref
-                            .get_node_mut(db)?
+                            .get_node_mut(db, path.current())?
                             .ok_or(TrieError::InconsistentTree)?
                             .insert(db, path, value)?;
                         choice_ref.clear_hash();
@@ -105,6 +107,7 @@ impl BranchNode {
             // Insert into self
             self.update(value);
         } else {
+            // Value in branches don't happen in our use-case.
             todo!("handle override case (error?)")
         }
 
@@ -136,13 +139,14 @@ impl BranchNode {
                 [+1 children]
                 Branch { [childA, childB, ... ], None } ->   Branch { [childA, childB, ... ], None }
         */
+        let base_path = path.clone();
 
         // Step 1: Remove value
         // Check if the value is located in a child subtrie
         let value = if let Some(choice_index) = path.next_choice() {
             if self.choices[choice_index].is_valid() {
                 let child_node = self.choices[choice_index]
-                    .get_node_mut(db)?
+                    .get_node_mut(db, path.current())?
                     .ok_or(TrieError::InconsistentTree)?;
                 // Remove value from child node
                 let (empty_trie, old_value) = child_node.remove(db, path.clone())?;
@@ -181,7 +185,7 @@ impl BranchNode {
             (1, false) => {
                 let (choice_index, child_ref) = children.get_mut(0).unwrap();
                 let child = child_ref
-                    .get_node_mut(db)?
+                    .get_node_mut(db, base_path.current().append_new(*choice_index as u8))?
                     .ok_or(TrieError::InconsistentTree)?;
                 let node = match child {
                     // Replace self with an extension node leading to the child
@@ -252,7 +256,9 @@ impl BranchNode {
             // Continue to child
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child_node = child_ref
+                    .get_node(db, path.current())?
+                    .ok_or(TrieError::InconsistentTree)?;
                 child_node.get_path(db, path, node_path)?;
             }
         }

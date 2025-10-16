@@ -29,7 +29,7 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self
                 .child
-                .get_node(db)?
+                .get_node(db, path.current())?
                 .ok_or(TrieError::InconsistentTree)?;
 
             child_node.get(db, path)
@@ -58,9 +58,10 @@ impl ExtensionNode {
         */
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
+            let path = path.offset(match_index);
             // Insert into child node
             self.child
-                .get_node_mut(db)?
+                .get_node_mut(db, path.current())?
                 .ok_or(TrieError::InconsistentTree)?
                 .insert(db, path.offset(match_index), value)?;
             self.child.clear_hash();
@@ -77,7 +78,7 @@ impl ExtensionNode {
             };
             let mut choices = BranchNode::EMPTY_CHOICES;
             let mut branch_node = if self.prefix.at(0) == 16 {
-                match new_node.get_node_mut(db)? {
+                match new_node.get_node_mut(db, path.current())? {
                     Some(Node::Leaf(leaf)) => {
                         BranchNode::new_with_value(choices, leaf.value.clone())
                     }
@@ -118,7 +119,7 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self
                 .child
-                .get_node_mut(db)?
+                .get_node_mut(db, path.current())?
                 .ok_or(TrieError::InconsistentTree)?;
             // Remove value from child subtrie
             let (empty_trie, old_value) = child_node.remove(db, path)?;
@@ -190,7 +191,7 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self
                 .child
-                .get_node(db)?
+                .get_node(db, path.current())?
                 .ok_or(TrieError::InconsistentTree)?;
             child_node.get_path(db, path, node_path)?;
         }

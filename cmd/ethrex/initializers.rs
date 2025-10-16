@@ -6,15 +6,17 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
+use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, PeerTableHandle},
+    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
+    sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -27,6 +29,7 @@ use secp256k1::SecretKey;
 use std::env;
 use std::{
     fs,
+    io::IsTerminal,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -52,7 +55,14 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let fmt_layer = fmt::layer().with_filter(filter);
+    let mut layer = fmt::layer();
+
+    if !std::io::stdout().is_terminal() {
+        layer = layer.with_ansi(false);
+    }
+
+    let fmt_layer = layer.with_filter(filter);
+
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
@@ -134,10 +144,17 @@ pub async fn init_rpc_api(
     extra_data: String,
 ) {
     init_datadir(&opts.datadir);
+
+    let syncmode = if opts.dev {
+        &SyncMode::Full
+    } else {
+        &opts.syncmode
+    };
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
@@ -197,6 +214,7 @@ pub async fn init_network(
         blockchain.clone(),
         get_client_version(),
         based_context,
+        opts.tx_broadcasting_time_interval,
     )
     .await
     .expect("P2P context could not be created");
@@ -373,7 +391,7 @@ pub async fn init_l1(
 ) -> eyre::Result<(
     PathBuf,
     CancellationToken,
-    PeerTableHandle,
+    PeerTable,
     Arc<Mutex<NodeRecord>>,
 )> {
     let datadir = &opts.datadir;
@@ -383,6 +401,9 @@ pub async fn init_l1(
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
+
+    raise_fd_limit()?;
+
     let store = init_store(datadir, genesis).await;
 
     #[cfg(feature = "sync-test")]
@@ -397,6 +418,8 @@ pub async fn init_l1(
         },
     );
 
+    regenerate_head_state(&store, &blockchain).await?;
+
     let signer = get_signer(datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
@@ -407,7 +430,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(PeerTable::spawn());
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.target_peers));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -462,4 +485,44 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+async fn regenerate_head_state(store: &Store, blockchain: &Arc<Blockchain>) -> eyre::Result<()> {
+    let head_block_number = store.get_latest_block_number().await?;
+    let Some(last_header) = store.get_block_header(head_block_number)? else {
+        unreachable!("Database is empty, genesis block should be present");
+    };
+
+    let mut current_last_header = last_header;
+
+    while !store.has_state_root(current_last_header.state_root)? {
+        let parent_number = current_last_header.number - 1;
+        debug!("Need to regenerate state for block {parent_number}");
+        let Some(parent_header) = store.get_block_header(parent_number)? else {
+            return Err(eyre::eyre!(
+                "Parent header for block {parent_number} not found"
+            ));
+        };
+        current_last_header = parent_header;
+    }
+
+    let last_state_number = current_last_header.number;
+
+    if last_state_number == head_block_number {
+        debug!("State is already up to date");
+        return Ok(());
+    }
+    info!("Regenerating state from block {last_state_number} to {head_block_number}");
+
+    for i in (last_state_number + 1)..=head_block_number {
+        debug!("Re-applying block {i} to regenerate state");
+
+        let block = store
+            .get_block_by_number(i)
+            .await?
+            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+        blockchain.add_block(block).await?;
+    }
+    info!("Finished regenerating state");
+    Ok(())
 }

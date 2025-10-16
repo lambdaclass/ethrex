@@ -81,6 +81,7 @@ impl LeafNode {
                     choices,
                     match value {
                         ValueOrHash::Value(value) => value,
+                        // Value in branches don't happen in our use-case.
                         ValueOrHash::Hash(_) => todo!("handle override case (error?)"),
                     },
                 )

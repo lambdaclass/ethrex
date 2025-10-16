@@ -812,6 +812,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-channel"
+version = "0.5.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -826,6 +848,15 @@ name = "crossbeam-epoch"
 version = "0.9.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f58bbc28f91df819d0aa2a2c00cd19754769c2fad90579b3592b1c9ba7a3115"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -1152,7 +1183,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -1170,10 +1201,9 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "bytes",
- "c-kzg",
  "crc32fast",
  "ethereum-types",
  "ethrex-crypto",
@@ -1182,6 +1212,7 @@ dependencies = [
  "hex",
  "kzg-rs",
  "lazy_static",
+ "libc",
  "once_cell",
  "rayon",
  "rkyv",
@@ -1198,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
@@ -1207,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1225,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1255,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1266,7 +1297,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1279,7 +1310,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1298,14 +1329,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-trie"
+name = "ethrex-threadpool"
 version = "0.1.0"
+dependencies = [
+ "crossbeam",
+]
+
+[[package]]
+name = "ethrex-trie"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "crossbeam",
  "digest",
  "ethereum-types",
  "ethrex-rlp",
+ "ethrex-threadpool",
  "hex",
  "lazy_static",
  "serde",
@@ -1318,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -1557,7 +1597,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "0.1.0"
+version = "3.0.0"
 dependencies = [
  "bytes",
  "ethrex-blockchain",

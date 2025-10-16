@@ -42,7 +42,8 @@ impl TrieIterator {
             mut node: NodeRef,
             new_stack: &mut Vec<(Nibbles, NodeRef)>,
         ) -> Result<(), TrieError> {
-            let Some(next_node) = node.get_node_mut(db).ok().flatten() else {
+            let Some(next_node) = node.get_node_mut(db, prefix_nibbles.clone()).ok().flatten()
+            else {
                 return Ok(());
             };
             match &next_node {
@@ -140,7 +141,7 @@ impl Iterator for TrieIterator {
         // Fetch the last node in the stack
         let (mut path, mut next_node_ref) = self.stack.pop()?;
         let next_node = next_node_ref
-            .get_node_mut(self.db.as_ref())
+            .get_node_mut(self.db.as_ref(), path.clone())
             .ok()
             .flatten()?;
         match &next_node {
