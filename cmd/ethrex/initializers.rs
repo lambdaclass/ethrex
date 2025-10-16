@@ -399,43 +399,6 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
-async fn reset_to_head(store: &Store) -> eyre::Result<()> {
-    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
-    let Some(root) = trie.db().get(Default::default())? else {
-        return Ok(());
-    };
-    let root = ethrex_trie::Node::decode(&root)?;
-    let state_root = root.compute_hash().finalize();
-
-    // TODO: store latest state metadata in the DB to avoid this loop
-    for block_number in (0..=store.get_latest_block_number().await?).rev() {
-        if let Some(header) = store.get_block_header(block_number)?
-            && header.state_root == state_root
-        {
-            info!("Resetting head to {block_number}");
-            let last_kept_block = block_number;
-            let mut block_to_delete = last_kept_block + 1;
-            while store
-                .get_canonical_block_hash(block_to_delete)
-                .await?
-                .is_some()
-            {
-                debug!("Deleting block {block_to_delete}");
-                store.remove_block(block_to_delete).await?;
-                block_to_delete += 1;
-            }
-            let last_kept_header = store
-                .get_block_header(last_kept_block)?
-                .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
-            store
-                .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
-                .await?;
-            break;
-        }
-    }
-    Ok(())
-}
-
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -458,8 +421,6 @@ pub async fn init_l1(
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store = init_store(datadir, genesis).await;
-
-    reset_to_head(&store).await?;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
