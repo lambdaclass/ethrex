@@ -293,10 +293,10 @@ pub async fn start_api(
             .route("/", axum::routing::any(ws_handler))
             .layer(cors)
             .with_state(service_context);
-        let ws_listner = TcpListener::bind(address)
+        let ws_listener = TcpListener::bind(address)
             .await
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
-        let ws_server = axum::serve(ws_listner, ws_router)
+        let ws_server = axum::serve(ws_listener, ws_router)
             .with_graceful_shutdown(shutdown_signal())
             .into_future();
         info!("Starting WS server at {address}");
