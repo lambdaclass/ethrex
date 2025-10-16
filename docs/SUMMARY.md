@@ -85,3 +85,4 @@
 # Other resources
 
 - [Contributing to the Documentation](./CONTRIBUTING_DOCS.md)
+- [Recommended lectures](./LECTURES.md)
