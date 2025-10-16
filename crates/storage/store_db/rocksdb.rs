@@ -523,7 +523,7 @@ impl StoreEngine for Store {
 
                 let last_written = db
                     .get_cf(&cf_misc, "last_written")?
-                    .ok_or(StoreError::Custom("Missing CF_MISC_VALUES".to_string()))?;
+                    .unwrap_or_default();
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
                     let is_leaf = key.len() == 65 || key.len() == 131;
@@ -1539,7 +1539,7 @@ impl StoreEngine for Store {
             let last_written = self
                 .db
                 .get_cf(&cf_misc, "last_written")?
-                .ok_or(StoreError::Custom("Missing CF_MISC_VALUES".to_string()))?;
+                .unwrap_or_default();
             let last_written_account = last_written
                 .get(0..64)
                 .map(|v| Nibbles::from_hex(v.to_vec()))
