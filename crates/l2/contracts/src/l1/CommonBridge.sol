@@ -499,6 +499,12 @@ contract CommonBridge is
             );
     }
 
+    /// @inheritdoc ICommonBridge
+    function sendMessage(uint256 dstChainId, SendValues memory message) public override onlyOnChainProposer {
+        IRouter(sharedBridgeRouter).sendMessage{value: message.value}(dstChainId, message);
+    }
+
+    /// @inheritdoc ICommonBridge
     function receiveMessage(SendValues calldata message) public override payable {
         require(
             msg.sender == sharedBridgeRouter,
@@ -516,10 +522,6 @@ contract CommonBridge is
         if (message.data.length != 0) {
             _sendToL2(_getSenderAlias(), message);
         }
-    }
-
-    function sendMessage(uint256 dstChainId, SendValues memory message) public override onlyOnChainProposer {
-        IRouter(sharedBridgeRouter).sendMessage{value: message.value}(dstChainId, message);
     }
 
     function upgradeL2Contract(

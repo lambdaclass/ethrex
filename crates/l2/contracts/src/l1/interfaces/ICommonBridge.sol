@@ -147,7 +147,16 @@ interface ICommonBridge {
         bytes32[] calldata withdrawalProof
     ) external;
 
+    /// @notice Sends a message to another chain via shared bridge router.
+    /// @dev This method should only be called by the OnChainProposer.
+    /// @param dstChainId The ID of the destination chain.
+    /// @param message The message details to send.
     function sendMessage(uint256 dstChainId, SendValues memory message) external;
+
+    /// @notice Receives a message from another chain via shared bridge router.
+    /// @dev This method should only be called by the shared bridge router, as this
+    /// method will not burn the L2 gas.
+    /// @param message The message details to receive.
     function receiveMessage(SendValues memory message) external payable;
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines

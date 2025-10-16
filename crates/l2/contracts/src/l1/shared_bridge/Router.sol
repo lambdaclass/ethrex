@@ -23,6 +23,7 @@ contract Router is
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
+    /// @inheritdoc IRouter
     function bridge(uint256 chainId) public view returns (address) {
         address commonBridge = chains[chainId].commonBridge;
 
@@ -33,6 +34,7 @@ contract Router is
         return commonBridge;
     }
 
+    /// @inheritdoc IRouter
     function onChainProposer(uint256 chainId) public view returns (address) {
         address _onChainProposer = chains[chainId].onChainProposer;
 
@@ -43,6 +45,7 @@ contract Router is
         return _onChainProposer;
     }
 
+    /// @inheritdoc IRouter
     function register(uint256 chainId, address _onChainProposer, address _commonBridge) onlyOwner whenNotPaused public {
         if (_onChainProposer == address(0) || _commonBridge == address(0)) {
             revert InvalidAddress(address(0));
@@ -60,6 +63,7 @@ contract Router is
         emit ChainRegistered(chainId, _onChainProposer, _commonBridge);
     }
 
+    /// @inheritdoc IRouter
     function deregister(uint256 chainId) onlyOwner whenNotPaused public {
         if (chains[chainId].onChainProposer == address(0)) {
             revert ChainNotRegistered(chainId);
@@ -70,6 +74,7 @@ contract Router is
         emit ChainDeregistered(chainId);
     }
 
+    /// @inheritdoc IRouter
     function sendMessage(uint256 chainId, ICommonBridge.SendValues calldata message) public override payable {
         if (chains[chainId].commonBridge == address(0)) {
             revert ChainNotRegistered(chainId);
