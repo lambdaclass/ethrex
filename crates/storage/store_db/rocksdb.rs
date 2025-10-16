@@ -552,7 +552,7 @@ impl Store {
             dbg!(snapshot_pivot_rx.recv().unwrap());
             match dbg!(res) {
                 Err(StoreError::PivotChanged) => {
-                    if let Ok(value) = snapshot_pivot_rx.try_recv() {
+                    if let Ok(value) = snapshot_pivot_rx.recv() {
                         match dbg!(value) {
                             SnapshotControlMessage::Continue => {}
                             _ => {
