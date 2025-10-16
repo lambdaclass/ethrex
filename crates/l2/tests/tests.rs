@@ -2117,11 +2117,13 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
         .base_fee_per_gas
         .unwrap();
 
-    let operator_fee_per_gas = get_operator_fee(
+    let operator_fee_per_gas: u64 = get_operator_fee(
         l2_client,
         BlockIdentifier::Number(tx_receipt.block_info.block_number),
     )
     .await
+    .unwrap()
+    .try_into()
     .unwrap();
 
     let priority_fees =
