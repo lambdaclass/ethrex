@@ -234,7 +234,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
             .backup_account_info(*address, account_to_remove)?;
 
         *account_to_remove = LevmAccount::default();
-        vm.db.destroyed_accounts.insert(*address);
+        account_to_remove.mark_destroyed();
     }
 
     Ok(())
