@@ -74,3 +74,5 @@ GEMINI.md
 
 # RKYV
 *.bin
+
+load-test-logs.txt
