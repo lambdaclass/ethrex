@@ -33,6 +33,7 @@ async fn main() {
     info!("");
 
     run_test(&cmd_path, no_reorgs_full_sync_smoke_test).await;
+    run_test(&cmd_path, snap_sync_smoke_test).await;
 
     // TODO: uncomment once #4676 is fixed
     // run_test(&cmd_path, test_reorg_back_to_base).await;
@@ -102,6 +103,60 @@ async fn no_reorgs_full_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
 
     // Try to fully sync node1 (which is a peer of node0)
     node1.update_forkchoice(&base_chain).await;
+}
+
+async fn snap_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
+    let mut simulator = simulator.lock().await;
+    // Initcode for deploying a contract that receives two `bytes32` parameters and sets `storage[param0] = param1`
+    let contract_deploy_bytecode = hex::decode("656020355f35555f526006601af3").unwrap().into();
+    let signer: Signer = LocalSigner::new(
+        "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+            .parse()
+            .unwrap(),
+    )
+    .into();
+
+    let slot_key0 = U256::from(42);
+    let slot_value0 = U256::from(1163);
+    let slot_key1 = U256::from(25);
+    let slot_value1 = U256::from(7474);
+
+    let node1 = simulator.start_node().await;
+
+    // Create a chain with a few empty blocks
+    let mut base_chain = simulator.get_base_chain();
+
+    base_chain = node1.extend_chain(base_chain, 10).await;
+
+    // Send a deploy tx for a contract which receives: `(bytes32 key, bytes32 value)` as parameters
+    let contract_address = node1
+        .send_contract_deploy(&signer, contract_deploy_bytecode)
+        .await;
+
+    // Set another storage slot in the contract in node1
+    let calldata0 = [slot_key0.to_big_endian(), slot_value0.to_big_endian()]
+        .concat()
+        .into();
+    node1.send_call(&signer, contract_address, calldata0).await;
+
+    base_chain = node1.extend_chain(base_chain, 10).await;
+    // Set another storage slot in the contract in node1
+    let calldata1 = [slot_key1.to_big_endian(), slot_value1.to_big_endian()]
+        .concat()
+        .into();
+    node1.send_call(&signer, contract_address, calldata1).await;
+
+    base_chain = node1.extend_chain(base_chain, 1000).await;
+
+    let node0 = simulator.start_snapsync_node().await;
+
+    node0.update_forkchoice(&base_chain).await;
+
+    // Check the storage slots are as expected after the reorg
+    let value_slot0 = node0.get_storage_at(contract_address, slot_key0).await;
+    assert_eq!(value_slot0, slot_value0);
+    let value_slot1 = node0.get_storage_at(contract_address, slot_key1).await;
+    assert_eq!(value_slot1, slot_value1);
 }
 
 #[expect(unused)]
