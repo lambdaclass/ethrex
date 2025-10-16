@@ -136,6 +136,34 @@ pub struct Options {
     )]
     pub http_port: String,
     #[arg(
+        long = "ws.enabled",
+        default_value = "false",
+        help = "Enable websocket rpc server. Disabled by default.",
+        help_heading = "RPC options",
+        env = "ETHREX_ENABLE_WS"
+    )]
+    pub ws_enabled: bool,
+    #[arg(
+        long = "ws.addr",
+        default_value = "0.0.0.0",
+        value_name = "ADDRESS",
+        requires = "ws_enabled",
+        help = "Listening address for the websocket rpc server.",
+        help_heading = "RPC options",
+        env = "ETHREX_WS_ADDR"
+    )]
+    pub ws_addr: String,
+    #[arg(
+        long = "ws.port",
+        default_value = "8546",
+        value_name = "PORT",
+        requires = "ws_enabled",
+        help = "Listening port for the websocket rpc server.",
+        help_heading = "RPC options",
+        env = "ETHREX_WS_PORT"
+    )]
+    pub ws_port: String,
+    #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -249,6 +277,9 @@ impl Default for Options {
         Self {
             http_addr: Default::default(),
             http_port: Default::default(),
+            ws_enabled: false,
+            ws_addr: Default::default(),
+            ws_port: Default::default(),
             log_level: Level::INFO,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
