@@ -531,14 +531,18 @@ impl Blockchain {
             }
 
             // Check adding a transaction wouldn't exceed the Osaka block size limit of 10 MiB
-            context.payload_size += head_tx.encode_canonical_to_vec().len() as u64;
+            // if inclusion of the transaction puts the block size over the size limit
+            // we don't add any more txs to the payload.
+            let potential_rlp_block_size =
+                context.payload_size + head_tx.encode_canonical_to_vec().len() as u64;
             if context
                 .chain_config()?
                 .is_osaka_activated(context.payload.header.timestamp)
-                && context.payload_size > MAX_RLP_BLOCK_SIZE
+                && potential_rlp_block_size > MAX_RLP_BLOCK_SIZE
             {
-                continue;
+                break;
             }
+            context.payload_size = potential_rlp_block_size;
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
             let tx_hash = head_tx.tx.hash();
