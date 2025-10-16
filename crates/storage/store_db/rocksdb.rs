@@ -523,7 +523,7 @@ impl Store {
                     batch.put_cf(&cf_misc, "last_written", key.as_ref());
                     batch.put_cf(&cf_snapshot, key.as_ref(), node.value);
                     if let Ok(value) = snapshot_pivot_rx.try_recv() {
-                        match value {
+                        match dbg!(value) {
                             SnapshotControlMessage::Stop => {
                                 return Err(StoreError::PivotChanged);
                             }
@@ -537,7 +537,7 @@ impl Store {
                 batch.put_cf(&cf_misc, "last_written", path.as_ref());
                 batch.put_cf(&cf_snapshot, path.as_ref(), node.value);
                 if let Ok(value) = snapshot_pivot_rx.try_recv() {
-                    match value {
+                    match dbg!(value) {
                         SnapshotControlMessage::Stop => return Err(StoreError::PivotChanged),
                         _ => {
                             return Err(StoreError::Custom("Unexpected message".to_string()));
@@ -547,11 +547,11 @@ impl Store {
                 Ok(())
             });
             self.db.write(batch)?;
-            snapshot_pivot_rx.recv().unwrap();
+            dbg!(snapshot_pivot_rx.recv().unwrap());
             match res {
                 Err(StoreError::PivotChanged) => {
                     if let Ok(value) = snapshot_pivot_rx.try_recv() {
-                        match value {
+                        match dbg!(value) {
                             SnapshotControlMessage::Continue => {}
                             _ => {
                                 return Err(StoreError::Custom("Unexpected messafe".to_string()));
