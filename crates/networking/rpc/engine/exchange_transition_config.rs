@@ -36,18 +36,20 @@ impl std::fmt::Display for ExchangeTransitionConfigV1Req {
 }
 
 impl RpcHandler for ExchangeTransitionConfigV1Req {
-    fn parse(params: &Option<Vec<Value>>) -> Result<ExchangeTransitionConfigV1Req, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<ExchangeTransitionConfigV1Req, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
-        let payload: ExchangeTransitionConfigPayload = serde_json::from_value(params[0].clone())?;
+        let payload: ExchangeTransitionConfigPayload = serde_json::from_value(
+            params
+                .pop()
+                .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+        )?;
         Ok(ExchangeTransitionConfigV1Req { payload })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested new engine request: {self}");
         let payload = &self.payload;
 

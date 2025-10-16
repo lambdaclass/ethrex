@@ -57,7 +57,7 @@ pub struct PollableFilter {
 }
 
 impl NewFilterRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         let filter = LogsFilter::parse(params)?;
         Ok(NewFilterRequest {
             request_data: filter,
@@ -65,7 +65,7 @@ impl NewFilterRequest {
     }
 
     pub async fn handle(
-        &self,
+        self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
@@ -101,7 +101,7 @@ impl NewFilterRequest {
                 timestamp,
                 PollableFilter {
                     last_block_number,
-                    filter_data: self.request_data.clone(),
+                    filter_data: self.request_data,
                 },
             ),
         );
@@ -110,11 +110,11 @@ impl NewFilterRequest {
     }
 
     pub async fn stateful_call(
-        req: &RpcRequest,
+        req: RpcRequest,
         storage: Store,
         state: ActiveFilters,
     ) -> Result<Value, RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params)?;
         request.handle(storage, state).await
     }
 }
@@ -124,7 +124,7 @@ pub struct DeleteFilterRequest {
 }
 
 impl DeleteFilterRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let id = parse_json_hex(param).map_err(|_err| RpcErr::BadHexFormat(0))?;
@@ -155,11 +155,11 @@ impl DeleteFilterRequest {
     }
 
     pub fn stateful_call(
-        req: &RpcRequest,
+        req: RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params)?;
         request.handle(storage, filters)
     }
 }
@@ -169,7 +169,7 @@ pub struct FilterChangesRequest {
 }
 
 impl FilterChangesRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let id = parse_json_hex(param).map_err(|_err| RpcErr::BadHexFormat(0))?;
@@ -216,7 +216,7 @@ impl FilterChangesRequest {
                 // starts from the last polled block.
                 filter.filter_data.from_block = BlockIdentifier::Number(filter.last_block_number);
                 filter.last_block_number = latest_block_num;
-                let mut filter = filter.clone();
+                let mut filter = filter.clone(); // ok-clone: needed to drop the mutex guard early
                 filter.filter_data.to_block = BlockIdentifier::Number(latest_block_num);
                 // Drop the lock early to process this filter's query
                 // and not keep the lock more than we should.
@@ -239,11 +239,11 @@ impl FilterChangesRequest {
         }
     }
     pub async fn stateful_call(
-        req: &RpcRequest,
+        req: RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params)?;
         request.handle(storage, filters).await
     }
 }
@@ -288,15 +288,15 @@ mod tests {
             "method":"eth_newFilter",
             "params":
             [
-                filter_req_params.clone()
+                filter_req_params
             ]
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        let id = run_new_filter_request_test(raw_json, filters.clone()).await; // ok-clone: increase arc reference count
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
-        let (_, filter) = filters.clone().get(&id).unwrap().clone();
+        let (_, filter) = filters.clone().get(&id).unwrap().clone(); // ok-clone: clone used in test
         assert!(matches!(
             filter.filter_data.from_block,
             BlockIdentifier::Number(1)
@@ -330,10 +330,10 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        let id = run_new_filter_request_test(raw_json, filters.clone()).await; // ok-clone: increase arc reference count
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
-        let (_, filter) = filters.clone().get(&id).unwrap().clone();
+        let (_, filter) = filters.clone().get(&id).unwrap().clone(); // ok-clone: clone used in test
         assert!(matches!(
             filter.filter_data.from_block,
             BlockIdentifier::Number(1)
@@ -364,10 +364,10 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        let id = run_new_filter_request_test(raw_json, filters.clone()).await; // ok-clone: increase arc reference count
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
-        let (_, filter) = filters.clone().get(&id).unwrap().clone();
+        let (_, filter) = filters.get(&id).unwrap().clone(); // ok-clone: increase arc reference count
         assert!(matches!(
             filter.filter_data.from_block,
             BlockIdentifier::Number(1)
@@ -401,7 +401,7 @@ mod tests {
             ]
                 ,"id":1
         });
-        run_new_filter_request_test(raw_json.clone(), Default::default()).await;
+        run_new_filter_request_test(raw_json, Default::default()).await;
     }
 
     #[tokio::test]
@@ -423,7 +423,7 @@ mod tests {
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        run_new_filter_request_test(raw_json, filters.clone()).await; // ok-clone: increase arc reference count
     }
 
     async fn run_new_filter_request_test(
@@ -433,7 +433,7 @@ mod tests {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
         let mut context = default_context_with_storage(storage).await;
-        context.active_filters = filters_pointer.clone();
+        context.active_filters = filters_pointer.clone(); // ok-clone: increase arc reference count
 
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -444,7 +444,7 @@ mod tests {
             .add_initial_state(genesis_config)
             .await
             .expect("Fatal: could not add test genesis in test");
-        let response = map_http_requests(&request, context)
+        let response = map_http_requests(request, context)
             .await
             .unwrap()
             .to_string();
@@ -490,14 +490,14 @@ mod tests {
             .expect("Fatal: could not create in memory test db");
 
         let mut context = default_context_with_storage(storage).await;
-        context.active_filters = active_filters.clone();
+        context.active_filters = active_filters.clone(); // ok-clone: increase arc reference count
 
-        map_http_requests(&uninstall_filter_req, context)
+        map_http_requests(uninstall_filter_req, context)
             .await
             .unwrap();
 
         assert!(
-            active_filters.clone().lock().unwrap().is_empty(),
+            active_filters.clone().lock().unwrap().is_empty(), // ok-clone: increase arc reference count
             "Expected filter map to be empty after request"
         );
     }
@@ -509,7 +509,7 @@ mod tests {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
         let mut context = default_context_with_storage(storage).await;
-        context.active_filters = active_filters.clone();
+        context.active_filters = active_filters.clone(); // ok-clone: increase arc reference count
 
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
@@ -522,7 +522,7 @@ mod tests {
                 ,"id":1
         }))
         .expect("Json for test is not a valid request");
-        let res = map_http_requests(&uninstall_filter_req, context)
+        let res = map_http_requests(uninstall_filter_req, context)
             .await
             .unwrap();
         assert!(matches!(res, serde_json::Value::Bool(false)));

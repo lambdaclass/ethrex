@@ -93,13 +93,13 @@ impl From<RpcErr> for RpcErrorMetadata {
                 // This code (3) was hand-picked to match hive tests.
                 // Could not find proper documentation about it.
                 code: 3,
-                data: Some(data.clone()),
                 message: format!(
                     "execution reverted: {}",
                     get_message_from_revert_data(&data).unwrap_or_else(|err| format!(
                         "tried to decode error from abi but failed: {err}"
                     ))
                 ),
+                data: Some(data),
             },
             RpcErr::Halt { reason, gas_used } => RpcErrorMetadata {
                 // Just copy the `Revert` error code.
@@ -186,7 +186,7 @@ pub enum RpcRequestId {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
-    pub id: RpcRequestId,
+    pub id: Option<RpcRequestId>,
     pub jsonrpc: String,
     pub method: String,
     pub params: Option<Vec<Value>>,
@@ -196,18 +196,22 @@ impl RpcRequest {
     pub fn namespace(&self) -> Result<RpcNamespace, RpcErr> {
         let mut parts = self.method.split('_');
         let Some(namespace) = parts.next() else {
-            return Err(RpcErr::MethodNotFound(self.method.clone()));
+            return Err(RpcErr::MethodNotFound(self.method.clone())); //todo-clone: these clones could be removed refactoring how we process the requests
         };
         resolve_namespace(namespace, self.method.clone())
     }
 
     pub fn new(method: &str, params: Option<Vec<Value>>) -> Self {
         RpcRequest {
-            id: RpcRequestId::Number(1),
+            id: Some(RpcRequestId::Number(1)),
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
             params,
         }
+    }
+
+    pub fn take_id(&mut self) -> RpcRequestId {
+        self.id.take().unwrap()
     }
 }
 
@@ -228,7 +232,7 @@ pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNam
 impl Default for RpcRequest {
     fn default() -> Self {
         RpcRequest {
-            id: RpcRequestId::Number(1),
+            id: Some(RpcRequestId::Number(1)),
             jsonrpc: "2.0".to_string(),
             method: "".to_string(),
             params: None,
@@ -379,7 +383,7 @@ pub mod test_utils {
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
             .await
             .expect("Failed to build test genesis");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone())); // ok-clone: store fields are all arcs, so this just increases their reference count
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         let local_node_record = example_local_node_record();
@@ -405,7 +409,7 @@ pub mod test_utils {
     }
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone())); // ok-clone: store fields are all arcs, so this just increases their reference count
         let local_node_record = example_local_node_record();
         RpcApiContext {
             storage,

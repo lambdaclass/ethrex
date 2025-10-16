@@ -27,15 +27,16 @@ pub struct NewPayloadV1Request {
 }
 
 impl RpcHandler for NewPayloadV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(NewPayloadV1Request {
             payload: parse_execution_payload(params)?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v1(&self.payload)?;
-        let block = match get_block_from_payload(&self.payload, None, None) {
+        let payload_hash = self.payload.block_hash;
+        let block = match get_block_from_payload(self.payload, None, None) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -43,7 +44,7 @@ impl RpcHandler for NewPayloadV1Request {
                 ))?);
             }
         };
-        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
+        let payload_status = handle_new_payload_v1_v2(payload_hash, block, context).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -53,13 +54,13 @@ pub struct NewPayloadV2Request {
 }
 
 impl RpcHandler for NewPayloadV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(NewPayloadV2Request {
             payload: parse_execution_payload(params)?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let chain_config = &context.storage.get_chain_config()?;
         if chain_config.is_shanghai_activated(self.payload.timestamp) {
             validate_execution_payload_v2(&self.payload)?;
@@ -67,7 +68,8 @@ impl RpcHandler for NewPayloadV2Request {
             // Behave as a v1
             validate_execution_payload_v1(&self.payload)?;
         }
-        let block = match get_block_from_payload(&self.payload, None, None) {
+        let payload_hash = self.payload.block_hash;
+        let block = match get_block_from_payload(self.payload, None, None) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -75,7 +77,7 @@ impl RpcHandler for NewPayloadV2Request {
                 ))?);
             }
         };
-        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
+        let payload_status = handle_new_payload_v1_v2(payload_hash, block, context).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -101,43 +103,51 @@ impl From<NewPayloadV3Request> for RpcRequest {
 }
 
 impl RpcHandler for NewPayloadV3Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 3 {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         }
         Ok(NewPayloadV3Request {
-            payload: serde_json::from_value(params[0].clone())
-                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
-                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
-                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            payload: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 3 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let block = match get_block_from_payload(
-            &self.payload,
-            Some(self.parent_beacon_block_root),
-            None,
-        ) {
-            Ok(block) => block,
-            Err(err) => {
-                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
-                    &err.to_string(),
-                ))?);
-            }
-        };
-        validate_fork(&block, Fork::Cancun, &context)?;
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v3(&self.payload)?;
+        let payload_hash = self.payload.block_hash;
+        let block =
+            match get_block_from_payload(self.payload, Some(self.parent_beacon_block_root), None) {
+                Ok(block) => block,
+                Err(err) => {
+                    return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                        &err.to_string(),
+                    ))?);
+                }
+            };
+        validate_fork(&block, Fork::Cancun, &context)?;
         let payload_status = handle_new_payload_v3(
-            &self.payload,
+            payload_hash,
             context,
             block,
-            self.expected_blob_versioned_hashes.clone(),
+            self.expected_blob_versioned_hashes,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -166,32 +176,51 @@ impl From<NewPayloadV4Request> for RpcRequest {
 }
 
 impl RpcHandler for NewPayloadV4Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+
         if params.len() != 4 {
             return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
         }
         Ok(NewPayloadV4Request {
-            payload: serde_json::from_value(params[0].clone())
-                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
-                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
-                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
-                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+            execution_requests: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            payload: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 4 params".to_owned()))?,
+            )
+            .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
 
+        // We use v3 since the execution payload remains the same.
+        validate_execution_payload_v3(&self.payload)?;
+        let payload_hash = self.payload.block_hash;
+
         let requests_hash = compute_requests_hash(&self.execution_requests);
         let block = match get_block_from_payload(
-            &self.payload,
+            self.payload,
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
         ) {
@@ -211,13 +240,11 @@ impl RpcHandler for NewPayloadV4Request {
                 chain_config.get_fork(block.header.timestamp)
             )));
         }
-        // We use v3 since the execution payload remains the same.
-        validate_execution_payload_v3(&self.payload)?;
         let payload_status = handle_new_payload_v3(
-            &self.payload,
+            payload_hash,
             context,
             block,
-            self.expected_blob_versioned_hashes.clone(),
+            self.expected_blob_versioned_hashes,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -230,12 +257,12 @@ pub struct GetPayloadV1Request {
 }
 
 impl RpcHandler for GetPayloadV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         // NOTE: This validation is actually not required to run Hive tests. Not sure if it's
         // necessary
@@ -252,12 +279,12 @@ pub struct GetPayloadV2Request {
 }
 
 impl RpcHandler for GetPayloadV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         validate_payload_v1_v2(&payload_bundle.block, &context)?;
 
@@ -288,12 +315,12 @@ impl From<GetPayloadV3Request> for RpcRequest {
 }
 
 impl RpcHandler for GetPayloadV3Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         validate_fork(&payload_bundle.block, Fork::Cancun, &context)?;
 
@@ -324,12 +351,12 @@ impl From<GetPayloadV4Request> for RpcRequest {
 }
 
 impl RpcHandler for GetPayloadV4Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config()?;
 
@@ -376,12 +403,12 @@ impl From<GetPayloadV5Request> for RpcRequest {
 }
 
 impl RpcHandler for GetPayloadV5Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config()?;
 
@@ -415,20 +442,21 @@ pub struct GetPayloadBodiesByHashV1Request {
 }
 
 impl RpcHandler for GetPayloadBodiesByHashV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
-            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
-        };
-
+            return Err(RpcErr::BadParams("Expected 1 params".to_owned()));
+        }
         Ok(GetPayloadBodiesByHashV1Request {
-            hashes: serde_json::from_value(params[0].clone())?,
+            hashes: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+            )?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         if self.hashes.len() as u64 >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
@@ -446,7 +474,7 @@ pub struct GetPayloadBodiesByRangeV1Request {
 }
 
 impl RpcHandler for GetPayloadBodiesByRangeV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -464,7 +492,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         Ok(GetPayloadBodiesByRangeV1Request { start, count })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         if self.count >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
@@ -483,14 +511,17 @@ fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, 
     serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
-fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {
-    let params = params
-        .as_ref()
-        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+fn parse_execution_payload(params: Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {
+    let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 params".to_owned()));
     }
-    serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
+    serde_json::from_value(
+        params
+            .pop()
+            .ok_or(RpcErr::BadParams("Expected 1 params".to_owned()))?,
+    )
+    .map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
 
 fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcErr> {
@@ -581,12 +612,12 @@ async fn validate_ancestors(
 }
 
 async fn handle_new_payload_v1_v2(
-    payload: &ExecutionPayload,
+    payload_hash: H256,
     block: Block,
     context: RpcApiContext,
 ) -> Result<PayloadStatus, RpcErr> {
     // Validate block hash
-    if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+    if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload_hash, &block) {
         return Ok(PayloadStatus::invalid_with_err(&error_msg));
     }
 
@@ -609,7 +640,7 @@ async fn handle_new_payload_v1_v2(
 }
 
 async fn handle_new_payload_v3(
-    payload: &ExecutionPayload,
+    payload_hash: H256,
     context: RpcApiContext,
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
@@ -628,7 +659,7 @@ async fn handle_new_payload_v3(
         ));
     }
 
-    handle_new_payload_v1_v2(payload, block, context).await
+    handle_new_payload_v1_v2(payload_hash, block, context).await
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
@@ -649,7 +680,7 @@ fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result
 }
 
 fn get_block_from_payload(
-    payload: &ExecutionPayload,
+    payload: ExecutionPayload,
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
 ) -> Result<Block, RLPDecodeError> {
@@ -657,13 +688,10 @@ fn get_block_from_payload(
     let block_number = payload.block_number;
     info!(%block_hash, %block_number, "Received new payload");
 
-    payload
-        .clone()
-        .into_block(parent_beacon_block_root, requests_hash)
+    payload.into_block(parent_beacon_block_root, requests_hash)
 }
 
-fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), RpcErr> {
-    let block_hash = payload.block_hash;
+fn validate_block_hash(block_hash: H256, block: &Block) -> Result<(), RpcErr> {
     let actual_block_hash = block.hash();
     if block_hash != actual_block_hash {
         return Err(RpcErr::Internal(format!(
@@ -743,14 +771,16 @@ async fn try_execute_payload(
     }
 }
 
-fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr> {
-    let params = params
-        .as_ref()
-        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+fn parse_get_payload_request(params: Option<Vec<Value>>) -> Result<u64, RpcErr> {
+    let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     };
-    let Ok(hex_str) = serde_json::from_value::<String>(params[0].clone()) else {
+    let Ok(hex_str) = serde_json::from_value::<String>(
+        params
+            .pop()
+            .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+    ) else {
         return Err(RpcErr::BadParams(
             "Expected param to be a string".to_owned(),
         ));

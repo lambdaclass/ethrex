@@ -72,9 +72,9 @@ impl RpcBlock {
         hash: H256,
         full_transactions: bool,
     ) -> Result<RpcBlock, RpcErr> {
-        let size = Block::new(header.clone(), body.clone())
-            .encode_to_vec()
-            .len();
+        let block = Block::new(header, body);
+        let size = block.encode_to_vec().len();
+        let (header, body) = (block.header, block.body);
         let body_wrapper = if full_transactions {
             BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash)?)
         } else {
@@ -101,9 +101,9 @@ impl FullBlockBody {
         block_hash: BlockHash,
     ) -> Result<FullBlockBody, RpcErr> {
         let mut transactions = Vec::new();
-        for (index, tx) in body.transactions.iter().enumerate() {
+        for (index, tx) in body.transactions.into_iter().enumerate() {
             transactions.push(RpcTransaction::build(
-                tx.clone(),
+                tx,
                 Some(block_number),
                 Some(block_hash),
                 Some(index),

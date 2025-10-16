@@ -68,12 +68,12 @@ impl From<PeerData> for RpcPeer {
             caps: peer.supported_capabilities,
             enode: peer.node.enode_url(),
             id: peer.node.node_id(),
-            name: peer.node.version.clone().unwrap_or("Unknown".to_string()),
             network: PeerNetwork {
                 remote_address: peer.node.udp_addr(),
                 inbound: peer.is_connection_inbound,
             },
             protocols,
+            name: peer.node.version.unwrap_or("Unknown".to_string()),
         }
     }
 }

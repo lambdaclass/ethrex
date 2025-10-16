@@ -8,11 +8,11 @@ use crate::{
 pub struct GetFeeVaultAddress;
 
 impl RpcHandler for GetFeeVaultAddress {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<GetFeeVaultAddress, RpcErr> {
+    fn parse(_params: Option<Vec<Value>>) -> Result<GetFeeVaultAddress, RpcErr> {
         Ok(GetFeeVaultAddress)
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let fee_vault_address = match context.l1_ctx.blockchain.options.r#type {
             ethrex_blockchain::BlockchainType::L1 => None,
             ethrex_blockchain::BlockchainType::L2(fee_config) => fee_config.fee_vault,

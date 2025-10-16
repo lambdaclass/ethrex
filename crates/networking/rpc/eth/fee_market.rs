@@ -44,16 +44,34 @@ pub struct FeeHistoryResponse {
 // - https://ethereum.github.io/execution-apis/api-documentation/
 // - https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go
 impl RpcHandler for FeeHistoryRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<FeeHistoryRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<FeeHistoryRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 3 {
             return Err(RpcErr::BadParams(format!(
                 "Expected 3 params, got {}",
                 params.len()
             )));
         };
+
+        let rp: Vec<f32> = serde_json::from_value(params.pop().ok_or(RpcErr::BadParams(
+            format!("Expected 3 params, got {}", params.len()),
+        ))?)?;
+
+        // NOTE: This check is offspec
+        if rp.len() > MAX_PERCENTILE_ARRAY_LEN {
+            return Err(RpcErr::BadParams(format!(
+                "Wrong size reward_percentiles parameter, must be {MAX_PERCENTILE_ARRAY_LEN} at max"
+            )));
+        }
+
+        let newest_block = BlockIdentifier::parse(
+            params.pop().ok_or(RpcErr::BadParams(format!(
+                "Expected 3 params, got {}",
+                params.len()
+            )))?,
+            0,
+        )?;
+
         let block_count: u64 = parse_json_hex(&params[0]).map_err(RpcErr::BadParams)?;
         // NOTE: This check is offspec
         if block_count > MAX_BLOCK_COUNT {
@@ -61,13 +79,7 @@ impl RpcHandler for FeeHistoryRequest {
                 "Too large block_count parameter".to_owned(),
             ));
         }
-        let rp: Vec<f32> = serde_json::from_value(params[2].clone())?;
-        // NOTE: This check is offspec
-        if rp.len() > MAX_PERCENTILE_ARRAY_LEN {
-            return Err(RpcErr::BadParams(format!(
-                "Wrong size reward_percentiles parameter, must be {MAX_PERCENTILE_ARRAY_LEN} at max"
-            )));
-        }
+
         // Restric them to be monotnically increasing and in the range [0.0; 100.0]
         let mut ok = rp.iter().all(|a| *a >= 0.0 && *a <= 100.0);
         ok &= rp.windows(2).all(|w| w[0] <= w[1]);
@@ -79,12 +91,12 @@ impl RpcHandler for FeeHistoryRequest {
 
         Ok(FeeHistoryRequest {
             block_count,
-            newest_block: BlockIdentifier::parse(params[1].clone(), 0)?,
+            newest_block,
             reward_percentiles: rp,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let config = storage.get_chain_config()?;
         debug!(

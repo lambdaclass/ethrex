@@ -19,7 +19,7 @@ pub struct GetL1MessageProof {
 }
 
 impl RpcHandler for GetL1MessageProof {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetL1MessageProof, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<GetL1MessageProof, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -34,7 +34,7 @@ impl RpcHandler for GetL1MessageProof {
             transaction_hash: serde_json::from_value(params[0].clone())?,
         })
     }
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.l1_ctx.storage;
         info!(
             "Requested l1message proof for transaction {:#x}",

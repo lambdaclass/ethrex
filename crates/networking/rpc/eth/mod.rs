@@ -83,14 +83,15 @@ pub mod test_utils {
         let mut new_canonical_blocks = vec![];
         for block_num in 1..=block_count {
             let block_body = BlockBody {
-                transactions: txs_per_block.clone(),
+                transactions: txs_per_block.clone(), // ok-clone: each block needs an owned copy of txs
                 ommers: Default::default(),
                 withdrawals: Default::default(),
             };
             let block_header = test_header(block_num);
-            let block = Block::new(block_header.clone(), block_body);
+            let header_hash = block_header.hash();
+            let block = Block::new(block_header, block_body);
             storage.add_block(block).await.unwrap();
-            new_canonical_blocks.push((block_num, block_header.hash()));
+            new_canonical_blocks.push((block_num, header_hash));
         }
         let Some((last_number, last_hash)) = new_canonical_blocks.pop() else {
             return;

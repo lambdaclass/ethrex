@@ -33,8 +33,8 @@ impl RpcReceipt {
     ) -> Self {
         let mut logs = vec![];
         let mut log_index = init_log_index;
-        for log in receipt.logs.clone() {
-            logs.push(RpcLog::new(log, log_index, &tx_info, &block_info));
+        for log in &receipt.logs {
+            logs.push(RpcLog::new(log.clone(), log_index, &tx_info, &block_info)); // ok-clone: the receipt needs to keep its own copy of the logs, but we also need a separate copy here
             log_index += 1;
         }
         Self {
@@ -123,7 +123,7 @@ impl From<Log> for RpcLogInfo {
     }
 }
 
-#[derive(Debug, Serialize, Clone, Deserialize)]
+#[derive(Debug, Copy, Serialize, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcReceiptBlockInfo {
     pub block_hash: BlockHash,

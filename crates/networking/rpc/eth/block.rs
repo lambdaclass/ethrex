@@ -52,19 +52,26 @@ pub struct BlockNumberRequest;
 pub struct GetBlobBaseFee;
 
 impl RpcHandler for GetBlockByNumberRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBlockByNumberRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<GetBlockByNumberRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 2 {
             return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
         };
         Ok(GetBlockByNumberRequest {
-            block: BlockIdentifier::parse(params[0].clone(), 0)?,
-            hydrated: serde_json::from_value(params[1].clone())?,
+            hydrated: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
+            )?,
+            block: BlockIdentifier::parse(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
+                0,
+            )?,
         })
     }
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         debug!("Requested block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage).await? {
@@ -86,19 +93,25 @@ impl RpcHandler for GetBlockByNumberRequest {
 }
 
 impl RpcHandler for GetBlockByHashRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBlockByHashRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<GetBlockByHashRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 2 {
             return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
         };
         Ok(GetBlockByHashRequest {
-            block: serde_json::from_value(params[0].clone())?,
-            hydrated: serde_json::from_value(params[1].clone())?,
+            hydrated: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
+            )?,
+            block: serde_json::from_value(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 2 params".to_owned()))?,
+            )?,
         })
     }
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         debug!("Requested block with hash: {:#x}", self.block);
         let block_number = match storage.get_block_number(self.block).await? {
@@ -119,19 +132,22 @@ impl RpcHandler for GetBlockByHashRequest {
 }
 
 impl RpcHandler for GetBlockTransactionCountRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBlockTransactionCountRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<GetBlockTransactionCountRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(GetBlockTransactionCountRequest {
-            block: BlockIdentifierOrHash::parse(params[0].clone(), 0)?,
+            block: BlockIdentifierOrHash::parse(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+                0,
+            )?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!(
             "Requested transaction count for block with number: {}",
             self.block
@@ -152,19 +168,22 @@ impl RpcHandler for GetBlockTransactionCountRequest {
 }
 
 impl RpcHandler for GetBlockReceiptsRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBlockReceiptsRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<GetBlockReceiptsRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(GetBlockReceiptsRequest {
-            block: BlockIdentifierOrHash::parse(params[0].clone(), 0)?,
+            block: BlockIdentifierOrHash::parse(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+                0,
+            )?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         debug!("Requested receipts for block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage).await? {
@@ -185,19 +204,22 @@ impl RpcHandler for GetBlockReceiptsRequest {
 }
 
 impl RpcHandler for GetRawHeaderRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetRawHeaderRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<GetRawHeaderRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(GetRawHeaderRequest {
-            block: BlockIdentifier::parse(params[0].clone(), 0)?,
+            block: BlockIdentifier::parse(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+                0,
+            )?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!(
             "Requested raw header for block with identifier: {}",
             self.block
@@ -217,20 +239,23 @@ impl RpcHandler for GetRawHeaderRequest {
 }
 
 impl RpcHandler for GetRawBlockRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetRawBlockRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<GetRawBlockRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
 
         Ok(GetRawBlockRequest {
-            block: BlockIdentifier::parse(params[0].clone(), 0)?,
+            block: BlockIdentifier::parse(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+                0,
+            )?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested raw block: {}", self.block);
         let block_number = match self.block.resolve_block_number(&context.storage).await? {
             Some(block_number) => block_number,
@@ -250,20 +275,23 @@ impl RpcHandler for GetRawBlockRequest {
 }
 
 impl RpcHandler for GetRawReceipts {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
 
         Ok(GetRawReceipts {
-            block: BlockIdentifier::parse(params[0].clone(), 0)?,
+            block: BlockIdentifier::parse(
+                params
+                    .pop()
+                    .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+                0,
+            )?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let block_number = match self.block.resolve_block_number(storage).await? {
             Some(block_number) => block_number,
@@ -285,11 +313,11 @@ impl RpcHandler for GetRawReceipts {
 }
 
 impl RpcHandler for BlockNumberRequest {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(Self {})
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested latest block number");
         serde_json::to_value(format!(
             "{:#x}",
@@ -300,11 +328,11 @@ impl RpcHandler for BlockNumberRequest {
 }
 
 impl RpcHandler for GetBlobBaseFee {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(Self {})
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested blob gas price");
         let block_number = context.storage.get_latest_block_number().await?;
         let header = match context.storage.get_block_header(block_number)? {
@@ -357,7 +385,7 @@ pub async fn get_all_block_rpc_receipts(
     // Fetch receipt for each tx in the block and add block and tx info
     let mut last_cumulative_gas_used = 0;
     let mut current_log_index = 0;
-    for (index, tx) in body.transactions.iter().enumerate() {
+    for (index, tx) in body.transactions.into_iter().enumerate() {
         let index = index as u64;
         let receipt = match storage.get_receipt(block_number, index).await? {
             Some(receipt) => receipt,
@@ -365,18 +393,13 @@ pub async fn get_all_block_rpc_receipts(
         };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info = RpcReceiptTxInfo::from_transaction(
-            tx.clone(),
+            tx,
             index,
             gas_used,
             blob_base_fee,
             base_fee_per_gas,
         )?;
-        let receipt = RpcReceipt::new(
-            receipt.clone(),
-            tx_info,
-            block_info.clone(),
-            current_log_index,
-        );
+        let receipt = RpcReceipt::new(receipt, tx_info, block_info, current_log_index);
         last_cumulative_gas_used += gas_used;
         current_log_index += receipt.logs.len() as u64;
         receipts.push(receipt);

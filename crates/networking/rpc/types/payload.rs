@@ -150,7 +150,6 @@ impl ExecutionPayload {
             gas_limit: block.header.gas_limit,
             gas_used: block.header.gas_used,
             timestamp: block.header.timestamp,
-            extra_data: block.header.extra_data.clone(),
             base_fee_per_gas: block.header.base_fee_per_gas.unwrap_or_default(),
             block_hash: block.hash(),
             transactions: block
@@ -162,6 +161,7 @@ impl ExecutionPayload {
             withdrawals: block.body.withdrawals,
             blob_gas_used: block.header.blob_gas_used,
             excess_blob_gas: block.header.excess_blob_gas,
+            extra_data: block.header.extra_data,
         }
     }
 }

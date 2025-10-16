@@ -44,19 +44,20 @@ pub struct BlobAndProofV2 {
 }
 
 impl RpcHandler for BlobsV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 1 {
-            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
-        };
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        let blob_versioned_hashes = serde_json::from_value(
+            params
+                .pop()
+                .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+        )?;
+
         Ok(BlobsV1Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Received new engine request: Requested Blobs");
 
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
@@ -96,19 +97,19 @@ impl RpcHandler for BlobsV1Request {
 }
 
 impl RpcHandler for BlobsV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 1 {
-            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
-        };
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        let blob_versioned_hashes = serde_json::from_value(
+            params
+                .pop()
+                .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?,
+        )?;
         Ok(BlobsV2Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Received new engine request: Requested Blobs V2");
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);

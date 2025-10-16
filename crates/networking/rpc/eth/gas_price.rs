@@ -11,11 +11,11 @@ use serde_json::Value;
 pub struct GasPrice;
 
 impl RpcHandler for GasPrice {
-    fn parse(_: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(GasPrice {})
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let latest_block_number = context.storage.get_latest_block_number().await?;
         let latest_header = context
             .storage
@@ -133,7 +133,7 @@ mod tests {
 
         add_legacy_tx_blocks(&context.storage, 100, 1).await;
 
-        let response = map_http_requests(&request, context).await.unwrap();
+        let response = map_http_requests(request, context).await.unwrap();
         assert_eq!(response, expected_response)
     }
 }

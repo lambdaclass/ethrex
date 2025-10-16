@@ -58,6 +58,7 @@ impl BlockIdentifier {
 
     pub fn parse(serde_value: Value, arg_index: u64) -> Result<Self, RpcErr> {
         // Check if it is a BlockTag
+        // ok-clone: serde needs owned value
         if let Ok(tag) = serde_json::from_value::<BlockTag>(serde_value.clone()) {
             return Ok(BlockIdentifier::Tag(tag));
         };
@@ -103,6 +104,7 @@ impl BlockIdentifierOrHash {
 
     pub fn parse(serde_value: Value, arg_index: u64) -> Result<BlockIdentifierOrHash, RpcErr> {
         // Parse as BlockHash
+        // ok-clone: serde needs owned value
         if let Some(block_hash) = serde_json::from_value::<String>(serde_value.clone())
             .ok()
             .and_then(|hex_str| BlockHash::from_str(&hex_str).ok())
