@@ -13,7 +13,7 @@ use ethrex_rlp::{
 #[derive(Debug, Clone, Default)]
 pub struct Nibbles {
     data: Vec<u8>,
-    pos: usize,
+    pos: u32,
 }
 
 // NOTE: custom impls to ignore the `already_consumed` field
@@ -74,7 +74,7 @@ impl Nibbles {
 
     /// Returns the amount of nibbles
     pub fn len(&self) -> usize {
-        self.data.len() - self.pos
+        self.data.len() - self.pos as usize
     }
 
     /// Returns true if there are no nibbles
@@ -86,7 +86,7 @@ impl Nibbles {
     /// the prefix and return true, otherwise return false.
     pub fn skip_prefix(&mut self, prefix: &Nibbles) -> bool {
         if self.len() >= prefix.len() && &self.as_ref()[..prefix.len()] == prefix.as_ref() {
-            self.pos += prefix.len();
+            self.pos += prefix.len() as u32;
             true
         } else {
             false
@@ -114,7 +114,7 @@ impl Nibbles {
     /// Removes and returns the first nibble
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u8> {
-        let nibble = self.data.get(self.pos)?;
+        let nibble = self.data.get(self.pos as usize)?;
         self.pos += 1;
         Some(*nibble)
     }
@@ -127,7 +127,7 @@ impl Nibbles {
     /// Returns the nibbles after the given offset
     pub fn offset(&self, offset: usize) -> Nibbles {
         let mut ret = self.clone();
-        ret.pos += offset;
+        ret.pos += offset as u32;
         ret
     }
 
@@ -148,7 +148,7 @@ impl Nibbles {
 
     /// Inserts a nibble at the start
     pub fn prepend(&mut self, nibble: u8) {
-        self.data.insert(self.pos, nibble);
+        self.data.insert(self.pos as usize, nibble);
     }
 
     /// Inserts a nibble at the end
@@ -238,7 +238,7 @@ impl Nibbles {
     /// Return already consumed parts of path
     pub fn current(&self) -> Nibbles {
         Nibbles {
-            data: self.data[..self.pos].to_vec(),
+            data: self.data[..self.pos as usize].to_vec(),
             pos: 0,
         }
     }
@@ -246,7 +246,7 @@ impl Nibbles {
 
 impl AsRef<[u8]> for Nibbles {
     fn as_ref(&self) -> &[u8] {
-        &self.data[self.pos..]
+        &self.data[self.pos as usize..]
     }
 }
 
