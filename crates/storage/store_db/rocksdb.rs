@@ -472,15 +472,17 @@ impl Store {
         &self,
         snapshot_pivot_rx: &mut std::sync::mpsc::Receiver<SnapshotControlMessage>,
     ) -> Result<(), StoreError> {
+        let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
+        let cf_snapshot = self.cf_handle(CF_SNAPSHOTS)?;
+
+        self.db
+            .delete_range_cf(&cf_snapshot, vec![], vec![0xff; 131])?;
         loop {
             let root = self
                 .read_sync(CF_TRIE_NODES, &[])?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
-
-            let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
-            let cf_snapshot = self.cf_handle(CF_SNAPSHOTS)?;
 
             let last_written = self
                 .db
