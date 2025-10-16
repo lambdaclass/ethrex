@@ -756,8 +756,20 @@ const ALT_BN128_PRIME: U256 = U256([
     0x30644e72e131a029,
 ]);
 
-pub type G1 = (U256, U256);
-pub type G2 = (U256, U256, U256, U256);
+pub struct G1(U256, U256);
+impl G1 {
+    /// According to EIP-197, the point at infinity (also called neutral element of G1 or zero) is encoded as (0, 0)
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero() && self.1.is_zero()
+    }
+}
+pub struct G2(U256, U256, U256, U256);
+impl G2 {
+    /// According to EIP-197, the point at infinity (also called neutral element of G2 or zero) is encoded as (0, 0, 0, 0)
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero() && self.1.is_zero() && self.2.is_zero() && self.3.is_zero()
+    }
+}
 
 #[inline]
 fn parse_bn254_coords(buf: &[u8; 192]) -> (G1, G2) {
@@ -814,17 +826,10 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
         }
     }
 
-    #[allow(unreachable_code)]
-    let pairing_check = 'inner: {
-        if batch.is_empty() {
-            break 'inner true;
-        }
-
-        #[cfg(feature = "sp1")]
-        break 'inner pairing_substrate(&batch)?;
-
-        // default
-        break 'inner pairing_lambdaworks(&batch)?;
+    let pairing_check = if batch.is_empty() {
+        true
+    } else {
+        pairing_check(&batch)?
     };
 
     let mut result = [0; 32];
@@ -834,7 +839,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
 #[cfg(feature = "sp1")]
 #[inline]
-pub fn pairing_substrate(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
 
     let result = if batch.is_empty() {
@@ -842,7 +847,7 @@ pub fn pairing_substrate(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     } else {
         let mut valid_batch = Vec::with_capacity(batch.len());
         for (g1, g2) in batch {
-            let g1: SubstrateG1 = if g1.0.is_zero() && g1.1.is_zero() {
+            let g1: SubstrateG1 = if g1.is_zero() {
                 SubstrateG1::zero()
             } else {
                 let (g1_x, g1_y) = (
@@ -855,28 +860,27 @@ pub fn pairing_substrate(batch: &[(G1, G2)]) -> Result<bool, VMError> {
                     .map_err(|_| PrecompileError::InvalidPoint)?
                     .into()
             };
-            let g2: SubstrateG2 =
-                if g2.0.is_zero() && g2.1.is_zero() && g2.2.is_zero() && g2.3.is_zero() {
-                    SubstrateG2::zero()
-                } else {
-                    let (g2_x, g2_y) = (
-                        Fq2::new(
-                            Fq::from_slice(&g2.0.to_big_endian())
-                                .map_err(|_| PrecompileError::ParsingInputError)?,
-                            Fq::from_slice(&g2.1.to_big_endian())
-                                .map_err(|_| PrecompileError::ParsingInputError)?,
-                        ),
-                        Fq2::new(
-                            Fq::from_slice(&g2.2.to_big_endian())
-                                .map_err(|_| PrecompileError::ParsingInputError)?,
-                            Fq::from_slice(&g2.3.to_big_endian())
-                                .map_err(|_| PrecompileError::ParsingInputError)?,
-                        ),
-                    );
-                    AffineG2::new(g2_x, g2_y)
-                        .map_err(|_| PrecompileError::InvalidPoint)?
-                        .into()
-                };
+            let g2: SubstrateG2 = if g2.is_zero() {
+                SubstrateG2::zero()
+            } else {
+                let (g2_x, g2_y) = (
+                    Fq2::new(
+                        Fq::from_slice(&g2.0.to_big_endian())
+                            .map_err(|_| PrecompileError::ParsingInputError)?,
+                        Fq::from_slice(&g2.1.to_big_endian())
+                            .map_err(|_| PrecompileError::ParsingInputError)?,
+                    ),
+                    Fq2::new(
+                        Fq::from_slice(&g2.2.to_big_endian())
+                            .map_err(|_| PrecompileError::ParsingInputError)?,
+                        Fq::from_slice(&g2.3.to_big_endian())
+                            .map_err(|_| PrecompileError::ParsingInputError)?,
+                    ),
+                );
+                AffineG2::new(g2_x, g2_y)
+                    .map_err(|_| PrecompileError::InvalidPoint)?
+                    .into()
+            };
 
             if g1.is_zero() || g2.is_zero() {
                 continue;
@@ -890,8 +894,9 @@ pub fn pairing_substrate(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     Ok(result == substrate_bn::Gt::one())
 }
 
+#[cfg(not(feature = "sp1"))]
 #[inline]
-pub fn pairing_lambdaworks(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     type Fq = BN254FieldElement;
     type Fq2 = BN254TwistCurveFieldElement;
     type LambdaworksG1 = BN254Curve;
@@ -904,7 +909,7 @@ pub fn pairing_lambdaworks(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     } else {
         let mut valid_batch = Vec::with_capacity(batch.len());
         for (g1, g2) in batch {
-            let g1 = if g1.0.is_zero() && g1.1.is_zero() {
+            let g1 = if g1.is_zero() {
                 ProjectiveG1::neutral_element()
             } else {
                 let (g1_x, g1_y) = (
@@ -916,7 +921,7 @@ pub fn pairing_lambdaworks(batch: &[(G1, G2)]) -> Result<bool, VMError> {
                 LambdaworksG1::create_point_from_affine(g1_x, g1_y)
                     .map_err(|_| PrecompileError::InvalidPoint)?
             };
-            let g2 = if g2.0.is_zero() && g2.1.is_zero() && g2.2.is_zero() && g2.3.is_zero() {
+            let g2 = if g2.is_zero() {
                 ProjectiveG2::neutral_element()
             } else {
                 let (g2_x, g2_y) = {
