@@ -248,7 +248,7 @@ jobs:
       - name: Run test
         run: |
           if  [ "${{ matrix.based }}" = true ]; then
-            export INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true
+            export INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true
           fi
           sudo chmod -R a+rw crates/l2
           cd crates/l2
@@ -445,7 +445,7 @@ jobs:
       - name: Run test
         run: |
           cd crates/l2
-          INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true \
+          INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true \
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           cargo test l2 --release -- --nocapture --test-threads=1
 
