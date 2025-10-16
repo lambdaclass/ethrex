@@ -433,11 +433,17 @@ jobs:
         run: |
           target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 2>&1 | tee /tmp/prover.log & 
 
+      - name: show envs
+        run: |
+          cat cmd/.env
+          cat crates/l2/.env
+
       - name: Run test
         run: |
           cd crates/l2
           tail -n 100 -f /tmp/ethrex.log &
           tail -n 100 -f /tmp/prover.log &
+          export $(shell cat ../../cmd/.env | xargs); \
           INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true \
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           cargo test l2 --release -- --nocapture --test-threads=1
