@@ -383,71 +383,124 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
-/// ## ECRECOVER precompile.
-/// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
-///
-/// Input is 128 bytes (padded with zeros if shorter):
-///   [0..32)  : keccak-256 hash (message digest)
-///   [32..64) : v (27 or 28)
-///   [64..128): r||s (64 bytes)
-///
-/// Returns the recovered address.
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
-    increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
+    use sha3::Keccak256;
 
-    const INPUT_LEN: usize = 128;
-    const WORD: usize = 32;
+    increase_precompile_consumed_gas(gas_cost::ECRECOVER_COST, gas_remaining)?;
 
-    let input = fill_with_zeros(calldata, INPUT_LEN);
+    // If calldata does not reach the required length, we should fill the rest with zeros
+    let calldata = fill_with_zeros(calldata, 128);
 
-    let (raw_hash, tail) = input.split_at(WORD);
-    let (raw_v, raw_sig) = tail.split_at(WORD);
-
-    // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
-    let mut recid_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
-        Ok(27) => 0,
-        Ok(28) => 1,
-        _ => return Ok(Bytes::new()),
-    };
-
-    // Parse signature (r||s). If malformed → empty return.
-    let Ok(mut sig) = Signature::from_slice(raw_sig) else {
+    // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
+    let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let Ok(message) = secp256k1::Message::from_digest_slice(hash) else {
         return Ok(Bytes::new());
     };
 
-    // k256 enforces canonical low-S for recovery.
-    // If S is high, normalize s := n - s and flip the recovery parity bit.
-    if let Some(low_s) = sig.normalize_s() {
-        sig = low_s;
-        recid_byte ^= 1;
+    let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+
+    // The Recovery identifier is expected to be 27 or 28, any other value is invalid
+    if !(v == U256::from(27) || v == U256::from(28)) {
+        return Ok(Bytes::new());
     }
 
-    // Recovery id from the adjusted byte.
-    let Some(recid) = RecoveryId::from_byte(recid_byte) else {
+    let v = u8::try_from(v).map_err(|_| InternalError::TypeConversion)?;
+    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::TypeConversion)?;
+    let Ok(recovery_id) =
+        secp256k1::ecdsa::RecoveryId::try_from(Into::<i32>::into(recovery_id_from_rpc))
+    else {
         return Ok(Bytes::new());
     };
 
-    // Recover the verifying key from the prehash (32-byte digest).
-    let Ok(vk) = VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) else {
+    // signature is made up of the parameters r and s
+    let sig = calldata.get(64..128).ok_or(InternalError::Slicing)?;
+    let Ok(signature) = secp256k1::ecdsa::RecoverableSignature::from_compact(sig, recovery_id)
+    else {
         return Ok(Bytes::new());
     };
 
-    // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
-    let uncompressed = vk.to_encoded_point(false);
-    let mut uncompressed = uncompressed.to_bytes();
-    #[allow(clippy::indexing_slicing)]
-    let xy = &mut uncompressed[1..65];
+    // Recover the address using secp256k1
+    let Ok(public_key) = signature.recover(&message) else {
+        return Ok(Bytes::new());
+    };
 
-    // keccak256(X||Y).
-    let xy = keccak(xy);
+    let public_key = public_key.serialize_uncompressed();
 
-    // Address is the last 20 bytes of the hash.
-    let mut out = [0u8; 32];
-    #[allow(clippy::indexing_slicing)]
-    out[12..32].copy_from_slice(&xy[12..32]);
+    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
+    let public_key_hash = Keccak256::digest(&public_key[1..65]);
 
-    Ok(Bytes::copy_from_slice(&out))
+    // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
+    let mut output = vec![0u8; 12];
+    output.extend_from_slice(public_key_hash.get(13..33).ok_or(InternalError::Slicing)?);
+
+    Ok(Bytes::from(output.to_vec()))
 }
+
+// /// ## ECRECOVER precompile.
+// /// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
+// ///
+// /// Input is 128 bytes (padded with zeros if shorter):
+// ///   [0..32)  : keccak-256 hash (message digest)
+// ///   [32..64) : v (27 or 28)
+// ///   [64..128): r||s (64 bytes)
+// ///
+// /// Returns the recovered address.
+// pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+//     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
+
+//     const INPUT_LEN: usize = 128;
+//     const WORD: usize = 32;
+
+//     let input = fill_with_zeros(calldata, INPUT_LEN);
+
+//     let (raw_hash, tail) = input.split_at(WORD);
+//     let (raw_v, raw_sig) = tail.split_at(WORD);
+
+//     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
+//     let mut recid_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
+//         Ok(27) => 0,
+//         Ok(28) => 1,
+//         _ => return Ok(Bytes::new()),
+//     };
+
+//     // Parse signature (r||s). If malformed → empty return.
+//     let Ok(mut sig) = Signature::from_slice(raw_sig) else {
+//         return Ok(Bytes::new());
+//     };
+
+//     // k256 enforces canonical low-S for recovery.
+//     // If S is high, normalize s := n - s and flip the recovery parity bit.
+//     if let Some(low_s) = sig.normalize_s() {
+//         sig = low_s;
+//         recid_byte ^= 1;
+//     }
+
+//     // Recovery id from the adjusted byte.
+//     let Some(recid) = RecoveryId::from_byte(recid_byte) else {
+//         return Ok(Bytes::new());
+//     };
+
+//     // Recover the verifying key from the prehash (32-byte digest).
+//     let Ok(vk) = VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) else {
+//         return Ok(Bytes::new());
+//     };
+
+//     // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
+//     let uncompressed = vk.to_encoded_point(false);
+//     let mut uncompressed = uncompressed.to_bytes();
+//     #[allow(clippy::indexing_slicing)]
+//     let xy = &mut uncompressed[1..65];
+
+//     // keccak256(X||Y).
+//     let xy = keccak(xy);
+
+//     // Address is the last 20 bytes of the hash.
+//     let mut out = [0u8; 32];
+//     #[allow(clippy::indexing_slicing)]
+//     out[12..32].copy_from_slice(&xy[12..32]);
+
+//     Ok(Bytes::copy_from_slice(&out))
+// }
 
 /// Returns the calldata received
 pub fn identity(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
