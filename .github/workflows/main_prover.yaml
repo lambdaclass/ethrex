@@ -61,12 +61,16 @@ jobs:
       - name: Start L1 & Deploy contracts
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries 
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
           touch cmd/.env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
-          docker compose up --build contract_deployer
+          docker compose up --exit-code-from=contract_deployer --build contract_deployer
 
       - name: Ensure admin permissions in _work
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
