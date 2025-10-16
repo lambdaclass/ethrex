@@ -16,6 +16,7 @@ services:
     container_name: contract_deployer
     image: "ethrex:main"
     build: ../../
+    restart: on-failure:10
     volumes:
       # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${DOCKER_ETHREX_WORKDIR}/contracts

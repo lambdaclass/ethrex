@@ -185,7 +185,6 @@ jobs:
 
       - name: Deploy contracts
         run: |
-          sleep 30
           touch cmd/.env
           cd crates/l2
           if [ "${{ matrix.use_native_token }}" = true ]; then
@@ -387,7 +386,6 @@ jobs:
 
       - name: Deploy contracts
         run: |
-          sleep 30
           touch cmd/.env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
