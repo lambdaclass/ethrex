@@ -104,7 +104,7 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 /// Block headers downloaded during fullsync column family: [`u8;_`] => [`Vec<u8>`]
 /// - [`u8;_`] = `block_number.to_le_bytes()`
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
-const CF_FULLSYNC_HEADERS: &str = "headers";
+const CF_FULLSYNC_HEADERS: &str = "fullsync_headers";
 
 #[derive(Debug)]
 pub struct Store {
