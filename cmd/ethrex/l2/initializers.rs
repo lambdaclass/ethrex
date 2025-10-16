@@ -8,20 +8,16 @@ use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
-use ethrex_common::U256;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
-use ethrex_l2_sdk::get_operator_fee;
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, PeerTableHandle},
+    discv4::peer_table::PeerTable,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
-use ethrex_rpc::EthClient;
-use ethrex_rpc::clients::EthClientError;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::SecretKey;
@@ -36,7 +32,7 @@ use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: PeerTableHandle,
+    peer_table: PeerTable,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -54,7 +50,7 @@ async fn init_rpc_api(
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        &opts.syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
@@ -194,7 +190,7 @@ pub async fn init_l2(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(PeerTable::spawn());
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -327,42 +323,23 @@ pub async fn get_operator_fee_config(
         return Ok(None);
     }
 
-    // Fetch operator fee from the on-chain proposer contract
-    let operator_fee = fetch_operator_fee(
-        sequencer_opts.eth_opts.rpc_url.clone(),
-        sequencer_opts.committer_opts.on_chain_proposer_address,
-    )
-    .await?;
+    let fee = sequencer_opts.block_producer_opts.operator_fee_per_gas;
 
-    // Check if operator fee vault address is provided in the config
-    let operator_address = sequencer_opts
+    let address = sequencer_opts
         .block_producer_opts
         .operator_fee_vault_address;
 
-    let operator_fee_config = if let Some(address) = operator_address {
+    let operator_fee_config = if let (Some(operator_fee_vault), Some(operator_fee)) = (address, fee)
+    {
+        let operator_fee_per_gas = operator_fee
+            .try_into()
+            .map_err(|_| eyre::eyre!("Failed to convert operator_fee_per_gas to u64"))?;
         Some(OperatorFeeConfig {
-            operator_fee,
-            operator_fee_vault: address,
+            operator_fee_vault,
+            operator_fee_per_gas,
         })
     } else {
-        if !operator_fee.is_zero() {
-            error!(
-                "The operator fee is set on-chain, but no operator fee vault address is provided in the configuration."
-            );
-            return Err(eyre::eyre!("Missing operator fee vault address"));
-        }
         None
     };
     Ok(operator_fee_config)
-}
-
-pub async fn fetch_operator_fee(
-    rpc_urls: Vec<String>,
-    on_chain_proposer_address: Option<Address>,
-) -> Result<U256, EthClientError> {
-    let contract_address = on_chain_proposer_address.ok_or(EthClientError::Custom(
-        "on_chain_proposer_address not set in config".to_string(),
-    ))?;
-    let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
-    get_operator_fee(&eth_client, contract_address).await
 }

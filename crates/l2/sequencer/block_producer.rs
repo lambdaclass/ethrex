@@ -100,20 +100,18 @@ impl BlockProducer {
 
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
 
-        if let Some(base_fee_vault) = base_fee_vault_address {
-            if base_fee_vault == coinbase_address {
-                warn!(
-                    "The coinbase address and base fee vault address are the same. Coinbase balance behavior will be affected.",
-                );
-            }
+        if base_fee_vault_address.is_some_and(|base_fee_vault| base_fee_vault == *coinbase_address)
+        {
+            warn!(
+                "The coinbase address and base fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
         }
-
-        if let Some(operator_fee_vault) = operator_fee_vault_address {
-            if operator_fee_vault == coinbase_address {
-                warn!(
-                    "The coinbase address and operator fee vault address are the same. Coinbase balance behavior will be affected.",
-                );
-            }
+        if operator_fee_vault_address
+            .is_some_and(|operator_fee_vault| operator_fee_vault == *coinbase_address)
+        {
+            warn!(
+                "The coinbase address and operator fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
         }
 
         Ok(Self {
@@ -227,50 +225,46 @@ impl BlockProducer {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
-        self.store_l1_base_fee_by_block(block.header.number).await?;
-
+        let transactions_count = block.body.transactions.len();
+        let block_number = block.header.number;
+        let block_hash = block.hash();
+        self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
-            .store_block(&block, account_updates_list, execution_result)
+            .store_block(block, account_updates_list, execution_result)
             .await?;
-        info!("Stored new block {:x}", block.hash());
-        // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
+        info!("Stored new block {:x}", block_hash);
 
         self.rollup_store
-            .store_account_updates_by_block_number(block.header.number, account_updates)
+            .store_account_updates_by_block_number(block_number, account_updates)
             .await?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&self.store, block.hash(), block.hash(), block.hash()).await?;
+        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
             let _ = METRICS_BLOCKS
-            .set_block_number(block.header.number)
+            .set_block_number(block_number)
             .inspect_err(|e| {
                 tracing::error!("Failed to set metric: block_number {}", e.to_string())
             });
             #[allow(clippy::as_conversions)]
-            let tps = block.body.transactions.len() as f64 / (self.block_time_ms as f64 / 1000_f64);
+            let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
         );
 
         Ok(())
     }
-
-    async fn store_l1_base_fee_by_block(
-        &self,
-        block_number: u64,
-    ) -> Result<(), BlockProducerError> {
+    async fn store_fee_config_by_block(&self, block_number: u64) -> Result<(), BlockProducerError> {
         let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
             error!("Invalid blockchain type. Expected L2.");
             return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
         };
 
-        let fee_config_guard = l2_config.fee_config.read().await;
-        if let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_ref() {
-            self.rollup_store
-                .store_l1_blob_base_fee_by_block(block_number, l1_fee_config.l1_fee_per_blob_gas)
-                .await?;
-        };
+        let fee_config = *l2_config.fee_config.read().await;
+
+        self.rollup_store
+            .store_fee_config_by_block(block_number, fee_config)
+            .await?;
         Ok(())
     }
 }

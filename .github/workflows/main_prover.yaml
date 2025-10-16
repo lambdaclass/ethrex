@@ -66,7 +66,6 @@ jobs:
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
-          ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE=0x3B9ACA00 \
           docker compose up --build contract_deployer
 
       - name: Ensure admin permissions in _work
@@ -82,6 +81,7 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
           ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+          ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=0x3B9ACA00 \
           ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec \
           docker compose up --build --detach --no-deps ethrex_l2
 

@@ -255,7 +255,9 @@ impl BlockFetcher {
                     "Failed to get the receipt for transaction {:x}",
                     batch_committed_log.transaction_hash
                 )))?
-                .data;
+                .tx
+                .data()
+                .clone();
 
             let batch = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
 
@@ -269,7 +271,7 @@ impl BlockFetcher {
 
     async fn store_batch(&mut self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
-            self.blockchain.add_block(block).await?;
+            self.blockchain.add_block(block.clone()).await?;
 
             let block_hash = block.hash();
 

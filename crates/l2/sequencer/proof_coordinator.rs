@@ -5,7 +5,7 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
-use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
@@ -473,16 +473,8 @@ impl ProofCoordinator {
             )));
         };
 
-        // Get the current fee config
-        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
-            return Err(ProofCoordinatorError::InternalError(
-                "Invalid blockchain type, expected L2".to_string(),
-            ));
-        };
-        let fee_config = *l2_config.fee_config.read().await;
-
         let (blocks, fee_configs) = self
-            .fetch_blocks_with_respective_fee_configs(block_numbers, fee_config)
+            .fetch_blocks_with_respective_fee_configs(block_numbers)
             .await?;
 
         let witness = self
@@ -528,7 +520,6 @@ impl ProofCoordinator {
     async fn fetch_blocks_with_respective_fee_configs(
         &mut self,
         block_numbers: Vec<u64>,
-        fee_config: FeeConfig,
     ) -> Result<(Vec<Block>, Vec<FeeConfig>), ProofCoordinatorError> {
         let mut blocks = vec![];
         let mut fee_configs = vec![];
@@ -544,23 +535,16 @@ impl ProofCoordinator {
                 .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
             blocks.push(Block::new(header, body));
 
-            // Update the L1 fee per blob gas used for this block if needed
-            if let Some(mut l1_fee_config) = fee_config.l1_fee_config {
-                let l1_blob_base_fee = self
-                    .rollup_store
-                    .get_l1_blob_base_fee_by_block(block_number)
-                    .await?
-                    .ok_or(ProofCoordinatorError::InternalError(
-                        "L1 blob base fee not found".to_string(),
-                    ))?;
-                l1_fee_config.l1_fee_per_blob_gas = l1_blob_base_fee;
+            // Fetch the L1 fee per blob gas used for this block
+            let fee_config = self
+                .rollup_store
+                .get_fee_config_by_block(block_number)
+                .await?
+                .ok_or(ProofCoordinatorError::InternalError(
+                    "L1 blob base fee not found".to_string(),
+                ))?;
 
-                let mut fee_config = fee_config;
-                fee_config.l1_fee_config = Some(l1_fee_config);
-                fee_configs.push(fee_config);
-            } else {
-                fee_configs.push(fee_config);
-            }
+            fee_configs.push(fee_config);
         }
         Ok((blocks, fee_configs))
     }

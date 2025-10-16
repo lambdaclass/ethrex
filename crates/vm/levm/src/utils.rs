@@ -297,7 +297,7 @@ pub fn get_max_blob_gas_price(
 
     Ok(max_blob_gas_cost)
 }
-/// Caltulate the actual blob gas cost.
+/// Calculate the actual blob gas cost.
 pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
     block_excess_blob_gas: Option<U256>,
@@ -677,10 +677,12 @@ impl<'a> VM<'a> {
 }
 
 /// Converts Account to LevmAccount
+/// The problem with this is that we don't have the storage root.
 pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
     (
         LevmAccount {
             info: account.info,
+            has_storage: !account.storage.is_empty(), // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
             storage: account.storage,
             status: AccountStatus::Unmodified,
         },

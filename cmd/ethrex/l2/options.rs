@@ -3,7 +3,7 @@ use crate::{
     utils::{self},
 };
 use clap::Parser;
-use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_common::{Address, U256, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
@@ -24,6 +24,8 @@ use std::{
     str::FromStr,
 };
 use tracing::Level;
+
+pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
 
 #[derive(Parser, Debug)]
 #[group(id = "L2Options")]
@@ -249,6 +251,38 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     }
 }
 
+impl Options {
+    pub fn populate_with_defaults(&mut self) {
+        let defaults = Options::default();
+        self.sponsorable_addresses_file_path = self
+            .sponsorable_addresses_file_path
+            .clone()
+            .or(defaults.sponsorable_addresses_file_path.clone());
+        self.sequencer_opts
+            .populate_with_defaults(&defaults.sequencer_opts);
+    }
+}
+
+impl SequencerOptions {
+    pub fn populate_with_defaults(&mut self, defaults: &SequencerOptions) {
+        self.eth_opts.populate_with_defaults(&defaults.eth_opts);
+        self.watcher_opts
+            .populate_with_defaults(&defaults.watcher_opts);
+        self.block_producer_opts
+            .populate_with_defaults(&defaults.block_producer_opts);
+        self.committer_opts
+            .populate_with_defaults(&defaults.committer_opts);
+        self.proof_coordinator_opts
+            .populate_with_defaults(&defaults.proof_coordinator_opts);
+        self.based_opts.populate_with_defaults(&defaults.based_opts);
+        self.aligned_opts
+            .populate_with_defaults(&defaults.aligned_opts);
+        self.monitor_opts
+            .populate_with_defaults(&defaults.monitor_opts);
+        // admin_opts contains only non-optional fields.
+    }
+}
+
 #[derive(Parser, Debug)]
 pub struct EthOptions {
     #[arg(
@@ -324,6 +358,14 @@ impl Default for EthOptions {
     }
 }
 
+impl EthOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        if self.rpc_url.is_empty() {
+            self.rpc_url = defaults.rpc_url.clone();
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 pub struct WatcherOptions {
     #[arg(
@@ -373,6 +415,12 @@ impl Default for WatcherOptions {
     }
 }
 
+impl WatcherOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.bridge_address = self.bridge_address.or(defaults.bridge_address);
+    }
+}
+
 #[derive(Parser, Debug)]
 pub struct BlockProducerOptions {
     #[arg(
@@ -402,10 +450,20 @@ pub struct BlockProducerOptions {
     #[arg(
         long = "block-producer.operator-fee-vault-address",
         value_name = "ADDRESS",
+        requires = "operator_fee_per_gas",
         env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS",
         help_heading = "Block producer options"
     )]
     pub operator_fee_vault_address: Option<Address>,
+    #[arg(
+        long,
+        value_name = "UINT256",
+        env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS",
+        requires = "operator_fee_vault_address",
+        help_heading = "Block producer options",
+        help = "Fee per gas that the operator will receive for each transaction included in a block."
+    )]
+    pub operator_fee_per_gas: Option<U256>,
     #[arg(
         long = "block-producer.l1-fee-vault-address",
         value_name = "ADDRESS",
@@ -451,11 +509,18 @@ impl Default for BlockProducerOptions {
             ),
             base_fee_vault_address: None,
             operator_fee_vault_address: None,
+            operator_fee_per_gas: None,
             l1_fee_vault_address: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             l1_fee_update_interval_ms: 60000,
         }
+    }
+}
+
+impl BlockProducerOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.coinbase_address = self.coinbase_address.or(defaults.coinbase_address);
     }
 }
 
@@ -555,6 +620,30 @@ impl Default for CommitterOptions {
     }
 }
 
+impl CommitterOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        if self.committer_remote_signer_url.is_none() {
+            self.committer_l1_private_key = self
+                .committer_l1_private_key
+                .or(defaults.committer_l1_private_key);
+        }
+        self.committer_remote_signer_url = self
+            .committer_remote_signer_url
+            .clone()
+            .or(defaults.committer_remote_signer_url.clone());
+        self.committer_remote_signer_public_key = self
+            .committer_remote_signer_public_key
+            .or(defaults.committer_remote_signer_public_key);
+        self.on_chain_proposer_address = self
+            .on_chain_proposer_address
+            .or(defaults.on_chain_proposer_address);
+        self.batch_gas_limit = self.batch_gas_limit.or(defaults.batch_gas_limit);
+        self.first_wake_up_time_ms = self
+            .first_wake_up_time_ms
+            .or(defaults.first_wake_up_time_ms);
+    }
+}
+
 #[derive(Parser, Debug)]
 pub struct ProofCoordinatorOptions {
     #[arg(
@@ -651,8 +740,34 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             proof_coordinator_tdx_private_key: None,
-            proof_coordinator_qpl_tool_path: None,
+            proof_coordinator_qpl_tool_path: Some(
+                DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH.to_string(),
+            ),
         }
+    }
+}
+
+impl ProofCoordinatorOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        if self.remote_signer_url.is_none() {
+            self.proof_coordinator_l1_private_key = self
+                .proof_coordinator_l1_private_key
+                .or(defaults.proof_coordinator_l1_private_key);
+        }
+        self.proof_coordinator_tdx_private_key = self
+            .proof_coordinator_tdx_private_key
+            .or(defaults.proof_coordinator_tdx_private_key);
+        self.proof_coordinator_qpl_tool_path = self
+            .proof_coordinator_qpl_tool_path
+            .clone()
+            .or(defaults.proof_coordinator_qpl_tool_path.clone());
+        self.remote_signer_url = self
+            .remote_signer_url
+            .clone()
+            .or(defaults.remote_signer_url.clone());
+        self.remote_signer_public_key = self
+            .remote_signer_public_key
+            .or(defaults.remote_signer_public_key);
     }
 }
 #[derive(Parser, Debug, Clone)]
@@ -728,12 +843,34 @@ impl Default for AlignedOptions {
     }
 }
 
+impl AlignedOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.beacon_url = self.beacon_url.clone().or(defaults.beacon_url.clone());
+        self.aligned_network = self
+            .aligned_network
+            .clone()
+            .or(defaults.aligned_network.clone());
+        self.aligned_sp1_elf_path = self
+            .aligned_sp1_elf_path
+            .clone()
+            .or(defaults.aligned_sp1_elf_path.clone());
+    }
+}
+
 #[derive(Parser, Default, Debug)]
 pub struct BasedOptions {
     #[clap(flatten)]
     pub state_updater_opts: StateUpdaterOptions,
     #[clap(flatten)]
     pub block_fetcher: BlockFetcherOptions,
+}
+
+impl BasedOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.state_updater_opts
+            .populate_with_defaults(&defaults.state_updater_opts);
+        // block fetcher contains only non-optional fields.
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -762,6 +899,12 @@ impl Default for StateUpdaterOptions {
             sequencer_registry: None,
             check_interval_ms: 1000,
         }
+    }
+}
+
+impl StateUpdaterOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.sequencer_registry = self.sequencer_registry.or(defaults.sequencer_registry);
     }
 }
 
@@ -809,6 +952,12 @@ impl Default for MonitorOptions {
             tick_rate: 1000,
             batch_widget_height: None,
         }
+    }
+}
+
+impl MonitorOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.batch_widget_height = self.batch_widget_height.or(defaults.batch_widget_height);
     }
 }
 

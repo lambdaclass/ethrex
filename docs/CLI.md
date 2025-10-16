@@ -59,7 +59,7 @@ Node options:
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
-        
+
           [default: 10000]
 
 P2P options:
@@ -67,9 +67,9 @@ P2P options:
           Comma separated enode URLs for P2P discovery bootstrap.
 
       --syncmode <SYNC_MODE>
-          Can be either "full" or "snap" with "full" as default value.
+          Can be either "full" or "snap" with "snap" as default value.
 
-          [default: full]
+          [default: snap]
 
       --p2p.enabled
 
@@ -83,6 +83,16 @@ P2P options:
           UDP port for P2P discovery.
 
           [default: 30303]
+    
+      --p2p.tx-broadcasting-interval <INTERVAL_MS>
+          Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
+
+          [default: 1000]
+
+      --target.peers <MAX_PEERS>
+          Max amount of connected peers.
+
+          [default: 100]
 
 RPC options:
       --http.addr <ADDRESS>
@@ -116,7 +126,7 @@ Block producer options:
       --block-producer.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 0.1.0"]
+          [default: "ethrex 3.0.0"]
 ```
 
 <!-- END_CLI_HELP -->

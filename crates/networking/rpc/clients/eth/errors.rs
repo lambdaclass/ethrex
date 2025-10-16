@@ -71,8 +71,12 @@ pub enum EthClientError {
     GenericTransactionError(#[from] GenericTransactionError),
     #[error("Failed to parse hex string: {0}")]
     FromStrRadixError(#[from] FromStrRadixErr),
-    #[error("ethrex_getFeeVaultAddress request error: {0}")]
-    GetFeeVaultAddressError(#[from] GetBaseFeeVaultAddressError),
+    #[error("ethrex_getBaseFeeVaultAddress request error: {0}")]
+    GetBaseFeeVaultAddressError(#[from] GetBaseFeeVaultAddressError),
+    #[error("ethrex_getOperatorFeeVaultAddress request error: {0}")]
+    GetOperatorFeeVaultAddressError(#[from] GetOperatorFeeVaultAddressError),
+    #[error("ethrex_getOperatorFee request error: {0}")]
+    GetOperatorFeeError(#[from] GetOperatorFeeError),
     #[error("ethrex_getL1BlobBaseFee request error: {0}")]
     GetL1BlobBaseFeeError(#[from] GetL1BlobBaseFeeRequestError),
 }
@@ -321,6 +325,20 @@ pub enum GetBatchByNumberError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetBaseFeeVaultAddressError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+#[derive(Debug, thiserror::Error)]
+pub enum GetOperatorFeeVaultAddressError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+#[derive(Debug, thiserror::Error)]
+pub enum GetOperatorFeeError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]

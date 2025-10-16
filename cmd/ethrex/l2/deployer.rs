@@ -326,12 +326,13 @@ pub struct DeployerOptions {
     pub use_compiled_genesis: bool,
     #[arg(
         long,
-        value_name = "UINT256",
-        env = "ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE",
+        value_name = "ADDRESS",
+        default_value = "0x0000000000000000000000000000000000000000",
+        env = "ETHREX_NATIVE_TOKEN_L1_ADDRESS",
         help_heading = "Deployer options",
-        help = "Fee that the operator will receive for each transaction included in a block."
+        help = "The L1 address of the L2 native token (e.g., USDC, USDT, DAI, etc. Use address(0) for ETH)"
     )]
-    pub operator_fee: U256,
+    pub native_token_l1_address: Address,
 }
 
 impl Default for DeployerOptions {
@@ -414,7 +415,7 @@ impl Default for DeployerOptions {
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
-            operator_fee: U256::zero(),
+            native_token_l1_address: H160::zero(),
         }
     }
 }
@@ -494,14 +495,20 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 ));
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256,uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address)";
 
-#[derive(Clone, Copy)]
+// deposit(uint256 _amount, address _l2Recipient)
+const NATIVE_TOKEN_DEPOSIT_SIGNATURE: &str = "deposit(uint256,address)";
+
+// approve(address spender, uint256 amount)
+const APPROVE_SIGNATURE: &str = "approve(address,uint256)";
+
+#[derive(Clone, Copy, Default)]
 pub struct ContractAddresses {
     pub on_chain_proposer_address: Address,
     pub bridge_address: Address,
@@ -533,6 +540,12 @@ pub async fn deploy_l1_contracts(
     initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
 
     if opts.deposit_rich {
+        if opts.native_token_l1_address != Address::zero() {
+            info!(
+                "Begging deposits with {} ERC20 as the native tokens",
+                opts.native_token_l1_address
+            );
+        }
         let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
             .await
             .inspect_err(|err| {
@@ -540,7 +553,11 @@ pub async fn deploy_l1_contracts(
             });
     }
 
-    write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
+    write_contract_addresses_to_env(
+        contract_addresses,
+        opts.native_token_l1_address,
+        opts.env_file_path,
+    )?;
     info!("Deployer binary finished successfully");
     Ok(contract_addresses)
 }
@@ -833,7 +850,6 @@ async fn initialize_contracts(
                 Value::Address(opts.proof_sender_l1_address),
             ]),
             Value::Uint(genesis.config.chain_id.into()),
-            Value::Uint(opts.operator_fee),
         ];
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
@@ -919,6 +935,7 @@ async fn initialize_contracts(
             Value::Address(opts.bridge_owner),
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
+            Value::Address(opts.native_token_l1_address),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
@@ -987,13 +1004,84 @@ async fn make_deposits(
         let get_balance = eth_client
             .get_balance(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
+
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
 
+        let native_token_is_eth = opts.native_token_l1_address == Address::zero();
+        let nonce = eth_client
+            .get_nonce(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
+            .await?;
+
+        // approve the transfer in the L1 token contract if not ETH
+        if !native_token_is_eth {
+            let mint_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                opts.native_token_l1_address,
+                signer.address(),
+                encode_calldata("freeMint()", &[])?.into(),
+                Default::default(),
+            )
+            .await?;
+            if let Err(e) = send_generic_transaction(eth_client, mint_tx, &signer).await {
+                error!(address =? signer.address(), "Failed to mint {e}");
+                continue;
+            }
+
+            let calldata = encode_calldata(
+                APPROVE_SIGNATURE,
+                &[Value::Address(bridge), Value::Uint(value_to_deposit * 2)],
+            )?;
+            let approve_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                opts.native_token_l1_address,
+                signer.address(),
+                calldata.into(),
+                Overrides {
+                    from: Some(signer.address()),
+                    // We set the nonce and gas limit manually to avoid the estimation step and having nonce issues.
+                    // We do nonce + 1 because the mint transaction is sent just before.
+                    nonce: Some(nonce + 1),
+                    gas_limit: Some(1_000_000u64),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            if let Err(e) = send_generic_transaction(eth_client, approve_tx, &signer).await {
+                error!(address =? signer.address(), "Failed to approve {e}");
+                continue;
+            }
+        }
+
+        let calldata_values = vec![
+            // uint256 _amount: amount of ERC20 to deposit
+            Value::Uint(if native_token_is_eth {
+                U256::zero()
+            } else {
+                value_to_deposit
+            }),
+            // address l2Recipient: the address on L2 to receive the funds
+            Value::Address(signer.address()),
+        ];
+
+        let native_token_deposit_calldata =
+            encode_calldata(NATIVE_TOKEN_DEPOSIT_SIGNATURE, &calldata_values)?;
+
         let overrides = Overrides {
-            value: Some(value_to_deposit),
+            value: native_token_is_eth.then_some(value_to_deposit).or(None),
             from: Some(signer.address()),
+            // When doing the deposits for ERC20 as the native token, we previously did an approve and mint.
+            // So to make the deposits fast and not wait for the node to have the nonce updated, we set it manually.
+            // Also we set the gas limit manually to avoid the estimation step and having nonce issues.
+            nonce: if !native_token_is_eth {
+                Some(nonce + 2)
+            } else {
+                None
+            },
+            gas_limit: Some(1_000_000u64),
             ..Overrides::default()
         };
 
@@ -1002,7 +1090,7 @@ async fn make_deposits(
             TxType::EIP1559,
             bridge,
             signer.address(),
-            Bytes::new(),
+            native_token_deposit_calldata.into(),
             overrides,
         )
         .await?;
@@ -1028,6 +1116,7 @@ async fn make_deposits(
 
 fn write_contract_addresses_to_env(
     contract_addresses: ContractAddresses,
+    native_token_l1_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
@@ -1104,6 +1193,11 @@ fn write_contract_addresses_to_env(
         writer,
         "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={:#x}",
         contract_addresses.sequencer_registry_address
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_NATIVE_TOKEN_L1_ADDRESS={:#x}",
+        native_token_l1_address
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())

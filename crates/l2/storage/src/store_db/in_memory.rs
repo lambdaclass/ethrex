@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -46,8 +46,8 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
-    /// Map of block number to L1 blob base fee
-    l1_blob_base_fee_by_block: HashMap<BlockNumber, u64>,
+    /// Map of block number to FeeConfig
+    fee_config_by_block: HashMap<BlockNumber, FeeConfig>,
 }
 
 impl Store {
@@ -337,24 +337,24 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.state_roots.keys().max().cloned())
     }
 
-    async fn store_l1_blob_base_fee_by_block(
+    async fn store_fee_config_by_block(
         &self,
         block_number: BlockNumber,
-        l1_blob_base_fee: u64,
+        fee_config: FeeConfig,
     ) -> Result<(), RollupStoreError> {
         self.inner()?
-            .l1_blob_base_fee_by_block
-            .insert(block_number, l1_blob_base_fee);
+            .fee_config_by_block
+            .insert(block_number, fee_config);
         Ok(())
     }
 
-    async fn get_l1_blob_base_fee_by_block(
+    async fn get_fee_config_by_block(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<u64>, RollupStoreError> {
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
         Ok(self
             .inner()?
-            .l1_blob_base_fee_by_block
+            .fee_config_by_block
             .get(&block_number)
             .cloned())
     }

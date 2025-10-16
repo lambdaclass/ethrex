@@ -7,7 +7,7 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use tracing::info;
@@ -356,22 +356,19 @@ impl Store {
             .await
     }
 
-    pub async fn store_l1_blob_base_fee_by_block(
+    pub async fn store_fee_config_by_block(
         &self,
         block_number: BlockNumber,
-        l1_blob_base_fee: u64,
+        fee_config: FeeConfig,
     ) -> Result<(), RollupStoreError> {
         self.engine
-            .store_l1_blob_base_fee_by_block(block_number, l1_blob_base_fee)
+            .store_fee_config_by_block(block_number, fee_config)
             .await
     }
-
-    pub async fn get_l1_blob_base_fee_by_block(
+    pub async fn get_fee_config_by_block(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<u64>, RollupStoreError> {
-        self.engine
-            .get_l1_blob_base_fee_by_block(block_number)
-            .await
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        self.engine.get_fee_config_by_block(block_number).await
     }
 }

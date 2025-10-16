@@ -259,12 +259,12 @@ pub fn get_nonce_diff(
     account_update: &AccountUpdate,
     db: &impl VmDatabase,
 ) -> Result<u16, StateDiffError> {
-    // Get previous account_info either from store or cache
-    let account_info = db.get_account_info(account_update.address)?;
+    // Get previous account_state either from store or cache
+    let account_state = db.get_account_state(account_update.address)?;
 
     // Get previous nonce
-    let prev_nonce = match account_info {
-        Some(info) => info.nonce,
+    let prev_nonce = match account_state {
+        Some(state) => state.nonce,
         None => 0,
     };
 

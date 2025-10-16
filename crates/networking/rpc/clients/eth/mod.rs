@@ -11,6 +11,7 @@ use crate::{
         block::RpcBlock,
         block_identifier::BlockIdentifier,
         receipt::{RpcLog, RpcReceipt},
+        transaction::RpcTransaction,
     },
     utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
@@ -275,10 +276,10 @@ impl EthClient {
         }
 
         // Add the nonce just if present, otherwise the RPC will use the latest nonce
-        if let Some(nonce) = transaction.nonce {
-            if let Value::Object(ref mut map) = data {
-                map.insert("nonce".to_owned(), json!(format!("{nonce:#x}")));
-            }
+        if let Some(nonce) = transaction.nonce
+            && let Value::Object(ref mut map) = data
+        {
+            map.insert("nonce".to_owned(), json!(format!("{nonce:#x}")));
         }
 
         let request = RpcRequest::new("eth_estimateGas", Some(vec![data, json!("latest")]));
@@ -614,7 +615,7 @@ impl EthClient {
     pub async fn get_transaction_by_hash(
         &self,
         tx_hash: H256,
-    ) -> Result<Option<GetTransactionByHashTransaction>, EthClientError> {
+    ) -> Result<Option<RpcTransaction>, EthClientError> {
         let params = Some(vec![json!(format!("{tx_hash:#x}"))]);
         let request = RpcRequest::new("eth_getTransactionByHash", params);
 

@@ -28,6 +28,8 @@ use sha3::{Digest, Keccak256};
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+#[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
 use tokio_util::sync::CancellationToken;
 
@@ -403,16 +405,21 @@ impl Blockchain {
         self.finalize_payload(&mut context).await?;
 
         let interval = Instant::now().duration_since(since).as_millis();
-        tracing::info!(
+
+        tracing::debug!(
             "[METRIC] BUILDING PAYLOAD TOOK: {interval} ms, base fee {}",
             base_fee
         );
+        metrics!(METRICS_BLOCKS.set_block_building_ms(interval as i64));
+        metrics!(METRICS_BLOCKS.set_block_building_base_fee(base_fee as i64));
         if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
             let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
             if interval != 0 {
                 let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-                tracing::info!(
+                metrics!(METRICS_BLOCKS.set_latest_gigagas_block_building(throughput));
+
+                tracing::debug!(
                     "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
                 );
             }
@@ -545,7 +552,7 @@ impl Blockchain {
                 }
                 // Ignore following txs from sender
                 Err(e) => {
-                    error!("Failed to execute transaction: {tx_hash:x}, {e}");
+                    debug!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     txs.pop();
                     continue;

@@ -24,8 +24,6 @@ pub struct ProgramOutput {
     pub chain_id: U256,
     /// amount of non-privileged transactions
     pub non_privileged_count: U256,
-    /// fee that the operator will receive for each transaction included in a block
-    pub operator_fee: U256,
 }
 
 impl ProgramOutput {
@@ -42,7 +40,6 @@ impl ProgramOutput {
             self.last_block_hash.to_fixed_bytes(),
             self.chain_id.to_big_endian(),
             self.non_privileged_count.to_big_endian(),
-            self.operator_fee.to_big_endian(),
         ]
         .concat()
     }

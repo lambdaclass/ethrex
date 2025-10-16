@@ -8,8 +8,10 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
 use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::sync::SyncMode;
-use ethrex_p2p::types::Node;
+use ethrex_p2p::{
+    discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
+    types::Node,
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use tracing::{Level, info, warn};
@@ -67,7 +69,7 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
-    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
+    #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options")]
     pub syncmode: SyncMode,
     #[arg(
         long = "metrics.addr",
@@ -176,6 +178,22 @@ pub struct Options {
     )]
     pub discovery_port: String,
     #[arg(
+        long = "p2p.tx-broadcasting-interval",
+        default_value_t = BROADCAST_INTERVAL_MS,
+        value_name = "INTERVAL_MS",
+        help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.",
+        help_heading = "P2P options"
+    )]
+    pub tx_broadcasting_time_interval: u64,
+    #[arg(
+        long = "target.peers",
+        default_value_t = TARGET_PEERS,
+        value_name = "MAX_PEERS",
+        help = "Max amount of connected peers.",
+        help_heading = "P2P options"
+    )]
+    pub target_peers: usize,
+    #[arg(
         long = "block-producer.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
@@ -200,6 +218,7 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
@@ -219,6 +238,7 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
@@ -246,6 +266,8 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            tx_broadcasting_time_interval: Default::default(),
+            target_peers: Default::default(),
             extra_data: get_minimal_client_version(),
         }
     }
@@ -438,7 +460,7 @@ pub async fn import_blocks(
             .collect::<Vec<_>>();
         // Execute block by block
         let mut last_progress_log = Instant::now();
-        for (index, block) in blocks.iter().enumerate() {
+        for (index, block) in blocks.into_iter().enumerate() {
             let hash = block.hash();
             let number = block.header.number;
 

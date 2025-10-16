@@ -39,8 +39,7 @@ ethrex l2 deploy \
     --aligned.aggregator-address <ALIGNED_AGGREGATOR_ADDRESS> \
     --on-chain-proposer-owner <OWNER_ADDRESS> \
     --bridge-owner <OWNER_ADDRESS> \
-    --randomize-contract-deployment \
-    --operator-fee <amount_in_wei>
+    --randomize-contract-deployment
 ```
 
 You can find a genesis example in the [repo](https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json).
