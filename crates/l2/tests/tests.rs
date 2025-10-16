@@ -2104,7 +2104,7 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
         .unwrap();
     let gas_used = tx_receipt.tx_info.gas_used;
     let max_fee_per_gas = rpc_tx.tx.max_fee_per_gas().unwrap();
-    let max_priority_fee_per_gas: u64 = rpc_tx.tx.max_priority_fee().unwrap().try_into().unwrap();
+    let max_priority_fee_per_gas: u64 = rpc_tx.tx.max_priority_fee().unwrap();
 
     let base_fee_per_gas = l2_client
         .get_block_by_number(
