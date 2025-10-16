@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-16
+
+- Reduce allocations in `Nibbles` in trie operation [#4913](https://github.com/lambdaclass/ethrex/pull/4913)
+
 ### 2025-10-14
 
 - Improve get_closest_nodes p2p performance [#4838](https://github.com/lambdaclass/ethrex/pull/4838)
