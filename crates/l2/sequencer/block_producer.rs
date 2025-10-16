@@ -6,7 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
@@ -210,6 +210,7 @@ impl BlockProducer {
         let transactions_count = block.body.transactions.len();
         let block_number = block.header.number;
         let block_hash = block.hash();
+        self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
             .store_block(block, account_updates_list, execution_result)
             .await?;
@@ -233,6 +234,17 @@ impl BlockProducer {
             METRICS_TX.set_transactions_per_second(tps);
         );
 
+        Ok(())
+    }
+    async fn store_fee_config_by_block(&self, block_number: u64) -> Result<(), BlockProducerError> {
+        let BlockchainType::L2(fee_config) = self.blockchain.options.r#type else {
+            error!("Invalid blockchain type. Expected L2.");
+            return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
+        };
+
+        self.rollup_store
+            .store_fee_config_by_block(block_number, fee_config)
+            .await?;
         Ok(())
     }
 }

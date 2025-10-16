@@ -1934,7 +1934,7 @@ async fn test_deploy(
         .get_balance(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let total_fees = deploy_fees.base_fees + deploy_fees.priority_fees + deploy_fees.operator_fees;
+    let total_fees = deploy_fees.total();
 
     assert_eq!(
         deployer_balance_after_deploy,
@@ -2097,14 +2097,14 @@ impl AddAssign for FeesDetails {
 }
 
 async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> FeesDetails {
-    let tx = l2_client
+    let rpc_tx = l2_client
         .get_transaction_by_hash(tx_receipt.tx_info.transaction_hash)
         .await
         .unwrap()
         .unwrap();
     let gas_used = tx_receipt.tx_info.gas_used;
-    let max_fee_per_gas = tx.max_fee_per_gas;
-    let max_priority_fee_per_gas = tx.max_priority_fee_per_gas;
+    let max_fee_per_gas = rpc_tx.tx.max_fee_per_gas().unwrap();
+    let max_priority_fee_per_gas: u64 = rpc_tx.tx.max_priority_fee().unwrap().try_into().unwrap();
 
     let base_fee_per_gas = l2_client
         .get_block_by_number(
@@ -2126,8 +2126,10 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
     .try_into()
     .unwrap();
 
-    let priority_fees =
-        min(max_priority_fee_per_gas, max_fee_per_gas - base_fee_per_gas) * gas_used;
+    let priority_fees = min(
+        max_priority_fee_per_gas,
+        max_fee_per_gas - base_fee_per_gas - operator_fee_per_gas,
+    ) * gas_used;
 
     let operator_fees = operator_fee_per_gas * gas_used;
     let base_fees = base_fee_per_gas * gas_used;

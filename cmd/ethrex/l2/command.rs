@@ -348,10 +348,7 @@ impl Command {
                                     "Transaction {:#x} not found",
                                     log.transaction_hash
                                 ))?;
-                            l2_blob_hashes.extend(tx.blob_versioned_hashes.ok_or_eyre(format!(
-                                "Blobs not found in transaction {:#x}",
-                                log.transaction_hash
-                            ))?);
+                            l2_blob_hashes.extend(tx.tx.blob_versioned_hashes());
                         }
 
                         // Get blobs from block's slot and only keep L2 commitment's blobs

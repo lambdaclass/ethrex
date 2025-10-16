@@ -808,7 +808,7 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<FeeConfig>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT fee_config FROM fee_config WHERE block_number = ?1",
+                "SELECT * FROM fee_config WHERE block_number = ?1",
                 vec![block_number],
             )
             .await?;
