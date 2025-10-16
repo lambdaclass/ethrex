@@ -842,54 +842,53 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
 
-    let result = if batch.is_empty() {
-        substrate_bn::Gt::one()
-    } else {
-        let mut valid_batch = Vec::with_capacity(batch.len());
-        for (g1, g2) in batch {
-            let g1: SubstrateG1 = if g1.is_zero() {
-                SubstrateG1::zero()
-            } else {
-                let (g1_x, g1_y) = (
-                    Fq::from_slice(&g1.0.to_big_endian())
+    if batch.is_empty() {
+        return Ok(true);
+    }
+    let mut valid_batch = Vec::with_capacity(batch.len());
+    for (g1, g2) in batch {
+        let g1: SubstrateG1 = if g1.is_zero() {
+            SubstrateG1::zero()
+        } else {
+            let (g1_x, g1_y) = (
+                Fq::from_slice(&g1.0.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+                Fq::from_slice(&g1.1.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+            );
+            AffineG1::new(g1_x, g1_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+                .into()
+        };
+        let g2: SubstrateG2 = if g2.is_zero() {
+            SubstrateG2::zero()
+        } else {
+            let (g2_x, g2_y) = (
+                Fq2::new(
+                    Fq::from_slice(&g2.0.to_big_endian())
                         .map_err(|_| PrecompileError::ParsingInputError)?,
-                    Fq::from_slice(&g1.1.to_big_endian())
+                    Fq::from_slice(&g2.1.to_big_endian())
                         .map_err(|_| PrecompileError::ParsingInputError)?,
-                );
-                AffineG1::new(g1_x, g1_y)
-                    .map_err(|_| PrecompileError::InvalidPoint)?
-                    .into()
-            };
-            let g2: SubstrateG2 = if g2.is_zero() {
-                SubstrateG2::zero()
-            } else {
-                let (g2_x, g2_y) = (
-                    Fq2::new(
-                        Fq::from_slice(&g2.0.to_big_endian())
-                            .map_err(|_| PrecompileError::ParsingInputError)?,
-                        Fq::from_slice(&g2.1.to_big_endian())
-                            .map_err(|_| PrecompileError::ParsingInputError)?,
-                    ),
-                    Fq2::new(
-                        Fq::from_slice(&g2.2.to_big_endian())
-                            .map_err(|_| PrecompileError::ParsingInputError)?,
-                        Fq::from_slice(&g2.3.to_big_endian())
-                            .map_err(|_| PrecompileError::ParsingInputError)?,
-                    ),
-                );
-                AffineG2::new(g2_x, g2_y)
-                    .map_err(|_| PrecompileError::InvalidPoint)?
-                    .into()
-            };
+                ),
+                Fq2::new(
+                    Fq::from_slice(&g2.2.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                    Fq::from_slice(&g2.3.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                ),
+            );
+            AffineG2::new(g2_x, g2_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+                .into()
+        };
 
-            if g1.is_zero() || g2.is_zero() {
-                continue;
-            }
-            valid_batch.push((g1, g2));
+        if g1.is_zero() || g2.is_zero() {
+            continue;
         }
+        valid_batch.push((g1, g2));
+    }
 
-        substrate_bn::pairing_batch(&valid_batch)
-    };
+    let result = substrate_bn::pairing_batch(&valid_batch);
 
     Ok(result == substrate_bn::Gt::one())
 }
@@ -904,53 +903,53 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     type ProjectiveG1 = ShortWeierstrassProjectivePoint<LambdaworksG1>;
     type ProjectiveG2 = ShortWeierstrassProjectivePoint<LambdaworksG2>;
 
-    let result = if batch.is_empty() {
-        QuadraticExtensionFieldElement::one()
-    } else {
-        let mut valid_batch = Vec::with_capacity(batch.len());
-        for (g1, g2) in batch {
-            let g1 = if g1.is_zero() {
-                ProjectiveG1::neutral_element()
-            } else {
-                let (g1_x, g1_y) = (
-                    Fq::from_bytes_be(&g1.0.to_big_endian())
-                        .map_err(|_| InternalError::msg("failed to parse g1 x"))?,
-                    Fq::from_bytes_be(&g1.1.to_big_endian())
-                        .map_err(|_| InternalError::msg("failed to parse g1 y"))?,
-                );
-                LambdaworksG1::create_point_from_affine(g1_x, g1_y)
-                    .map_err(|_| PrecompileError::InvalidPoint)?
-            };
-            let g2 = if g2.is_zero() {
-                ProjectiveG2::neutral_element()
-            } else {
-                let (g2_x, g2_y) = {
-                    let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
-                    let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
-                    let (x, y) = (
-                        Fq2::from_bytes_be(&x_bytes)
-                            .map_err(|_| InternalError::msg("failed to parse g2 x"))?,
-                        Fq2::from_bytes_be(&y_bytes)
-                            .map_err(|_| InternalError::msg("failed to parse g2 y"))?,
-                    );
-                    (x, y)
-                };
-                LambdaworksG2::create_point_from_affine(g2_x, g2_y)
-                    .map_err(|_| PrecompileError::InvalidPoint)?
-            };
-            if !g2.is_in_subgroup() {
-                return Err(PrecompileError::PointNotInSubgroup.into());
-            }
+    if batch.is_empty() {
+        return Ok(true);
+    }
 
-            if g1.is_neutral_element() || g2.is_neutral_element() {
-                continue;
-            }
-            valid_batch.push((g1, g2));
+    let mut valid_batch = Vec::with_capacity(batch.len());
+    for (g1, g2) in batch {
+        let g1 = if g1.is_zero() {
+            ProjectiveG1::neutral_element()
+        } else {
+            let (g1_x, g1_y) = (
+                Fq::from_bytes_be(&g1.0.to_big_endian())
+                    .map_err(|_| InternalError::msg("failed to parse g1 x"))?,
+                Fq::from_bytes_be(&g1.1.to_big_endian())
+                    .map_err(|_| InternalError::msg("failed to parse g1 y"))?,
+            );
+            LambdaworksG1::create_point_from_affine(g1_x, g1_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+        };
+        let g2 = if g2.is_zero() {
+            ProjectiveG2::neutral_element()
+        } else {
+            let (g2_x, g2_y) = {
+                let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
+                let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
+                let (x, y) = (
+                    Fq2::from_bytes_be(&x_bytes)
+                        .map_err(|_| InternalError::msg("failed to parse g2 x"))?,
+                    Fq2::from_bytes_be(&y_bytes)
+                        .map_err(|_| InternalError::msg("failed to parse g2 y"))?,
+                );
+                (x, y)
+            };
+            LambdaworksG2::create_point_from_affine(g2_x, g2_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+        };
+        if !g2.is_in_subgroup() {
+            return Err(PrecompileError::PointNotInSubgroup.into());
         }
-        let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
-        BN254AtePairing::compute_batch(&valid_batch_refs)
-            .map_err(|_| PrecompileError::BN254AtePairingError)?
-    };
+
+        if g1.is_neutral_element() || g2.is_neutral_element() {
+            continue;
+        }
+        valid_batch.push((g1, g2));
+    }
+    let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
+    let result = BN254AtePairing::compute_batch(&valid_batch_refs)
+        .map_err(|_| PrecompileError::BN254AtePairingError)?;
 
     Ok(result == QuadraticExtensionFieldElement::one())
 }
