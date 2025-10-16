@@ -185,7 +185,7 @@ jobs:
 
       - name: Deploy contracts
         run: |
-          sleep 120
+          sleep 30
           touch cmd/.env
           cd crates/l2
           if [ "${{ matrix.use_native_token }}" = true ]; then
@@ -380,8 +380,14 @@ jobs:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
-      - name: Start L1 & Deploy contracts
+      - name: Start L1
         run: |
+          cd crates/l2
+          docker compose up --detach ethrex_l1
+
+      - name: Deploy contracts
+        run: |
+          sleep 30
           touch cmd/.env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
