@@ -548,7 +548,7 @@ impl Store {
             });
             self.db.write(batch)?;
             dbg!(snapshot_pivot_rx.recv().unwrap());
-            match res {
+            match dbg!(res) {
                 Err(StoreError::PivotChanged) => {
                     if let Ok(value) = snapshot_pivot_rx.try_recv() {
                         match dbg!(value) {
