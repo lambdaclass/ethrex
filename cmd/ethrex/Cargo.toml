@@ -13,6 +13,7 @@ ethrex-config.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-p2p.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
@@ -70,6 +71,7 @@ c-kzg = [
   "ethrex-common/c-kzg",
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
+  "ethrex-crypto/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb"]
