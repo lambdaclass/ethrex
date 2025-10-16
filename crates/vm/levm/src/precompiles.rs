@@ -821,7 +821,10 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
         }
 
         #[cfg(feature = "sp1")]
-        break 'inner pairing_substrate(&batch)?;
+        {
+            println!("Using substrate_bn for pairing");
+            break 'inner pairing_substrate(&batch)?;
+        }
 
         // default
         break 'inner pairing_lambdaworks(&batch)?;
