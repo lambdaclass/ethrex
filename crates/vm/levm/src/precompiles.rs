@@ -822,7 +822,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
         #[cfg(feature = "sp1")]
         {
-            println!("Using substrate_bn for pairing");
+            compile_error!("TODO OK");
             break 'inner pairing_substrate(&batch)?;
         }
 
