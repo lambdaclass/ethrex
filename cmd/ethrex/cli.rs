@@ -18,12 +18,13 @@ use tracing::{Level, info, warn};
 
 use crate::{
     initializers::{get_network, init_blockchain, init_store, init_tracing, load_store},
-    l2::{
-        self,
-        command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
-    },
     utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
+
+pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
+
+#[cfg(feature = "l2")]
+pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 use ethrex_config::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
@@ -136,6 +137,34 @@ pub struct Options {
     )]
     pub http_port: String,
     #[arg(
+        long = "ws.enabled",
+        default_value = "false",
+        help = "Enable websocket rpc server. Disabled by default.",
+        help_heading = "RPC options",
+        env = "ETHREX_ENABLE_WS"
+    )]
+    pub ws_enabled: bool,
+    #[arg(
+        long = "ws.addr",
+        default_value = "0.0.0.0",
+        value_name = "ADDRESS",
+        requires = "ws_enabled",
+        help = "Listening address for the websocket rpc server.",
+        help_heading = "RPC options",
+        env = "ETHREX_WS_ADDR"
+    )]
+    pub ws_addr: String,
+    #[arg(
+        long = "ws.port",
+        default_value = "8546",
+        value_name = "PORT",
+        requires = "ws_enabled",
+        help = "Listening port for the websocket rpc server.",
+        help_heading = "RPC options",
+        env = "ETHREX_WS_PORT"
+    )]
+    pub ws_port: String,
+    #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -223,6 +252,7 @@ impl Options {
         }
     }
 
+    #[cfg(feature = "l2")]
     pub fn default_l2() -> Self {
         Self {
             network: Some(Network::LocalDevnetL2),
@@ -249,6 +279,9 @@ impl Default for Options {
         Self {
             http_addr: Default::default(),
             http_port: Default::default(),
+            ws_enabled: false,
+            ws_addr: Default::default(),
+            ws_port: Default::default(),
             log_level: Level::INFO,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
@@ -333,14 +366,16 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[cfg(feature = "l2")]
     #[command(name = "l2")]
-    L2(l2::L2Command),
+    L2(crate::l2::L2Command),
 }
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
         match self {
+            #[cfg(feature = "l2")]
             Self::L2(_) => {}
             _ => {
                 init_tracing(opts);
@@ -382,6 +417,7 @@ impl Subcommand {
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
             }
+            #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
 

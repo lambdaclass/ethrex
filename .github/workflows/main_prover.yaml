@@ -56,7 +56,7 @@ jobs:
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
-          cargo test l2 --no-run --release
+          cargo test l2 --features l2 --no-run --release
 
       - name: Start L1
         run: |

@@ -82,7 +82,7 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
@@ -95,7 +95,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -115,7 +115,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -135,7 +135,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
 	l2 --dev
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
@@ -152,7 +152,7 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pgrep -a -f "ethrex l2" | awk '!/prover/ {print $1}' | xargs -r kill -s SIGINT
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
@@ -170,25 +170,25 @@ build-prover-sp1:
 	cargo build --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml --bin ethrex
 
 build-prover-risc0:
-	cargo build --release --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml --bin ethrex
+	cargo build --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml --bin ethrex
 
 build-prover-exec:
-	cargo build --release --features "$(GPU?)" --manifest-path ../../Cargo.toml --bin ethrex
+	cargo build --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml --bin ethrex
 
 init-prover-sp1:
-	cargo run --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend sp1
 
 init-prover-risc0:
-	cargo run --release --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend risc0
 
 init-prover-exec:
-	cargo run --release --features "$(GPU?)" --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend exec
@@ -240,7 +240,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 # State reconstruction tests
 state-diff-test:
 	touch .env
-	cargo run --release --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
 	l2 reconstruct \
 	-g ../../fixtures/genesis/l2.json \
 	-b ../../fixtures/blobs/ \
