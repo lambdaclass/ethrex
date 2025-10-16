@@ -429,7 +429,7 @@ impl GenServer for PeerConnectionServer {
                             .version
                             .clone()
                             .unwrap_or("-".to_string());
-                        log_peer_warn(
+                        log_peer_debug(
                             &established_state.node,
                             &format!(
                                 "Error handling cast message: {e}, for client: {} with capabilities {:?}",

@@ -162,8 +162,15 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let ws_socket_opts = if opts.ws_enabled {
+        Some(get_ws_socket_addr(opts))
+    } else {
+        None
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
+        ws_socket_opts,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -367,6 +374,11 @@ pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
         .expect("Failed to parse http address and port")
 }
 
+pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
+    parse_socket_addr(&opts.ws_addr, &opts.ws_port)
+        .expect("Failed to parse websocket address and port")
+}
+
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
     if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
@@ -403,6 +415,8 @@ pub async fn init_l1(
     display_chain_initialization(&genesis);
 
     raise_fd_limit()?;
+    debug!("Preloading KZG trusted setup");
+    ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store = init_store(datadir, genesis).await;
 
