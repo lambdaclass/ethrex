@@ -637,7 +637,7 @@ impl StoreEngine for Store {
                 for (key, value) in nodes {
                     let is_leaf = key.len() == 65 || key.len() == 131;
 
-                    if is_leaf && last_written > key {
+                    if is_leaf && key > last_written {
                         continue;
                     }
                     let cf = if is_leaf {
