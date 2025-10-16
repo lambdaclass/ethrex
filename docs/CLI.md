@@ -14,7 +14,6 @@ Commands:
   import              Import blocks to the database
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
-  l2
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -84,10 +83,15 @@ P2P options:
 
           [default: 30303]
     
-        --p2p.tx-broadcasting-interval <INTERVAL_MS>
-            Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
+      --p2p.tx-broadcasting-interval <INTERVAL_MS>
+          Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
 
-            [default: 1000]
+          [default: 1000]
+
+      --target.peers <MAX_PEERS>
+          Max amount of connected peers.
+
+          [default: 100]
 
 RPC options:
       --http.addr <ADDRESS>
@@ -101,6 +105,23 @@ RPC options:
 
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
+
+      --ws.enabled
+          Enable websocket rpc server. Disabled by default.
+
+          [env: ETHREX_ENABLE_WS=]
+
+      --ws.addr <ADDRESS>
+          Listening address for the websocket rpc server.
+
+          [env: ETHREX_WS_ADDR=]
+          [default: 0.0.0.0]
+
+      --ws.port <PORT>
+          Listening port for the websocket rpc server.
+
+          [env: ETHREX_WS_PORT=]
+          [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
@@ -121,7 +142,7 @@ Block producer options:
       --block-producer.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 0.1.0"]
+          [default: "ethrex 3.0.0"]
 ```
 
 <!-- END_CLI_HELP -->

@@ -8,11 +8,12 @@ use super::{
     codec::RLPxCodec,
     server::{Initiator, Receiver},
 };
+#[cfg(feature = "l2")]
+use crate::rlpx::l2::l2_connection::L2ConnState;
 use crate::{
     rlpx::{
         connection::server::{ConnectionState, Established},
         error::PeerConnectionError,
-        l2::l2_connection::L2ConnState,
         message::EthCapVersion,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
@@ -140,6 +141,7 @@ pub(crate) async fn perform(
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
             peer_table: context.table.clone(),
+            #[cfg(feature = "l2")]
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
@@ -163,7 +165,7 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     mut stream: S,
 ) -> Result<LocalState, PeerConnectionError> {
     let peer_pk =
-        compress_pubkey(remote_public_key).ok_or_else(PeerConnectionError::InvalidPeerId)?;
+        compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
@@ -183,7 +185,7 @@ async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     mut stream: S,
 ) -> Result<LocalState, PeerConnectionError> {
     let peer_pk =
-        compress_pubkey(remote_public_key).ok_or_else(PeerConnectionError::InvalidPeerId)?;
+        compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
@@ -205,10 +207,10 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
-        .ok_or_else(PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let msg = &msg_bytes
         .get(2..)
-        .ok_or_else(PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let (auth, remote_ephemeral_key) = decode_auth_message(signer, msg, size_data)?;
 
     Ok(RemoteState {
@@ -227,10 +229,10 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
-        .ok_or_else(PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let msg = &msg_bytes
         .get(2..)
-        .ok_or_else(PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let ack = decode_ack_message(signer, msg, size_data)?;
     let remote_ephemeral_key = ack
         .get_ephemeral_pubkey()
@@ -254,7 +256,7 @@ async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
     let ack_data = [buf[0], buf[1]];
     let msg_size = u16::from_be_bytes(ack_data) as usize;
     if msg_size > P2P_MAX_MESSAGE_SIZE {
-        return Err(PeerConnectionError::InvalidMessageLength());
+        return Err(PeerConnectionError::InvalidMessageLength);
     }
     buf.resize(msg_size + 2, 0);
 
@@ -315,7 +317,7 @@ fn decode_auth_message(
 
     // Derive a shared secret from the static keys.
     let peer_pk =
-        compress_pubkey(auth.public_key).ok_or_else(PeerConnectionError::InvalidPeerId)?;
+        compress_pubkey(auth.public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
     let static_shared_secret = ecdh_xchng(static_key, &peer_pk).map_err(|error| {
         PeerConnectionError::CryptographyError(format!(
             "Invalid generated static shared secret: {error}"
@@ -367,13 +369,13 @@ fn decrypt_message(
     // public-key (65) || iv (16) || ciphertext || mac (32)
     let (pk, rest) = msg
         .split_at_checked(65)
-        .ok_or_else(PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let (iv, rest) = rest
         .split_at_checked(16)
-        .ok_or_else(PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let (c, d) = rest
         .split_at_checked(rest.len() - 32)
-        .ok_or_else(PeerConnectionError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
 
     // Derive the message shared secret.
     let shared_secret = ecdh_xchng(static_key, &PublicKey::from_slice(pk)?).map_err(|error| {

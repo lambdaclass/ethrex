@@ -1,4 +1,10 @@
-use crate::{rlp::AccountCodeHashRLP, trie_db::rocksdb_locked::RocksDBLockedTrieDB};
+use crate::{
+    rlp::AccountCodeHashRLP,
+    trie_db::{
+        layering::{TrieLayerCache, TrieWrapper, apply_prefix},
+        rocksdb_locked::RocksDBLockedTrieDB,
+    },
+};
 use bytes::Bytes;
 use ethrex_common::{
     H256,
@@ -7,12 +13,16 @@ use ethrex_common::{
         Transaction,
     },
 };
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch,
 };
-use std::{collections::HashSet, path::Path, sync::Arc};
+use std::{
+    collections::HashSet,
+    path::Path,
+    sync::{Arc, RwLock},
+};
 use tracing::info;
 
 use crate::{
@@ -25,6 +35,9 @@ use crate::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use std::fmt::Debug;
+
+// TODO: use finalized hash to determine when to commit
+const COMMIT_THRESHOLD: usize = 128;
 
 /// Canonical block hashes column family: [`u8;_`] => [`Vec<u8>`]
 /// - [`u8;_`] = `block_number.to_le_bytes()`
@@ -76,20 +89,10 @@ const CF_CHAIN_DATA: &str = "chain_data";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
 const CF_SNAP_STATE: &str = "snap_state";
 
-/// State trie nodes column family: [`NodeHash`] => [`Vec<u8>`]
-/// - [`NodeHash`] = `node_hash.as_ref()`
+/// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
-
-/// Storage tries nodes column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = Composite key
-///   ```rust,no_run
-///     // let mut key = Vec::with_capacity(64);
-///     // key.extend_from_slice(address_hash.as_bytes());
-///     // key.extend_from_slice(node_hash.as_ref());
-///   ```
-/// - [`Vec<u8>`] = `node_data`
-const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
+const CF_TRIE_NODES: &str = "trie_nodes";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -104,6 +107,7 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 #[derive(Debug)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
+    trie_cache: Arc<RwLock<TrieLayerCache>>,
 }
 
 impl Store {
@@ -157,8 +161,7 @@ impl Store {
             CF_TRANSACTION_LOCATIONS,
             CF_CHAIN_DATA,
             CF_SNAP_STATE,
-            CF_STATE_TRIE_NODES,
-            CF_STORAGE_TRIES_NODES,
+            CF_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
         ];
@@ -222,7 +225,7 @@ impl Store {
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_STATE_TRIE_NODES | CF_STORAGE_TRIES_NODES => {
+                CF_TRIE_NODES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
@@ -286,7 +289,10 @@ impl Store {
             }
         }
 
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            trie_cache: Default::default(),
+        })
     }
 
     // Helper method to get column family handle
@@ -355,7 +361,6 @@ impl Store {
         batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
-
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
 
@@ -428,11 +433,32 @@ impl Store {
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
+        let trie_cache = self.trie_cache.clone();
+
+        let parent_state_root = self
+            .get_block_header_by_hash(
+                update_batch
+                    .blocks
+                    .first()
+                    .ok_or(StoreError::UpdateBatchNoBlocks)?
+                    .header
+                    .parent_hash,
+            )?
+            .map(|header| header.state_root)
+            .unwrap_or_default();
+
+        let last_state_root = update_batch
+            .blocks
+            .last()
+            .ok_or(StoreError::UpdateBatchNoBlocks)?
+            .header
+            .state_root;
 
         tokio::task::spawn_blocking(move || {
+            let _span = tracing::trace_span!("Block DB update").entered();
+
             let [
-                cf_state,
-                cf_storage,
+                cf_trie_nodes,
                 cf_receipts,
                 cf_codes,
                 cf_block_numbers,
@@ -442,8 +468,7 @@ impl StoreEngine for Store {
             ] = open_cfs(
                 &db,
                 [
-                    CF_STATE_TRIE_NODES,
-                    CF_STORAGE_TRIES_NODES,
+                    CF_TRIE_NODES,
                     CF_RECEIPTS,
                     CF_ACCOUNT_CODES,
                     CF_BLOCK_NUMBERS,
@@ -456,19 +481,31 @@ impl StoreEngine for Store {
             let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatch::default();
 
-            for (node_hash, node_data) in update_batch.account_updates {
-                batch.put_cf(&cf_state, node_hash.as_ref(), node_data);
-            }
-
-            for (address_hash, storage_updates) in update_batch.storage_updates {
-                for (node_hash, node_data) in storage_updates {
-                    // Key: address_hash + node_hash
-                    let mut key = Vec::with_capacity(64);
-                    key.extend_from_slice(address_hash.as_bytes());
-                    key.extend_from_slice(node_hash.as_ref());
-                    batch.put_cf(&cf_storage, key, node_data);
+            let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
+            if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
+                let nodes = trie.commit(root).unwrap_or_default();
+                for (key, value) in nodes {
+                    if value.is_empty() {
+                        batch.delete_cf(&cf_trie_nodes, key);
+                    } else {
+                        batch.put_cf(&cf_trie_nodes, key, value);
+                    }
                 }
             }
+            trie.put_batch(
+                parent_state_root,
+                last_state_root,
+                update_batch
+                    .storage_updates
+                    .into_iter()
+                    .flat_map(|(account_hash, nodes)| {
+                        nodes
+                            .into_iter()
+                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                    })
+                    .chain(update_batch.account_updates)
+                    .collect(),
+            );
 
             for block in update_batch.blocks {
                 let block_number = block.header.number;
@@ -1058,40 +1095,80 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
+    ) -> Result<Trie, StoreError> {
+        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: self.trie_cache.clone(),
+            db,
+            prefix: Some(hashed_address),
+        });
+        Ok(Trie::open(wrap_db, storage_root))
+    }
+
+    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: self.trie_cache.clone(),
+            db,
+            prefix: None,
+        });
+        Ok(Trie::open(wrap_db, state_root))
+    }
+
+    fn open_direct_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            CF_STORAGE_TRIES_NODES,
+            CF_TRIE_NODES,
             Some(hashed_address),
         )?);
         Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(
-            self.db.clone(),
-            CF_STATE_TRIE_NODES,
-            None,
-        )?);
+    fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         Ok(Trie::open(db, state_root))
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = RocksDBLockedTrieDB::new(self.db.clone(), CF_STATE_TRIE_NODES, None)?;
-        Ok(Trie::open(Box::new(db), state_root))
+        let db = Box::new(RocksDBLockedTrieDB::new(
+            self.db.clone(),
+            CF_TRIE_NODES,
+            None,
+        )?);
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: self.trie_cache.clone(),
+            db,
+            prefix: None,
+        });
+        Ok(Trie::open(wrap_db, state_root))
     }
 
     fn open_locked_storage_trie(
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = RocksDBLockedTrieDB::new(
+        let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
-            CF_STORAGE_TRIES_NODES,
-            Some(hashed_address),
-        )?;
-        Ok(Trie::open(Box::new(db), storage_root))
+            CF_TRIE_NODES,
+            None,
+        )?);
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: self.trie_cache.clone(),
+            db,
+            prefix: Some(hashed_address),
+        });
+        Ok(Trie::open(wrap_db, storage_root))
     }
 
     async fn forkchoice_update(
@@ -1348,21 +1425,31 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
+            let cf = db.cf_handle(CF_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom("Column family not found: CF_TRIE_NODES".to_string())
+            })?;
 
-        for (address_hash, nodes) in storage_trie_nodes {
-            for (node_hash, node_data) in nodes {
-                // Create composite key: address_hash + node_hash
-                let mut key = Vec::with_capacity(64);
-                key.extend_from_slice(address_hash.as_bytes());
-                key.extend_from_slice(node_hash.as_ref());
-                batch_ops.push((CF_STORAGE_TRIES_NODES.to_string(), key, node_data));
+            for (address_hash, nodes) in storage_trie_nodes {
+                for (node_hash, node_data) in nodes {
+                    let key = apply_prefix(Some(address_hash), node_hash);
+                    if node_data.is_empty() {
+                        batch.delete_cf(&cf, key.as_ref());
+                    } else {
+                        batch.put_cf(&cf, key.as_ref(), node_data);
+                    }
+                }
             }
-        }
 
-        self.write_batch_async(batch_ops).await
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn write_account_code_batch(
