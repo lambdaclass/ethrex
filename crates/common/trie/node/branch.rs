@@ -180,10 +180,21 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children[0];
-                let child = child_ref
-                    .get_node(db, base_path.current().append_new(choice_index as u8))?
-                    .ok_or(TrieError::InconsistentTree)?;
-                match child {
+                let child =
+                    child_ref.get_node(db, base_path.current().append_new(choice_index as u8))?;
+
+                #[cfg(feature = "replay")]
+                if child.is_none() {
+                    // With the eth_getProof method if a child is missing we know for sure that it's an extension node,
+                    // because these are the only ones we can't get when using that RPC endpoint.
+                    let reduced_node: ExtensionNode = ExtensionNode::new(
+                        Nibbles::from_hex(vec![choice_index as u8]),
+                        child_ref.clone(),
+                    );
+                    return Ok((Some(reduced_node.into()), value));
+                }
+
+                match child.ok_or(TrieError::InconsistentTree)? {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
                         Nibbles::from_hex(vec![choice_index as u8]),

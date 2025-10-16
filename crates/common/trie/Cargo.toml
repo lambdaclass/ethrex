@@ -27,6 +27,7 @@ crossbeam.workspace = true
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
+replay = []
 
 
 [dev-dependencies]
