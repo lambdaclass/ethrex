@@ -39,7 +39,7 @@ resolver = "2"
 default-members = ["cmd/ethrex"]
 
 [workspace.package]
-version = "0.1.0"
+version = "3.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
@@ -113,8 +113,8 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-spawned-concurrency = "0.4.0"
-spawned-rt = "0.4.0"
+spawned-concurrency = "0.4.1"
+spawned-rt = "0.4.1"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
@@ -123,6 +123,7 @@ rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
+indexmap = { version = "2.11.4" }
 
 rocksdb = "0.24.0"
 
