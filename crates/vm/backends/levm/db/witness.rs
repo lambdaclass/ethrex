@@ -2,7 +2,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountUpdate, Block, BlockHeader,
+        AccountState, AccountUpdate, Block, BlockHeader, ChainConfig,
         block_execution_witness::{GuestProgramState, GuestProgramStateError},
     },
 };
@@ -59,18 +59,13 @@ impl GuestProgramStateWrapper {
         self.lock_mutex()?.initialize_block_header_hashes(blocks)
     }
 
-    pub fn get_chain_config(
-        &self,
-    ) -> Result<ethrex_common::types::ChainConfig, GuestProgramStateError> {
+    pub fn get_chain_config(&self) -> Result<ChainConfig, GuestProgramStateError> {
         self.lock_mutex()?.get_chain_config()
     }
 }
 
 impl LevmDatabase for GuestProgramStateWrapper {
-    fn get_account_state(
-        &self,
-        address: Address,
-    ) -> Result<ethrex_common::types::AccountState, DatabaseError> {
+    fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
         self.lock_mutex()
             .map_err(|_| DatabaseError::Custom("Failed to lock db".to_string()))?
             .get_account_state(address)
