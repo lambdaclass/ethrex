@@ -58,7 +58,11 @@ pub fn verify_cell_kzg_proof_batch(
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         let mut cells = Vec::new();
         for blob in blobs {
-            cells.extend(c_kzg_settings.compute_cells(&(*blob).into())?.into_iter());
+            let blob: c_kzg::Blob = (*blob).into();
+            let (cells_blob, _cell_proofs) = c_kzg_settings
+                .compute_cells_and_kzg_proofs(&blob)
+                .map_err(KzgError::CKzg)?;
+            cells.extend(*cells_blob);
         }
         c_kzg::KzgSettings::verify_cell_kzg_proof_batch(
             c_kzg_settings,
