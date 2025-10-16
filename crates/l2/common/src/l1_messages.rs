@@ -44,17 +44,20 @@ impl L1Message {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// Represents a message from the L2 to the L1
+/// Represents a message from the L2 to another L2
 pub struct L2Message {
+    /// Chain id of the destination chain
     pub chain_id: U256,
-    /// Address that called the L1Messanger
+    /// Address that originated the transaction
     pub from: Address,
+    /// Address of the recipient in the destination chain
     pub to: Address,
+    /// Amount of ETH to send to the recipient
     pub value: U256,
+    /// Gas limit for the transaction execution in the destination chain
     pub gas_limit: U256,
+    /// Calldata for the transaction in the destination chain
     pub data: Bytes,
-    /// Message id emitted by the bridge contract
-    pub message_id: U256,
 }
 
 impl From<L2Message> for Value {
@@ -142,9 +145,6 @@ fn l2_message_from_log_data(log_data: &[u8]) -> Option<L2Message> {
     let gas_limit = U256::from_big_endian(log_data.get(offset..offset + 32)?);
     offset += 64; // 32 from gas_limit + 32 from data offset
 
-    let message_id = U256::from_big_endian(log_data.get(offset..offset + 32)?);
-    offset += 32;
-
     let data_len: usize = U256::from_big_endian(log_data.get(offset..offset + 32)?).as_usize();
     let data = Bytes::copy_from_slice(log_data.get(offset + 32..offset + 32 + data_len)?);
 
@@ -155,6 +155,5 @@ fn l2_message_from_log_data(log_data: &[u8]) -> Option<L2Message> {
         value,
         gas_limit,
         data,
-        message_id,
     })
 }
