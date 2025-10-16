@@ -106,7 +106,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     }
 
     /// @inheritdoc ICommonBridgeL2
-    function sendToL2(uint256 chainId, address to, uint256 destGasLimit, bytes calldata data) public payable {
+    function sendToL2(uint256 chainId, address to, uint256 destGasLimit, bytes calldata data) external override payable {
         _burnGas(destGasLimit);
         IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2{value: msg.value}(chainId, msg.sender, to, destGasLimit, data);
     }

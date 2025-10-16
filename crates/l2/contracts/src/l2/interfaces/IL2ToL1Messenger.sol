@@ -22,7 +22,7 @@ interface IL2ToL1Messenger {
         address to,
         uint256 value,
         uint256 gasLimit,
-        bytes data,
+        bytes data
     );
 
     /// @notice Sends the given data to the L1
