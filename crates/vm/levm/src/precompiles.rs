@@ -16,25 +16,19 @@ use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use k256::elliptic_curve::Field;
 use lambdaworks_math::cyclic_group::IsGroup;
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{BN254FieldElement, BN254TwistCurveFieldElement};
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{
+    BN254FieldElement, BN254TwistCurveFieldElement,
+};
 use lambdaworks_math::elliptic_curve::short_weierstrass::point::ShortWeierstrassProjectivePoint;
 use lambdaworks_math::{
     elliptic_curve::{
         short_weierstrass::curves::{
             bls12_381::{curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve},
-            bn_254::{
-                curve::BN254Curve,
-                field_extension::{BN254FieldModulus, Degree2ExtensionField},
-                pairing::BN254AtePairing,
-                twist::BN254TwistCurve,
-            },
+            bn_254::{curve::BN254Curve, pairing::BN254AtePairing, twist::BN254TwistCurve},
         },
         traits::{IsEllipticCurve, IsPairing},
     },
-    field::{
-        element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement,
-        fields::montgomery_backed_prime_fields::MontgomeryBackendPrimeField,
-    },
+    field::extensions::quadratic::QuadraticExtensionFieldElement,
     traits::ByteConversion,
     unsigned_integer::element::UnsignedInteger,
 };
@@ -817,7 +811,6 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
         let (g1, g2) = parse_bn254_coords(&input);
         if validate_bn254_coords(&g1, &g2)? {
             batch.push((g1, g2));
-        } else {
         }
     }
 
@@ -849,32 +842,41 @@ pub fn pairing_substrate(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     } else {
         let mut valid_batch = Vec::with_capacity(batch.len());
         for (g1, g2) in batch {
-            let (g1_x, g1_y) = (
-                Fq::from_slice(&g1.0.to_big_endian())
-                    .map_err(|_| PrecompileError::ParsingInputError)?,
-                Fq::from_slice(&g1.1.to_big_endian())
-                    .map_err(|_| PrecompileError::ParsingInputError)?,
-            );
-            let (g2_x, g2_y) = (
-                Fq2::new(
-                    Fq::from_slice(&g2.0.to_big_endian())
+            let g1: SubstrateG1 = if g1.0.is_zero() && g1.1.is_zero() {
+                SubstrateG1::zero()
+            } else {
+                let (g1_x, g1_y) = (
+                    Fq::from_slice(&g1.0.to_big_endian())
                         .map_err(|_| PrecompileError::ParsingInputError)?,
-                    Fq::from_slice(&g2.1.to_big_endian())
+                    Fq::from_slice(&g1.1.to_big_endian())
                         .map_err(|_| PrecompileError::ParsingInputError)?,
-                ),
-                Fq2::new(
-                    Fq::from_slice(&g2.2.to_big_endian())
-                        .map_err(|_| PrecompileError::ParsingInputError)?,
-                    Fq::from_slice(&g2.3.to_big_endian())
-                        .map_err(|_| PrecompileError::ParsingInputError)?,
-                ),
-            );
-            let g1: SubstrateG1 = AffineG1::new(g1_x, g1_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-                .into();
-            let g2: SubstrateG2 = AffineG2::new(g2_x, g2_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-                .into();
+                );
+                AffineG1::new(g1_x, g1_y)
+                    .map_err(|_| PrecompileError::InvalidPoint)?
+                    .into()
+            };
+            let g2: SubstrateG2 =
+                if g2.0.is_zero() && g2.1.is_zero() && g2.2.is_zero() && g2.3.is_zero() {
+                    SubstrateG2::zero()
+                } else {
+                    let (g2_x, g2_y) = (
+                        Fq2::new(
+                            Fq::from_slice(&g2.0.to_big_endian())
+                                .map_err(|_| PrecompileError::ParsingInputError)?,
+                            Fq::from_slice(&g2.1.to_big_endian())
+                                .map_err(|_| PrecompileError::ParsingInputError)?,
+                        ),
+                        Fq2::new(
+                            Fq::from_slice(&g2.2.to_big_endian())
+                                .map_err(|_| PrecompileError::ParsingInputError)?,
+                            Fq::from_slice(&g2.3.to_big_endian())
+                                .map_err(|_| PrecompileError::ParsingInputError)?,
+                        ),
+                    );
+                    AffineG2::new(g2_x, g2_y)
+                        .map_err(|_| PrecompileError::InvalidPoint)?
+                        .into()
+                };
 
             if g1.is_zero() || g2.is_zero() {
                 continue;
