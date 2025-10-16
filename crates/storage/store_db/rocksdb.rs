@@ -496,25 +496,28 @@ impl Store {
 
             let mut batch = WriteBatchWithTransaction::default();
             let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
-            iter.advance(last_written_account.to_bytes())?;
+            if last_written_account > Nibbles::default() {
+                iter.advance(last_written_account.to_bytes())?;
+            }
             let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
                 let account_state = AccountState::decode(&node.value)?;
+                let account_hash = H256::from_slice(&path.to_bytes());
                 let mut iter_inner = self
-                    .open_direct_storage_trie(
-                        H256::from_slice(&path.to_bytes()),
-                        account_state.storage_root,
-                    )?
+                    .open_direct_storage_trie(account_hash, account_state.storage_root)?
                     .into_iter();
-                iter_inner.advance(last_written_storage.to_bytes())?;
+                if last_written_storage > Nibbles::default() {
+                    iter_inner.advance(last_written_storage.to_bytes())?;
+                }
                 iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
                     let Node::Leaf(node) = node else {
                         return Ok(());
                     };
-                    batch.put_cf(&cf_misc, "last_written", path.as_ref());
-                    batch.put_cf(&cf_snapshot, path.as_ref(), node.value);
+                    let key = apply_prefix(Some(account_hash), path);
+                    batch.put_cf(&cf_misc, "last_written", key.as_ref());
+                    batch.put_cf(&cf_snapshot, key.as_ref(), node.value);
                     if let Ok(value) = snapshot_pivot_rx.try_recv() {
                         match value {
                             SnapshotControlMessage::Stop => {
