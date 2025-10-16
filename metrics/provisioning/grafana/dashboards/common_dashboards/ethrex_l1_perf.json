@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 16,
+  "id": 41,
   "links": [],
   "panels": [
     {
@@ -531,7 +531,23 @@
           },
           "unit": "Ggas/s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block_number"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -568,10 +584,23 @@
           "expr": "gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} - 0",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "Gigagas/s",
+          "legendFormat": "{{ instance }} Gigagas/s",
           "range": true,
           "refId": "A",
           "useBackend": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "{{instance}} Block Number",
+          "range": true,
+          "refId": "B"
         }
       ],
       "title": "Ggas/s",
@@ -674,7 +703,7 @@
           "includeNullMetadata": true,
           "instant": false,
           "interval": "",
-          "legendFormat": "BlockNumber",
+          "legendFormat": "{{ instance }} BlockNumber",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -682,6 +711,159 @@
       ],
       "title": "Block Height",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 50,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 5
+            },
+            "pointStrokeWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "points+lines"
+          },
+          "links": [
+            {
+              "title": "Show on Etherscan",
+              "url": "https://${network}.etherscan.io/block/${__data.fields[\"block\"]}"
+            }
+          ],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "gigagas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "si:Ggas/s"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "id": 47,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "last"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mapping": "auto",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "gigagas"
+              }
+            }
+          }
+        ],
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max_over_time(block_number{instance=~\"$instance(:\\\\d+)?$\"}[10s])",
+          "legendFormat": "block {{ instance }}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "gigagas{instance=~\"$instance(:\\\\d+)?$\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "ggas/s {{ instance }}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Ggas/s by Block",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "mode": "inner"
+          }
+        }
+      ],
+      "type": "xychart"
     },
     {
       "datasource": {
@@ -803,8 +985,8 @@
       },
       "gridPos": {
         "h": 12,
-        "w": 24,
-        "x": 0,
+        "w": 12,
+        "x": 12,
         "y": 13
       },
       "id": 12,
@@ -878,6 +1060,7 @@
           "editorMode": "builder",
           "expr": "block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
           "fullMetaSearch": false,
+          "hide": false,
           "includeNullMetadata": true,
           "legendFormat": "Block Number",
           "range": true,
@@ -890,7 +1073,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "disableTextWrap": false,
-          "editorMode": "builder",
+          "editorMode": "code",
           "expr": "gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
           "fullMetaSearch": false,
           "hide": false,
@@ -1323,6 +1506,23 @@
               "legend": false,
               "tooltip": false,
               "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
           "mappings": [],
@@ -1378,7 +1578,7 @@
           },
           "editorMode": "code",
           "expr": "process_open_fds{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "legendFormat": "FDs used %",
+          "legendFormat": "{{ instance }} FDs used",
           "range": true,
           "refId": "A"
         }
@@ -1421,6 +1621,7 @@
               "type": "linear"
             },
             "showPoints": "auto",
+            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1480,7 +1681,7 @@
           "expr": "datadir_size_bytes{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "Datadir Size (GB)",
+          "legendFormat": "{{ instance }} Datadir Size (GB)",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -1524,6 +1725,7 @@
               "type": "linear"
             },
             "showPoints": "auto",
+            "showValues": false,
             "spanNulls": true,
             "stacking": {
               "group": "A",
@@ -1580,7 +1782,7 @@
         {
           "editorMode": "code",
           "expr": "100 * sum by (instance) (rate(node_cpu_seconds_total{mode!=\"idle\", instance=~\"$instance(:\\\\d+)?$\"}[1m])) / sum by (instance) (rate(node_cpu_seconds_total{instance=~\"$instance(:\\\\d+)?$\"}[1m]))",
-          "legendFormat": "CPU Utilization %",
+          "legendFormat": "{{ instance }} CPU Utilization",
           "range": true,
           "refId": "A"
         }
@@ -1623,6 +1825,7 @@
               "type": "linear"
             },
             "showPoints": "auto",
+            "showValues": false,
             "spanNulls": true,
             "stacking": {
               "group": "A",
@@ -1719,7 +1922,7 @@
         {
           "editorMode": "code",
           "expr": "(node_memory_MemTotal_bytes{instance=~\"$instance(:\\\\d+)?$\"} - node_memory_MemAvailable_bytes{instance=~\"$instance(:\\\\d+)?$\"}) / (1024*1024*1024)",
-          "legendFormat": "Memory Used",
+          "legendFormat": "{{ instance }} Memory Used",
           "range": true,
           "refId": "A"
         },
@@ -1728,8 +1931,9 @@
           "exemplar": false,
           "expr": "node_memory_MemTotal_bytes{instance=~\"$instance(:\\\\d+)?$\"} / (1024*1024*1024)",
           "format": "time_series",
+          "hide": true,
           "instant": false,
-          "legendFormat": "Memory Total",
+          "legendFormat": "{{ instance }} Memory Total",
           "range": true,
           "refId": "B"
         }
@@ -1772,6 +1976,7 @@
               "type": "linear"
             },
             "showPoints": "auto",
+            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1831,7 +2036,7 @@
           },
           "editorMode": "code",
           "expr": "rate(process_cpu_seconds_total{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[1m])",
-          "legendFormat": "CPU cores used",
+          "legendFormat": "{{ instance }} CPU cores used",
           "range": true,
           "refId": "A"
         }
@@ -1874,6 +2079,7 @@
               "type": "linear"
             },
             "showPoints": "auto",
+            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1958,7 +2164,7 @@
           },
           "editorMode": "code",
           "expr": "process_resident_memory_bytes{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "legendFormat": "RSS",
+          "legendFormat": "{{ instance }} RSS",
           "range": true,
           "refId": "A"
         }
@@ -2049,5 +2255,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 11
+  "version": 12
 }
