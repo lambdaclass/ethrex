@@ -324,7 +324,6 @@ impl Store {
         let store_clone = store.clone();
         std::thread::spawn(move || {
             let mut rx = rx;
-            while rx.recv() != Ok(SnapshotControlMessage::Continue) {}
             loop {
                 match rx.recv() {
                     Ok(SnapshotControlMessage::Continue) => break,
