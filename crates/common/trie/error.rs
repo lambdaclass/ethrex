@@ -2,8 +2,6 @@ use ethereum_types::H256;
 use ethrex_rlp::error::RLPDecodeError;
 use thiserror::Error;
 
-use crate::NodeRef;
-
 #[derive(Debug, Error)]
 pub enum TrieError {
     #[error(transparent)]
