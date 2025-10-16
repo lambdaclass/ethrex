@@ -60,6 +60,7 @@ use crate::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
+        snap::TrieNodes,
         utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
     snap::{
@@ -270,7 +271,7 @@ impl GenServer for PeerConnectionServer {
                     initialize_connection(handle, &mut established_state, stream, eth_version).await
                 {
                     match &reason {
-                        PeerConnectionError::NoMatchingCapabilities()
+                        PeerConnectionError::NoMatchingCapabilities
                         | PeerConnectionError::HandshakeError(_) => {
                             established_state
                                 .peer_table
@@ -399,11 +400,11 @@ impl GenServer for PeerConnectionServer {
                     | PeerConnectionError::DisconnectReceived(_)
                     | PeerConnectionError::DisconnectSent(_)
                     | PeerConnectionError::HandshakeError(_)
-                    | PeerConnectionError::NoMatchingCapabilities()
-                    | PeerConnectionError::InvalidPeerId()
-                    | PeerConnectionError::InvalidMessageLength()
+                    | PeerConnectionError::NoMatchingCapabilities
+                    | PeerConnectionError::InvalidPeerId
+                    | PeerConnectionError::InvalidMessageLength
                     | PeerConnectionError::StateError(_)
-                    | PeerConnectionError::InvalidRecoveryId() => {
+                    | PeerConnectionError::InvalidRecoveryId => {
                         log_peer_debug(&established_state.node, &e.to_string());
                         return CastResponse::Stop;
                     }
@@ -484,6 +485,10 @@ async fn initialize_connection<S>(
 where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
 {
+    if state.peer_table.target_peers_reached().await? {
+        log_peer_warn(&state.node, "Reached target peer connections, discarding.");
+        return Err(PeerConnectionError::TooManyPeers);
+    }
     exchange_hello_messages(state, &mut stream).await?;
 
     // Update eth capability version to the negotiated version for further message decoding
@@ -723,6 +728,7 @@ fn match_disconnect_reason(error: &PeerConnectionError) -> Option<DisconnectReas
         PeerConnectionError::DisconnectSent(reason) => Some(*reason),
         PeerConnectionError::DisconnectReceived(reason) => Some(*reason),
         PeerConnectionError::RLPDecodeError(_) => Some(DisconnectReason::NetworkError),
+        PeerConnectionError::TooManyPeers => Some(DisconnectReason::TooManyPeers),
         // TODO build a proper matching between error types and disconnection reasons
         _ => None,
     }
@@ -802,7 +808,7 @@ where
             state.capabilities = hello_message.capabilities;
 
             if negotiated_eth_version == 0 {
-                return Err(PeerConnectionError::NoMatchingCapabilities());
+                return Err(PeerConnectionError::NoMatchingCapabilities);
             }
             debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
@@ -1039,8 +1045,11 @@ async fn handle_incoming_message(
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
-            let response = process_trie_nodes_request(req, state.storage.clone()).await?;
-            send(state, Message::TrieNodes(response)).await?
+            let id = req.id;
+            match process_trie_nodes_request(req, state.storage.clone()).await {
+                Ok(response) => send(state, Message::TrieNodes(response)).await?,
+                Err(_) => send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?,
+            }
         }
         #[cfg(feature = "l2")]
         Message::L2(req) if peer_supports_l2 => {

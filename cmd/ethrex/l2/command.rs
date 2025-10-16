@@ -20,7 +20,7 @@ use ethrex_l2_sdk::call_contract;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
-use ethrex_storage::{EngineType, Store, UpdateBatch};
+use ethrex_storage::{EngineType, Store};
 use ethrex_storage_rollup::StoreRollup;
 use eyre::OptionExt;
 use itertools::Itertools;
@@ -42,7 +42,6 @@ const _: () = {
 const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
 const UNPAUSE_CONTRACT_SELECTOR: &str = "unpause()";
 const REVERT_BATCH_SELECTOR: &str = "revertBatch(uint256)";
-
 #[derive(Parser)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct L2Command {
@@ -84,10 +83,8 @@ impl L2Command {
             let contract_addresses =
                 l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;
 
-            l2_options = l2::options::Options {
-                node_opts: crate::cli::Options::default_l2(),
-                ..Default::default()
-            };
+            l2_options.node_opts = crate::cli::Options::default_l2();
+            l2_options.populate_with_defaults();
             l2_options
                 .sequencer_opts
                 .committer_opts
@@ -404,11 +401,8 @@ impl Command {
 
                 // Get genesis
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
-                let genesis_block_hash = genesis_header.hash();
 
-                let mut new_trie = store
-                    .state_trie(genesis_block_hash)?
-                    .expect("Genesis block not found");
+                let mut current_state_root = genesis_header.state_root;
 
                 let mut last_block_number = 0;
                 let mut new_canonical_blocks = vec![];
@@ -432,37 +426,30 @@ impl Command {
                     let state_diff = StateDiff::decode(&blob)?;
 
                     // Apply all account updates to trie
-                    let account_updates = state_diff.to_account_updates(&new_trie)?;
+                    let trie = store.open_direct_state_trie(current_state_root)?;
+
+                    let account_updates = state_diff.to_account_updates(&trie)?;
+
                     let account_updates_list = store
-                        .apply_account_updates_from_trie_batch(new_trie, account_updates.values())
+                        .apply_account_updates_from_trie_batch(trie, account_updates.values())
                         .await
                         .map_err(|e| format!("Error applying account updates: {e}"))
                         .unwrap();
 
-                    let (new_state_root, state_updates, accounts_updates) = (
-                        account_updates_list.state_trie_hash,
-                        account_updates_list.state_updates,
-                        account_updates_list.storage_updates,
-                    );
+                    store
+                        .open_direct_state_trie(current_state_root)?
+                        .db()
+                        .put_batch(account_updates_list.state_updates)?;
 
-                    let pseudo_update_batch = UpdateBatch {
-                        account_updates: state_updates,
-                        storage_updates: accounts_updates,
-                        blocks: vec![],
-                        receipts: vec![],
-                        code_updates: vec![],
-                    };
+                    current_state_root = account_updates_list.state_trie_hash;
 
                     store
-                        .store_block_updates(pseudo_update_batch)
-                        .await
-                        .map_err(|e| format!("Error storing trie updates: {e}"))
-                        .unwrap();
+                        .write_storage_trie_nodes_batch(account_updates_list.storage_updates)
+                        .await?;
 
-                    new_trie = store
-                        .open_state_trie(new_state_root)
-                        .map_err(|e| format!("Error opening new state trie: {e}"))
-                        .unwrap();
+                    store
+                        .write_account_code_batch(account_updates_list.code_updates)
+                        .await?;
 
                     // Get withdrawal hashes
                     let message_hashes = state_diff
@@ -478,10 +465,7 @@ impl Command {
                     // Note that its state_root is the root of new_trie.
                     let new_block = BlockHeader {
                         coinbase,
-                        state_root: new_trie
-                            .hash()
-                            .map_err(|e| format!("Error committing state: {e}"))
-                            .unwrap(),
+                        state_root: account_updates_list.state_trie_hash,
                         ..state_diff.last_header
                     };
 

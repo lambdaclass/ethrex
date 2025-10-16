@@ -83,10 +83,15 @@ P2P options:
 
           [default: 30303]
     
-        --p2p.tx-broadcasting-interval <INTERVAL_MS>
-            Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
+      --p2p.tx-broadcasting-interval <INTERVAL_MS>
+          Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
 
-            [default: 1000]
+          [default: 1000]
+
+      --target.peers <MAX_PEERS>
+          Max amount of connected peers.
+
+          [default: 100]
 
 RPC options:
       --http.addr <ADDRESS>
@@ -120,7 +125,7 @@ Block producer options:
       --block-producer.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 0.1.0"]
+          [default: "ethrex 3.0.0"]
 ```
 
 <!-- END_CLI_HELP -->
