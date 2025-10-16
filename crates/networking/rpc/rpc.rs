@@ -384,7 +384,7 @@ async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
         };
 
         // ok-clone: increase arc reference count
-        let Ok(response) = handle_http_request(state.clone(), body.to_string())
+        let Ok(response) = handle_http_request(state.clone(), body)
             .await
             .map(|res| res.to_string())
         else {
