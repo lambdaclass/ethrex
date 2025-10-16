@@ -1071,14 +1071,7 @@ impl Syncer {
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
-        info!("Snapshot started");
-        let store_clone = store.clone();
-        std::thread::spawn(move || {
-            match store_clone.generate_snapshot() {
-                Ok(_) => info!("Snapshot completed."),
-                Err(err) => error!("Snapshot error: {err}"),
-            }
-        });
+        store.generate_snapshot()?;
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
