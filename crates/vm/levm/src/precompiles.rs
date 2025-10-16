@@ -784,7 +784,7 @@ fn parse_bn254_coords(buf: &[u8; 192]) -> (G1, G2) {
         u256_from_big_endian(&buf[160..]),
     );
 
-    ((g1_x, g1_y), (g2_xx, g2_xy, g2_yx, g2_yy))
+    (G1(g1_x, g1_y), G2(g2_xx, g2_xy, g2_yx, g2_yy))
 }
 
 #[inline]
