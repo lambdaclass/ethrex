@@ -120,7 +120,7 @@ impl LeafNode {
         path: Nibbles,
     ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
         Ok(if self.partial == path {
-            (None, Some(self.value.clone()))
+            (None, Some(mem::take(&mut self.value)))
         } else {
             (Some(NodeRemoveResult::Mutated), None)
         })
