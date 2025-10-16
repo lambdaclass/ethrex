@@ -551,6 +551,9 @@ impl Store {
                 }
                 Ok(())
             });
+            if res.is_ok() {
+                batch.put_cf(&cf_misc, "last_written", vec![0xff]);
+            }
             self.db.write(batch)?;
             dbg!(snapshot_pivot_rx.recv().unwrap());
             match dbg!(res) {
