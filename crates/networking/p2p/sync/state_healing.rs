@@ -345,7 +345,6 @@ fn heal_state_batch(
         batch.extend(missing_children);
         if missing_children_count == 0 {
             commit_node(
-                &store,
                 node,
                 &path.path,
                 &path.parent_path,
@@ -364,8 +363,7 @@ fn heal_state_batch(
     Ok(batch)
 }
 
-async fn commit_node(
-    store: &Store,
+fn commit_node(
     node: Node,
     path: &Nibbles,
     parent_path: &Nibbles,
@@ -384,15 +382,13 @@ async fn commit_node(
 
     membatch_entry.children_not_in_storage_count -= 1;
     if membatch_entry.children_not_in_storage_count == 0 {
-        Box::pin(commit_node(
-            store,
+        commit_node(
             membatch_entry.node,
             parent_path,
             &membatch_entry.parent_path,
             membatch,
             nodes_to_write,
-        ))
-        .await;
+        );
     } else {
         membatch.insert(parent_path.clone(), membatch_entry);
     }

@@ -468,7 +468,7 @@ async fn zip_requeue_node_responses_score_peer(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn process_node_responses(
+fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,
     store: &Store,
@@ -498,11 +498,9 @@ async fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&store, &node_response, membatch, roots_healed, to_write)
-                .await
-                .inspect_err(|err| {
-                    error!("{err} in commit node while committing {node_response:?}")
-                })?;
+            commit_node(&node_response, membatch, roots_healed, to_write).inspect_err(|err| {
+                error!("{err} in commit node while committing {node_response:?}")
+            })?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -636,8 +634,7 @@ pub fn determine_missing_children(
     Ok((paths, count))
 }
 
-async fn commit_node(
-    store: &Store,
+fn commit_node(
     node: &NodeResponse,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
@@ -671,13 +668,12 @@ async fn commit_node(
     parent_entry.missing_children_count -= 1;
 
     if parent_entry.missing_children_count == 0 {
-        Box::pin(commit_node(
-            store,
+        commit_node(
             &parent_entry.node_response,
             membatch,
             roots_healed,
             to_write,
-        )).await
+        )
     } else {
         membatch.insert(parent_key, parent_entry);
         Ok(())

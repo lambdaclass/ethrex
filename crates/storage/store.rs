@@ -878,6 +878,29 @@ impl Store {
         get_account_state_from_trie(&state_trie, address)
     }
 
+    pub fn get_account_state_by_hash(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        self.get_account_state_from_trie(&state_trie, address)
+    }
+
+    pub fn get_account_state_from_trie(
+        &self,
+        state_trie: &Trie,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let hashed_address = hash_address(&address);
+        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+            return Ok(None);
+        };
+        Ok(Some(AccountState::decode(&encoded_state)?))
+    }
+
     /// Constructs a merkle proof for the given account address against a given state.
     /// If storage_keys are provided, also constructs the storage proofs for those keys.
     ///
