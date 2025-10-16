@@ -323,6 +323,7 @@ impl Store {
         std::thread::spawn(move || {
             let mut rx = rx;
             while rx.recv() != Ok(SnapshotControlMessage::Continue) {}
+            info!("Snapshooter started.");
             match store_clone.snapshoting_loop(&mut rx) {
                 Ok(_) => info!("Snapshooter finished."),
                 Err(err) => error!("Error while generating snapshot: {err}"),
@@ -475,7 +476,7 @@ impl Store {
             let root = self
                 .read_sync(CF_TRIE_NODES, &[])?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
-            let root = ethrex_trie::Node::decode(&root)?;
+            let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
 
             let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
@@ -494,9 +495,12 @@ impl Store {
                 .map(|v| Nibbles::from_hex(v.to_vec()))
                 .unwrap_or_default();
 
+            println!("Starting snapshooting loop pivot={last_written:?} SR={state_root:x}");
+
             let mut batch = WriteBatchWithTransaction::default();
             let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
             if last_written_account > Nibbles::default() {
+                println!("Advancing iterator to {last_written_account:?}");
                 iter.advance(last_written_account.to_bytes())?;
             }
             let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
