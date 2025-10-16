@@ -8,12 +8,15 @@ pub static METRICS_BLOCKS: LazyLock<MetricsBlocks> = LazyLock::new(MetricsBlocks
 #[derive(Debug, Clone)]
 pub struct MetricsBlocks {
     gas_limit: Gauge,
+    /// Keeps track of the block number of the last processed block
     block_number: IntGauge,
     gigagas: Gauge,
     gigagas_block_building: Gauge,
     block_building_ms: IntGauge,
     block_building_base_fee: IntGauge,
     gas_used: Gauge,
+    /// Keeps track of the head block number
+    head_height: IntGauge,
 }
 
 impl Default for MetricsBlocks {
@@ -27,12 +30,12 @@ impl MetricsBlocks {
         MetricsBlocks {
             gas_limit: Gauge::new(
                 "gas_limit",
-                "Keeps track of the percentage of gas limit used by the last block",
+                "Keeps track of the percentage of gas limit used by the last processed block",
             )
             .unwrap(),
             block_number: IntGauge::new(
                 "block_number",
-                "Keeps track of the block number for the head of the chain",
+                "Keeps track of the block number for the last processed block",
             )
             .unwrap(),
             gigagas: Gauge::new(
@@ -57,7 +60,12 @@ impl MetricsBlocks {
             .unwrap(),
             gas_used: Gauge::new(
                 "gas_used",
-                "Keeps track of the gas used in the latest block",
+                "Keeps track of the gas used in the last processed block",
+            )
+            .unwrap(),
+            head_height: IntGauge::new(
+                "head_height",
+                "Keeps track of the block number for the head of the chain",
             )
             .unwrap(),
         }
@@ -88,6 +96,11 @@ impl MetricsBlocks {
         Ok(())
     }
 
+    pub fn set_head_height(&self, head_height: u64) -> Result<(), MetricsError> {
+        self.head_height.set(head_height.try_into()?);
+        Ok(())
+    }
+
     pub fn set_latest_gas_used(&self, gas_used: f64) {
         self.gas_used.set(gas_used);
     }
@@ -112,6 +125,8 @@ impl MetricsBlocks {
         r.register(Box::new(self.block_building_base_fee.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.block_building_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.head_height.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
