@@ -163,7 +163,8 @@ impl RLPDecode for WrappedEIP4844Transaction {
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct LegacyTransaction {
     pub nonce: u64,
-    pub gas_price: u64,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub gas_price: U256,
     pub gas: u64,
     /// The recipient of the transaction.
     /// Create transactions contain a [`null`](RLP_NULL) value in this field.
@@ -186,7 +187,8 @@ pub struct LegacyTransaction {
 pub struct EIP2930Transaction {
     pub chain_id: u64,
     pub nonce: u64,
-    pub gas_price: u64,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub gas_price: U256,
     pub gas_limit: u64,
     pub to: TxKind,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -351,20 +353,19 @@ impl Transaction {
         }
     }
 
-    fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<u64> {
-        if self.max_fee_per_gas()? < base_fee_per_gas? {
+    fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<U256> {
+        let base_fee = base_fee_per_gas?;
+        let max_fee = self.max_fee_per_gas()?;
+        if max_fee < base_fee {
             // This is invalid, can't calculate
             return None;
         }
 
-        let priority_fee_per_gas = min(
-            self.max_priority_fee()?,
-            self.max_fee_per_gas()?.saturating_sub(base_fee_per_gas?),
-        );
-        Some(priority_fee_per_gas + base_fee_per_gas?)
+        let priority_fee_per_gas = min(self.max_priority_fee()?, max_fee.saturating_sub(base_fee));
+        Some(U256::from(priority_fee_per_gas) + U256::from(base_fee))
     }
 
-    pub fn effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<u64> {
+    pub fn effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<U256> {
         match self.tx_type() {
             TxType::Legacy => Some(self.gas_price()),
             TxType::EIP2930 => Some(self.gas_price()),
@@ -379,14 +380,14 @@ impl Transaction {
         let price = match self.tx_type() {
             TxType::Legacy => self.gas_price(),
             TxType::EIP2930 => self.gas_price(),
-            TxType::EIP1559 => self.max_fee_per_gas()?,
-            TxType::EIP4844 => self.max_fee_per_gas()?,
-            TxType::EIP7702 => self.max_fee_per_gas()?,
+            TxType::EIP1559 => U256::from(self.max_fee_per_gas()?),
+            TxType::EIP4844 => U256::from(self.max_fee_per_gas()?),
+            TxType::EIP7702 => U256::from(self.max_fee_per_gas()?),
             TxType::Privileged => self.gas_price(),
         };
 
         Some(U256::saturating_add(
-            U256::saturating_mul(price.into(), self.gas_limit().into()),
+            U256::saturating_mul(price, self.gas_limit().into()),
             self.value(),
         ))
     }
@@ -1067,14 +1068,15 @@ impl Transaction {
         }
     }
 
-    pub fn gas_price(&self) -> u64 {
+    //TODO: It's not very correct to return gas price for legacy and eip-2930 txs but return the max fee per gas for the others, make necessary changes for it to be technically correct.
+    pub fn gas_price(&self) -> U256 {
         match self {
             Transaction::LegacyTransaction(tx) => tx.gas_price,
             Transaction::EIP2930Transaction(tx) => tx.gas_price,
-            Transaction::EIP1559Transaction(tx) => tx.max_fee_per_gas,
-            Transaction::EIP7702Transaction(tx) => tx.max_fee_per_gas,
-            Transaction::EIP4844Transaction(tx) => tx.max_fee_per_gas,
-            Transaction::PrivilegedL2Transaction(tx) => tx.max_fee_per_gas,
+            Transaction::EIP1559Transaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::EIP7702Transaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
         }
     }
 
@@ -1236,11 +1238,11 @@ impl Transaction {
     }
 
     pub fn gas_tip_cap(&self) -> u64 {
-        self.max_priority_fee().unwrap_or(self.gas_price())
+        self.max_priority_fee().unwrap_or(self.gas_price().as_u64())
     }
 
     pub fn gas_fee_cap(&self) -> u64 {
-        self.max_fee_per_gas().unwrap_or(self.gas_price())
+        self.max_fee_per_gas().unwrap_or(self.gas_price().as_u64())
     }
 
     pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<u64> {
@@ -1941,7 +1943,7 @@ mod serde_impl {
 
             Ok(LegacyTransaction {
                 nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?.as_u64(),
+                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?,
                 gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
@@ -1964,7 +1966,7 @@ mod serde_impl {
             Ok(EIP2930Transaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
                 nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?.as_u64(),
+                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?,
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
@@ -2453,7 +2455,7 @@ mod serde_impl {
                 from: Address::default(),
                 gas: Some(value.gas),
                 value: value.value,
-                gas_price: value.gas_price,
+                gas_price: value.gas_price.as_u64(),
                 max_priority_fee_per_gas: None,
                 max_fee_per_gas: None,
                 max_fee_per_blob_gas: None,
@@ -2476,7 +2478,7 @@ mod serde_impl {
                 from: Address::default(),
                 gas: Some(value.gas_limit),
                 value: value.value,
-                gas_price: value.gas_price,
+                gas_price: value.gas_price.as_u64(),
                 max_priority_fee_per_gas: None,
                 max_fee_per_gas: None,
                 max_fee_per_blob_gas: None,
@@ -2627,7 +2629,7 @@ mod tests {
         let mut body = BlockBody::empty();
         let tx = LegacyTransaction {
             nonce: 0,
-            gas_price: 0x0a,
+            gas_price: U256::from(0x0a),
             gas: 0x05f5e100,
             to: TxKind::Call(hex!("1000000000000000000000000000000000000000").into()),
             value: 0.into(),
@@ -2654,7 +2656,7 @@ mod tests {
         let tx_eip2930 = EIP2930Transaction {
             chain_id: 3503995874084926u64,
             nonce: 7,
-            gas_price: 0x2dbf1f9a,
+            gas_price: U256::from(0x2dbf1f9a_u64),
             gas_limit: 0x186A0,
             to: TxKind::Call(hex!("7dcd17433742f4c0ca53122ab541d0ba67fc27df").into()),
             value: 2.into(),
@@ -2708,7 +2710,7 @@ mod tests {
         let tx = LegacyTransaction::decode(&encoded_tx_bytes).unwrap();
         let expected_tx = LegacyTransaction {
             nonce: 0,
-            gas_price: 1001000000,
+            gas_price: U256::from(1001000000u64),
             gas: 63000,
             to: TxKind::Call(Address::from_slice(
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
@@ -3066,7 +3068,7 @@ mod tests {
     fn test_legacy_transaction_into_generic() {
         let legacy_tx = LegacyTransaction {
             nonce: 1,
-            gas_price: 20_000_000_000,
+            gas_price: U256::from(20_000_000_000u64),
             gas: 21000,
             to: TxKind::Call(
                 Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
@@ -3105,7 +3107,7 @@ mod tests {
         let eip2930_tx = EIP2930Transaction {
             chain_id: 1,
             nonce: 1,
-            gas_price: 20_000_000_000,
+            gas_price: U256::from(20_000_000_000u64),
             gas_limit: 21000,
             to: TxKind::Call(
                 Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
