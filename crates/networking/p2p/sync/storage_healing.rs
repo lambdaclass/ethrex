@@ -208,25 +208,21 @@ pub async fn heal_storage_trie(
             if !db_joinset.is_empty() {
                 db_joinset.join_next().await;
             }
-            db_joinset.spawn_blocking(|| {
-                spawned_rt::tasks::block_on(async move {
-                    let mut encoded_to_write = vec![];
-                    for (hashed_account, nodes) in to_write {
-                        let mut account_nodes = vec![];
-                        for (path, node) in nodes {
-                            for i in 0..path.len() {
-                                account_nodes.push((path.slice(0, i), vec![]));
-                            }
-                            account_nodes.push((path, node.encode_to_vec()));
+            db_joinset.spawn_blocking(move || {
+                let mut encoded_to_write = vec![];
+                for (hashed_account, nodes) in to_write {
+                    let mut account_nodes = vec![];
+                    for (path, node) in nodes {
+                        for i in 0..path.len() {
+                            account_nodes.push((path.slice(0, i), vec![]));
                         }
-                        encoded_to_write.push((hashed_account, account_nodes));
+                        account_nodes.push((path, node.encode_to_vec()));
                     }
-
-                    store
-                        .write_storage_trie_nodes_batch(encoded_to_write)
-                        .await
-                        .expect("db write failed");
-                })
+                    encoded_to_write.push((hashed_account, account_nodes));
+                }
+                // PERF: use put_batch_no_alloc? (it needs to remove parent nodes too)
+                spawned_rt::tasks::block_on(store.write_storage_trie_nodes_batch(encoded_to_write))
+                    .expect("db write failed");
             });
         }
 
@@ -271,7 +267,7 @@ pub async fn heal_storage_trie(
                     &mut state.requests,
                     peers,
                     &mut state.download_queue,
-                    trie_nodes.clone(), // TODO: remove unnecesary clone, needed now for log 🏗️🏗️
+                    &trie_nodes,
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
                 )
@@ -283,7 +279,7 @@ pub async fn heal_storage_trie(
                 process_node_responses(
                     &mut nodes_from_peer,
                     &mut state.download_queue,
-                    state.store.clone(),
+                    &state.store,
                     &mut state.membatch,
                     &mut state.leafs_healed,
                     global_leafs_healed,
@@ -291,10 +287,9 @@ pub async fn heal_storage_trie(
                     &mut state.maximum_length_seen,
                     &mut nodes_to_write,
                 )
-                .await
-                .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
+                .expect("We shouldn't be getting store errors"); // TODO: if we have a store error we should stop
             }
-            Err(RequestStorageTrieNodes::SendMessageError(id, _err)) => {
+            Err(RequestStorageTrieNodes::RequestError(id, _err)) => {
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
                 state.failed_downloads += 1;
                 state
@@ -302,7 +297,7 @@ pub async fn heal_storage_trie(
                     .extend(inflight_request.requests.clone());
                 peers
                     .peer_table
-                    .free_with_failure(&inflight_request.peer_id)
+                    .record_failure(&inflight_request.peer_id)
                     .await?;
             }
         }
@@ -321,9 +316,9 @@ async fn ask_peers_for_nodes(
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
-        let Some((peer_id, mut peer_channel)) = peers
+        let Some((peer_id, connection)) = peers
             .peer_table
-            .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
             .await
             .inspect_err(
                 |err| error!(err= ?err, "Error requesting a peer to perform storage healing"),
@@ -355,10 +350,13 @@ async fn ask_peers_for_nodes(
 
         let tx = task_sender.clone();
 
+        let peer_table = peers.peer_table.clone();
+
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
             // TODO: check errors to determine whether the current block is stale
-            let response = PeerHandler::request_storage_trienodes(&mut peer_channel, gtn).await;
+            let response =
+                PeerHandler::request_storage_trienodes(peer_id, connection, peer_table, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")
@@ -405,7 +403,7 @@ async fn zip_requeue_node_responses_score_peer(
     requests: &mut HashMap<u64, InflightRequest>,
     peer_handler: &mut PeerHandler,
     download_queue: &mut VecDeque<NodeRequest>,
-    trie_nodes: TrieNodes,
+    trie_nodes: &TrieNodes,
     succesful_downloads: &mut usize,
     failed_downloads: &mut usize,
 ) -> Result<Option<Vec<NodeResponse>>, SyncError> {
@@ -417,7 +415,6 @@ async fn zip_requeue_node_responses_score_peer(
         info!("No matching request found for received response {trie_nodes:?}");
         return Ok(None);
     };
-    peer_handler.peer_table.free_peer(&request.peer_id).await?;
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
@@ -474,7 +471,7 @@ async fn zip_requeue_node_responses_score_peer(
 async fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,
-    store: Store,
+    store: &Store,
     membatch: &mut Membatch,
     leafs_healed: &mut usize,
     global_leafs_healed: &mut u64,
@@ -495,7 +492,7 @@ async fn process_node_responses(
         );
 
         let (missing_children_nibbles, missing_children_count) =
-            determine_missing_children(&node_response, store.clone()).inspect_err(|err| {
+            determine_missing_children(&node_response, store).inspect_err(|err| {
                 error!("{err} in determine missing children while searching {node_response:?}")
             })?;
 
@@ -566,7 +563,7 @@ fn get_initial_downloads(
 /// and the number of direct missing children
 pub fn determine_missing_children(
     node_response: &NodeResponse,
-    store: Store,
+    store: &Store,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
     let mut paths = Vec::new();
     let mut count = 0;
@@ -662,7 +659,7 @@ async fn commit_node(
         return Ok(());
     }
 
-    let parent_key: (Nibbles, Nibbles) = (
+    let parent_key = (
         node.node_request.acc_path.clone(),
         node.node_request.parent.clone(),
     );
@@ -680,10 +677,9 @@ async fn commit_node(
             membatch,
             roots_healed,
             to_write,
-        ))
-        .await?;
+        )).await
     } else {
         membatch.insert(parent_key, parent_entry);
+        Ok(())
     }
-    Ok(())
 }

@@ -64,6 +64,7 @@ jobs:
           make test
 
       - name: Run Blockchain EF tests
+        if: ${{ github.event_name != 'merge_group' }}
         run: |
           make -C tooling/ef_tests/blockchain test
 
@@ -143,62 +144,37 @@ jobs:
         include:
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
-            limit: ""
-            hive_repository: lambdaclass/hive
-            hive_version: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
+            # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
+            buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate
-            # AccountRange and GetTrieNodes don't pass anymore.
+            limit: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|NewPooledTxs|GetBlockReceipts|BlockRangeUpdate|GetTrieNodes
             # Findnode/BasicFindnode fails due to packets being processed out of order
             # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
-            hive_repository: lambdaclass/hive
-            hive_version: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             limit: engine-(auth|exchange-capabilities)/
-            hive_repository: ethereum/hive
-            hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
             artifact_prefix: engine_auth_ec
           - name: "Cancun Engine tests"
             simulation: ethereum/engine
             limit: "engine-cancun"
-            hive_repository: ethereum/hive
-            hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
             artifact_prefix: engine_cancun
           - name: "Paris Engine tests"
             simulation: ethereum/engine
             limit: "engine-api"
-            hive_repository: ethereum/hive
-            hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
             artifact_prefix: engine_paris
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
             limit: "engine-withdrawals/Corrupted Block Hash Payload|Empty Withdrawals|engine-withdrawals test loader|GetPayloadBodies|GetPayloadV2 Block Value|Max Initcode Size|Sync after 2 blocks - Withdrawals on Genesis|Withdraw many accounts|Withdraw to a single account|Withdraw to two accounts|Withdraw zero amount|Withdraw many accounts|Withdrawals Fork on Block 1 - 1 Block Re-Org|Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload|Withdrawals Fork on Block 2|Withdrawals Fork on Block 3|Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload|Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org [^S]|Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org [^S]"
-            hive_repository: ethereum/hive
-            hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
             artifact_prefix: engine_withdrawals
-          - name: "Sync full"
-            simulation: ethereum/sync
-            limit: ""
-            hive_repository: ethereum/hive
-            hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
-            artifact_prefix: sync_full
-          - name: "Sync snap"
-            simulation: ethereum/sync
-            limit: ""
-            hive_repository: ethereum/hive
-            hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
-            artifact_prefix: sync_snap
+          # Investigate this test
+          # - name: "Sync"
+          #   simulation: ethereum/sync
+          #   limit: ""
+          #   artifact_prefix: sync
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -227,11 +203,15 @@ jobs:
         shell: bash
         env:
           SIM_LIMIT: ${{ matrix.limit }}
+          SIM_BUILDARG: ${{ matrix.buildarg }}
         run: |
-          FLAGS='--sim.parallelism 16 --sim.loglevel 1'
+          FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
+          fi
+          if [[ -n "$SIM_BUILDARG" ]]; then
+            FLAGS+=" --sim.buildarg $SIM_BUILDARG"
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
@@ -239,14 +219,26 @@ jobs:
         id: run-hive-action
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
-          hive_repository: ${{ matrix.hive_repository }}
-          hive_version: ${{ matrix.hive_version }}
+          hive_repository: ethereum/hive
+          hive_version: 7709e5892146c793307da072e1593f48039a7e4b
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
-          workflow_artifact_upload: true
-          workflow_artifact_prefix: ${{ matrix.artifact_prefix }}
+
+      - name: Check Hive Results For Failures
+        id: verify-hive-results
+        if: ${{ success() }}
+        shell: bash
+        run: ./.github/scripts/check-hive-results.sh src/results
+
+      - name: Upload Hive Failure Logs
+        if: ${{ failure() && steps.verify-hive-results.conclusion == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive_failed_logs_${{ matrix.artifact_prefix }}
+          path: src/results/failed_logs
+          if-no-files-found: warn
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:

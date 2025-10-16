@@ -221,7 +221,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         Transaction::EIP2930Transaction(EIP2930Transaction {
             chain_id,
             nonce,
-            gas_price: test_case.gas_price.unwrap().as_u64(),
+            gas_price: test_case.gas_price.unwrap(),
             gas_limit: test_case.gas,
             to,
             value,
@@ -232,7 +232,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
     } else {
         Transaction::LegacyTransaction(LegacyTransaction {
             nonce,
-            gas_price: test_case.gas_price.unwrap().as_u64(),
+            gas_price: test_case.gas_price.unwrap(),
             gas: test_case.gas,
             to,
             value,

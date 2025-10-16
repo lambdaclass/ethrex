@@ -50,7 +50,7 @@ pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
 pub type TrieNode = (Nibbles, NodeRLP);
 
-/// Libmdx-based Ethereum Compatible Merkle Patricia Trie
+/// Ethereum-compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
@@ -284,6 +284,11 @@ impl Trie {
         all_nodes: &BTreeMap<H256, Vec<u8>>,
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
+        // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
+        if root_hash == *EMPTY_TRIE_HASH {
+            return Ok(NodeRef::default());
+        }
+
         let root_rlp = all_nodes
             .get(&root_hash)
             .ok_or(TrieError::InconsistentTree)?;

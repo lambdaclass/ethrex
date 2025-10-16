@@ -10,7 +10,7 @@ use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
-    get_code_hashes_snapshots_dir,
+    get_code_hashes_snapshots_dir, validate_folders,
 };
 use crate::{
     metrics::METRICS,
@@ -196,6 +196,19 @@ impl Syncer {
             Ok(res) => res,
             Err(e) => return Err(e.into()),
         };
+
+        // We validate that we have the folders that are being used empty, as we currently assume
+        // they are.
+        if !validate_folders(&self.datadir) {
+            // Temp std::process::exit until #2767 is done
+            error!(
+                "One of the folders used for temporary leaves during snap is still used. Delete them in {}",
+                &self.datadir.to_str().unwrap_or_default()
+            );
+            std::process::exit(1);
+            // Cloning a single string, the node should stop after this
+            // return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
+        }
 
         loop {
             debug!("Sync Log 1: In snap sync");
@@ -812,17 +825,6 @@ impl SnapBlockSyncState {
     }
 }
 
-/// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
-/// Logs with where the function was when it found this error
-/// TODO: remove this function once peer table has moved to spawned implementation
-async fn free_peers_and_log_if_not_empty(peer_handler: &mut PeerHandler) -> Result<(), SyncError> {
-    if peer_handler.peer_table.free_peers().await? != 0 {
-        let step = METRICS.current_step.get();
-        error!("Found peers marked as used even though we just finished this step: step = {step}");
-    };
-    Ok(())
-}
-
 impl Syncer {
     async fn snap_sync(
         &mut self,
@@ -885,7 +887,6 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
-            free_peers_and_log_if_not_empty(&mut self.peers).await?;
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -946,7 +947,6 @@ impl Syncer {
                 {
                     continue;
                 };
-                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
@@ -985,7 +985,6 @@ impl Syncer {
 
                     storage_accounts.accounts_with_storage_root.clear();
                 }
-                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
@@ -1066,8 +1065,6 @@ impl Syncer {
                 &mut global_storage_leafs_healed,
             )
             .await?;
-
-            free_peers_and_log_if_not_empty(&mut self.peers).await?;
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1138,6 +1135,9 @@ impl Syncer {
                 )
                 .await?;
         }
+
+        std::fs::remove_dir_all(code_hashes_dir)
+            .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
@@ -1229,7 +1229,7 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        let (peer_id, mut peer_channel) = peers
+        let (peer_id, mut connection) = peers
             .peer_table
             .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
             .await?
@@ -1240,7 +1240,7 @@ pub async fn update_pivot(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
         let Some(pivot) = peers
-            .get_block_header(&mut peer_channel, new_pivot_block_number)
+            .get_block_header(peer_id, &mut connection, new_pivot_block_number)
             .await
             .map_err(SyncError::PeerHandler)?
         else {
@@ -1337,10 +1337,12 @@ pub enum SyncError {
     CodeHashesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
-    #[error("We aren't finding get_peer_channel_with_retry")]
+    #[error("Cannot find suitable peer")]
     NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
+    #[error("The download datadir folders at {0} are not empty, delete them first")]
+    NotEmptyDatadirFolders(PathBuf),
     #[error("Couldn't create a thread")]
     ThreadCreationError,
     #[error("Called update_pivot outside snapsync mode")]
@@ -1424,7 +1426,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     .all(|valid| valid);
     info!("Finished validate_storage_root");
     if !is_valid {
-        std::process::exit(-1);
+        std::process::exit(1);
     }
     is_valid
 }
@@ -1449,7 +1451,7 @@ pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
         }
     }
     if !is_valid {
-        std::process::exit(-1);
+        std::process::exit(1);
     }
     is_valid
 }
@@ -1512,6 +1514,8 @@ async fn insert_accounts(
 
         computed_state_root = current_state_root?;
     }
+    std::fs::remove_dir_all(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     info!("computed_state_root {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
@@ -1580,6 +1584,10 @@ async fn insert_storages(
             .write_storage_trie_nodes_batch(storage_trie_node_changes)
             .await?;
     }
+
+    std::fs::remove_dir_all(account_storages_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+
     Ok(())
 }
 
@@ -1638,6 +1646,11 @@ async fn insert_accounts(
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
     .map_err(SyncError::TrieGenerationError)?;
+
+    std::fs::remove_dir_all(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
+    std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
+        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
@@ -1698,7 +1711,7 @@ async fn insert_storages(
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
+        .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
     let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
         .collect::<Result<Vec<_>, _>>()
@@ -1774,5 +1787,11 @@ async fn insert_storages(
             pool.execute(task);
         }
     });
+
+    std::fs::remove_dir_all(account_storages_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
+        .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
+
     Ok(())
 }

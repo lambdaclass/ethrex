@@ -2,9 +2,9 @@ use ethrex_common::types::{AccountInfo, AccountUpdate, ChainConfig};
 use ethrex_common::{Address as CoreAddress, BigEndianHash, H256, U256};
 use ethrex_vm::{DynVmDatabase, EvmError, VmDatabase};
 use revm::context::DBErrorMarker;
-use revm::database::states::{AccountStatus, bundle_state::BundleRetention};
+use revm::database::states::{bundle_state::BundleRetention, AccountStatus};
 use revm::primitives::{
-    Address as RevmAddress, B256 as RevmB256, Bytes as RevmBytes, U256 as RevmU256,
+    Address as RevmAddress, Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 use revm::state::{AccountInfo as RevmAccountInfo, Bytecode as RevmBytecode};
 
@@ -54,7 +54,7 @@ impl revm::Database for RevmDynVmDatabase {
     type Error = RevmError;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match <dyn VmDatabase>::get_account_info(
+        let acc_info = match <dyn VmDatabase>::get_account_state(
             self.0.as_ref(),
             CoreAddress::from(address.0.as_ref()),
         )? {
@@ -97,7 +97,7 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
     type Error = RevmError;
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match <dyn VmDatabase>::get_account_info(
+        let acc_info = match <dyn VmDatabase>::get_account_state(
             self.0.as_ref(),
             CoreAddress::from(address.0.as_ref()),
         )? {

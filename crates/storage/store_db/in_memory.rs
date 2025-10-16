@@ -18,6 +18,12 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 
+// NOTE: we use a different commit threshold than rocksdb since tests
+// require older states to be available
+// TODO: solve this in some other way, maybe adding logic for arbitrary
+// state access by applying diffs
+const COMMIT_THRESHOLD: usize = 10000;
+
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
 
@@ -88,15 +94,16 @@ impl StoreEngine for Store {
                 .trie_cache
                 .write()
                 .map_err(|_| StoreError::LockError)?;
-            let parent_state_root = self
-                .get_block_header_by_hash(
-                    update_batch
-                        .blocks
-                        .first()
-                        .ok_or(StoreError::UpdateBatchNoBlocks)?
-                        .header
-                        .parent_hash,
-                )?
+            let parent = update_batch
+                .blocks
+                .first()
+                .ok_or(StoreError::UpdateBatchNoBlocks)?
+                .header
+                .parent_hash;
+
+            let pre_state_root = store
+                .headers
+                .get(&parent)
                 .map(|header| header.state_root)
                 .unwrap_or_default();
 
@@ -112,7 +119,7 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
 
-            if let Some(root) = trie.get_commitable(parent_state_root) {
+            if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
                     if value.is_empty() {
@@ -122,20 +129,17 @@ impl StoreEngine for Store {
                     }
                 }
             }
-            trie.put_batch(
-                parent_state_root,
-                last_state_root,
-                update_batch
-                    .storage_updates
-                    .into_iter()
-                    .flat_map(|(account_hash, nodes)| {
-                        nodes
-                            .into_iter()
-                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                    })
-                    .chain(update_batch.account_updates)
-                    .collect(),
-            );
+            let key_values = update_batch
+                .storage_updates
+                .into_iter()
+                .flat_map(|(account_hash, nodes)| {
+                    nodes
+                        .into_iter()
+                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                })
+                .chain(update_batch.account_updates)
+                .collect();
+            trie.put_batch(pre_state_root, last_state_root, key_values);
         }
 
         for block in update_batch.blocks {
@@ -163,6 +167,11 @@ impl StoreEngine for Store {
                     .or_default()
                     .insert(index as u64, receipt);
             }
+        }
+
+        // store code updates
+        for (code_hash, code) in update_batch.code_updates {
+            store.account_codes.insert(code_hash, code);
         }
 
         Ok(())
@@ -422,7 +431,7 @@ impl StoreEngine for Store {
     fn open_storage_trie(
         &self,
         hashed_address: H256,
-        _storage_root: H256,
+        storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
         let store = self.inner()?;
@@ -434,7 +443,7 @@ impl StoreEngine for Store {
             db,
             prefix: Some(hashed_address),
         });
-        Ok(Trie::open(wrap_db, state_root))
+        Ok(Trie::open(wrap_db, storage_root))
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {

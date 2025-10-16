@@ -42,7 +42,8 @@ pub fn compile_contract(
             .to_str()
             .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
     )
-    .arg("--overwrite");
+    .arg("--overwrite")
+    .arg("--no-cbor-metadata");
 
     if !allow_paths.is_empty() {
         apply_allow_paths(&mut cmd, allow_paths)?;

@@ -67,18 +67,14 @@ impl NodeRef {
                     Node::Extension(node) => {
                         node.child.commit(path.concat(&node.prefix), acc);
                     }
-                    Node::Leaf(_) => {
-                        //path.extend(&node.partial);
-                    }
+                    Node::Leaf(_) => {}
                 }
-                //println!("commit {path:?} => {node:?}");
-                let hash = hash.get_or_init(|| node.compute_hash());
+                let hash = *hash.get_or_init(|| node.compute_hash());
                 acc.push((path.clone(), node.encode_to_vec()));
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }
 
-                let hash = *hash;
                 *self = hash.into();
 
                 hash

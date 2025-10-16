@@ -155,8 +155,6 @@ async fn heal_state_trie(
         }
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
-            // Mark the peer as available
-            peers.peer_table.free_peer(&peer_id).await?;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -217,9 +215,9 @@ async fn heal_state_trie(
                         .unwrap_or_default(),
                     longest_path_seen,
                 );
-                let Some((peer_id, mut peer_channel)) = peers
+                let Some((peer_id, connection)) = peers
                     .peer_table
-                    .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                    .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                     .await
                     .inspect_err(
                         |err| error!(err= ?err, "Error requesting a peer to perform state healing"),
@@ -234,10 +232,13 @@ async fn heal_state_trie(
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
 
+                let peer_table = peers.peer_table.clone();
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
-                        &mut peer_channel,
+                        peer_id,
+                        connection,
+                        peer_table,
                         state_root,
                         batch.clone(),
                     )
@@ -263,7 +264,6 @@ async fn heal_state_trie(
                 &mut membatch,
                 &mut nodes_to_write,
             )
-            .await
             .inspect_err(|err| {
                 error!("We have found a sync error while trying to write to DB a batch: {err}")
             })?;
@@ -273,32 +273,31 @@ async fn heal_state_trie(
         let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
 
         if nodes_to_write.len() > 100_000 || is_done || is_stale {
+            // PERF: reuse buffers?
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
             // NOTE: we keep only a single task in the background to avoid out of order deletes
             if !db_joinset.is_empty() {
-                db_joinset.join_next().await;
+                db_joinset
+                    .join_next()
+                    .await
+                    .expect("we just checked joinset is not empty")?;
             }
-            db_joinset.spawn_blocking(|| {
-                spawned_rt::tasks::block_on(async move {
-                    // TODO: replace put batch with the async version
-                    let mut encoded_to_write = BTreeMap::new();
-                    for (path, node) in to_write {
-                        for i in 0..path.len() {
-                            encoded_to_write.insert(path.slice(0, i), vec![]);
-                        }
-                        if let Node::Leaf(leaf) = &node {
-                            encoded_to_write.insert(path.concat(&leaf.partial), leaf.value.clone());
-                        }
-                        encoded_to_write.insert(path, node.encode_to_vec());
+            db_joinset.spawn_blocking(move || {
+                let mut encoded_to_write = BTreeMap::new();
+                for (path, node) in to_write {
+                    for i in 0..path.len() {
+                        encoded_to_write.insert(path.slice(0, i), vec![]);
                     }
-                    let trie_db = store
-                        .open_direct_state_trie(*EMPTY_TRIE_HASH)
-                        .expect("Store should open");
-                    let db = trie_db.db();
-                    db.put_batch(encoded_to_write.into_iter().collect())
-                        .expect("The put batch on the store failed");
-                })
+                    encoded_to_write.insert(path, node.encode_to_vec());
+                }
+                let trie_db = store
+                    .open_direct_state_trie(*EMPTY_TRIE_HASH)
+                    .expect("Store should open");
+                let db = trie_db.db();
+                // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
+                db.put_batch(encoded_to_write.into_iter().collect())
+                    .expect("The put batch on the store failed");
             });
         }
 
@@ -331,7 +330,7 @@ async fn heal_state_trie(
 
 /// Receives a set of state trie paths, fetches their respective nodes, stores them,
 /// and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
-async fn heal_state_batch(
+fn heal_state_batch(
     mut batch: Vec<RequestMetadata>,
     nodes: Vec<Node>,
     store: Store,
@@ -352,8 +351,7 @@ async fn heal_state_batch(
                 &path.parent_path,
                 membatch,
                 nodes_to_write,
-            )
-            .await;
+            );
         } else {
             let entry = MembatchEntryValue {
                 node: node.clone(),

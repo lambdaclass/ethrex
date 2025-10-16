@@ -12,7 +12,7 @@ use ethrex_common::H256;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
 
-use crate::rlpx::{error::RLPxError, p2p::DisconnectReason};
+use crate::rlpx::{error::PeerConnectionError, p2p::DisconnectReason};
 
 pub static METRICS: LazyLock<Metrics> = LazyLock::new(Metrics::default);
 
@@ -175,10 +175,10 @@ impl fmt::Display for CurrentStepValue {
             CurrentStepValue::RequestingStorageRanges => write!(f, "Requesting Storage Ranges"),
             CurrentStepValue::DownloadingHeaders => write!(f, "Downloading Headers"),
             CurrentStepValue::InsertingStorageRanges => {
-                write!(f, "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m")
+                write!(f, "Inserting Storage Ranges - Writing to DB")
             }
             CurrentStepValue::InsertingAccountRanges => {
-                write!(f, "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m")
+                write!(f, "Inserting Account Ranges - Writing to DB")
             }
             CurrentStepValue::InsertingAccountRangesNoDb => write!(f, "Inserting Account Ranges"),
         }
@@ -279,7 +279,7 @@ impl Metrics {
             .and_modify(|count| *count -= 1);
     }
 
-    pub async fn record_new_rlpx_conn_failure(&self, reason: RLPxError) {
+    pub async fn record_new_rlpx_conn_failure(&self, reason: PeerConnectionError) {
         let mut failures_grouped_by_reason = self.connection_attempt_failures.lock().await;
 
         self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, &reason)
@@ -326,186 +326,210 @@ impl Metrics {
     pub async fn update_failures_grouped_by_reason(
         &self,
         failures_grouped_by_reason: &mut BTreeMap<String, u64>,
-        failure_reason: &RLPxError,
+        failure_reason: &PeerConnectionError,
     ) {
         match failure_reason {
-            RLPxError::HandshakeError(reason) => {
+            PeerConnectionError::HandshakeError(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("HandshakeError - {reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::StateError(reason) => {
+            PeerConnectionError::StateError(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("StateError - {reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::NoMatchingCapabilities() => {
+            PeerConnectionError::NoMatchingCapabilities => {
                 failures_grouped_by_reason
                     .entry("NoMatchingCapabilities".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::Disconnected() => {
+            PeerConnectionError::TooManyPeers => {
+                failures_grouped_by_reason
+                    .entry("TooManyPeers".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            PeerConnectionError::Disconnected => {
                 failures_grouped_by_reason
                     .entry("Disconnected".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::DisconnectReceived(disconnect_reason) => {
+            PeerConnectionError::DisconnectReceived(disconnect_reason) => {
                 failures_grouped_by_reason
                     .entry(format!("DisconnectReceived - {disconnect_reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::DisconnectSent(disconnect_reason) => {
+            PeerConnectionError::DisconnectSent(disconnect_reason) => {
                 failures_grouped_by_reason
                     .entry(format!("DisconnectSent - {disconnect_reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::NotFound(reason) => {
+            PeerConnectionError::NotFound(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("NotFound - {reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::InvalidPeerId() => {
+            PeerConnectionError::InvalidPeerId => {
                 failures_grouped_by_reason
                     .entry("InvalidPeerId".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::InvalidRecoveryId() => {
+            PeerConnectionError::InvalidRecoveryId => {
                 failures_grouped_by_reason
                     .entry("InvalidRecoveryId".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::InvalidMessageLength() => {
+            PeerConnectionError::InvalidMessageLength => {
                 failures_grouped_by_reason
                     .entry("InvalidMessageLength".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::MessageNotHandled(reason) => {
+            PeerConnectionError::ExpectedRequestId(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("ExpectedRequestId - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            PeerConnectionError::MessageNotHandled(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("MessageNotHandled - {reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::BadRequest(reason) => {
+            PeerConnectionError::BadRequest(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("BadRequest - {reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::RLPDecodeError(rlpdecode_error) => {
+            PeerConnectionError::RLPDecodeError(rlpdecode_error) => {
                 failures_grouped_by_reason
                     .entry(format!("RLPDecodeError - {rlpdecode_error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::RLPEncodeError(rlpencode_error) => {
+            PeerConnectionError::RLPEncodeError(rlpencode_error) => {
                 failures_grouped_by_reason
                     .entry(format!("RLPEncodeError - {rlpencode_error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::StoreError(store_error) => {
+            PeerConnectionError::StoreError(store_error) => {
                 failures_grouped_by_reason
                     .entry(format!("StoreError - {store_error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::CryptographyError(reason) => {
+            PeerConnectionError::CryptographyError(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("CryptographyError - {reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::BroadcastError(reason) => {
+            PeerConnectionError::BroadcastError(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("BroadcastError - {reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::RecvError(recv_error) => {
+            PeerConnectionError::RecvError(recv_error) => {
                 failures_grouped_by_reason
                     .entry(format!("RecvError - {recv_error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::SendMessage(reason) => {
+            PeerConnectionError::SendMessage(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("SendMessage - {reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::MempoolError(mempool_error) => {
+            PeerConnectionError::MempoolError(mempool_error) => {
                 failures_grouped_by_reason
                     .entry(format!("MempoolError - {mempool_error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::IoError(error) => {
+            PeerConnectionError::IoError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("IoError - {error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::InvalidMessageFrame(reason) => {
+            PeerConnectionError::InvalidMessageFrame(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("InvalidMessageFrame - {reason}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::IncompatibleProtocol => {
+            PeerConnectionError::IncompatibleProtocol => {
                 failures_grouped_by_reason
                     .entry("IncompatibleProtocol".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::InvalidBlockRange => {
+            PeerConnectionError::InvalidBlockRange => {
                 failures_grouped_by_reason
                     .entry("InvalidBlockRange".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::RollupStoreError(error) => {
+            PeerConnectionError::RollupStoreError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("RollupStoreError - {error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::BlockchainError(error) => {
+            PeerConnectionError::BlockchainError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("BlockchainError - {error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::InternalError(error) => {
+            PeerConnectionError::InternalError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("InternalError - {error}"))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::L2CapabilityNotNegotiated => {
+            PeerConnectionError::L2CapabilityNotNegotiated => {
                 failures_grouped_by_reason
                     .entry("L2CapabilityNotNegotiated".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::InvalidBlockRangeUpdate => {
+            PeerConnectionError::InvalidBlockRangeUpdate => {
                 failures_grouped_by_reason
                     .entry("InvalidBlockRangeUpdate".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::PeerTableError(error) => {
+            PeerConnectionError::PeerTableError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("InternalError - {error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            PeerConnectionError::Timeout => {
+                failures_grouped_by_reason
+                    .entry("Timeout".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            PeerConnectionError::UnexpectedResponse(_, _) => {
+                failures_grouped_by_reason
+                    .entry("UnexpectedResponse".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }

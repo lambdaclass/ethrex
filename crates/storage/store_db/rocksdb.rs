@@ -36,6 +36,9 @@ use crate::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use std::fmt::Debug;
 
+// TODO: use finalized hash to determine when to commit
+const COMMIT_THRESHOLD: usize = 128;
+
 /// Canonical block hashes column family: [`u8;_`] => [`Vec<u8>`]
 /// - [`u8;_`] = `block_number.to_le_bytes()`
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
@@ -649,7 +652,7 @@ impl StoreEngine for Store {
             let mut updated_trie = false;
 
             let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
-            if let Some(root) = trie.get_commitable(parent_state_root) {
+            if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
                 updated_trie = true;
                 // If the channel is closed, there's nobody to notify
                 let _ = snapshot_pivot_tx.send(SnapshotControlMessage::Stop);

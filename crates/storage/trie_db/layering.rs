@@ -4,9 +4,6 @@ use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
-// TODO: make this configurable or use finalized hash for this
-const COMMIT_THRESHOLD: usize = 128;
-
 #[derive(Debug)]
 struct TrieLayer {
     nodes: HashMap<Vec<u8>, Vec<u8>>,
@@ -23,32 +20,55 @@ pub struct TrieLayerCache {
 }
 
 impl TrieLayerCache {
-    pub fn get(&self, mut state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
-        while let Some(layer) = self.layers.get(&state_root) {
+    pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+        let mut current_state_root = state_root;
+        while let Some(layer) = self.layers.get(&current_state_root) {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
                 return Some(value.clone());
             }
-            state_root = layer.parent;
+            current_state_root = layer.parent;
+            if current_state_root == state_root {
+                // TODO: check if this is possible in practice
+                // This can't happen in L1, due to system contracts irreversibly modifying state
+                // at each block.
+                // On L2, if no transactions are included in a block, the state root remains the same,
+                // but we handle that case in put_batch. It may happen, however, if someone modifies
+                // state with a privileged tx and later reverts it (since it doesn't update nonce).
+                panic!("State cycle found");
+            }
         }
         None
     }
-    pub fn get_commitable(&mut self, mut state_root: H256) -> Option<H256> {
+
+    // TODO: use finalized hash to know when to commit
+    pub fn get_commitable(
+        &mut self,
+        mut state_root: H256,
+        commit_threshold: usize,
+    ) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
             counter += 1;
-            if counter > COMMIT_THRESHOLD {
+            if counter > commit_threshold {
                 return Some(state_root);
             }
         }
         None
     }
+
     pub fn put_batch(
         &mut self,
         parent: H256,
         state_root: H256,
         key_values: Vec<(Nibbles, Vec<u8>)>,
     ) {
+        if parent == state_root && key_values.is_empty() {
+            return;
+        } else if parent == state_root {
+            tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
+            return;
+        }
         self.layers
             .entry(state_root)
             .or_insert_with(|| {
@@ -66,6 +86,7 @@ impl TrieLayerCache {
                     .map(|(path, node)| (path.into_vec(), node)),
             );
     }
+
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut layer = self.layers.remove(&state_root)?;
         // ensure parents are commited
@@ -89,9 +110,9 @@ pub struct TrieWrapper {
     pub prefix: Option<H256>,
 }
 
-/// Apply a prefix with an invalid nibble (17) as a separator, to
-/// differentiate between a state trie value and a storage trie root.
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
+    // Apply a prefix with an invalid nibble (17) as a separator, to
+    // differentiate between a state trie value and a storage trie root.
     match prefix {
         Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
             .append_new(17)
@@ -117,7 +138,9 @@ impl TrieDB for TrieWrapper {
         }
         self.db.get(key)
     }
+
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        // TODO: this is unused, because we call `TrieLayerCache::put_batch` directly
         let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
         let new_state_root = match last_pair {
             Some((_, noderlp)) => {

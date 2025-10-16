@@ -55,9 +55,7 @@ impl RocksDBTrieDB {
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
-    fn cf_handle_snapshot(
-        &self,
-    ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
+    fn cf_handle_flatkeyvalue(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
         self.db
             .cf_handle(CF_FLATKEYVALUE)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
@@ -76,7 +74,7 @@ impl TrieDB for RocksDBTrieDB {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = if key.is_leaf() {
-            self.cf_handle_snapshot()?
+            self.cf_handle_flatkeyvalue()?
         } else {
             self.cf_handle()?
         };
@@ -91,7 +89,7 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
-        let cf_snapshot = self.cf_handle_snapshot()?;
+        let cf_snapshot = self.cf_handle_flatkeyvalue()?;
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
 
         for (key, value) in key_values {
@@ -111,7 +109,7 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
-        let cf_snapshot = self.cf_handle_snapshot()?;
+        let cf_snapshot = self.cf_handle_flatkeyvalue()?;
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
@@ -237,10 +235,11 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
 
         // Test data
+        // NOTE: we don't use the same paths to avoid overwriting in the batch
         let batch_data = vec![
             (Nibbles::from_hex(vec![1]), vec![1, 2, 3]),
-            (Nibbles::from_hex(vec![1]), vec![4, 5, 6]),
-            (Nibbles::from_hex(vec![1]), vec![7, 8, 9]),
+            (Nibbles::from_hex(vec![1, 2]), vec![4, 5, 6]),
+            (Nibbles::from_hex(vec![1, 2, 3]), vec![7, 8, 9]),
         ];
 
         // Test batch put
