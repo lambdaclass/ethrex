@@ -1,3 +1,5 @@
+#[cfg(feature = "l2")]
+use crate::rlpx::l2::l2_connection::P2PBasedContext;
 use crate::{
     discv4::{
         peer_table::{PeerData, PeerTable},
@@ -7,7 +9,6 @@ use crate::{
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
         initiator::RLPxInitiator,
-        l2::l2_connection::P2PBasedContext,
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
@@ -44,6 +45,7 @@ pub struct P2PContext {
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
+    #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
 }
@@ -59,7 +61,7 @@ impl P2PContext {
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
-        based_context: Option<P2PBasedContext>,
+        #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
@@ -87,6 +89,7 @@ impl P2PContext {
             blockchain,
             broadcast: channel_broadcast_send_end,
             client_version,
+            #[cfg(feature = "l2")]
             based_context,
             tx_broadcaster,
         })
