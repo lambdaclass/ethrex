@@ -225,6 +225,11 @@ fn exception_is_expected(
                 ),
                 ChainError::EvmError(EvmError::SystemContractCallFailed(_))
             ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::RlpBlockLimitExceeded
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::MaximumRlpSizeExceeded(_, _))
+            ) | (
                 BlockChainExpectedException::Other,
                 _ //TODO: Decide whether to support more specific errors.
             ),
