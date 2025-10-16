@@ -435,7 +435,6 @@ jobs:
 
       - name: show envs
         run: |
-          cat cmd/.env
           cat crates/l2/.env
 
       - name: Run test
@@ -443,7 +442,7 @@ jobs:
           cd crates/l2
           tail -n 100 -f /tmp/ethrex.log &
           tail -n 100 -f /tmp/prover.log &
-          export $(shell cat ../../cmd/.env | xargs); \
+          export $(shell cat .env | xargs); \
           INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true \
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           cargo test l2 --release -- --nocapture --test-threads=1
