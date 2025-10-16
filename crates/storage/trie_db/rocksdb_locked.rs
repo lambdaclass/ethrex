@@ -17,7 +17,7 @@ pub struct RocksDBLockedTrieDB {
     snapshot: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
-    last_snapshotted: Nibbles
+    last_snapshotted: Nibbles,
 }
 
 impl RocksDBLockedTrieDB {
@@ -50,7 +50,6 @@ impl RocksDBLockedTrieDB {
 
         // Create snapshot for consistent reads
         let snapshot = db.snapshot();
-        
 
         Ok(Self {
             db,
@@ -58,7 +57,7 @@ impl RocksDBLockedTrieDB {
             cf_snapshots,
             snapshot,
             address_prefix,
-            last_snapshotted
+            last_snapshotted,
         })
     }
 

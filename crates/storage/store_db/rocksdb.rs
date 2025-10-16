@@ -717,7 +717,8 @@ impl StoreEngine for Store {
             }
 
             // Single write operation
-            let ret = db.write(batch)
+            let ret = db
+                .write(batch)
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)));
             if updated_trie {
                 snapshot_pivot_tx

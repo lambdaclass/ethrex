@@ -1,6 +1,9 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, RwLock},
+};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
@@ -9,7 +12,7 @@ const COMMIT_THRESHOLD: usize = 128;
 
 #[derive(Debug)]
 struct TrieLayer {
-    nodes: HashMap<Vec<u8>, Vec<u8>>,
+    nodes: BTreeMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
@@ -19,7 +22,8 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: HashMap<H256, TrieLayer>,
+    // layers: HashMap<H256, TrieLayer>,
+    layers: BTreeMap<H256, TrieLayer>,
 }
 
 impl TrieLayerCache {
@@ -54,7 +58,7 @@ impl TrieLayerCache {
             .or_insert_with(|| {
                 self.last_id += 1;
                 TrieLayer {
-                    nodes: HashMap::new(),
+                    nodes: BTreeMap::new(),
                     parent,
                     id: self.last_id,
                 }
@@ -67,7 +71,7 @@ impl TrieLayerCache {
             );
     }
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let mut layer = self.layers.remove(&state_root)?;
+        let layer = self.layers.remove(&state_root)?;
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
@@ -76,7 +80,8 @@ impl TrieLayerCache {
             parent_nodes
                 .unwrap_or_default()
                 .into_iter()
-                .chain(layer.nodes.drain())
+                // .chain(layer.nodes.drain())
+                .chain(layer.nodes.into_iter())
                 .collect(),
         )
     }
