@@ -147,7 +147,7 @@ pub struct Options {
         long = "ws.addr",
         default_value = "0.0.0.0",
         value_name = "ADDRESS",
-        requires = "ws_enables",
+        requires = "ws_enabled",
         help = "Listening address for the websocket rpc server.",
         help_heading = "RPC options",
         env = "ETHREX_WS_ADDR"
@@ -157,7 +157,7 @@ pub struct Options {
         long = "ws.port",
         default_value = "8546",
         value_name = "PORT",
-        requires = "ws_enables",
+        requires = "ws_enabled",
         help = "Listening port for the websocket rpc server.",
         help_heading = "RPC options",
         env = "ETHREX_WS_PORT"
