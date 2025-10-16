@@ -136,7 +136,7 @@ pub struct Options {
     )]
     pub http_port: String,
     #[arg(
-        long = "ws",
+        long = "ws.enabled",
         default_value = "false",
         help = "Enable websocket rpc server. Disabled by default.",
         help_heading = "RPC options",

@@ -107,7 +107,7 @@ RPC options:
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
 
-      --ws
+      --ws.enabled
           Enable websocket rpc server. Disabled by default.
 
           [env: ETHREX_ENABLE_WS=]
