@@ -167,7 +167,7 @@ else
 endif
 
 build-prover-sp1:
-	cargo build --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml --bin ethrex
+	cargo build --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml --bin ethrex
 
 build-prover-risc0:
 	cargo build --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml --bin ethrex
