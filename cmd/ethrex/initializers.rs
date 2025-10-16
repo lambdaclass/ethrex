@@ -163,8 +163,15 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let ws_socket_opts = if opts.ws_enabled {
+        Some(get_ws_socket_addr(opts))
+    } else {
+        None
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
+        ws_socket_opts,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -367,6 +374,11 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
+}
+
+pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
+    parse_socket_addr(&opts.ws_addr, &opts.ws_port)
+        .expect("Failed to parse websocket address and port")
 }
 
 #[cfg(feature = "sync-test")]
