@@ -118,11 +118,37 @@ impl<'a> Decoder<'a> {
 
 /// # Struct decoding helper
 ///
-/// todo
+/// Used to decode a struct from RLP format, taking ownership of the encoded buffer.
+/// Unlike [`Decoder`], this struct owns the buffer and modifies it during decoding,
+/// minimizing cloning and reallocation.
+///
+/// The encoded data is expected to be a single RLP list.
 ///
 /// # Examples
 ///
-/// todo
+/// ```
+/// # use ethrex_rlp::structs::OwnedDecoder;
+/// # use ethrex_rlp::error::RLPDecodeError;
+/// #[derive(Debug, PartialEq, Eq)]
+/// struct Simple {
+///     pub a: u8,
+///     pub b: u16,
+/// }
+///
+/// impl Simple {
+///     fn decode_owned(buf: Vec<u8>) -> Result<Self, RLPDecodeError> {
+///         let mut decoder = OwnedDecoder::new(buf)?;
+///         let a = decoder.decode_next_item()?;
+///         let b = decoder.decode_next_item()?;
+///         Ok(Simple { a: a[0], b: u16::from_be_bytes([b[0], b[1]]) })
+///     }
+/// }
+///
+/// let bytes = vec![0xc2, 61, 75];
+/// let decoded = Simple::decode_owned(bytes).unwrap();
+///
+/// assert_eq!(decoded, Simple { a: 61, b: 75 });
+/// ```
 #[derive(Debug)]
 pub struct OwnedDecoder {
     buf: Vec<u8>,
