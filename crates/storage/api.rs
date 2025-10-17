@@ -363,5 +363,18 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_codes: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError>;
 
+    /// Add a batch of headers downloaded during fullsync
+    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError>;
+
+    /// Read a batch of headers downloaded during fullsync
+    async fn read_fullsync_batch(
+        &self,
+        start: BlockNumber,
+        limit: u64,
+    ) -> Result<Vec<BlockHeader>, StoreError>;
+
+    /// Clear all headers downloaded during fullsync
+    async fn clear_fullsync_headers(&self) -> Result<(), StoreError>;
+
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 }
