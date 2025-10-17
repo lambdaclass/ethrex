@@ -35,6 +35,7 @@ default = []
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 
 sp1 = ["ethrex-levm/sp1"]
+risc0 = ["ethrex-levm/risc0", "c-kzg"]
 
 debug = ["ethrex-levm/debug"]
 

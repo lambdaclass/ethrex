@@ -55,6 +55,7 @@ default = []
 c-kzg = ["ethrex-common/c-kzg"]
 
 sp1 = []
+risc0 = ["c-kzg"]
 
 ethereum_foundation_tests = []
 
