@@ -26,7 +26,7 @@ impl TopLevelCache {
         let Some(new_top) = layers.get(&state_root) else {
             return self.regenerate(layers, state_root);
         };
-        println!("current: {state_root:x} parent={:x}, old={:x}}", new_top.parent, self.root);
+        println!("current: {state_root:x} parent={:x}, old={:x}", new_top.parent, self.root);
         if new_top.parent == self.root {
             self.nodes.append(&mut new_top.nodes.clone());
             self.root = state_root;
