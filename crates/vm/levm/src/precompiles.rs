@@ -397,7 +397,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let (raw_v, raw_sig) = tail.split_at(WORD);
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
-    let mut recovery_id_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
+    let recovery_id_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
         Ok(27) => 0_i32,
         Ok(28) => 1_i32,
         _ => return Ok(Bytes::new()),
@@ -417,7 +417,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let message = secp256k1::Message::from_digest(
         raw_hash
             .try_into()
-            .expect("ecrecover: raw_hash is not 32 bytes"),
+            .map_err(|_err| InternalError::msg("Invalid message length for ecrecover"))?,
     );
 
     let Ok(public_key) = recoverable_signature.recover(&message) else {
@@ -432,7 +432,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let recovered_address_bytes = &public_key_hash[12..];
 
     let mut out = [0u8; 32];
-    
+
     out[12..32].copy_from_slice(recovered_address_bytes);
 
     Ok(Bytes::copy_from_slice(&out))
