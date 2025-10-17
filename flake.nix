@@ -1,7 +1,7 @@
 {
-  description = "ethrex prebuilt shells + nix run support";
+  description = "Ethrex Nix";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
 
   outputs = { self, nixpkgs }:
   let
@@ -25,7 +25,6 @@
       };
     };
 
-    # Fill these with: nix store prefetch-file --json <url> | jq -r .hash
     hashes = {
       "x86_64-linux" = {
         plain = "sha256-Vg6jwBj5jrSAsb7nn04G/HEKhQyX8sICjmmPMpkIHTI=";
@@ -57,35 +56,59 @@
           platforms   = platforms.unix;
         };
       };
+
   in {
+    # --- Dev shells with a clear prompt
     devShells = forEachSystem (system:
-      let pkgs = import nixpkgs { inherit system; };
-          plain = mkEthrex { inherit pkgs; url = urls.${system}.plain; sha256 = hashes.${system}.plain; };
-          haveGpu = urls.${system} ? gpu;
-          gpuPkg = if haveGpu then mkEthrex { inherit pkgs; url = urls.${system}.gpu; sha256 = hashes.${system}.gpu; } else null;
-          shellFor = pkg: pkgs.mkShell { packages = [ pkg ]; shellHook = ''echo "ethrex: $(command -v ethrex)"; ethrex --version || true''; };
-      in if system == "x86_64-linux" then {
-           default = shellFor plain; linux-x86_64 = shellFor plain; linux-x86_64-gpu = shellFor gpuPkg;
-         } else if system == "aarch64-linux" then {
-           default = shellFor plain; linux-aarch64 = shellFor plain; linux-aarch64-gpu = shellFor gpuPkg;
-         } else {
-           default = shellFor plain; macos-aarch64 = shellFor plain;
-         }
+      let
+        pkgs = import nixpkgs { inherit system; };
+        plain = mkEthrex { inherit pkgs; url = urls.${system}.plain; sha256 = hashes.${system}.plain; };
+        haveGpu = urls.${system} ? gpu;
+        gpuPkg = if haveGpu then mkEthrex { inherit pkgs; url = urls.${system}.gpu; sha256 = hashes.${system}.gpu; } else null;
+
+        # Helper that tags the prompt with system + cpu/gpu
+        shellFor = { pkg, label }:
+          pkgs.mkShell {
+            packages = [ pkg ];
+            shellHook = ''
+              export PS1="(ethrex-${label}-${system}) \u@\h:\w\$ "
+            '';
+          };
+      in
+        if system == "x86_64-linux" then
+          {
+            default        = shellFor { pkg = plain; label = "cpu"; };
+            linux-x86_64   = shellFor { pkg = plain; label = "cpu"; };
+          } // lib.optionalAttrs haveGpu {
+            linux-x86_64-gpu = shellFor { pkg = gpuPkg; label = "gpu"; };
+          }
+        else if system == "aarch64-linux" then
+          {
+            default         = shellFor { pkg = plain; label = "cpu"; };
+            linux-aarch64   = shellFor { pkg = plain; label = "cpu"; };
+          } // lib.optionalAttrs haveGpu {
+            linux-aarch64-gpu = shellFor { pkg = gpuPkg; label = "gpu"; };
+          }
+        else {
+          default        = shellFor { pkg = plain; label = "cpu"; };
+          macos-aarch64  = shellFor { pkg = plain; label = "cpu"; };
+        }
     );
 
+    # --- Packages
     packages = forEachSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
         plain = mkEthrex { inherit pkgs; url = urls.${system}.plain; sha256 = hashes.${system}.plain; };
         haveGpu = urls.${system} ? gpu;
       in
-        { ethrex = plain;
-          default = plain;
-        } // lib.optionalAttrs haveGpu {
+        { ethrex = plain; default = plain; }
+        // lib.optionalAttrs haveGpu {
           ethrex-gpu = mkEthrex { inherit pkgs; url = urls.${system}.gpu; sha256 = hashes.${system}.gpu; };
         }
     );
 
+    # --- Apps
     apps = forEachSystem (system: {
       ethrex = {
         type = "app";
@@ -95,4 +118,3 @@
     });
   };
 }
-
