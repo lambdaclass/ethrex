@@ -3,7 +3,7 @@
   vars:
     ansible_ssh_user: admin
     rust_version: "1.88.0"
-    lighthouse_version: "7.0.1"
+    lighthouse_version: "8.0.0-rc.1"
 
   tasks:
     - name: Write systemd service file
