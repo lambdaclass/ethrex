@@ -12,7 +12,7 @@ documentation.workspace = true
 ethrex-common = { workspace = true, default-features = false }
 ethrex-blockchain = { workspace = true, default-features = false }
 ethrex-l2-common = { workspace = true, default-features = false }
-ethrex-p2p = { workspace = true, default-features = false }
+ethrex-p2p = { workspace = true, default-features = false, features = ["l2"] }
 ethrex-storage = { workspace = true, default-features = false }
 ethrex-storage-rollup = { workspace = true, default-features = false }
 ethrex-rpc = { workspace = true, default-features = false }
@@ -27,7 +27,7 @@ bytes.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
-secp256k1.workspace = true # FIXME
+secp256k1.workspace = true                             # FIXME
 reqwest.workspace = true
 ethereum-types.workspace = true
 hex.workspace = true

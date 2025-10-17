@@ -98,9 +98,9 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
 }
 
 pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
-    #[cfg(feature = "rollup_storage_sql")]
+    #[cfg(feature = "l2-sql")]
     let engine_type = EngineTypeRollup::SQL;
-    #[cfg(not(feature = "rollup_storage_sql"))]
+    #[cfg(not(feature = "l2-sql"))]
     let engine_type = EngineTypeRollup::InMemory;
     let rollup_store =
         StoreRollup::new(datadir, engine_type).expect("Failed to create StoreRollup");
@@ -179,7 +179,7 @@ pub async fn init_l2(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(PeerTable::spawn());
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();

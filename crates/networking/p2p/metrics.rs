@@ -175,10 +175,10 @@ impl fmt::Display for CurrentStepValue {
             CurrentStepValue::RequestingStorageRanges => write!(f, "Requesting Storage Ranges"),
             CurrentStepValue::DownloadingHeaders => write!(f, "Downloading Headers"),
             CurrentStepValue::InsertingStorageRanges => {
-                write!(f, "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m")
+                write!(f, "Inserting Storage Ranges - Writing to DB")
             }
             CurrentStepValue::InsertingAccountRanges => {
-                write!(f, "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m")
+                write!(f, "Inserting Account Ranges - Writing to DB")
             }
             CurrentStepValue::InsertingAccountRangesNoDb => write!(f, "Inserting Account Ranges"),
         }
@@ -341,9 +341,15 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::NoMatchingCapabilities() => {
+            PeerConnectionError::NoMatchingCapabilities => {
                 failures_grouped_by_reason
                     .entry("NoMatchingCapabilities".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            PeerConnectionError::TooManyPeers => {
+                failures_grouped_by_reason
+                    .entry("TooManyPeers".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
@@ -371,19 +377,19 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::InvalidPeerId() => {
+            PeerConnectionError::InvalidPeerId => {
                 failures_grouped_by_reason
                     .entry("InvalidPeerId".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::InvalidRecoveryId() => {
+            PeerConnectionError::InvalidRecoveryId => {
                 failures_grouped_by_reason
                     .entry("InvalidRecoveryId".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::InvalidMessageLength() => {
+            PeerConnectionError::InvalidMessageLength => {
                 failures_grouped_by_reason
                     .entry("InvalidMessageLength".to_owned())
                     .and_modify(|e| *e += 1)
@@ -479,6 +485,7 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            #[cfg(feature = "l2")]
             PeerConnectionError::RollupStoreError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("RollupStoreError - {error}"))

@@ -11,7 +11,7 @@ documentation.workspace = true
 ethrex-common = { workspace = true, default-features = false }
 ethrex-blockchain = { workspace = true, default-features = false }
 ethrex-storage = { workspace = true, default-features = false }
-ethrex-storage-rollup = { workspace = true, default-features = false }
+ethrex-storage-rollup = { workspace = true, default-features = false, optional = true }
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
 ethrex-threadpool.workspace = true
@@ -61,7 +61,7 @@ path = "./p2p.rs"
 default = ["l1"]
 
 sync-test = []
-rocksdb = ["dep:rocksdb"]
+l2 = ["dep:ethrex-storage-rollup"]
 
 l1 = [
     "ethrex-blockchain/l1",
