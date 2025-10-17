@@ -116,7 +116,7 @@ impl Store {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache
+        let cache = Cache::new_lru_cache(20 * 1024 * 1024 * 1024); // 20GB cache
 
         db_options.set_max_open_files(-1);
         db_options.set_max_file_opening_threads(16);
