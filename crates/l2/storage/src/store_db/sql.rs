@@ -788,22 +788,18 @@ impl StoreEngineRollup for SQLStore {
         batch_number: u64,
         messages: Vec<L2toL2Message>,
     ) -> Result<(), RollupStoreError> {
-        self.execute_in_tx(
-            messages
-                .iter()
-                .enumerate()
-                .map(|(idx, msg)| {
-                    (
-                        "INSERT INTO l2_to_l2_messages (batch, idx, message) VALUES (?1, ?2, ?3)",
-                        libsql::params!(batch_number, idx as u64, bincode::serialize(msg).unwrap())
-                            .into_params()
-                            .unwrap(),
-                    )
-                })
-                .collect(),
-            None,
-        )
-        .await?;
+        let mut queries = Vec::with_capacity(messages.len());
+
+        for (idx, message) in messages.iter().enumerate() {
+            let idx = u64::try_from(idx)
+                .map_err(|_| RollupStoreError::Custom("Message index out of range".to_string()))?;
+            queries.push((
+                "INSERT INTO l2_to_l2_messages (batch, idx, message) VALUES (?1, ?2, ?3)",
+                libsql::params!(batch_number, idx, bincode::serialize(message)?).into_params()?,
+            ))
+        }
+
+        self.execute_in_tx(queries, None).await?;
         Ok(())
     }
 
