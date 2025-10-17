@@ -87,7 +87,7 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
-        let gas_price: U256 = claculate_gas_price_for_tx(
+        let gas_price: U256 = calculate_gas_price_for_tx(
             tx,
             block_header.base_fee_per_gas.unwrap_or_default(),
             &vm_type,
@@ -478,7 +478,7 @@ pub fn calculate_gas_price_for_generic(tx: &GenericTransaction, basefee: u64) ->
     }
 }
 
-pub fn claculate_gas_price_for_tx(
+pub fn calculate_gas_price_for_tx(
     tx: &Transaction,
     mut fee_per_gas: u64,
     vm_type: &VMType,
