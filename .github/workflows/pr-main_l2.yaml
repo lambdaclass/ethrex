@@ -222,6 +222,10 @@ jobs:
 
       - name: Deploy contracts
         run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries 
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
           touch cmd/.env
           cd crates/l2
           if [ "${{ matrix.use_native_token }}" = true ]; then
@@ -241,6 +245,13 @@ jobs:
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_NATIVE_TOKEN_L1_ADDRESS=$ETHREX_NATIVE_TOKEN_L1_ADDRESS \
           docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
 
       - name: Copy env to host
         run: |
@@ -289,6 +300,7 @@ jobs:
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           docker logs --follow ethrex_l2 &
+          docker logs --follow ethrex_l1 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
@@ -437,6 +449,10 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries 
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
           touch cmd/.env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
@@ -446,6 +462,13 @@ jobs:
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           COMPILE_CONTRACTS=true \
           docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
 
       - name: Run tests
         run: |
