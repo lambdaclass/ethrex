@@ -110,7 +110,7 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
 
 pub fn get_l2_to_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
     static L2_MESSAGE_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
-        keccak("L2ToL2Message(uint256,address,address,uint256,uint256,bytes,uint256)".as_bytes())
+        keccak("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)".as_bytes())
     });
 
     receipts
