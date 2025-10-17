@@ -64,6 +64,7 @@ impl NodeRef {
                     }
                     Node::Leaf(_) => {}
                 }
+                buf.clear();
                 node.encode(buf);
                 let hash = *hash.get_or_init(|| NodeHash::from_encoded_raw(buf));
                 acc.push((path.clone(), buf.to_vec()));
