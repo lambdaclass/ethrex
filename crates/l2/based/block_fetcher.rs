@@ -1,6 +1,7 @@
 use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
+use ethrex_common::types::l2_to_l2_message::L2toL2Message;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H160, H256, U256,
@@ -8,6 +9,7 @@ use ethrex_common::{
         AccountUpdate, Block, BlockNumber, PrivilegedL2Transaction, Transaction, batch::Batch,
     },
 };
+use ethrex_l2_common::l1_messages::get_l2_to_l2_messages;
 use ethrex_l2_common::{
     l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
     privileged_transactions::compute_privileged_transactions_hash,
@@ -332,7 +334,7 @@ impl BlockFetcher {
             .collect();
         let mut messages = Vec::new();
         for block in batch {
-            let block_messages = self.extract_block_messages(block.header.number).await?;
+            let (block_messages, _) = self.extract_block_messages(block.header.number).await?;
             messages.extend(block_messages);
         }
         let privileged_transactions_hash =
@@ -391,41 +393,46 @@ impl BlockFetcher {
         let (blobs_bundle, _) =
             generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
 
+        let (message_hashes, l2_to_l2_messages) = self.get_batch_messages(batch).await?;
+
         Ok(Batch {
             number: batch_number.as_u64(),
             first_block: first_block.header.number,
             last_block: last_block.header.number,
             state_root: new_state_root,
             privileged_transactions_hash,
-            message_hashes: self.get_batch_message_hashes(batch).await?,
-            l2_to_l2_messages: unimplemented!("TODO"),
+            message_hashes,
+            l2_to_l2_messages,
             blobs_bundle,
             commit_tx: Some(commit_tx),
             verify_tx: None,
         })
     }
 
-    async fn get_batch_message_hashes(
+    async fn get_batch_messages(
         &mut self,
         batch: &[Block],
-    ) -> Result<Vec<H256>, BlockFetcherError> {
+    ) -> Result<(Vec<H256>, Vec<L2toL2Message>), BlockFetcherError> {
         let mut message_hashes = Vec::new();
+        let mut l2_to_l2_messages = Vec::new();
 
         for block in batch {
-            let block_messages = self.extract_block_messages(block.header.number).await?;
+            let (block_messages, block_l2_to_l2_messages) =
+                self.extract_block_messages(block.header.number).await?;
 
+            l2_to_l2_messages.extend(block_l2_to_l2_messages);
             for msg in &block_messages {
                 message_hashes.push(get_l1_message_hash(msg));
             }
         }
 
-        Ok(message_hashes)
+        Ok((message_hashes, l2_to_l2_messages))
     }
 
     async fn extract_block_messages(
         &mut self,
         block_number: BlockNumber,
-    ) -> Result<Vec<L1Message>, BlockFetcherError> {
+    ) -> Result<(Vec<L1Message>, Vec<L2toL2Message>), BlockFetcherError> {
         let Some(block_body) = self.store.get_block_body(block_number).await? else {
             return Err(BlockFetcherError::InconsistentStorage(format!(
                 "Block {block_number} is supposed to be in store at this point"
@@ -452,7 +459,10 @@ impl BlockFetcher {
             txs.push(tx.clone());
             receipts.push(receipt);
         }
-        Ok(get_block_l1_messages(&receipts))
+        Ok((
+            get_block_l1_messages(&receipts),
+            get_l2_to_l2_messages(&receipts),
+        ))
     }
 
     /// Process the logs from the event `BatchVerified`.

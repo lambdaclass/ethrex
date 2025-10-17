@@ -1,9 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
-use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
-    structs::Decoder,
-};
+use ethrex_rlp::{decode::RLPDecode, structs::Decoder};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
