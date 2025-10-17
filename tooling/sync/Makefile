@@ -121,7 +121,7 @@ endif
 	@echo "Starting ethrex..."
 	cd $(ETHREX_DIR) && cargo run --release --features "metrics" --bin ethrex -- \
 	--network $(NETWORK) \
-	--metrics \
+	--metrics.enabled \
 	--metrics.port 3701 \
 	import $(RLP_FILE) \
 	--removedb 
@@ -165,7 +165,7 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--metrics \
+		--metrics.enabled \
 		--metrics-address 0.0.0.0 \
 		--metrics-port 5054 \
 		--datadir $(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_$(EVM) \
@@ -178,7 +178,7 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--authrpc.port 8551 \
     		--p2p.port 30303\
     		--discovery.port 30303 \
-    		--metrics \
+    		--metrics.enabled \
     		--metrics.port 3701 \
     		--network $(NETWORK) \
     		--datadir "$(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM)" \
@@ -219,4 +219,4 @@ server-sync:
 
 	sleep 0.2
 
-	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker stop metrics-ethereum-metrics-exporter-1 || true && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=info,ethrex_p2p::sync=debug $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(FULL_SYNC),$(HEALING)),--syncmode full)  2>&1 | tee $(LOGS_FILE)"
+	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker stop metrics-ethereum-metrics-exporter-1 || true && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=info,ethrex_p2p::sync=debug $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics.enabled --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(FULL_SYNC),$(HEALING)),--syncmode full)  2>&1 | tee $(LOGS_FILE)"
