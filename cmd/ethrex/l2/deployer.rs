@@ -530,7 +530,11 @@ pub async fn deploy_l1_contracts(
         Some(opts.maximum_allowed_max_fee_per_blob_gas),
     )?;
 
+    info!("Deploying contracts");
+
     let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
+
+    info!("Initializing contracts");
 
     initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
 
@@ -791,8 +795,10 @@ async fn initialize_contracts(
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
     let genesis: Genesis = if opts.use_compiled_genesis {
+        info!("Using compiled genesis for OnChainProposer initialization");
         serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS).map_err(|_| DeployerError::Genesis)?
     } else {
+        info!("Using genesis file from path for OnChainProposer initialization");
         read_genesis_file(
             opts.genesis_l2_path
                 .to_str()
@@ -800,8 +806,13 @@ async fn initialize_contracts(
         )
     };
 
+    info!("Reading verification keys for OnChainProposer initialization");
+
     let sp1_vk = get_vk(ProverType::SP1, opts)?;
+    info!("SP1 VK read");
     let risc0_vk = get_vk(ProverType::RISC0, opts)?;
+
+    info!("Risc0 vk read");
 
     let deployer_address =
         get_address_from_secret_key(&opts.private_key).map_err(DeployerError::InternalError)?;
