@@ -10,6 +10,15 @@ pub const FIELD_ELEMENTS_PER_EXT_BLOB: usize = 2 * FIELD_ELEMENTS_PER_BLOB;
 pub const FIELD_ELEMENTS_PER_CELL: usize = 64;
 pub const BYTES_PER_CELL: usize = FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT;
 pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMENTS_PER_CELL;
+
+// https://github.com/ethereum/c-kzg-4844?tab=readme-ov-file#precompute
+// For Risc0 we need this parameter to be 0.
+// For the rest we keep the value 8 due to optimizations.
+#[cfg(not(feature = "risc0"))]
+pub const KZG_PRECOMPUTE: u64 = 8;
+#[cfg(feature = "risc0")]
+pub const KZG_PRECOMPUTE: u64 = 0;
+
 type Bytes48 = [u8; 48];
 type Blob = [u8; BYTES_PER_BLOB];
 type Commitment = Bytes48;
@@ -54,10 +63,14 @@ pub fn verify_cell_kzg_proof_batch(
     )));
     #[cfg(feature = "c-kzg")]
     {
-        let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
+        let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         let mut cells = Vec::new();
         for blob in blobs {
-            cells.extend(c_kzg_settings.compute_cells(&(*blob).into())?.into_iter());
+            let blob: c_kzg::Blob = (*blob).into();
+            let (cells_blob, _cell_proofs) = c_kzg_settings
+                .compute_cells_and_kzg_proofs(&blob)
+                .map_err(KzgError::CKzg)?;
+            cells.extend(*cells_blob);
         }
         c_kzg::KzgSettings::verify_cell_kzg_proof_batch(
             c_kzg_settings,
@@ -98,7 +111,7 @@ pub fn verify_blob_kzg_proof(
     #[cfg(feature = "c-kzg")]
     {
         c_kzg::KzgSettings::verify_blob_kzg_proof(
-            c_kzg::ethereum_kzg_settings(8),
+            c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
             &blob.into(),
             &commitment.into(),
             &proof.into(),
@@ -128,7 +141,7 @@ pub fn verify_kzg_proof(
     #[cfg(feature = "c-kzg")]
     {
         c_kzg::KzgSettings::verify_kzg_proof(
-            c_kzg::ethereum_kzg_settings(8),
+            c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
             &commitment_bytes.into(),
             &z.into(),
             &y.into(),
@@ -142,12 +155,14 @@ pub fn verify_kzg_proof(
 pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), KzgError> {
     let blob: c_kzg::Blob = (*blob).into();
 
-    let commitment =
-        c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg::ethereum_kzg_settings(8), &blob)?;
+    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(
+        c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
+        &blob,
+    )?;
     let commitment_bytes = commitment.to_bytes();
 
     let proof = c_kzg::KzgSettings::compute_blob_kzg_proof(
-        c_kzg::ethereum_kzg_settings(8),
+        c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
         &blob,
         &commitment_bytes,
     )?;
@@ -155,4 +170,21 @@ pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proo
     let proof_bytes = proof.to_bytes();
 
     Ok((commitment_bytes.into_inner(), proof_bytes.into_inner()))
+}
+
+#[cfg(feature = "c-kzg")]
+pub fn blob_to_commitment_and_cell_proofs(
+    blob: &Blob,
+) -> Result<(Commitment, Vec<Proof>), KzgError> {
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
+    let blob: c_kzg::Blob = (*blob).into();
+    let commitment =
+        c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg::ethereum_kzg_settings(8), &blob)?;
+    let commitment_bytes = commitment.to_bytes();
+
+    let (_cells, cell_proofs) = c_kzg_settings
+        .compute_cells_and_kzg_proofs(&blob)
+        .map_err(KzgError::CKzg)?;
+    let cell_proofs = cell_proofs.map(|p| p.to_bytes().into_inner());
+    Ok((commitment_bytes.into_inner(), cell_proofs.to_vec()))
 }

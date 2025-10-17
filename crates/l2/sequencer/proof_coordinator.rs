@@ -6,14 +6,15 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::{BlobsBundle, CELLS_PER_EXT_BLOB, Fork};
 use ethrex_common::{
     Address,
     types::{Block, blobs_bundle},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_sdk::is_osaka_activated_on_l1;
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
@@ -48,8 +49,8 @@ pub struct ProverInputData {
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
     #[cfg(feature = "l2")]
-    #[serde_as(as = "[_; 48]")]
-    pub blob_proof: blobs_bundle::Proof,
+    #[serde_as(as = "Vec<[_; 48]>")]
+    pub blob_proof: Vec<blobs_bundle::Proof>,
     pub fee_config: FeeConfig,
 }
 
@@ -186,6 +187,7 @@ pub struct ProofCoordinator {
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
     qpl_tool_path: Option<String>,
+    osaka_activation_time: Option<u64>,
 }
 
 impl ProofCoordinator {
@@ -236,6 +238,7 @@ impl ProofCoordinator {
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
             qpl_tool_path: config.qpl_tool_path.clone(),
+            osaka_activation_time: config.osaka_activation_time,
         })
     }
 
@@ -483,22 +486,37 @@ impl ProofCoordinator {
 
         // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
         let (blob_commitment, blob_proof) = if self.validium {
-            ([0; 48], [0; 48])
+            ([0; 48], vec![[0; 48]])
         } else {
             let blob = self
                 .rollup_store
                 .get_blobs_by_batch(batch_number)
                 .await?
                 .ok_or(ProofCoordinatorError::MissingBlob(batch_number))?;
+            let fork = is_osaka_activated_on_l1(&self.eth_client, self.osaka_activation_time)
+                .await
+                .map_err(ProofCoordinatorError::EthClientError)?;
             let BlobsBundle {
                 mut commitments,
                 mut proofs,
                 ..
-            } = BlobsBundle::create_from_blobs(&blob)?;
-            match (commitments.pop(), proofs.pop()) {
-                (Some(commitment), Some(proof)) => (commitment, proof),
-                _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),
+            } = BlobsBundle::create_from_blobs(&blob, fork)?;
+            let proof_count = if fork < Fork::Osaka {
+                1
+            } else {
+                CELLS_PER_EXT_BLOB
+            };
+            let commitment = commitments
+                .pop()
+                .ok_or_else(|| ProofCoordinatorError::MissingBlob(batch_number))?;
+
+            if proofs.len() < proof_count {
+                return Err(ProofCoordinatorError::MissingBlob(batch_number));
             }
+
+            let proof = proofs.split_off(proofs.len() - proof_count);
+
+            (commitment, proof)
         };
 
         debug!("Created prover input for batch {batch_number}");

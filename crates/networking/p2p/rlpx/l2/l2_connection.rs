@@ -438,7 +438,12 @@ pub(crate) async fn send_sealed_batch(
         {
             return Ok(());
         }
-        let Some(batch) = l2_state.store_rollup.get_batch(next_batch_to_send).await? else {
+        let fork = established.blockchain.current_fork().await?;
+        let Some(batch) = l2_state
+            .store_rollup
+            .get_batch(next_batch_to_send, fork)
+            .await?
+        else {
             return Ok(());
         };
         match l2_state
