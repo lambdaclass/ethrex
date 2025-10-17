@@ -27,6 +27,5 @@ tempfile.workspace = true
 ethrex-l2-rpc.workspace = true
 
 [[bench]]
-path = "./benches/build_block_benchmark.rs"
 name = "build_block_benchmark"
 harness = false
