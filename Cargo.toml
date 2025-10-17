@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "benches",
   "cmd/ethrex",
   "crates/blockchain",
   "crates/blockchain/dev",

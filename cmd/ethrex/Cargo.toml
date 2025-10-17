@@ -27,7 +27,10 @@ ethrex-storage.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-vm.workspace = true
 
-tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms"] }
+tikv-jemallocator = { version = "0.6.0", optional = true, features = [
+  "stats",
+  "unprefixed_malloc_on_supported_platforms",
+] }
 bytes.workspace = true
 hex.workspace = true
 tracing.workspace = true
@@ -55,7 +58,11 @@ url.workspace = true
 tui-logger = { workspace = true, optional = true }
 
 [target.'cfg(linux)'.dependencies]
-tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms", "background_threads"] }
+tikv-jemallocator = { version = "0.6.0", optional = true, features = [
+  "stats",
+  "unprefixed_malloc_on_supported_platforms",
+  "background_threads",
+] }
 
 [[bin]]
 name = "ethrex"
@@ -102,32 +109,10 @@ l2 = [
   "dep:serde_json",
   "dep:hex",
 ]
-l2-sql = [
-  "ethrex-storage-rollup/sql",
-]
+l2-sql = ["ethrex-storage-rollup/sql"]
 sp1 = ["ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0"]
-
-[dev-dependencies]
-criterion = { version = "0.5.1", features = [
-  "html_reports",
-  "async_futures",
-  "async_tokio",
-] }
-secp256k1.workspace = true
-tempfile.workspace = true
-ethrex-l2-rpc.workspace = true
-
-[[bench]]
-path = "./bench/import_blocks_benchmark.rs"
-name = "import_blocks_benchmark"
-harness = false
-
-[[bench]]
-path = "./bench/build_block_benchmark.rs"
-name = "build_block_benchmark"
-harness = false
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
