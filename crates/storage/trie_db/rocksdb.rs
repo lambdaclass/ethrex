@@ -4,7 +4,7 @@ use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
 
-use crate::{store_db::rocksdb::CF_FLATKEYVALUE, trie_db::layering::apply_prefix};
+use crate::{store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES}, trie_db::layering::apply_prefix};
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
@@ -14,8 +14,8 @@ pub struct RocksDBTrieDB {
     cf_name: String,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
-
-    last_snapshotted: Nibbles,
+    /// Last flatkeyvalue path already generated
+    last_computed_flatkeyvalue: Nibbles,
 }
 
 impl RocksDBTrieDB {
@@ -32,9 +32,9 @@ impl RocksDBTrieDB {
             )));
         }
         let cf_misc = db
-            .cf_handle("misc_values")
+            .cf_handle(CF_MISC_VALUES)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
-        let last_snapshotted = db
+        let last_computed_flatkeyvalue = db
             .get_cf(&cf_misc, "last_written")
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Error reading last_written: {e}")))?
             .map(|v| Nibbles::from_hex(v.to_vec()))
@@ -45,7 +45,7 @@ impl RocksDBTrieDB {
             db,
             cf_name: cf_name.to_string(),
             address_prefix,
-            last_snapshotted,
+            last_computed_flatkeyvalue,
         })
     }
 
@@ -69,8 +69,8 @@ impl RocksDBTrieDB {
 }
 
 impl TrieDB for RocksDBTrieDB {
-    fn snapshot_completed(&self, key: Nibbles) -> bool {
-        self.last_snapshotted >= key
+    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        self.last_computed_flatkeyvalue >= key
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = if key.is_leaf() {
@@ -109,13 +109,13 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
-        let cf_snapshot = self.cf_handle_flatkeyvalue()?;
+        let cf_flatkeyvalue = self.cf_handle_flatkeyvalue()?;
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
 
         for (hash, node) in key_values {
-            let cf = if hash.is_leaf() { &cf_snapshot } else { &cf };
+            let cf = if hash.is_leaf() { &cf_flatkeyvalue } else { &cf };
             let db_key = self.make_key(hash.clone());
             buffer.clear();
             node.encode(&mut buffer);

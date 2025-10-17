@@ -106,10 +106,11 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 pub const CF_FLATKEYVALUE: &str = "flatkeyvalue";
 
-const CF_MISC_VALUES: &str = "misc_values";
+pub const CF_MISC_VALUES: &str = "misc_values";
 
+/// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
-enum SnapshotControlMessage {
+enum FKVGeneratorControlMessage {
     Stop,
     Continue,
 }
@@ -118,7 +119,7 @@ enum SnapshotControlMessage {
 pub struct Store {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     trie_cache: Arc<RwLock<TrieLayerCache>>,
-    snapshot_pivot_tx: std::sync::mpsc::SyncSender<SnapshotControlMessage>,
+    flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
 }
 
 impl Store {
@@ -319,25 +320,25 @@ impl Store {
         let store = Self {
             db: Arc::new(db),
             trie_cache: Default::default(),
-            snapshot_pivot_tx: tx,
+            flatkeyvalue_control_tx: tx,
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
             let mut rx = rx;
             loop {
                 match rx.recv() {
-                    Ok(SnapshotControlMessage::Continue) => break,
-                    Ok(SnapshotControlMessage::Stop) => {}
+                    Ok(FKVGeneratorControlMessage::Continue) => break,
+                    Ok(FKVGeneratorControlMessage::Stop) => {}
                     Err(_) => {
-                        debug!("Closing snapshooter.");
+                        debug!("Closing FlatKeyValue generator.");
                         return;
                     }
                 }
             }
-            info!("Snapshooter started.");
-            match store_clone.snapshoting_loop(&mut rx) {
-                Ok(_) => info!("Snapshooter finished."),
-                Err(err) => error!("Error while generating snapshot: {err}"),
+            info!("Generation of FlatKeyValue started.");
+            match store_clone.flatkeyvalue_generator(&mut rx) {
+                Ok(_) => info!("FlatKeyValue generation finished."),
+                Err(err) => error!("Error while generating FlatKeyValue: {err}"),
             }
             // rx channel is dropped, closing it
         });
@@ -477,19 +478,19 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    fn snapshoting_loop(
+    fn flatkeyvalue_generator(
         &self,
-        snapshot_pivot_rx: &mut std::sync::mpsc::Receiver<SnapshotControlMessage>,
+        control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
         let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
-        let cf_snapshot = self.cf_handle(CF_FLATKEYVALUE)?;
+        let cf_flatkeyvalue = self.cf_handle(CF_FLATKEYVALUE)?;
 
         let last_written = self
             .db
             .get_cf(&cf_misc, "last_written")?
             .unwrap_or_default();
         self.db
-            .delete_range_cf(&cf_snapshot, last_written, vec![0xff])?;
+            .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff])?;
 
         loop {
             let root = self
@@ -511,7 +512,7 @@ impl Store {
                 .map(|v| Nibbles::from_hex(v.to_vec()))
                 .unwrap_or_default();
 
-            debug!("Starting snapshooting loop pivot={last_written:?} SR={state_root:x}");
+            debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
 
             let mut ctr = 0;
             let mut batch = WriteBatchWithTransaction::default();
@@ -526,7 +527,7 @@ impl Store {
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
                 batch.put_cf(&cf_misc, "last_written", path.as_ref());
-                batch.put_cf(&cf_snapshot, path.as_ref(), node.value);
+                batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
                 ctr += 1;
                 if ctr > 10_000 {
                     self.db.write(std::mem::take(&mut batch))?;
@@ -545,14 +546,14 @@ impl Store {
                     };
                     let key = apply_prefix(Some(account_hash), path);
                     batch.put_cf(&cf_misc, "last_written", key.as_ref());
-                    batch.put_cf(&cf_snapshot, key.as_ref(), node.value);
+                    batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
                     ctr += 1;
                     if ctr > 10_000 {
                         self.db.write(std::mem::take(&mut batch))?;
                     }
-                    if let Ok(value) = snapshot_pivot_rx.try_recv() {
+                    if let Ok(value) = control_rx.try_recv() {
                         match value {
-                            SnapshotControlMessage::Stop => {
+                            FKVGeneratorControlMessage::Stop => {
                                 return Err(StoreError::PivotChanged);
                             }
                             _ => {
@@ -562,9 +563,9 @@ impl Store {
                     }
                     Ok(())
                 })?;
-                if let Ok(value) = snapshot_pivot_rx.try_recv() {
+                if let Ok(value) = control_rx.try_recv() {
                     match value {
-                        SnapshotControlMessage::Stop => return Err(StoreError::PivotChanged),
+                        FKVGeneratorControlMessage::Stop => return Err(StoreError::PivotChanged),
                         _ => {
                             return Err(StoreError::Custom("Unexpected message".to_string()));
                         }
@@ -577,9 +578,9 @@ impl Store {
             }
             match res {
                 Err(StoreError::PivotChanged) => {
-                    if let Ok(value) = snapshot_pivot_rx.recv() {
+                    if let Ok(value) = control_rx.recv() {
                         match value {
-                            SnapshotControlMessage::Continue => {}
+                            FKVGeneratorControlMessage::Continue => {}
                             _ => {
                                 return Err(StoreError::Custom("Unexpected messafe".to_string()));
                             }
@@ -615,14 +616,14 @@ impl StoreEngine for Store {
             .ok_or(StoreError::UpdateBatchNoBlocks)?
             .header
             .state_root;
-        let snapshot_pivot_tx = self.snapshot_pivot_tx.clone();
+        let flatkeyvalue_control_tx = self.flatkeyvalue_control_tx.clone();
 
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
 
             let [
                 cf_trie_nodes,
-                cf_snapshots,
+                cf_flatkeyvalue,
                 cf_receipts,
                 cf_codes,
                 cf_block_numbers,
@@ -654,7 +655,7 @@ impl StoreEngine for Store {
             if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
                 updated_trie = true;
                 // If the channel is closed, there's nobody to notify
-                let _ = snapshot_pivot_tx.send(SnapshotControlMessage::Stop);
+                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Stop);
 
                 let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
                 let nodes = trie.commit(root).unwrap_or_default();
@@ -665,7 +666,7 @@ impl StoreEngine for Store {
                         continue;
                     }
                     let cf = if is_leaf {
-                        &cf_snapshots
+                        &cf_flatkeyvalue
                     } else {
                         &cf_trie_nodes
                     };
@@ -737,7 +738,7 @@ impl StoreEngine for Store {
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)));
             if updated_trie {
                 // If the channel is closed, there's nobody to notify
-                let _ = snapshot_pivot_tx.send(SnapshotControlMessage::Continue);
+                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Continue);
             }
             ret
         })
@@ -1658,9 +1659,9 @@ impl StoreEngine for Store {
     }
 
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
-        self.snapshot_pivot_tx
-            .send(SnapshotControlMessage::Continue)
-            .map_err(|_| StoreError::Custom("Snapshooting thread disconnected.".to_string()))
+        self.flatkeyvalue_control_tx
+            .send(FKVGeneratorControlMessage::Continue)
+            .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
     }
 }
 

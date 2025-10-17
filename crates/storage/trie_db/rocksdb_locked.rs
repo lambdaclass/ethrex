@@ -3,7 +3,7 @@ use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB, SnapshotWithThreadMode};
 use std::sync::Arc;
 
-use crate::{store_db::rocksdb::CF_FLATKEYVALUE, trie_db::layering::apply_prefix};
+use crate::{store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES}, trie_db::layering::apply_prefix};
 
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
 pub struct RocksDBLockedTrieDB {
@@ -12,12 +12,12 @@ pub struct RocksDBLockedTrieDB {
     /// Column family handle
     cf: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
     /// Column family handle
-    cf_snapshots: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
+    cf_flatkeyvalue: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
     /// Read-only snapshot for consistent reads
     snapshot: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
-    last_snapshotted: Nibbles
+    last_computed_flatkeyvalue: Nibbles
 }
 
 impl RocksDBLockedTrieDB {
@@ -34,14 +34,14 @@ impl RocksDBLockedTrieDB {
             TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
         })?;
         // Verify column family exists
-        let cf_snapshots = db.cf_handle(CF_FLATKEYVALUE).ok_or_else(|| {
+        let cf_flatkeyvalue = db.cf_handle(CF_FLATKEYVALUE).ok_or_else(|| {
             TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
         })?;
 
         let cf_misc = db
-            .cf_handle("misc_values")
+            .cf_handle(CF_MISC_VALUES)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
-        let last_snapshotted = db
+        let last_computed_flatkeyvalue = db
             .get_cf(&cf_misc, "last_written")
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Error reading last_written: {e}")))?
             .map(|v| Nibbles::from_hex(v.to_vec()))
@@ -55,10 +55,10 @@ impl RocksDBLockedTrieDB {
         Ok(Self {
             db,
             cf,
-            cf_snapshots,
+            cf_flatkeyvalue,
             snapshot,
             address_prefix,
-            last_snapshotted
+            last_computed_flatkeyvalue
         })
     }
 
@@ -82,12 +82,12 @@ impl Drop for RocksDBLockedTrieDB {
 }
 
 impl TrieDB for RocksDBLockedTrieDB {
-    fn snapshot_completed(&self, key: Nibbles) -> bool {
-        self.last_snapshotted >= key
+    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        self.last_computed_flatkeyvalue >= key
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = if key.is_leaf() {
-            &self.cf_snapshots
+            &self.cf_flatkeyvalue
         } else {
             &self.cf
         };
