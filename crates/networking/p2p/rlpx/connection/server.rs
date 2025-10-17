@@ -1001,6 +1001,21 @@ async fn handle_incoming_message(
             send(state, Message::PooledTransactions(response)).await?;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
+            for tx in &msg.pooled_transactions {
+                if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
+                    if itx.blobs_bundle.as_ref().is_none_or(|_blobs| false) {
+                        log_peer_warn(
+                            &state.node,
+                            &format!("disconnected from peer. Reason: Invalid/Missing Blobs"),
+                        );
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
+                        return Err(PeerConnectionError::DisconnectSent(
+                            DisconnectReason::SubprotocolError,
+                        ));
+                    }
+                }
+            }
             if state.blockchain.is_synced() {
                 // TODO(#3745): disconnect from peers that send invalid blob sidecars
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {

@@ -602,7 +602,7 @@ impl RpcHandler for SendRawTransactionRequest {
                 .blockchain
                 .add_blob_transaction_to_pool(
                     wrapped_blob_tx.tx.clone(),
-                    wrapped_blob_tx.blobs_bundle.clone(),
+                    wrapped_blob_tx.blobs_bundle.as_ref().unwrap().clone(),
                 )
                 .await
         } else {

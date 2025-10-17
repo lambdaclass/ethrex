@@ -225,7 +225,7 @@ pub struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
-    pooled_transactions: Vec<P2PTransaction>,
+    pub pooled_transactions: Vec<P2PTransaction>,
 }
 
 impl PooledTransactions {
@@ -243,8 +243,9 @@ impl PooledTransactions {
         fork: Fork,
     ) -> Result<(), MempoolError> {
         for tx in &self.pooled_transactions {
+            dbg!(&tx);
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate(&itx.tx, fork)?;
+                dbg!(itx.blobs_bundle.as_ref()).ok_or(MempoolError::BlobTxNoBlobsBundle)?.validate(&itx.tx, fork)?;
             }
             let tx_hash = tx.compute_hash();
             let Some(pos) = requested
@@ -284,8 +285,12 @@ impl PooledTransactions {
                     );
                     continue;
                 }
+                let Some(blobs_bundle) = itx.blobs_bundle else {
+                    dbg!("yes");
+                    return Err(MempoolError::BlobTxNoBlobsBundle)
+                };
                 if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
+                    .add_blob_transaction_to_pool(itx.tx, blobs_bundle)
                     .await
                 {
                     log_peer_debug(node, &format!("Error adding transaction: {e}"));
