@@ -87,7 +87,7 @@ interface ICommonBridge {
     /// @notice Method to retrieve the merkle root of the withdrawal logs of a
     /// given block.
     /// @dev This method is used by the L2 OnChainOperator at the verify stage.
-    /// @param batchNumber the block number in L2 where the withdrawal logs were
+    /// @param batchNumber the batch number in L2 where the withdrawal logs were
     /// emitted.
     /// @return the merkle root of the withdrawal logs of the given block.
     function getWithdrawalLogsMerkleRoot(
