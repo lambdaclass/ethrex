@@ -36,12 +36,16 @@ impl TopLevelCache {
     fn regenerate(&mut self, layers: &BTreeMap<H256, TrieLayer>, state_root: H256) {
         self.nodes.clear();
         let mut current_state_root = state_root;
+        let mut roots_to_add = Vec::new();
         while let Some(layer) = layers.get(&current_state_root) {
-            self.nodes.append(&mut layer.nodes.clone());
+            roots_to_add.push(current_state_root);
             current_state_root = layer.parent;
             if current_state_root == state_root {
                 panic!("State cycle found");
             }
+        }
+        for root in roots_to_add.iter().rev() {
+            self.nodes.append(&mut layers[root].nodes.clone());
         }
         self.root = state_root;
         self.counter = 0;
