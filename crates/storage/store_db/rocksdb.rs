@@ -489,6 +489,10 @@ impl Store {
             .db
             .get_cf(&cf_misc, "last_written")?
             .unwrap_or_default();
+        if last_written == vec![0xff] {
+            return Ok(());
+        }
+
         self.db
             .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff])?;
 
