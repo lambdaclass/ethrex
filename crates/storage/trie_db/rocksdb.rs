@@ -4,7 +4,10 @@ use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
 
-use crate::{store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES}, trie_db::layering::apply_prefix};
+use crate::{
+    store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES},
+    trie_db::layering::apply_prefix,
+};
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
@@ -55,7 +58,9 @@ impl RocksDBTrieDB {
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
-    fn cf_handle_flatkeyvalue(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
+    fn cf_handle_flatkeyvalue(
+        &self,
+    ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
         self.db
             .cf_handle(CF_FLATKEYVALUE)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
@@ -115,7 +120,11 @@ impl TrieDB for RocksDBTrieDB {
         let mut buffer = Vec::with_capacity(532);
 
         for (hash, node) in key_values {
-            let cf = if hash.is_leaf() { &cf_flatkeyvalue } else { &cf };
+            let cf = if hash.is_leaf() {
+                &cf_flatkeyvalue
+            } else {
+                &cf
+            };
             let db_key = self.make_key(hash.clone());
             buffer.clear();
             node.encode(&mut buffer);
