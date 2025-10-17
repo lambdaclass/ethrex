@@ -279,7 +279,21 @@ git push --tags
 <tr><td>ethrex-l2-macos-aarch64</td><td>✅</td><td>Exec</td><td>❌</td></tr>
 </tbody></table>
 </div>
+<p>Also, two docker images are built and pushed to the Github Container registry:</p>
+<ul>
+<li><code>ghcr.io/lambdaclass/ethrex:latest</code></li>
+<li><code>ghcr.io/lambdaclass/ethrex:X.Y.Z[-custom]</code></li>
+<li><code>ghcr.io/lambdaclass/ethrex:l2</code></li>
+<li><code>ghcr.io/lambdaclass/ethrex:X.Y.Z[-custom]-l2</code></li>
+</ul>
 <p>A changelog will be generated based on commit names (using conventional commits) from the last tag.</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>If the tag has format <code>vX.Y.Z-rc*</code>, the release will be a pre-release and in draft mode. Also, <code>latest</code> and <code>l2</code> docker tags will not be updated.</p>
+</div>
 <h2 id="4th---update-homebrew"><a class="header" href="#4th---update-homebrew">4th - Update Homebrew</a></h2>
 <p>Disclaimer: We should automate this</p>
 <ol>
