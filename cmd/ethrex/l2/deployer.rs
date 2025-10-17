@@ -173,6 +173,7 @@ pub struct DeployerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_L2_RISC0",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
         help = "If true, L2 will require Risc0 proofs to validate batch proofs and settle state."
     )]
@@ -189,6 +190,7 @@ pub struct DeployerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_L2_SP1",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
         help = "If true, L2 will require SP1 proofs to validate batch proofs and settle state."
     )]
@@ -206,6 +208,7 @@ pub struct DeployerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_L2_TDX",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
         help = "If true, L2 will require TDX proofs to validate batch proofs and settle state."
     )]
@@ -223,6 +226,7 @@ pub struct DeployerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_L2_ALIGNED",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
         help = "If true, L2 will verify proofs using Aligned Layer instead of smart contract verifiers."
     )]
@@ -249,6 +253,7 @@ pub struct DeployerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_L2_VALIDIUM",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
         help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
@@ -325,6 +330,7 @@ pub struct DeployerOptions {
         long,
         default_value = "false",
         env = "ETHREX_USE_COMPILED_GENESIS",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
         help = "Genesis data is extracted at compile time, used for development"
     )]
