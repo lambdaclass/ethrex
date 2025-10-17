@@ -18,12 +18,13 @@ use tracing::{Level, info, warn};
 
 use crate::{
     initializers::{get_network, init_blockchain, init_store, init_tracing, load_store},
-    l2::{
-        self,
-        command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
-    },
     utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
+
+pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
+
+#[cfg(feature = "l2")]
+pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 use ethrex_config::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
@@ -251,6 +252,7 @@ impl Options {
         }
     }
 
+    #[cfg(feature = "l2")]
     pub fn default_l2() -> Self {
         Self {
             network: Some(Network::LocalDevnetL2),
@@ -364,14 +366,16 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[cfg(feature = "l2")]
     #[command(name = "l2")]
-    L2(l2::L2Command),
+    L2(crate::l2::L2Command),
 }
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
         match self {
+            #[cfg(feature = "l2")]
             Self::L2(_) => {}
             _ => {
                 init_tracing(opts);
@@ -413,6 +417,7 @@ impl Subcommand {
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
             }
+            #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
 

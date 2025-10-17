@@ -489,6 +489,10 @@ impl Store {
             .db
             .get_cf(&cf_misc, "last_written")?
             .unwrap_or_default();
+        if last_written == vec![0xff] {
+            return Ok(());
+        }
+
         self.db
             .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff])?;
 
@@ -573,9 +577,6 @@ impl Store {
                 }
                 Ok(())
             });
-            if res.is_ok() {
-                self.db.put_cf(&cf_misc, "last_written", [0xff])?;
-            }
             match res {
                 Err(StoreError::PivotChanged) => {
                     if let Ok(value) = control_rx.recv() {
@@ -588,7 +589,11 @@ impl Store {
                     }
                 }
                 Err(err) => return Err(err),
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    batch.put_cf(&cf_misc, "last_written", [0xff]);
+                    self.db.write(batch)?;
+                    return Ok(())
+                },
             };
         }
     }
