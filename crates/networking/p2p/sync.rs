@@ -483,7 +483,8 @@ impl Syncer {
         {
             if let Some(batch_failure) = batch_failure {
                 warn!("Failed to add block during FullSync: {err}");
-                // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
+                // Since running the batch failed we set the failing block and its descendants
+                // with having an invalid ancestor on the following cases.
                 if let ChainError::InvalidBlock(_) = err {
                     let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
                     if let Some(index) = blocks_hashes
