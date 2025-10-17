@@ -1,12 +1,6 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
-
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::P2PTransaction;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_storage::{Store, error::StoreError};
@@ -23,6 +17,12 @@ use spawned_concurrency::{
     },
 };
 use spawned_rt::tasks::BroadcastStream;
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 use tokio::{
     net::TcpStream,
     sync::{Mutex, broadcast, oneshot},

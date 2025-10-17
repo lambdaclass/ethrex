@@ -245,7 +245,9 @@ impl PooledTransactions {
         for tx in &self.pooled_transactions {
             dbg!(&tx);
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                dbg!(itx.blobs_bundle.as_ref()).ok_or(MempoolError::BlobTxNoBlobsBundle)?.validate(&itx.tx, fork)?;
+                dbg!(itx.blobs_bundle.as_ref())
+                    .ok_or(MempoolError::BlobTxNoBlobsBundle)?
+                    .validate(&itx.tx, fork)?;
             }
             let tx_hash = tx.compute_hash();
             let Some(pos) = requested
@@ -287,7 +289,7 @@ impl PooledTransactions {
                 }
                 let Some(blobs_bundle) = itx.blobs_bundle else {
                     dbg!("yes");
-                    return Err(MempoolError::BlobTxNoBlobsBundle)
+                    return Err(MempoolError::BlobTxNoBlobsBundle);
                 };
                 if let Err(e) = blockchain
                     .add_blob_transaction_to_pool(itx.tx, blobs_bundle)
