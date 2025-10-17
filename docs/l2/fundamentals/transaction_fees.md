@@ -113,8 +113,8 @@ The `BlockProducer` periodically fetches the `BlobBaseFee` from L1 (at a configu
 blob_base_fee_per_byte = (l1_fee_per_blob_gas * GAS_PER_BLOB) / SAFE_BYTES_PER_BLOB
 ```
 
-> [!TIP]  
-> Take a look at the [State Diffs](./state_diffs.md) documentation for more information.
+
+See [State Diffs](./state_diffs.md) for more information about how `stateDiffs` works.
 
 L1 fee is deactivated by default. To activate it, configure the **L1 fee vault address**:
 
@@ -130,3 +130,7 @@ ethrex l2 --block-producer.blob-base-fee-update-interval <milliseconds>
 
 > [!CAUTION]  
 > If the L1 fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.
+
+> [!IMPORTANT]  
+> At the moment, the L1 fee is **not capped** by `max_fee_per_gas`.  
+> If it is configured, users must ensure they have enough balance to cover any resulting differences.
