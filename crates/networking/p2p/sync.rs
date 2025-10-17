@@ -378,8 +378,8 @@ impl Syncer {
                     }
                 }
                 block_headers.drain(first_canon_block..block_headers.len());
-                if !block_headers.is_empty() {
-                    start_block_number = block_headers.last().ok_or(SyncError::NoBlocks)?.number
+                if let Some(last_header) = block_headers.last() {
+                    start_block_number = last_header.number;
                 }
                 // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
                 if single_batch {
