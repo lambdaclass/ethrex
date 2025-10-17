@@ -1,12 +1,56 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
+/// TopLevelCache if it contains more than this many layers
+/// Cache size trades memory usage for hit rate
+const MAX_TLC_DEPTH: usize = 130;
+
+#[derive(Debug, Default)]
+struct TopLevelCache {
+    root: H256,
+    nodes: BTreeMap<Vec<u8>, Vec<u8>>,
+    counter: usize
+}
+
+impl TopLevelCache {
+    fn extend_or_regen(&mut self, layers: &BTreeMap<H256, TrieLayer>, state_root: H256) {
+        if self.counter > MAX_TLC_DEPTH {
+            return self.regenerate(layers, state_root);
+        }
+        self.counter += 1;
+        let Some(new_top) = layers.get(&state_root) else {
+            return self.regenerate(layers, state_root);
+        };
+        if new_top.parent == self.root {
+            self.nodes.append(&mut new_top.nodes.clone());
+        } else {
+            self.regenerate(layers, state_root);
+        }
+    }
+    fn regenerate(&mut self, layers: &BTreeMap<H256, TrieLayer>, state_root: H256) {
+        self.nodes.clear();
+        let mut current_state_root = state_root;
+        while let Some(layer) = layers.get(&current_state_root) {
+            self.nodes.append(&mut layer.nodes.clone());
+            current_state_root = layer.parent;
+            if current_state_root == state_root {
+                panic!("State cycle found");
+            }
+        }
+        self.root = state_root;
+        self.counter = 0;
+    }
+}
+
 #[derive(Debug)]
 struct TrieLayer {
-    nodes: HashMap<Vec<u8>, Vec<u8>>,
+    nodes: BTreeMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
@@ -16,11 +60,16 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: HashMap<H256, TrieLayer>,
+    layers: BTreeMap<H256, TrieLayer>,
+    cache: TopLevelCache,
 }
 
 impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+        if state_root == self.cache.root {
+            return self.cache.nodes.get(key.as_ref()).cloned();
+        }
+
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.get(&current_state_root) {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
@@ -74,7 +123,7 @@ impl TrieLayerCache {
             .or_insert_with(|| {
                 self.last_id += 1;
                 TrieLayer {
-                    nodes: HashMap::new(),
+                    nodes: BTreeMap::new(),
                     parent,
                     id: self.last_id,
                 }
@@ -85,10 +134,11 @@ impl TrieLayerCache {
                     .into_iter()
                     .map(|(path, node)| (path.into_vec(), node)),
             );
+        self.cache.extend_or_regen(&self.layers, state_root);
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let mut layer = self.layers.remove(&state_root)?;
+        let layer = self.layers.remove(&state_root)?;
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
@@ -97,7 +147,7 @@ impl TrieLayerCache {
             parent_nodes
                 .unwrap_or_default()
                 .into_iter()
-                .chain(layer.nodes.drain())
+                .chain(layer.nodes)
                 .collect(),
         )
     }
