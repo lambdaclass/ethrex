@@ -175,10 +175,10 @@ impl fmt::Display for CurrentStepValue {
             CurrentStepValue::RequestingStorageRanges => write!(f, "Requesting Storage Ranges"),
             CurrentStepValue::DownloadingHeaders => write!(f, "Downloading Headers"),
             CurrentStepValue::InsertingStorageRanges => {
-                write!(f, "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m")
+                write!(f, "Inserting Storage Ranges - Writing to DB")
             }
             CurrentStepValue::InsertingAccountRanges => {
-                write!(f, "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m")
+                write!(f, "Inserting Account Ranges - Writing to DB")
             }
             CurrentStepValue::InsertingAccountRangesNoDb => write!(f, "Inserting Account Ranges"),
         }
@@ -485,6 +485,7 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            #[cfg(feature = "l2")]
             PeerConnectionError::RollupStoreError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("RollupStoreError - {error}"))

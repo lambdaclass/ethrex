@@ -1,3 +1,5 @@
+#[cfg(feature = "l2")]
+use crate::rlpx::l2::l2_connection::P2PBasedContext;
 use crate::{
     discv4::{
         peer_table::{PeerData, PeerTable},
@@ -7,7 +9,6 @@ use crate::{
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
         initiator::RLPxInitiator,
-        l2::l2_connection::P2PBasedContext,
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
@@ -44,6 +45,7 @@ pub struct P2PContext {
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
+    #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
 }
@@ -59,7 +61,7 @@ impl P2PContext {
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
-        based_context: Option<P2PBasedContext>,
+        #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
@@ -87,6 +89,7 @@ impl P2PContext {
             blockchain,
             broadcast: channel_broadcast_send_end,
             client_version,
+            #[cfg(feature = "l2")]
             based_context,
             tx_broadcaster,
         })
@@ -352,13 +355,13 @@ pub async fn periodically_show_peer_stats_during_syncing(
                 "P2P Snap Sync:
 elapsed: {elapsed}
 {peer_number} peers.
-\x1b[93mCurrent step:\x1b[0m {current_step}
+Current step: {current_step}
 Current Header Hash: {current_header_hash:x}
 ---
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
 account leaves insertion: {account_leaves_inserted_percentage:.2}%, elapsed: {account_leaves_inserted_time}
-storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initially accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed} 
+storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initially accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed}
 storage leaves insertion: {storage_accounts_inserted}, {storage_leaves_inserted_time}
 healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
 bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_download_time})"
