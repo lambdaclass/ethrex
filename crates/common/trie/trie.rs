@@ -217,8 +217,7 @@ impl Trie {
     pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
-            let mut buf = Vec::new();
-            self.root.commit(Nibbles::default(), &mut acc, &mut buf);
+            self.root.commit(Nibbles::default(), &mut acc);
         }
         if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
             acc.push((Nibbles::default(), vec![RLP_NULL]))
