@@ -20,7 +20,6 @@ contract L2ToL1Messenger is IL2ToL1Messenger {
 
     /// @inheritdoc IL2ToL1Messenger
     function sendMessageToL2(uint256 chainId, address from, address to, uint256 gasLimit, bytes calldata data) external payable {
-        lastMessageIdL2 += 1;
         emit L2ToL2Message(chainId, from, to, msg.value, gasLimit, data);
     }
 }

@@ -333,7 +333,22 @@ pub struct DeployerOptions {
         help = "The L1 address of the L2 native token (e.g., USDC, USDT, DAI, etc. Use address(0) for ETH)"
     )]
     pub native_token_l1_address: Address,
-    #[arg(long = "router-address")]
+    #[arg(
+        long = "router.deploy",
+        default_value = "false",
+        env = "ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER",
+        help_heading = "Deployer options",
+        help = "If set, the deployer will deploy the shared bridge router contract. Default to false",
+        conflicts_with = "router"
+    )]
+    pub deploy_router: bool,
+    #[arg(
+        long = "router.address",
+        value_name = "ADDRESS",
+        env = "ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS",
+        help_heading = "Deployer options",
+        help = "The address of the shared bridge router"
+    )]
     pub router: Option<Address>,
 }
 
@@ -419,6 +434,7 @@ impl Default for DeployerOptions {
             use_compiled_genesis: true,
             native_token_l1_address: H160::zero(),
             router: None,
+            deploy_router: false,
         }
     }
 }
@@ -522,7 +538,6 @@ const APPROVE_SIGNATURE: &str = "approve(address,uint256)";
 
 #[derive(Clone, Copy, Default)]
 pub struct ContractAddresses {
-    pub router: Address,
     pub on_chain_proposer_address: Address,
     pub bridge_address: Address,
     pub sp1_verifier_address: Address,
@@ -530,6 +545,7 @@ pub struct ContractAddresses {
     pub tdx_verifier_address: Address,
     pub sequencer_registry_address: Address,
     pub aligned_aggregator_address: Address,
+    pub router: Option<Address>,
 }
 
 pub async fn deploy_l1_contracts(
@@ -562,13 +578,18 @@ pub async fn deploy_l1_contracts(
 
     initialize_contracts(contract_addresses, &eth_client, &opts, &genesis, &signer).await?;
 
-    register_chain(
-        &eth_client,
-        contract_addresses,
-        genesis.config.chain_id,
-        &signer,
-    )
-    .await?;
+    if contract_addresses.router.is_some()
+        && register_chain(
+            &eth_client,
+            contract_addresses,
+            genesis.config.chain_id,
+            &signer,
+        )
+        .await
+        .is_err()
+    {
+        warn!("Could not register chain in shared bridge router");
+    }
 
     if opts.deposit_rich {
         if opts.native_token_l1_address != Address::zero() {
@@ -613,9 +634,7 @@ async fn deploy_contracts(
             .to_vec()
     };
 
-    let router_address = if let Some(router) = opts.router {
-        router
-    } else {
+    let deployed_router = if opts.deploy_router {
         info!("Deploying Router");
 
         let bytecode = ROUTER_BYTECODE.to_vec();
@@ -633,7 +652,9 @@ async fn deploy_contracts(
             router_deployment.implementation_tx_hash,
         );
 
-        router_deployment.proxy_address
+        Some(router_deployment.proxy_address)
+    } else {
+        None
     };
 
     info!("Deploying OnChainProposer");
@@ -743,7 +764,6 @@ async fn deploy_contracts(
         "Contracts deployed"
     );
     Ok(ContractAddresses {
-        router: router_address,
         on_chain_proposer_address: on_chain_proposer_deployment.proxy_address,
         bridge_address: bridge_deployment.proxy_address,
         sp1_verifier_address,
@@ -751,6 +771,7 @@ async fn deploy_contracts(
         tdx_verifier_address,
         sequencer_registry_address: sequencer_registry_deployment.proxy_address,
         aligned_aggregator_address: opts.aligned_aggregator_address,
+        router: opts.router.or(deployed_router),
     })
 }
 
@@ -880,12 +901,14 @@ async fn initialize_contracts(
         };
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
     } else {
-        if opts.router.is_none() {
+        if let Some(router) = contract_addresses.router
+            && opts.deploy_router
+        {
             let calldata_values = vec![Value::Address(deployer_address)];
             let router_initialization_calldata =
                 encode_calldata(ROUTER_INITIALIZER_SIGNATURE, &calldata_values)?;
             let initialize_tx_hash = initialize_contract(
-                contract_addresses.router,
+                router,
                 router_initialization_calldata,
                 initializer,
                 eth_client,
@@ -910,7 +933,7 @@ async fn initialize_contracts(
                 Value::Address(opts.proof_sender_l1_address),
             ]),
             Value::Uint(genesis.config.chain_id.into()),
-            Value::Address(contract_addresses.router),
+            Value::Address(contract_addresses.router.unwrap_or_default()),
         ];
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
@@ -997,7 +1020,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
             Value::Address(opts.native_token_l1_address),
-            Value::Address(contract_addresses.router),
+            Value::Address(contract_addresses.router.unwrap_or_default()),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
@@ -1031,7 +1054,11 @@ async fn register_chain(
     ethrex_l2_sdk::call_contract(
         eth_client,
         deployer,
-        contract_addresses.router,
+        contract_addresses
+            .router
+            .ok_or(DeployerError::InternalError(
+                "Router address is None. This is a bug.".to_string(),
+            ))?,
         ROUTER_REGISTER_SIGNATURE,
         params,
     )
@@ -1290,7 +1317,7 @@ fn write_contract_addresses_to_env(
     writeln!(
         writer,
         "ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS={:#x}",
-        contract_addresses.router
+        contract_addresses.router.unwrap_or_default()
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
