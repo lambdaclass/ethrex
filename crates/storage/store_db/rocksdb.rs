@@ -1512,7 +1512,7 @@ impl StoreEngine for Store {
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
             let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-            let mut batch = WriteBatchWithTransaction::default();
+            let mut batch = WriteBatch::default();
 
             while let Some(Ok((key, _))) = iter.next() {
                 batch.delete_cf(&cf, key);
