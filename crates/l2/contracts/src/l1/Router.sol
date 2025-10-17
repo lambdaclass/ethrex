@@ -6,7 +6,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { IRouter } from "./interfaces/IRouter.sol";
-import { ICommonBridge } from "../interfaces/ICommonBridge.sol";
+import { ICommonBridge } from "./interfaces/ICommonBridge.sol";
 
 /// @title Router contract.
 /// @author LambdaClass

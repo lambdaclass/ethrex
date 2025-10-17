@@ -124,7 +124,7 @@ fn download_script() {
     // L1 contracts
     let l1_contracts = [
         (
-            &Path::new("../../crates/l2/contracts/src/l1/shared_bridge/Router.sol"),
+            &Path::new("../../crates/l2/contracts/src/l1/Router.sol"),
             "Router",
         ),
         (

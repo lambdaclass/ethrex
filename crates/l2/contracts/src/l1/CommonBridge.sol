@@ -14,7 +14,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
-import {IRouter} from "./shared_bridge/interfaces/IRouter.sol";
+import {IRouter} from "./interfaces/IRouter.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import { ICommonBridge } from "../../interfaces/ICommonBridge.sol";
+import { ICommonBridge } from "./ICommonBridge.sol";
 
 interface IRouter {
     /// @notice Struct containing information about a registered chain.

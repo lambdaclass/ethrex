@@ -11,7 +11,7 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
-import {IRouter} from "./shared_bridge/interfaces/IRouter.sol";
+import {IRouter} from "./interfaces/IRouter.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
