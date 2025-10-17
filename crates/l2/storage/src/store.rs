@@ -195,7 +195,13 @@ impl Store {
             .await?
             .unwrap_or_default();
 
-        let l2_to_l2_messages = self.get_l2_to_l2_messages(batch_number).await?;
+        let l2_to_l2_messages = self
+            .get_l2_to_l2_messages(batch_number)
+            .await?
+            .ok_or(RollupStoreError::Custom(
+            "Failed while trying to retrieve the L2->L2 messages of a known batch. This is a bug."
+                .to_owned(),
+        ))?;
 
         let privileged_transactions_hash = self
             .get_privileged_transactions_hash_by_batch(batch_number)
@@ -376,7 +382,7 @@ impl Store {
     pub async fn get_l2_to_l2_messages(
         &self,
         batch_number: u64,
-    ) -> Result<Vec<L2toL2Message>, RollupStoreError> {
+    ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError> {
         self.engine.get_l2_to_l2_messages(batch_number).await
     }
 }

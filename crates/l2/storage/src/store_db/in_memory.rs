@@ -352,15 +352,8 @@ impl StoreEngineRollup for Store {
     async fn get_l2_to_l2_messages(
         &self,
         batch_number: u64,
-    ) -> Result<Vec<L2toL2Message>, RollupStoreError> {
-        Ok(self
-            .inner()?
-            .l2_to_l2_messages
-            .get(&batch_number)
-            .unwrap_or(&vec![])
-            .iter()
-            .cloned()
-            .collect())
+    ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError> {
+        Ok(self.inner()?.l2_to_l2_messages.get(&batch_number).cloned())
     }
 }
 

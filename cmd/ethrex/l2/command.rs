@@ -492,7 +492,8 @@ impl Command {
                         state_root: new_block.state_root,
                         privileged_transactions_hash: H256::zero(),
                         message_hashes,
-                        l2_to_l2_messages: unimplemented!("TODO"),
+                        // TODO: Check if this is restorable
+                        l2_to_l2_messages: vec![],
                         blobs_bundle: BlobsBundle::empty(),
                         commit_tx: None,
                         verify_tx: None,

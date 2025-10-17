@@ -810,9 +810,25 @@ impl StoreEngineRollup for SQLStore {
     async fn get_l2_to_l2_messages(
         &self,
         batch_number: u64,
-    ) -> Result<Vec<L2toL2Message>, RollupStoreError> {
-        unimplemented!("TODO");
-        Ok(Vec::new())
+    ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT messages FROM l2_to_l2_messages WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+
+        let mut messages = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let val = read_from_row_blob(&row, 2)?;
+            messages.push(bincode::deserialize(&val)?);
+        }
+
+        if messages.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(messages))
+        }
     }
 }
 
