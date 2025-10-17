@@ -190,6 +190,8 @@ impl Hook for L2Hook {
             // Operator fee is paid to the chain operator
             pay_operator_fee(vm, actual_gas_used, &self.fee_config.operator_fee_config)?;
 
+            ctx_result.gas_used = actual_gas_used + l1_gas;
+
             return Ok(());
         }
 
