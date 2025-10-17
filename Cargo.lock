@@ -3513,7 +3513,6 @@ dependencies = [
  "bytes",
  "clap 4.5.48",
  "clap_complete",
- "criterion",
  "directories 5.0.1",
  "ethrex-blockchain",
  "ethrex-common 3.0.0",
@@ -3543,7 +3542,6 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
@@ -3553,6 +3551,24 @@ dependencies = [
  "tui-logger",
  "url",
  "vergen-git2",
+]
+
+[[package]]
+name = "ethrex-benches"
+version = "3.0.0"
+dependencies = [
+ "bytes",
+ "criterion",
+ "ethrex",
+ "ethrex-blockchain",
+ "ethrex-common 3.0.0",
+ "ethrex-config",
+ "ethrex-l2-rpc",
+ "ethrex-storage 3.0.0",
+ "secp256k1",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

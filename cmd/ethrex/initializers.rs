@@ -11,11 +11,12 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
+#[cfg(feature = "l2")]
+use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
-    rlpx::l2::l2_connection::P2PBasedContext,
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -200,7 +201,7 @@ pub async fn init_network(
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
-    based_context: Option<P2PBasedContext>,
+    #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -220,6 +221,7 @@ pub async fn init_network(
         store,
         blockchain.clone(),
         get_client_version(),
+        #[cfg(feature = "l2")]
         based_context,
         opts.tx_broadcasting_time_interval,
     )
@@ -486,6 +488,7 @@ pub async fn init_l1(
             store.clone(),
             tracker.clone(),
             blockchain.clone(),
+            #[cfg(feature = "l2")]
             None,
         )
         .await;
