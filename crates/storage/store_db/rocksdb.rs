@@ -270,6 +270,21 @@ impl Store {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
+        // Note: we are not using transactions on our Rocksdb instance.
+        // This is safe as long as two conditions are met:
+        // - We never write to the same table from two different places concurrently.
+        // - We always use batch writes. This guarantees atomicity in rocksdb.
+        //
+        // For the first point, we know that all writes to the state and storage tries are
+        // done through the `apply_updates` function, called only after block execution.
+        // There is only one other place where we write to the tries, and that's during snap
+        // sync, through the `write_storage_trie_nodes_batch` function (and similarly for state trie nodes);
+        // this does not pose a problem because there is no block execution until snap sync is done.
+        //
+        // Regardless of transactionality, all writes go through a WAL, which ensures
+        // we get durability (i.e. crash recovery).
+        //
+        // For other less crucial tables refer to the db_safety documentation.
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             path,
