@@ -201,6 +201,11 @@ async fn handle_forkchoice(
             .get_latest_valid_ancestor(head_block.parent_hash)
             .await?
     {
+        // Invalidate the child too
+        context
+            .storage
+            .set_latest_valid_ancestor(head_block.hash(), latest_valid_hash)
+            .await?;
         return Ok((
             None,
             ForkChoiceResponse::from(PayloadStatus::invalid_with(
