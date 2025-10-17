@@ -397,6 +397,9 @@ impl Store {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
+            if update.removed_storage {
+                account_state.storage_root = *EMPTY_TRIE_HASH;
+            }
             if let Some(info) = &update.info {
                 account_state.nonce = info.nonce;
                 account_state.balance = info.balance;
@@ -467,6 +470,9 @@ impl Store {
                     if let Some(code) = &update.code {
                         self.add_account_code(info.code_hash, code.clone()).await?;
                     }
+                }
+                if update.removed_storage {
+                    account_state.storage_root = *EMPTY_TRIE_HASH;
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {

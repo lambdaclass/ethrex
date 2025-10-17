@@ -198,6 +198,7 @@ impl RevmState {
                                 )
                             })
                             .collect(),
+                        removed_storage: false,
                     };
                     account_updates.push(new_acc_update);
                 }
