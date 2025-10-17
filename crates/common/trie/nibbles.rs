@@ -203,6 +203,11 @@ impl Nibbles {
         Self::from_hex(compact_to_hex(compact))
     }
 
+    /// Decodes the nibbles from compact form, taking ownership of the bytes
+    pub fn decode_compact_owned(compact: Vec<u8>) -> Self {
+        Self::from_hex(compact_to_hex_owned(compact))
+    }
+
     /// Returns true if the nibbles contain the leaf flag (16) at the end
     pub fn is_leaf(&self) -> bool {
         if self.is_empty() {
@@ -295,7 +300,22 @@ fn compact_to_hex(compact: &[u8]) -> Vec<u8> {
     base[chop..].to_vec()
 }
 
-// Code taken from https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/trie/encoding.go#L96
+fn compact_to_hex_owned(compact: Vec<u8>) -> Vec<u8> {
+    if compact.is_empty() {
+        return vec![];
+    }
+    let mut base = keybytes_to_hex_owned(compact);
+    // delete terminator flag
+    if base[0] < 2 {
+        base.pop();
+    }
+    // apply odd flag
+    let chop = 2 - (base[0] & 1) as usize;
+    base.drain(0..chop);
+    base
+}
+
+// Code taken from https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/trie/encoding.go#L82
 fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
     let l = keybytes.len() * 2 + 1;
     let mut nibbles = vec![0; l];
@@ -304,6 +324,16 @@ fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
         nibbles[i * 2 + 1] = b % 16;
     }
     nibbles[l - 1] = 16;
+    nibbles
+}
+
+fn keybytes_to_hex_owned(keybytes: Vec<u8>) -> Vec<u8> {
+    let mut nibbles = Vec::with_capacity(keybytes.len() * 2 + 1);
+    for b in keybytes {
+        nibbles.push(b / 16);
+        nibbles.push(b % 16);
+    }
+    nibbles.push(16);
     nibbles
 }
 

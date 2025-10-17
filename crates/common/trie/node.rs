@@ -9,10 +9,10 @@ use std::{
 
 pub use branch::BranchNode;
 use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
+    decode::{RLPDecode, decode_bytes, decode_rlp_item},
     encode::RLPEncode,
     error::RLPDecodeError,
-    structs::Decoder,
+    structs::{Decoder, OwnedDecoder},
 };
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
@@ -34,8 +34,8 @@ impl NodeRef {
     pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
-            NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some(Node::decode_raw(&data[..len as usize])?))
+            NodeRef::Hash(NodeHash::Inline((data, _))) => {
+                Ok(Some(Node::decode_raw_owned(Vec::from(data))?))
             }
             NodeRef::Hash(hash) => db
                 .get(path)?
@@ -279,6 +279,54 @@ impl Node {
         })
     }
 
+    /// Decodes the node
+    pub fn decode_raw_owned(rlp: Vec<u8>) -> Result<Self, RLPDecodeError> {
+        let mut decoder = OwnedDecoder::new(rlp)?;
+        // Deserialize into node depending on the available fields
+        Ok(match decoder.length()? {
+            // Leaf or Extension Node
+            2 => {
+                let compact_path = decoder.decode_next_item()?;
+                let path = Nibbles::decode_compact_owned(compact_path);
+                if path.is_leaf() {
+                    // Decode as Leaf
+                    LeafNode {
+                        partial: path,
+                        value: decoder.decode_next_item()?,
+                    }
+                    .into()
+                } else {
+                    // Decode as Extension
+                    let child = decoder.get_encoded_item()?;
+                    ExtensionNode {
+                        prefix: path,
+                        child: decode_child_owned(child)?.into(),
+                    }
+                    .into()
+                }
+            }
+            // Branch Node
+            17 => {
+                let mut choices = Vec::with_capacity(16);
+                for _ in 0..16 {
+                    let encoded_child = decoder.decode_next_item()?;
+                    choices.push(decode_child_owned(encoded_child)?.into());
+                }
+                let choices: [NodeRef; 16] = choices.try_into().unwrap();
+                BranchNode {
+                    choices,
+                    value: decoder.decode_next_item()?,
+                }
+                .into()
+            }
+            n => {
+                return Err(RLPDecodeError::Custom(format!(
+                    "Invalid arg count for Node, expected 2 or 17, got {n}"
+                )));
+            }
+        })
+    }
+
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
         match self {
@@ -294,5 +342,20 @@ fn decode_child(rlp: &[u8]) -> NodeHash {
         Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
         Ok((&[], &[])) => NodeHash::default(),
         _ => NodeHash::from_slice(rlp),
+    }
+}
+
+fn decode_child_owned(mut child: Vec<u8>) -> Result<NodeHash, RLPDecodeError> {
+    let (is_list, decoded_item, rest) = decode_rlp_item(&child)?;
+    if is_list || !rest.is_empty() {
+        return Err(RLPDecodeError::UnexpectedString);
+    }
+    let payload_start = decoded_item.as_ptr() as usize - child.as_ptr() as usize;
+    child.drain(..payload_start);
+
+    if child.is_empty() {
+        Ok(NodeHash::default())
+    } else {
+        Ok(NodeHash::from_vec(child))
     }
 }
