@@ -44,7 +44,7 @@ const DB_SCHEMA: [&str; 16] = [
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
-    "CREATE TABLE l2_to_l2_messages (batch INT PRIMARY KEY, idx INT, message BLOB)",
+    "CREATE TABLE l2_to_l2_messages (batch INT, idx INT, message BLOB, PRIMARY KEY (batch, idx))",
 ];
 
 impl SQLStore {
@@ -809,22 +809,18 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT messages FROM l2_to_l2_messages WHERE batch = ?1",
+                "SELECT message FROM l2_to_l2_messages WHERE batch = ?1",
                 vec![batch_number],
             )
             .await?;
 
         let mut messages = Vec::new();
         while let Some(row) = rows.next().await? {
-            let val = read_from_row_blob(&row, 2)?;
+            let val = read_from_row_blob(&row, 0)?;
             messages.push(bincode::deserialize(&val)?);
         }
 
-        if messages.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(messages))
-        }
+        Ok(Some(messages))
     }
 }
 
