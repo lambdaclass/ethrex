@@ -309,7 +309,7 @@ impl Node {
             17 => {
                 let mut choices = Vec::with_capacity(16);
                 for _ in 0..16 {
-                    let encoded_child = decoder.decode_next_item()?;
+                    let encoded_child = decoder.get_encoded_item()?;
                     choices.push(decode_child_owned(encoded_child)?.into());
                 }
                 let choices: [NodeRef; 16] = choices.try_into().unwrap();
