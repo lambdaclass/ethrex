@@ -1,7 +1,7 @@
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
-use rocksdb::{MultiThreaded, OptimisticTransactionDB};
+use rocksdb::{MultiThreaded, DBWithThreadMode};
 use std::sync::Arc;
 
 use crate::{store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES}, trie_db::layering::apply_prefix};
@@ -9,7 +9,7 @@ use crate::{store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES}, trie_db::layer
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Column family name
     cf_name: String,
     /// Storage trie address prefix
@@ -20,7 +20,7 @@ pub struct RocksDBTrieDB {
 
 impl RocksDBTrieDB {
     pub fn new(
-        db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+        db: Arc<DBWithThreadMode<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
@@ -90,7 +90,7 @@ impl TrieDB for RocksDBTrieDB {
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
         let cf_snapshot = self.cf_handle_flatkeyvalue()?;
-        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        let mut batch = rocksdb::WriteBatch::default();
 
         for (key, value) in key_values {
             let cf = if key.is_leaf() { &cf_snapshot } else { &cf };
@@ -110,7 +110,7 @@ impl TrieDB for RocksDBTrieDB {
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
         let cf_flatkeyvalue = self.cf_handle_flatkeyvalue()?;
-        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        let mut batch = rocksdb::WriteBatch::default();
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
 
@@ -146,7 +146,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],
@@ -186,7 +186,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],
@@ -223,7 +223,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],

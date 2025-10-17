@@ -1,6 +1,6 @@
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
-use rocksdb::{MultiThreaded, OptimisticTransactionDB, SnapshotWithThreadMode};
+use rocksdb::{MultiThreaded, DBWithThreadMode, SnapshotWithThreadMode};
 use std::sync::Arc;
 
 use crate::{store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES}, trie_db::layering::apply_prefix};
@@ -8,13 +8,13 @@ use crate::{store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES}, trie_db::layer
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
 pub struct RocksDBLockedTrieDB {
     /// RocksDB database
-    db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: &'static Arc<DBWithThreadMode<MultiThreaded>>,
     /// Column family handle
     cf: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
     /// Column family handle
     cf_flatkeyvalue: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
     /// Read-only snapshot for consistent reads
-    snapshot: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
+    snapshot: SnapshotWithThreadMode<'static, DBWithThreadMode<MultiThreaded>>,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
     last_computed_flatkeyvalue: Nibbles
@@ -22,7 +22,7 @@ pub struct RocksDBLockedTrieDB {
 
 impl RocksDBLockedTrieDB {
     pub fn new(
-        db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+        db: Arc<DBWithThreadMode<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
@@ -74,8 +74,8 @@ impl Drop for RocksDBLockedTrieDB {
         // Restore the leaked database reference
         unsafe {
             drop(Box::from_raw(
-                self.db as *const Arc<OptimisticTransactionDB<MultiThreaded>>
-                    as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
+                self.db as *const Arc<DBWithThreadMode<MultiThreaded>>
+                    as *mut Arc<DBWithThreadMode<MultiThreaded>>,
             ));
         }
     }
