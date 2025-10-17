@@ -29,7 +29,7 @@ bincode = "1.3.3"
 [features]
 default = ["l1"]
 
-l1 = ["ethrex-common/l1", "ethrex-l2-common/l1", "ethrex-storage/l1"]
+l1 = ["ethrex-common/l1", "ethrex-storage/l1"]
 sp1 = ["ethrex-common/sp1", "ethrex-l2-common/sp1", "ethrex-storage/sp1"]
 risc0 = [
     "ethrex-common/risc0",

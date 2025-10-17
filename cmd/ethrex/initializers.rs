@@ -212,6 +212,19 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
+    /*
+    new(
+            local_node: Node,
+            local_node_record: Arc<Mutex<NodeRecord>>,
+            tracker: TaskTracker,
+            signer: SecretKey,
+            peer_table: PeerTable,
+            storage: Store,
+            blockchain: Arc<Blockchain>,
+            client_version: String,
+            #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
+            tx_broadcasting_time_interval: u64,
+        )*/
     let context = P2PContext::new(
         local_p2p_node,
         local_node_record,

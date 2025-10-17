@@ -63,12 +63,7 @@ default = ["l1"]
 sync-test = []
 l2 = ["dep:ethrex-storage-rollup"]
 
-l1 = [
-    "ethrex-blockchain/l1",
-    "ethrex-common/l1",
-    "ethrex-storage/l1",
-    "ethrex-storage-rollup/l1",
-]
+l1 = ["ethrex-blockchain/l1", "ethrex-common/l1", "ethrex-storage/l1"]
 sp1 = [
     "ethrex-blockchain/sp1",
     "ethrex-common/sp1",

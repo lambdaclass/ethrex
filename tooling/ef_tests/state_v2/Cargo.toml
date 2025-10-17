@@ -38,7 +38,6 @@ l1 = [
     "ethrex-vm/l1",
     "ethrex-levm/l1",
     "ethrex-storage/l1",
-    "ethrex-l2-rpc/l1",
 ]
 
 block = []

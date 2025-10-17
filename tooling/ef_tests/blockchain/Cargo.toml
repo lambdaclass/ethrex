@@ -59,8 +59,6 @@ kzg-rs = [
 
 l1 = [
     "ethrex-vm/l1",
-    "guest_program/l1",
-    "ethrex-prover/l1",
     "ethrex-blockchain/l1",
     "ethrex-common/l1",
     "ethrex-storage/l1",

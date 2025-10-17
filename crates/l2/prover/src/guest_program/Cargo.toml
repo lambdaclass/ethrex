@@ -78,7 +78,6 @@ l1 = [
     "ethrex-common/l1",
     "ethrex-blockchain/l1",
     "ethrex-crypto/l1",
-    "ethrex-l2-common/l1",
 ]
 
 # This feature enables the SP1's guest program ELF compilation.

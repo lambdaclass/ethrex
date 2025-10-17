@@ -21,6 +21,7 @@ path = "lib.rs"
 [features]
 default = ["l1"]
 
+l2 = ["ethrex-p2p/l2"]
 l1 = ["ethrex-common/l1", "ethrex-p2p/l1"]
 sp1 = ["ethrex-common/sp1", "ethrex-p2p/sp1"]
 risc0 = ["ethrex-common/risc0", "ethrex-p2p/risc0"]

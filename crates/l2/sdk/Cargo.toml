@@ -46,12 +46,7 @@ panic = "deny"
 [features]
 default = ["l1"]
 
-l1 = [
-    "ethrex-common/l1",
-    "ethrex-l2-common/l1",
-    "ethrex-rpc/l1",
-    "ethrex-l2-rpc/l1",
-]
+l1 = ["ethrex-common/l1", "ethrex-rpc/l1"]
 sp1 = [
     "ethrex-common/sp1",
     "ethrex-l2-common/sp1",
