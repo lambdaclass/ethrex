@@ -469,8 +469,8 @@ impl PeerHandler {
                     )
                     .await
                     {
-                        if are_block_headers_chained(&block_headers, &order)
-                            && !block_headers.is_empty()
+                        if !block_headers.is_empty()
+                            && are_block_headers_chained(&block_headers, &order)
                         {
                             return Ok(Some(block_headers));
                         } else {
