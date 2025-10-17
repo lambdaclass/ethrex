@@ -3,6 +3,7 @@ use crate::discv4::peer_table::PeerTableError;
 use ethrex_blockchain::error::{ChainError, MempoolError};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
+#[cfg(feature = "l2")]
 use ethrex_storage_rollup::RollupStoreError;
 use thiserror::Error;
 
@@ -24,7 +25,9 @@ pub enum PeerConnectionError {
     #[error("Invalid connection state: {0}")]
     StateError(String),
     #[error("No matching capabilities")]
-    NoMatchingCapabilities(),
+    NoMatchingCapabilities,
+    #[error("Too many peers")]
+    TooManyPeers,
     #[error("Peer disconnected")]
     Disconnected,
     #[error("Disconnect requested: {0}")]
@@ -34,11 +37,11 @@ pub enum PeerConnectionError {
     #[error("Not Found: {0}")]
     NotFound(String),
     #[error("Invalid peer id")]
-    InvalidPeerId(),
+    InvalidPeerId,
     #[error("Invalid recovery id")]
-    InvalidRecoveryId(),
+    InvalidRecoveryId,
     #[error("Invalid message length")]
-    InvalidMessageLength(),
+    InvalidMessageLength,
     #[error("Request id not present: {0}")]
     ExpectedRequestId(String),
     #[error("Cannot handle message: {0}")]
@@ -52,6 +55,7 @@ pub enum PeerConnectionError {
     #[error(transparent)]
     StoreError(#[from] StoreError),
     #[error(transparent)]
+    #[cfg(feature = "l2")]
     RollupStoreError(#[from] RollupStoreError),
     #[error("Error in cryptographic library: {0}")]
     CryptographyError(String),

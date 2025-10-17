@@ -31,12 +31,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # We don't run with workspace, as members of the workspace require l2. We run it with workspace
+      # om the l2 lint
       - name: Run cargo check
-        run: cargo check --workspace
+        run: cargo check
 
       - name: Run cargo clippy
         run: |
-          cargo clippy --workspace -- -D warnings
           cargo clippy -- -D warnings
 
       - name: Run cargo fmt
@@ -144,56 +145,37 @@ jobs:
         include:
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
-            limit: "rpc-compat/(debug_[^/]+/.*|eth_blobBaseFee/.*|eth_blockNumber/.*|eth_call/.*|eth_chainId/.*|eth_createAccessList/.*|eth_estimateGas/.*|eth_feeHistory/.*|eth_getBalance/.*|eth_getBlockByHash/.*|eth_getBlockByNumber/.*|eth_getBlockReceipts/.*|eth_getBlockTransactionCountByHash/.*|eth_getBlockTransactionCountByNumber/.*|eth_getCode/.*|eth_getLogs/.*|eth_getProof/.*|eth_getStorageAt/.*|eth_getTransactionByBlockHashAndIndex/.*|eth_getTransactionByBlockNumberAndIndex/.*|eth_getTransactionByHash/.*|eth_getTransactionCount/.*|eth_getTransactionReceipt/.*|eth_sendRawTransaction/.*)"
-            hive_repository: lambdaclass/hive
-            hive_version: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
+            # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
+            buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
             limit: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|NewPooledTxs|GetBlockReceipts|BlockRangeUpdate|GetTrieNodes
             # Findnode/BasicFindnode fails due to packets being processed out of order
             # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
-            hive_repository: ethereum/hive
-            hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             limit: engine-(auth|exchange-capabilities)/
-            hive_repository: ethereum/hive
-            hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
             artifact_prefix: engine_auth_ec
-          # - name: "Cancun Engine tests"
-          #   simulation: ethereum/engine
-          #   limit: "engine-cancun"
-          #   hive_repository: ethereum/hive
-          #   hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
-          #   artifact_prefix: engine_cancun
+          - name: "Cancun Engine tests"
+            simulation: ethereum/engine
+            limit: "engine-cancun"
+            artifact_prefix: engine_cancun
           - name: "Paris Engine tests"
             simulation: ethereum/engine
             limit: "engine-api"
-            hive_repository: ethereum/hive
-            hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
             artifact_prefix: engine_paris
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
             limit: "engine-withdrawals/Corrupted Block Hash Payload|Empty Withdrawals|engine-withdrawals test loader|GetPayloadBodies|GetPayloadV2 Block Value|Max Initcode Size|Sync after 2 blocks - Withdrawals on Genesis|Withdraw many accounts|Withdraw to a single account|Withdraw to two accounts|Withdraw zero amount|Withdraw many accounts|Withdrawals Fork on Block 1 - 1 Block Re-Org|Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload|Withdrawals Fork on Block 2|Withdrawals Fork on Block 3|Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload|Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org [^S]|Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org [^S]"
-            hive_repository: ethereum/hive
-            hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
             artifact_prefix: engine_withdrawals
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
           #   limit: ""
-          #   hive_repository: ethereum/hive
-          #   hive_version: c7deebe0c604248e90f27de51f6037d4b7b8c5b5
           #   artifact_prefix: sync
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -222,11 +204,15 @@ jobs:
         shell: bash
         env:
           SIM_LIMIT: ${{ matrix.limit }}
+          SIM_BUILDARG: ${{ matrix.buildarg }}
         run: |
-          FLAGS='--sim.parallelism 16 --sim.loglevel 1'
+          FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
+          fi
+          if [[ -n "$SIM_BUILDARG" ]]; then
+            FLAGS+=" --sim.buildarg $SIM_BUILDARG"
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
@@ -234,8 +220,8 @@ jobs:
         id: run-hive-action
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
-          hive_repository: ${{ matrix.hive_repository }}
-          hive_version: ${{ matrix.hive_version }}
+          hive_repository: ethereum/hive
+          hive_version: 7709e5892146c793307da072e1593f48039a7e4b
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
