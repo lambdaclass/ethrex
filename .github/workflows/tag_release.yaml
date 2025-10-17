@@ -195,7 +195,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Format name
-        run: echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+        run: |
+          echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+
+      - name: Select tags
+        run: |
+          if [ "$(echo ${{ github.ref_name }}- | cut -d- -f2 | grep '^rc')" == "" ]; then
+            echo "L1_TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}" >> $GITHUB_ENV
+            echo "L2_TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2" >> $GITHUB_ENV
+          else
+            echo "L1_TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}" >> $GITHUB_ENV
+            echo "L2_TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2" >> $GITHUB_ENV
+          fi
 
       # Pushes to ghcr.io/lambdaclass/ethrex
       - name: Build and push L1 Docker image
@@ -206,7 +217,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
+          tags: ${{ env.L1_TAGS }}
 
       # Pushes to ghcr.io/lambdaclass/ethrex
       - name: Build and push L2 Docker image
@@ -217,7 +228,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-l2,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
+          tags: ${{ env.L2_TAGS }}
           build_args: BUILD_FLAGS=--features l2,l2-sql
 
   # Creates a release on GitHub with the binaries
