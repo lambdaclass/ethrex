@@ -20,31 +20,47 @@ jobs:
       matrix:
         platform:
           - ubuntu-22.04
-          - ubuntu-24.04-arm
+          - ubuntu-22.04-arm
           - macos-latest
-        gpu:
-          - true
-          - false
+        stack:
+          - l1
+          - l2
+          - l2_gpu
+        exclude:
+          - platform: macos-latest
+            stack: l2_gpu
         include:
           - platform: ubuntu-22.04
             os: linux
             arch: x86_64
-            prover_features: sp1,risc0
             cpu_flags: RUSTFLAGS='-C target-cpu=x86-64-v2'
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             os: linux
             arch: aarch64
-            prover_features: sp1
           - platform: macos-latest
             os: macos
             arch: aarch64
-          - gpu: true
-            gpu_flags: NVCC_PREPEND_FLAGS='-arch=sm_70'
-            gpu_feature: ",gpu"
-            gpu_suffix: "-gpu"
-        exclude:
           - platform: macos-latest
-            gpu: true
+            stack: l2
+            features: l2,l2-sql
+          - platform: ubuntu-22.04
+            stack: l2
+            features: l2,l2-sql,sp1,risc0
+          - platform: ubuntu-22.04
+            stack: l2_gpu
+            features: l2,l2-sql,sp1,risc0,gpu
+          - platform: ubuntu-22.04-arm
+            stack: l2
+            features: l2,l2-sql,sp1
+          - platform: ubuntu-22.04-arm
+            stack: l2_gpu
+            features: l2,l2-sql,sp1,gpu
+          - stack: l2_gpu
+            gpu_flags: NVCC_PREPEND_FLAGS='-arch=sm_70'
+            l2_suffix: "-l2"
+            gpu_suffix: "-gpu"
+          - stack: l2
+            l2_suffix: "-l2"
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Free Disk Space (Ubuntu)
@@ -57,10 +73,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install SP1 (only Linux)
         if: ${{ matrix.os == 'linux' }}
@@ -72,7 +86,7 @@ jobs:
           ~/.sp1/bin/sp1up --version 5.0.8
 
       - name: Set up QEMU (only Linux ARM)
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
@@ -89,7 +103,7 @@ jobs:
 
       - name: Install CUDA (only Linux x86 GPU)
         uses: Jimver/cuda-toolkit@v0.2.24
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }}
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }}
         id: cuda-toolkit
         with:
           cuda: "12.9.0"
@@ -97,7 +111,7 @@ jobs:
           sub-packages: '["nvcc"]'
 
       - name: Install solc
-        if: ${{ matrix.platform != 'ubuntu-24.04-arm' }}
+        if: ${{ matrix.platform != 'ubuntu-22.04-arm' }}
         uses: lambdaclass/get-solc@master
         with:
           version: v0.8.29
@@ -109,18 +123,19 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc (Linux ARM)
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         run: |
           sudo curl -L -o /usr/local/bin/solc https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29
           sudo chmod +x /usr/local/bin/solc
 
       - name: Build ethrex
         run: |
-          COMPILE_CONTRACTS=true ${{ matrix.cpu_flags }} ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.prover_features }}${{ matrix.gpu_feature }}" --bin ethrex
-          mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          COMPILE_CONTRACTS=true ${{ matrix.cpu_flags }} ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.features }}" --bin ethrex
+          chmod +x target/release/ethrex
+          mv target/release/ethrex ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Copy verification keys
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         run: |
           mkdir -p ./verification_keys
           mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
@@ -129,11 +144,11 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
-          path: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          name: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          path: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Upload verification keys
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         uses: actions/upload-artifact@v4
         with:
           name: verification_keys
@@ -180,20 +195,43 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Format name
-        run: echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+        run: |
+          echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+
+      - name: Select tags
+        run: |
+          if [ "$(echo ${{ github.ref_name }}- | cut -d- -f2 | grep '^rc')" == "" ]; then
+            echo "L1_TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}" >> $GITHUB_ENV
+            echo "L2_TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2" >> $GITHUB_ENV
+          else
+            echo "L1_TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}" >> $GITHUB_ENV
+            echo "L2_TAGS=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2" >> $GITHUB_ENV
+          fi
 
       # Pushes to ghcr.io/lambdaclass/ethrex
-      - name: Build and push Docker image
-        id: push
+      - name: Build and push L1 Docker image
+        id: push_l1
         uses: ./.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
+          tags: ${{ env.L1_TAGS }}
 
-  # Creates a draft release on GitHub with the binaries
+      # Pushes to ghcr.io/lambdaclass/ethrex
+      - name: Build and push L2 Docker image
+        id: push_l2
+        uses: ./.github/actions/build-docker
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          push: true
+          tags: ${{ env.L2_TAGS }}
+          build_args: BUILD_FLAGS=--features l2,l2-sql
+
+  # Creates a release on GitHub with the binaries
   finalize-release:
     needs:
       - build-ethrex
@@ -218,6 +256,9 @@ jobs:
           echo "PREVIOUS_TAG: $name"
           echo "PREVIOUS_TAG=$name" >> $GITHUB_ENV
 
+      - name: Check release type
+        run: echo "TAG_SUFFIX=$(echo ${{ github.ref_name }}- | cut -d- -f2)" >> $GITHUB_ENV
+
       - name: Update CHANGELOG
         id: changelog
         uses: requarks/changelog-action@v1
@@ -233,8 +274,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: ./bin/**/*
-          draft: false
-          prerelease: false
+          draft: ${{ startsWith(env.TAG_SUFFIX, 'rc') }}
+          prerelease: ${{ startsWith(env.TAG_SUFFIX, 'rc') }}
           tag_name: ${{ github.ref_name }}
           name: "ethrex: ${{ github.ref_name }}"
           body: >
