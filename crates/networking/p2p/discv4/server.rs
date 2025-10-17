@@ -5,7 +5,7 @@ use crate::{
             ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
             PacketDecodeErr, PingMessage, PongMessage,
         },
-        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTableError, PeerTableHandle},
+        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     },
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
@@ -42,10 +42,6 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_secs(5);
 const LOOKUP_INTERVAL: Duration = Duration::from_secs(5 * 60); // 5 minutes
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
-/// The target number of RLPx connections to reach.
-const TARGET_PEERS: usize = 100;
-/// The target number of contacts to maintain in peer_table.
-const TARGET_CONTACTS: usize = 100_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -82,7 +78,7 @@ pub struct DiscoveryServer {
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
-    peer_table: PeerTableHandle,
+    peer_table: PeerTable,
 }
 
 impl DiscoveryServer {
@@ -90,7 +86,7 @@ impl DiscoveryServer {
         local_node: Node,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
-        mut peer_table: PeerTableHandle,
+        mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
@@ -240,12 +236,7 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        if self
-            .peer_table
-            .target_reached(TARGET_CONTACTS, TARGET_PEERS)
-            .await
-            .unwrap_or(false)
-        {
+        if !self.peer_table.target_reached().await.unwrap_or(false) {
             INITIAL_LOOKUP_INTERVAL
         } else {
             trace!("Reached target number of peers or contacts. Using longer lookup interval.");
