@@ -432,8 +432,8 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let recovered_address_bytes = &public_key_hash[12..];
 
     let mut out = [0u8; 32];
-    #[expect(clippy::indexing_slicing)]
-    out[12..32].copy_from_slice(&recovered_address_bytes[12..32]);
+    
+    out[12..32].copy_from_slice(recovered_address_bytes);
 
     Ok(Bytes::copy_from_slice(&out))
 }
