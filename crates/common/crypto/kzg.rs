@@ -24,6 +24,14 @@ type Blob = [u8; BYTES_PER_BLOB];
 type Commitment = Bytes48;
 type Proof = Bytes48;
 
+/// Ensures the Ethereum trusted setup is loaded so later KZG operations avoid the first-call cost.
+pub fn warm_up_trusted_setup() {
+    #[cfg(feature = "c-kzg")]
+    {
+        let _ = c_kzg::ethereum_kzg_settings(8);
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum KzgError {
     #[cfg(feature = "c-kzg")]

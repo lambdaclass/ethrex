@@ -372,6 +372,7 @@ pub mod test_utils {
     // ```
     pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
+        let ws_addr: SocketAddr = "127.0.0.1:8546".parse().unwrap();
         let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
         let storage =
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
@@ -386,6 +387,7 @@ pub mod test_utils {
         tokio::spawn(async move {
             start_api(
                 http_addr,
+                Some(ws_addr),
                 authrpc_addr,
                 storage,
                 blockchain,

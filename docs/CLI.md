@@ -14,7 +14,6 @@ Commands:
   import              Import blocks to the database
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
-  l2
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -106,6 +105,23 @@ RPC options:
 
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
+
+      --ws.enabled
+          Enable websocket rpc server. Disabled by default.
+
+          [env: ETHREX_ENABLE_WS=]
+
+      --ws.addr <ADDRESS>
+          Listening address for the websocket rpc server.
+
+          [env: ETHREX_WS_ADDR=]
+          [default: 0.0.0.0]
+
+      --ws.port <PORT>
+          Listening port for the websocket rpc server.
+
+          [env: ETHREX_WS_PORT=]
+          [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
