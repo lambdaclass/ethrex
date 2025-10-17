@@ -397,6 +397,9 @@ impl Store {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
+            if update.removed_storage {
+                account_state.storage_root = *EMPTY_TRIE_HASH;
+            }
             if let Some(info) = &update.info {
                 account_state.nonce = info.nonce;
                 account_state.balance = info.balance;
@@ -467,6 +470,9 @@ impl Store {
                     if let Some(code) = &update.code {
                         self.add_account_code(info.code_hash, code.clone()).await?;
                     }
+                }
+                if update.removed_storage {
+                    account_state.storage_root = *EMPTY_TRIE_HASH;
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
@@ -1332,6 +1338,25 @@ impl Store {
         account_codes: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError> {
         self.engine.write_account_code_batch(account_codes).await
+    }
+
+    /// Add a batch of headers downloaded during fullsync
+    pub async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        self.engine.add_fullsync_batch(headers).await
+    }
+
+    /// Read a batch of headers downloaded during fullsync
+    pub async fn read_fullsync_batch(
+        &self,
+        start: BlockNumber,
+        limit: u64,
+    ) -> Result<Vec<BlockHeader>, StoreError> {
+        self.engine.read_fullsync_batch(start, limit).await
+    }
+
+    /// Clear all headers downloaded during fullsync
+    pub async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
+        self.engine.clear_fullsync_headers().await
     }
 }
 
