@@ -14,6 +14,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
+import {IRouter} from "./interfaces/IRouter.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -40,7 +41,7 @@ contract CommonBridge is
     /// @dev The value is the merkle root of the logs.
     /// @dev If there exist a merkle root for a given batch number it means
     /// that the logs were published on L1, and that that batch was committed.
-    mapping(uint256 => bytes32) public batchWithdrawalLogsMerkleRoots;
+    mapping(uint256 batchNumber => bytes32) public batchWithdrawalLogsMerkleRoots;
 
     /// @notice Array of hashed pending privileged transactions
     bytes32[] public pendingTxHashes;
@@ -92,6 +93,8 @@ contract CommonBridge is
     /// Otherwise, this address is used for native token deposits and withdrawals.
     address public NATIVE_TOKEN_L1;
 
+    address public sharedBridgeRouter = address(0);
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -111,7 +114,8 @@ contract CommonBridge is
         address owner,
         address onChainProposer,
         uint256 inclusionMaxWait,
-        address _nativeToken
+        address _nativeToken,
+        address _sharedBridgeRouter
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -125,6 +129,8 @@ contract CommonBridge is
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
         NATIVE_TOKEN_L1 = _nativeToken;
+
+        sharedBridgeRouter = _sharedBridgeRouter;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -175,8 +181,6 @@ contract CommonBridge is
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
-        _burnGas(sendValues.gasLimit);
-
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes20(from),
@@ -209,6 +213,7 @@ contract CommonBridge is
     function sendToL2(
         SendValues calldata sendValues
     ) public override whenNotPaused {
+        _burnGas(sendValues.gasLimit);
         _sendToL2(_getSenderAlias(), sendValues);
     }
 
@@ -217,6 +222,11 @@ contract CommonBridge is
         uint256 _amount,
         address l2Recipient
     ) public payable override whenNotPaused {
+        _burnGas(21000 * 5);
+        _deposit(_amount, l2Recipient);
+    }
+
+    function _deposit(uint256 _amount, address l2Recipient) private {
         uint256 value;
 
         // Here we define value depending on whether the native token is ETH or an ERC20
@@ -298,6 +308,7 @@ contract CommonBridge is
             value: 0,
             data: callData
         });
+        _burnGas(sendValues.gasLimit);
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
@@ -349,9 +360,9 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function getWithdrawalLogsMerkleRoot(
-        uint256 blockNumber
+        uint256 batchNumber
     ) public view returns (bytes32) {
-        return batchWithdrawalLogsMerkleRoots[blockNumber];
+        return batchWithdrawalLogsMerkleRoots[batchNumber];
     }
 
     /// @inheritdoc ICommonBridge
@@ -364,9 +375,7 @@ contract CommonBridge is
                 bytes32(0),
             "CommonBridge: withdrawal logs already published"
         );
-        batchWithdrawalLogsMerkleRoots[
-            withdrawalLogsBatchNumber
-        ] = withdrawalsLogsMerkleRoot;
+        batchWithdrawalLogsMerkleRoots[withdrawalLogsBatchNumber] = withdrawalsLogsMerkleRoot;
         emit WithdrawalsPublished(
             withdrawalLogsBatchNumber,
             withdrawalsLogsMerkleRoot
@@ -490,6 +499,31 @@ contract CommonBridge is
             );
     }
 
+    /// @inheritdoc ICommonBridge
+    function sendMessage(uint256 dstChainId, SendValues memory message) public override onlyOnChainProposer {
+        IRouter(sharedBridgeRouter).sendMessage{value: message.value}(dstChainId, message);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function receiveMessage(SendValues calldata message) public override payable {
+        require(
+            msg.sender == sharedBridgeRouter,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+
+        if (message.value != 0) {
+            require(
+                message.value == msg.value,
+                "CommonBridge: message.value does not match msg.value"
+            );
+            _deposit(0, _getSenderAlias());
+        }
+
+        if (message.data.length != 0) {
+            _sendToL2(_getSenderAlias(), message);
+        }
+    }
+
     function upgradeL2Contract(
         address l2Contract,
         address newImplementation,
@@ -506,6 +540,7 @@ contract CommonBridge is
             value: 0,
             data: callData
         });
+        _burnGas(sendValues.gasLimit);
         _sendToL2(L2_PROXY_ADMIN, sendValues);
     }
 

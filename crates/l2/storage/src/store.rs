@@ -7,7 +7,10 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
+    types::{
+        AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch,
+        l2_to_l2_message::L2toL2Message,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use tracing::info;
@@ -57,6 +60,7 @@ impl Store {
             state_root: H256::zero(),
             privileged_transactions_hash: H256::zero(),
             message_hashes: Vec::new(),
+            l2_to_l2_messages: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
             commit_tx: None,
             verify_tx: None,
@@ -191,6 +195,14 @@ impl Store {
             .await?
             .unwrap_or_default();
 
+        let l2_to_l2_messages = self
+            .get_l2_to_l2_messages(batch_number)
+            .await?
+            .ok_or(RollupStoreError::Custom(
+            "Failed while trying to retrieve the L2->L2 messages of a known batch. This is a bug."
+                .to_owned(),
+        ))?;
+
         let privileged_transactions_hash = self
             .get_privileged_transactions_hash_by_batch(batch_number)
             .await?.ok_or(RollupStoreError::Custom(
@@ -209,6 +221,7 @@ impl Store {
             state_root,
             blobs_bundle,
             message_hashes,
+            l2_to_l2_messages,
             privileged_transactions_hash,
             commit_tx,
             verify_tx,
@@ -354,5 +367,22 @@ impl Store {
         self.engine
             .delete_proof_by_batch_and_type(batch_number, proof_type)
             .await
+    }
+
+    pub async fn store_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+        messages: Vec<L2toL2Message>,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_l2_to_l2_messages(batch_number, messages)
+            .await
+    }
+
+    pub async fn get_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError> {
+        self.engine.get_l2_to_l2_messages(batch_number).await
     }
 }

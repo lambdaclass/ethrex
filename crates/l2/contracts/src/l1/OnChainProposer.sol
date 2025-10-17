@@ -11,6 +11,7 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
+import {IRouter} from "./interfaces/IRouter.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -91,6 +92,8 @@ contract OnChainProposer is
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
 
+    address public sharedBridgeRouter = address(0);
+
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -117,7 +120,8 @@ contract OnChainProposer is
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses,
-        uint256 chainId
+        uint256 chainId,
+        address _sharedBridgeRouter
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -167,6 +171,8 @@ contract OnChainProposer is
 
         CHAIN_ID = chainId;
 
+        sharedBridgeRouter = _sharedBridgeRouter;
+
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
@@ -196,6 +202,7 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
+        L2toL2Message[] calldata l2CrossMessages,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external override onlySequencer whenNotPaused {
@@ -224,11 +231,23 @@ contract OnChainProposer is
                 "OnChainProposer: invalid privileged transaction logs"
             );
         }
+
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
                 batchNumber,
                 withdrawalsLogsMerkleRoot
             );
+        }
+
+        for (uint256 i = 0; i < l2CrossMessages.length; i++) {
+            L2toL2Message calldata message = l2CrossMessages[i];
+            ICommonBridge.SendValues memory sendValues = ICommonBridge.SendValues(
+                message.to,
+                message.gasLimit,
+                message.value,
+                message.data
+            );
+            ICommonBridge(BRIDGE).sendMessage(message.chainId, sendValues);
         }
 
         // Blob is published in the (EIP-4844) transaction that calls this function.
