@@ -10745,8 +10745,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.4.1"
-source = "git+https://github.com/lambdaclass/spawned?branch=start_on_thread#253527734d423897ce21f924e37badf1403003c8"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c34171afa9ef68114f07b4be6cf294f49a388380b62a036010b31534ecc0f927"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -10757,8 +10758,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.4.1"
-source = "git+https://github.com/lambdaclass/spawned?branch=start_on_thread#253527734d423897ce21f924e37badf1403003c8"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b83e35512b851b51d27a6dcee6025da1c61e7d842e2ec79971124eab2be3e974"
 dependencies = [
  "crossbeam 0.7.3",
  "tokio",

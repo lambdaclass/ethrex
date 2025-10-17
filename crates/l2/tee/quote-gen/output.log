@@ -1,0 +1,3 @@
+error: no bin target named `ethrex` in default-run packages
+help: available bin targets:
+    quote-gen
