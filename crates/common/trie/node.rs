@@ -50,24 +50,24 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>, buf: &mut Vec<u8>) -> NodeHash {
+    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for (choice, node) in &mut node.choices.iter_mut().enumerate() {
-                            node.commit(path.append_new(choice as u8), acc, buf);
+                            node.commit(path.append_new(choice as u8), acc);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(path.concat(&node.prefix), acc, buf);
+                        node.child.commit(path.concat(&node.prefix), acc);
                     }
                     Node::Leaf(_) => {}
                 }
-                buf.clear();
-                node.encode(buf);
-                let hash = *hash.get_or_init(|| NodeHash::from_encoded_raw(buf));
-                acc.push((path.clone(), buf.to_vec()));
+                let mut buf = Vec::new();
+                node.encode(&mut buf);
+                let hash = *hash.get_or_init(|| NodeHash::from_encoded_raw(&buf));
+                acc.push((path.clone(), buf));
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }

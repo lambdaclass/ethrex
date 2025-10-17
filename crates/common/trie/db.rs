@@ -65,8 +65,7 @@ impl InMemoryTrieDB {
     ) -> Result<Self, TrieError> {
         let mut embedded_root = Trie::get_embedded_root(state_nodes, root_hash)?;
         let mut hashed_nodes = vec![];
-        let mut buf = Vec::new();
-        embedded_root.commit(Nibbles::default(), &mut hashed_nodes, &mut buf);
+        embedded_root.commit(Nibbles::default(), &mut hashed_nodes);
 
         let hashed_nodes = hashed_nodes
             .into_iter()
