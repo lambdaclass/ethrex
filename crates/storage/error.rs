@@ -39,5 +39,5 @@ pub enum StoreError {
     #[error("Update batch contains no blocks")]
     UpdateBatchNoBlocks,
     #[error("Pivot changed")]
-    PivotChanged
+    PivotChanged,
 }

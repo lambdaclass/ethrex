@@ -598,8 +598,8 @@ impl Store {
                 Ok(()) => {
                     batch.put_cf(&cf_misc, "last_written", [0xff]);
                     self.db.write(batch)?;
-                    return Ok(())
-                },
+                    return Ok(());
+                }
             };
         }
     }

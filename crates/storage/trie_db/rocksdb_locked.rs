@@ -3,7 +3,10 @@ use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB, SnapshotWithThreadMode};
 use std::sync::Arc;
 
-use crate::{store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES}, trie_db::layering::apply_prefix};
+use crate::{
+    store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES},
+    trie_db::layering::apply_prefix,
+};
 
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
 pub struct RocksDBLockedTrieDB {
@@ -17,7 +20,7 @@ pub struct RocksDBLockedTrieDB {
     snapshot: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
-    last_computed_flatkeyvalue: Nibbles
+    last_computed_flatkeyvalue: Nibbles,
 }
 
 impl RocksDBLockedTrieDB {
@@ -50,7 +53,6 @@ impl RocksDBLockedTrieDB {
 
         // Create snapshot for consistent reads
         let snapshot = db.snapshot();
-        
 
         Ok(Self {
             db,
@@ -58,7 +60,7 @@ impl RocksDBLockedTrieDB {
             cf_flatkeyvalue,
             snapshot,
             address_prefix,
-            last_computed_flatkeyvalue
+            last_computed_flatkeyvalue,
         })
     }
 
