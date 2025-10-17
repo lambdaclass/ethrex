@@ -120,6 +120,9 @@ where
                         BlockExpectedException::SystemContractCallFailed,
                     )
                 }
+                "BlockException.RLP_BLOCK_LIMIT_EXCEEDED" => BlockChainExpectedException::BlockException(
+                    BlockExpectedException::RlpBlockLimitExceeded,
+                ),
                 _ => BlockChainExpectedException::Other,
             })
             .collect();
