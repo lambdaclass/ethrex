@@ -29,6 +29,7 @@ impl TopLevelCache {
         };
         if new_top.parent == self.root {
             self.nodes.append(&mut new_top.nodes.clone());
+            self.root = state_root;
         } else {
             self.regenerate(layers, state_root);
         }
