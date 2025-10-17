@@ -5,7 +5,6 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 pub mod tracing;
-pub mod vm;
 
 use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
@@ -29,8 +28,9 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
+pub use ethrex_vm::backends::levm::db as vm; // re-export VM adapters module for downstream users
+use ethrex_vm::backends::levm::db::{DatabaseLogger, StoreVmDatabase};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use std::collections::{BTreeMap, HashMap};
@@ -39,8 +39,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
-
-use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
@@ -217,8 +215,7 @@ impl Blockchain {
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
-            let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_hash);
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
@@ -918,9 +915,10 @@ impl Blockchain {
     }
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+        let store = Arc::new(vm_db);
         let evm = match self.options.r#type {
-            BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2(fee_config) => Evm::new_for_l2(vm_db, fee_config)?,
+            BlockchainType::L1 => Evm::new_from_db_for_l1(store),
+            BlockchainType::L2(fee_config) => Evm::new_from_db_for_l2(store, fee_config),
         };
         Ok(evm)
     }
