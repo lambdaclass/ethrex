@@ -49,7 +49,7 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use sha3::Digest;
+use sha3::{Digest, Keccak256};
 use std::borrow::Cow;
 use std::ops::Mul;
 
