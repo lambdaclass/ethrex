@@ -385,56 +385,57 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 }
 
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
-    use sha3::Keccak256;
+    increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
-    increase_precompile_consumed_gas(gas_cost::ECRECOVER_COST, gas_remaining)?;
+    const INPUT_LEN: usize = 128;
+    const WORD: usize = 32;
 
-    // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 128);
+    let input = fill_with_zeros(calldata, INPUT_LEN);
 
-    // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
-    let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
-    let Ok(message) = secp256k1::Message::from_digest_slice(hash) else {
+    // len(raw_hash) == 32, len(raw_v) == 32, len(raw_sig) == 64
+    let (raw_hash, tail) = input.split_at(WORD);
+    let (raw_v, raw_sig) = tail.split_at(WORD);
+
+    // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
+    let mut recovery_id_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
+        Ok(27) => 0_i32,
+        Ok(28) => 1_i32,
+        _ => return Ok(Bytes::new()),
+    };
+
+    // Recovery id from the adjusted byte.
+    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(recovery_id_byte) else {
         return Ok(Bytes::new());
     };
 
-    let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
-
-    // The Recovery identifier is expected to be 27 or 28, any other value is invalid
-    if !(v == U256::from(27) || v == U256::from(28)) {
-        return Ok(Bytes::new());
-    }
-
-    let v = u8::try_from(v).map_err(|_| InternalError::TypeConversion)?;
-    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::TypeConversion)?;
-    let Ok(recovery_id) =
-        secp256k1::ecdsa::RecoveryId::try_from(Into::<i32>::into(recovery_id_from_rpc))
+    let Ok(recoverable_signature) =
+        secp256k1::ecdsa::RecoverableSignature::from_compact(raw_sig, recovery_id)
     else {
         return Ok(Bytes::new());
     };
 
-    // signature is made up of the parameters r and s
-    let sig = calldata.get(64..128).ok_or(InternalError::Slicing)?;
-    let Ok(signature) = secp256k1::ecdsa::RecoverableSignature::from_compact(sig, recovery_id)
-    else {
+    let message = secp256k1::Message::from_digest(
+        raw_hash
+            .try_into()
+            .expect("ecrecover: raw_hash is not 32 bytes"),
+    );
+
+    let Ok(public_key) = recoverable_signature.recover(&message) else {
         return Ok(Bytes::new());
     };
-
-    // Recover the address using secp256k1
-    let Ok(public_key) = signature.recover(&message) else {
-        return Ok(Bytes::new());
-    };
-
-    let public_key = public_key.serialize_uncompressed();
 
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
-    let public_key_hash = Keccak256::digest(&public_key[1..65]);
+    let public_key_hash = Keccak256::digest(&public_key.serialize_uncompressed()[1..]);
 
-    // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
-    let mut output = vec![0u8; 12];
-    output.extend_from_slice(public_key_hash.get(13..33).ok_or(InternalError::Slicing)?);
+    // Address is the last 20 bytes of the hash.
+    #[expect(clippy::indexing_slicing)]
+    let recovered_address_bytes = &public_key_hash[12..];
 
-    Ok(Bytes::from(output.to_vec()))
+    let mut out = [0u8; 32];
+    #[expect(clippy::indexing_slicing)]
+    out[12..32].copy_from_slice(&recovered_address_bytes[12..32]);
+
+    Ok(Bytes::copy_from_slice(&out))
 }
 
 // /// ## ECRECOVER precompile.
