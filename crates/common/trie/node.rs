@@ -41,7 +41,6 @@ impl NodeRef {
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
-                    // Ok(node) => (node.compute_hash() == hash).then_some(Ok(node)),
                     Ok(node) => Some(Ok(node)),
                     Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
