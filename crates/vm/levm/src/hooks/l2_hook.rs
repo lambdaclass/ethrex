@@ -152,8 +152,12 @@ impl Hook for L2Hook {
                 &self.fee_config.l1_fee_config,
             )?;
 
+            let total_gas = actual_gas_used
+                .checked_add(l1_gas)
+                .ok_or(InternalError::Overflow)?;
+
             // Check that sender has enough gas to pay the l1 fee
-            if actual_gas_used + l1_gas > vm.current_call_frame.gas_limit {
+            if total_gas > vm.current_call_frame.gas_limit {
                 // Not enough gas to pay l1 fee, force revert
 
                 // Restore VM state to before execution
@@ -179,7 +183,7 @@ impl Hook for L2Hook {
             // L1 fee is paid to the L1 fee vault
             pay_to_l1_fee_vault(vm, l1_gas, self.fee_config.l1_fee_config)?;
 
-            refund_sender(vm, ctx_result, gas_refunded, actual_gas_used + l1_gas)?;
+            refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
 
             // We pay to coinbase after the l1_fee to avoid charging the diff to every transaction
             pay_coinbase_l2(vm, actual_gas_used, &self.fee_config.operator_fee_config)?;
@@ -190,7 +194,7 @@ impl Hook for L2Hook {
             // Operator fee is paid to the chain operator
             pay_operator_fee(vm, actual_gas_used, &self.fee_config.operator_fee_config)?;
 
-            ctx_result.gas_used = actual_gas_used + l1_gas;
+            ctx_result.gas_used = total_gas;
 
             return Ok(());
         }
@@ -328,7 +332,7 @@ fn calculate_l1_fee_gas(
     let account_diffs_size = get_accounts_diff_size(&account_diffs_in_tx)
         .map_err(|e| InternalError::Custom(format!("Failed to get account diffs size: {}", e)))?;
 
-    let l1_fee = calculate_l1_fee(&fee_config, account_diffs_size)?;
+    let l1_fee = calculate_l1_fee(fee_config, account_diffs_size)?;
     let l1_fee_gas = l1_fee
         .checked_div(vm.env.gas_price)
         .ok_or(InternalError::DivisionByZero)?;

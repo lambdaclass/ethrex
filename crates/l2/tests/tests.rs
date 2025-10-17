@@ -2184,7 +2184,7 @@ async fn get_fees_details_l2(
         .await
         .unwrap()
         .unwrap();
-    let gas_used = tx_receipt.tx_info.gas_used;
+    let tx_gas_used = tx_receipt.tx_info.gas_used;
     let max_fee_per_gas = rpc_tx.tx.max_fee_per_gas().unwrap();
     let max_priority_fee_per_gas: u64 = rpc_tx.tx.max_priority_fee().unwrap();
     let block_number = tx_receipt.block_info.block_number;
@@ -2214,13 +2214,22 @@ async fn get_fees_details_l2(
     .try_into()
     .unwrap();
 
+    let gas_price = rpc_tx
+        .tx
+        .effective_gas_price(Some(base_fee_per_gas))
+        .unwrap();
+
+    let l1_gas = l1_fee / gas_price.as_u64();
+
+    let actual_gas_used = tx_gas_used - l1_gas;
+
     let priority_fee = min(
         max_priority_fee_per_gas,
         max_fee_per_gas - base_fee_per_gas - operator_fee_per_gas,
-    ) * gas_used;
+    ) * actual_gas_used;
 
-    let operator_fees = operator_fee_per_gas * gas_used;
-    let base_fee = base_fee_per_gas * gas_used;
+    let operator_fees = operator_fee_per_gas * actual_gas_used;
+    let base_fee = base_fee_per_gas * actual_gas_used;
 
     Ok(FeesDetails {
         base_fee,
