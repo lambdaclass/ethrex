@@ -169,6 +169,20 @@ impl BlobsBundle {
 
         Ok(())
     }
+
+    pub fn validate_blob_commitment_hashes(&self, blob_versioned_hashes: &[H256]) -> Result<(), BlobsBundleError> {
+        if self.commitments.len() != blob_versioned_hashes.len() {
+            return Err(BlobsBundleError::BlobVersionedHashesError);
+        }
+        for (commitment, blob_versioned_hash) in
+            self.commitments.iter().zip(blob_versioned_hashes.iter())
+        {
+            if *blob_versioned_hash != kzg_commitment_to_versioned_hash(commitment) {
+                return Err(BlobsBundleError::BlobVersionedHashesError);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl RLPEncode for BlobsBundle {

@@ -1003,7 +1003,7 @@ async fn handle_incoming_message(
         Message::PooledTransactions(msg) if peer_supports_eth => {
             for tx in &msg.pooled_transactions {
                 if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                    if itx.blobs_bundle.as_ref().is_none_or(|_blobs| false) {
+                    if itx.blobs_bundle.as_ref().is_none_or(|blobs| blobs.validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes).is_err()) {
                         log_peer_warn(
                             &state.node,
                             &format!("disconnected from peer. Reason: Invalid/Missing Blobs"),
