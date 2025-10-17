@@ -1,5 +1,5 @@
 use crate::{
-    cli::remove_db,
+    cli::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2, remove_db},
     initializers::{init_l1, init_store, init_tracing},
     l2::{
         self,
@@ -38,9 +38,6 @@ use tracing::{debug, info};
 const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
-
-pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
-pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 
 const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
 const UNPAUSE_CONTRACT_SELECTOR: &str = "unpause()";
@@ -378,8 +375,10 @@ impl Command {
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
 
-                #[cfg(feature = "rollup_storage_sql")]
+                #[cfg(feature = "l2-sql")]
                 let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
+                #[cfg(not(feature = "l2-sql"))]
+                let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::InMemory;
 
                 // Init stores
                 let store = Store::new_from_genesis(

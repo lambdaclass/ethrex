@@ -11,11 +11,12 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
+#[cfg(feature = "l2")]
+use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
-    rlpx::l2::l2_connection::P2PBasedContext,
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -162,8 +163,15 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let ws_socket_opts = if opts.ws_enabled {
+        Some(get_ws_socket_addr(opts))
+    } else {
+        None
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
+        ws_socket_opts,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -193,7 +201,7 @@ pub async fn init_network(
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
-    based_context: Option<P2PBasedContext>,
+    #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -213,6 +221,7 @@ pub async fn init_network(
         store,
         blockchain.clone(),
         get_client_version(),
+        #[cfg(feature = "l2")]
         based_context,
         opts.tx_broadcasting_time_interval,
     )
@@ -367,6 +376,11 @@ pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
         .expect("Failed to parse http address and port")
 }
 
+pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
+    parse_socket_addr(&opts.ws_addr, &opts.ws_port)
+        .expect("Failed to parse websocket address and port")
+}
+
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
     if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
@@ -403,6 +417,8 @@ pub async fn init_l1(
     display_chain_initialization(&genesis);
 
     raise_fd_limit()?;
+    debug!("Preloading KZG trusted setup");
+    ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store = init_store(datadir, genesis).await;
 
@@ -472,6 +488,7 @@ pub async fn init_l1(
             store.clone(),
             tracker.clone(),
             blockchain.clone(),
+            #[cfg(feature = "l2")]
             None,
         )
         .await;
