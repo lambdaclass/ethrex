@@ -15,8 +15,9 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
-    OptimisticTransactionDB, Options, WriteBatchWithTransaction,
+    BlockBasedIndexType, BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor,
+    CompactOptions, DBCompressionType, FifoCompactOptions, LruCacheOptions, MultiThreaded,
+    OptimisticTransactionDB, Options, UniversalCompactOptions, WriteBatchWithTransaction,
 };
 use std::{
     collections::HashSet,
@@ -117,45 +118,62 @@ pub struct Store {
 
 impl Store {
     pub fn new(path: &Path) -> Result<Self, StoreError> {
+        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB shared cache
         let mut db_options = Options::default();
+
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache
-
+        db_options.set_max_background_jobs(24);
+        db_options.set_compaction_readahead_size(2097152);
+        db_options.set_wal_bytes_per_sync(0);
         db_options.set_max_open_files(-1);
-        db_options.set_max_file_opening_threads(16);
-
-        db_options.set_max_background_jobs(8);
-
-        db_options.set_level_zero_file_num_compaction_trigger(2);
-        db_options.set_level_zero_slowdown_writes_trigger(10);
-        db_options.set_level_zero_stop_writes_trigger(16);
-        db_options.set_target_file_size_base(512 * 1024 * 1024); // 512MB
-        db_options.set_max_bytes_for_level_base(2 * 1024 * 1024 * 1024); // 2GB L1
-        db_options.set_max_bytes_for_level_multiplier(10.0);
-        db_options.set_level_compaction_dynamic_level_bytes(true);
-
-        db_options.set_db_write_buffer_size(1024 * 1024 * 1024); // 1GB
-        db_options.set_write_buffer_size(128 * 1024 * 1024); // 128MB
-        db_options.set_max_write_buffer_number(4);
-        db_options.set_min_write_buffer_number_to_merge(2);
-
-        db_options.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
-        db_options.set_max_total_wal_size(2 * 1024 * 1024 * 1024); // 2GB
-        db_options.set_wal_ttl_seconds(3600);
-        db_options.set_wal_bytes_per_sync(32 * 1024 * 1024); // 32MB
-        db_options.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
-        db_options.set_use_fsync(false); // fdatasync
-
-        db_options.set_enable_pipelined_write(true);
-        db_options.set_allow_concurrent_memtable_write(true);
+        db_options.set_stats_dump_period_sec(600);
+        db_options.set_stats_persist_period_sec(600);
+        db_options.set_delete_obsolete_files_period_micros(21600000000);
+        db_options.set_max_total_wal_size(0);
+        // MISSING OPT:
+        // db_options.set_strict_bytes_per_sync(false);
+        db_options.set_writable_file_max_buffer_size(1048576);
+        db_options.set_max_subcompactions(24);
+        db_options.set_max_background_jobs(24);
+        db_options.set_avoid_unnecessary_blocking_io(false);
+        db_options.set_allow_ingest_behind(false);
+        db_options.set_manual_wal_flush(false);
         db_options.set_enable_write_thread_adaptive_yield(true);
-        db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
-        db_options.set_advise_random_on_open(false);
-
-        // db_options.enable_statistics();
-        // db_options.set_stats_dump_period_sec(600);
+        db_options.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
+        db_options.set_unordered_write(true);
+        db_options.set_wal_compression_type(DBCompressionType::None);
+        db_options.set_enable_pipelined_write(false);
+        db_options.set_write_dbid_to_manifest(true);
+        db_options.set_allow_concurrent_memtable_write(true);
+        db_options.set_max_manifest_file_size(1073741824);
+        db_options.set_wal_ttl_seconds(0);
+        db_options.set_wal_size_limit_mb(0);
+        db_options.set_manifest_preallocation_size(4194304);
+        db_options.set_log_file_time_to_roll(0);
+        db_options.set_keep_log_file_num(1000);
+        db_options.set_db_write_buffer_size(0);
+        db_options.set_table_cache_num_shard_bits(6);
+        db_options.set_max_file_opening_threads(16);
+        db_options.set_use_adaptive_mutex(false);
+        db_options.set_use_fsync(false);
+        db_options.set_skip_stats_update_on_db_open(false);
+        db_options.set_dump_malloc_stats(false);
+        db_options.set_track_and_verify_wals_in_manifest(false);
+        db_options.set_is_fd_close_on_exec(true);
+        db_options.set_error_if_exists(false);
+        db_options.set_log_level(rocksdb::LogLevel::Info);
+        db_options.set_recycle_log_file_num(0);
+        db_options.set_paranoid_checks(true);
+        db_options.set_track_and_verify_wals_in_manifest(false);
+        db_options.set_max_log_file_size(0);
+        db_options.set_use_direct_io_for_flush_and_compaction(false);
+        db_options.set_use_direct_reads(false);
+        db_options.set_allow_mmap_writes(false);
+        db_options.set_allow_mmap_reads(false);
+        db_options.set_atomic_flush(false);
+        db_options.set_advise_random_on_open(true);
 
         // Current column families that the code expects
         let expected_column_families = vec![
@@ -239,19 +257,79 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_TRIE_NODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
-                    cf_opts.set_max_write_buffer_number(6);
+                    let mut cache_opts = LruCacheOptions::default();
+                    cache_opts.set_num_shard_bits(6);
+                    let cache = Cache::new_lru_cache_opts(&cache_opts);
+
+                    cf_opts = Options::default();
+
+                    cf_opts.set_level_zero_file_num_compaction_trigger(4);
+                    cf_opts.set_level_zero_slowdown_writes_trigger(20);
+                    cf_opts.set_level_zero_stop_writes_trigger(1024);
+                    cf_opts.set_compression_type(DBCompressionType::Lz4);
+                    cf_opts.set_enable_blob_gc(false);
+                    cf_opts.set_target_file_size_base(1073741824);
+                    cf_opts.set_enable_blob_files(false);
+                    cf_opts.set_periodic_compaction_seconds(0);
+                    cf_opts.set_max_bytes_for_level_multiplier_additional(&[1, 1, 1, 1, 1, 1, 1]);
+                    cf_opts.set_max_bytes_for_level_base(350000000);
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.020000);
+                    cf_opts.set_write_buffer_size(134217728);
+                    cf_opts.set_memtable_huge_page_size(0);
+                    cf_opts.set_max_successive_merges(0);
+                    cf_opts.set_max_bytes_for_level_multiplier(30.000000);
+                    cf_opts.set_target_file_size_multiplier(2);
+                    cf_opts.set_max_write_buffer_number(4);
+                    cf_opts.set_target_file_size_base(64000000);
+                    cf_opts.set_max_compaction_bytes(4000000000);
+                    cf_opts.set_memtable_whole_key_filtering(true);
+                    cf_opts.set_hard_pending_compaction_bytes_limit(274877906944);
+                    cf_opts.set_soft_pending_compaction_bytes_limit(68719476736);
+                    cf_opts.set_paranoid_checks(false);
+                    cf_opts.set_arena_block_size(1048576);
+                    cf_opts.set_disable_auto_compactions(false);
+                    cf_opts.set_max_sequential_skip_in_iterations(8);
+                    cf_opts.set_report_bg_io_stats(false);
+                    cf_opts.set_compaction_pri(rocksdb::CompactionPri::MinOverlappingRatio);
+                    cf_opts.set_bloom_locality(0);
+                    cf_opts.set_compaction_style(rocksdb::DBCompactionStyle::Level);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    cf_opts.set_max_write_buffer_size_to_maintain(0);
+                    cf_opts.set_num_levels(7);
+                    cf_opts.set_optimize_filters_for_hits(true);
+                    cf_opts.set_level_compaction_dynamic_level_bytes(false);
+                    cf_opts.set_inplace_update_support(false);
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB
+                    block_opts.set_unpartitioned_pinning_tier(
+                        rocksdb::BlockBasedTablePinningTier::Fallback,
+                    );
+                    block_opts
+                        .set_partition_pinning_tier(rocksdb::BlockBasedTablePinningTier::Fallback);
+                    block_opts.set_top_level_index_pinning_tier(
+                        rocksdb::BlockBasedTablePinningTier::Fallback,
+                    );
                     block_opts.set_block_cache(&cache);
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    block_opts.set_cache_index_and_filter_blocks(true);
+                    block_opts.set_format_version(5);
+                    block_opts.set_pin_top_level_index_and_filter(true);
+                    block_opts.set_partition_filters(false);
+                    block_opts.set_metadata_block_size(4096);
+                    block_opts.set_index_block_restart_interval(1);
+                    block_opts.set_block_size(32000);
+                    block_opts.set_block_cache(&cache);
+                    block_opts.set_checksum_type(rocksdb::ChecksumType::XXH3);
+                    block_opts.set_bloom_filter(15.0, false);
+                    block_opts.set_data_block_hash_ratio(0.5);
+                    block_opts.set_block_restart_interval(4);
+                    block_opts.set_index_type(BlockBasedIndexType::BinarySearch);
                     block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    block_opts
+                        .set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash);
+                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    block_opts.set_pin_top_level_index_and_filter(true);
+                    block_opts.set_whole_key_filtering(true);
+                    block_opts.set_cache_index_and_filter_blocks(false);
+                    block_opts.set_optimize_filters_for_memory(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_RECEIPTS | CF_ACCOUNT_CODES => {
@@ -261,7 +339,6 @@ impl Store {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&cache);
                     block_opts.set_block_size(32 * 1024); // 32KB
                     block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
