@@ -1,12 +1,16 @@
 use ethrex_common::types::NETWORK_NAMES;
 use prometheus::{Encoder, GaugeVec, IntGaugeVec, Opts, Registry, TextEncoder};
-use std::{borrow::Cow, sync::LazyLock};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
 
 use crate::MetricsError;
 
 pub static METRICS_BLOCKS: LazyLock<MetricsBlocks> = LazyLock::new(MetricsBlocks::default);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MetricsBlocks {
     gas_limit: GaugeVec,
     gigagas: GaugeVec,
@@ -16,6 +20,7 @@ pub struct MetricsBlocks {
     gas_used: GaugeVec,
     /// Keeps track of the head block number
     head_height: IntGaugeVec,
+    active_block_labels: Mutex<HashMap<(String, String), String>>,
 }
 
 impl Default for MetricsBlocks {
@@ -45,6 +50,10 @@ impl NetworkLabels {
             network,
             chain_id: chain_id.to_string(),
         }
+    }
+
+    pub fn network_name(&self) -> &str {
+        self.network.as_ref()
     }
 
     fn values(&self) -> [&str; 2] {
@@ -138,7 +147,64 @@ impl MetricsBlocks {
                 NETWORK_LABELS,
             )
             .unwrap(),
+            active_block_labels: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn recycle_previous_block_labels(
+        &self,
+        labels: &BlockMetricLabels,
+    ) -> Result<(), MetricsError> {
+        let mut active = self
+            .active_block_labels
+            .lock()
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+
+        let key = (
+            labels.network.network_name().to_string(),
+            labels.network.chain_id.clone(),
+        );
+
+        if active
+            .get(&key)
+            .is_some_and(|prev_block| prev_block == &labels.block_number)
+        {
+            return Ok(());
+        }
+
+        let previous_block = active.insert(key, labels.block_number.clone());
+        drop(active);
+
+        if let Some(previous_block) = previous_block {
+            let old_values = [
+                labels.network.network_name(),
+                labels.network.chain_id.as_str(),
+                previous_block.as_str(),
+            ];
+
+            let remove_err = |e: prometheus::Error| MetricsError::PrometheusErr(e.to_string());
+
+            self.gas_limit
+                .remove_label_values(&old_values)
+                .map_err(remove_err)?;
+            self.gigagas
+                .remove_label_values(&old_values)
+                .map_err(remove_err)?;
+            self.gigagas_block_building
+                .remove_label_values(&old_values)
+                .map_err(remove_err)?;
+            self.block_building_ms
+                .remove_label_values(&old_values)
+                .map_err(remove_err)?;
+            self.block_building_base_fee
+                .remove_label_values(&old_values)
+                .map_err(remove_err)?;
+            self.gas_used
+                .remove_label_values(&old_values)
+                .map_err(remove_err)?;
+        }
+
+        Ok(())
     }
 
     pub fn set_latest_block_gas_limit(
@@ -146,6 +212,7 @@ impl MetricsBlocks {
         labels: &BlockMetricLabels,
         gas_limit: f64,
     ) -> Result<(), MetricsError> {
+        self.recycle_previous_block_labels(labels)?;
         let values = labels.values();
         self.gas_limit
             .get_metric_with_label_values(&values)
@@ -159,6 +226,7 @@ impl MetricsBlocks {
         labels: &BlockMetricLabels,
         gigagas: f64,
     ) -> Result<(), MetricsError> {
+        self.recycle_previous_block_labels(labels)?;
         let values = labels.values();
         self.gigagas
             .get_metric_with_label_values(&values)
@@ -172,6 +240,7 @@ impl MetricsBlocks {
         labels: &BlockMetricLabels,
         gigagas: f64,
     ) -> Result<(), MetricsError> {
+        self.recycle_previous_block_labels(labels)?;
         let values = labels.values();
         self.gigagas_block_building
             .get_metric_with_label_values(&values)
@@ -185,6 +254,7 @@ impl MetricsBlocks {
         labels: &BlockMetricLabels,
         ms: i64,
     ) -> Result<(), MetricsError> {
+        self.recycle_previous_block_labels(labels)?;
         let values = labels.values();
         self.block_building_ms
             .get_metric_with_label_values(&values)
@@ -198,6 +268,7 @@ impl MetricsBlocks {
         labels: &BlockMetricLabels,
         base_fee: i64,
     ) -> Result<(), MetricsError> {
+        self.recycle_previous_block_labels(labels)?;
         let values = labels.values();
         self.block_building_base_fee
             .get_metric_with_label_values(&values)
@@ -224,6 +295,7 @@ impl MetricsBlocks {
         labels: &BlockMetricLabels,
         gas_used: f64,
     ) -> Result<(), MetricsError> {
+        self.recycle_previous_block_labels(labels)?;
         let values = labels.values();
         self.gas_used
             .get_metric_with_label_values(&values)
