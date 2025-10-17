@@ -133,6 +133,7 @@ impl RLPxMessage for BatchSealed {
         let (privileged_transactions_hash, decoder) =
             decoder.decode_field("privileged_transactions_hash")?;
         let (message_hashes, decoder) = decoder.decode_field("message_hashes")?;
+        let (l2_to_l2_messages, decoder) = decoder.decode_field("l2_to_l2_messages")?;
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
         let (proofs, decoder) = decoder.decode_field("proofs")?;
@@ -148,6 +149,7 @@ impl RLPxMessage for BatchSealed {
             state_root,
             privileged_transactions_hash,
             message_hashes,
+            l2_to_l2_messages,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
                 blobs,
                 commitments,

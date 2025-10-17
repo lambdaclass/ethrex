@@ -14,11 +14,15 @@ use ethrex_common::{
     types::{
         AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
         MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
+        l2_to_l2_message::L2toL2Message,
     },
 };
 use ethrex_l2_common::{
     calldata::Value,
-    l1_messages::{L2Message, get_block_l1_messages, get_l1_message_hash, get_l2_to_l2_messages},
+    l1_messages::{
+        get_block_l1_messages, get_l1_message_hash, get_l2_to_l2_messages,
+        value_from_l2_to_l2_message,
+    },
     merkle_tree::compute_merkle_root,
     privileged_transactions::{
         PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash,
@@ -206,8 +210,8 @@ impl L1Committer {
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
-        let (batch, l2_to_l2_messages) = match self.rollup_store.get_batch(batch_to_commit).await? {
-            Some(batch) => (batch, vec![]),
+        let batch = match self.rollup_store.get_batch(batch_to_commit).await? {
+            Some(batch) => batch,
             None => {
                 let last_committed_blocks = self
                     .rollup_store
@@ -247,6 +251,7 @@ impl L1Committer {
                     state_root: new_state_root,
                     privileged_transactions_hash,
                     message_hashes,
+                    l2_to_l2_messages,
                     blobs_bundle,
                     commit_tx: None,
                     verify_tx: None,
@@ -261,7 +266,7 @@ impl L1Committer {
                     batch.number
                 );
 
-                (batch, l2_to_l2_messages)
+                batch
             }
         };
 
@@ -272,7 +277,7 @@ impl L1Committer {
             batch.number,
         );
 
-        match self.send_commitment(&batch, l2_to_l2_messages).await {
+        match self.send_commitment(&batch).await {
             Ok(commit_tx_hash) => {
                 metrics!(
                 let _ = METRICS
@@ -314,7 +319,7 @@ impl L1Committer {
             BlobsBundle,
             H256,
             Vec<H256>,
-            Vec<L2Message>,
+            Vec<L2toL2Message>,
             H256,
             BlockNumber,
         ),
@@ -551,11 +556,7 @@ impl L1Committer {
         ))
     }
 
-    async fn send_commitment(
-        &mut self,
-        batch: &Batch,
-        l2_to_l2_messages: Vec<L2Message>,
-    ) -> Result<H256, CommitterError> {
+    async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
         let messages_merkle_root = compute_merkle_root(&batch.message_hashes);
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
 
@@ -563,7 +564,13 @@ impl L1Committer {
             Value::Uint(U256::from(batch.number)),
             Value::FixedBytes(batch.state_root.0.to_vec().into()),
             Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
-            Value::Array(l2_to_l2_messages.into_iter().map(Into::into).collect()),
+            Value::Array(
+                batch
+                    .l2_to_l2_messages
+                    .iter()
+                    .map(value_from_l2_to_l2_message)
+                    .collect(),
+            ),
             Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
             Value::FixedBytes(last_block_hash.0.to_vec().into()),
         ];

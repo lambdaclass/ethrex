@@ -202,8 +202,8 @@ pub enum Command {
         #[arg(
             long,
             value_parser = parse_private_key,
-            env = "SEQUENCER_PRIVATE_KEY", 
-            help = "The private key of the sequencer", 
+            env = "SEQUENCER_PRIVATE_KEY",
+            help = "The private key of the sequencer",
             help_heading  = "Sequencer account options",
             group = "sequencer_signing",
         )]
@@ -492,6 +492,7 @@ impl Command {
                         state_root: new_block.state_root,
                         privileged_transactions_hash: H256::zero(),
                         message_hashes,
+                        l2_to_l2_messages: unimplemented!("TODO"),
                         blobs_bundle: BlobsBundle::empty(),
                         commit_tx: None,
                         verify_tx: None,

@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, l2_to_l2_message::L2toL2Message},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -28,7 +28,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 15] = [
+const DB_SCHEMA: [&str; 16] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -44,6 +44,7 @@ const DB_SCHEMA: [&str; 15] = [
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE l2_to_l2_messages (batch INT PRIMARY KEY, idx INT, message BLOB)",
 ];
 
 impl SQLStore {
@@ -780,6 +781,38 @@ impl StoreEngineRollup for SQLStore {
             .await?
             .map(|row| read_from_row_int(&row, 0))
             .transpose()
+    }
+
+    async fn store_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+        messages: Vec<L2toL2Message>,
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(
+            messages
+                .iter()
+                .enumerate()
+                .map(|(idx, msg)| {
+                    (
+                        "INSERT INTO l2_to_l2_messages (batch, idx, message) VALUES (?1, ?2, ?3)",
+                        libsql::params!(batch_number, idx as u64, bincode::serialize(msg).unwrap())
+                            .into_params()
+                            .unwrap(),
+                    )
+                })
+                .collect(),
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn get_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+    ) -> Result<Vec<L2toL2Message>, RollupStoreError> {
+        unimplemented!("TODO");
+        Ok(Vec::new())
     }
 }
 

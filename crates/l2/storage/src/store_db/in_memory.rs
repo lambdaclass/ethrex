@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, l2_to_l2_message::L2toL2Message},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -46,6 +46,8 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
+    /// Map of batch number to L2->L2 messages
+    l2_to_l2_messages: HashMap<u64, Vec<L2toL2Message>>,
 }
 
 impl Store {
@@ -333,6 +335,32 @@ impl StoreEngineRollup for Store {
 
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
         Ok(self.inner()?.state_roots.keys().max().cloned())
+    }
+
+    async fn store_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+        messages: Vec<L2toL2Message>,
+    ) -> Result<(), RollupStoreError> {
+        let mut store = self.inner()?;
+
+        store.l2_to_l2_messages.insert(batch_number, messages);
+
+        Ok(())
+    }
+
+    async fn get_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+    ) -> Result<Vec<L2toL2Message>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .l2_to_l2_messages
+            .get(&batch_number)
+            .unwrap_or(&vec![])
+            .iter()
+            .cloned()
+            .collect())
     }
 }
 

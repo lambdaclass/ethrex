@@ -2,6 +2,7 @@ use std::sync::LazyLock;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
+use ethrex_common::types::l2_to_l2_message::L2toL2Message;
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
 
@@ -43,35 +44,6 @@ impl L1Message {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// Represents a message from the L2 to another L2
-pub struct L2Message {
-    /// Chain id of the destination chain
-    pub chain_id: U256,
-    /// Address that originated the transaction
-    pub from: Address,
-    /// Address of the recipient in the destination chain
-    pub to: Address,
-    /// Amount of ETH to send to the recipient
-    pub value: U256,
-    /// Gas limit for the transaction execution in the destination chain
-    pub gas_limit: U256,
-    /// Calldata for the transaction in the destination chain
-    pub data: Bytes,
-}
-
-impl From<L2Message> for Value {
-    fn from(msg: L2Message) -> Self {
-        Value::Tuple(vec![
-            Value::Uint(msg.chain_id),
-            Value::Address(msg.to),
-            Value::Uint(msg.value),
-            Value::Uint(msg.gas_limit),
-            Value::Bytes(msg.data),
-        ])
-    }
-}
-
 pub fn get_l1_message_hash(msg: &L1Message) -> H256 {
     keccak(msg.encode())
 }
@@ -108,7 +80,7 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
         .collect()
 }
 
-pub fn get_l2_to_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
+pub fn get_l2_to_l2_messages(receipts: &[Receipt]) -> Vec<L2toL2Message> {
     static L2_MESSAGE_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
         keccak("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)".as_bytes())
     });
@@ -127,7 +99,7 @@ pub fn get_l2_to_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
         .collect()
 }
 
-fn l2_message_from_log_data(log_data: &[u8]) -> Option<L2Message> {
+fn l2_message_from_log_data(log_data: &[u8]) -> Option<L2toL2Message> {
     let mut offset = 0;
 
     let chain_id = U256::from_big_endian(log_data.get(offset..offset + 32)?);
@@ -148,7 +120,7 @@ fn l2_message_from_log_data(log_data: &[u8]) -> Option<L2Message> {
     let data_len: usize = U256::from_big_endian(log_data.get(offset..offset + 32)?).as_usize();
     let data = Bytes::copy_from_slice(log_data.get(offset + 32..offset + 32 + data_len)?);
 
-    Some(L2Message {
+    Some(L2toL2Message {
         chain_id,
         from,
         to,
@@ -156,4 +128,14 @@ fn l2_message_from_log_data(log_data: &[u8]) -> Option<L2Message> {
         gas_limit,
         data,
     })
+}
+
+pub fn value_from_l2_to_l2_message(msg: &L2toL2Message) -> Value {
+    Value::Tuple(vec![
+        Value::Uint(msg.chain_id),
+        Value::Address(msg.to),
+        Value::Uint(msg.value),
+        Value::Uint(msg.gas_limit),
+        Value::Bytes(msg.data.clone()),
+    ])
 }

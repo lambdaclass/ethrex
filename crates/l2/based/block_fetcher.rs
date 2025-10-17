@@ -398,6 +398,7 @@ impl BlockFetcher {
             state_root: new_state_root,
             privileged_transactions_hash,
             message_hashes: self.get_batch_message_hashes(batch).await?,
+            l2_to_l2_messages: unimplemented!("TODO"),
             blobs_bundle,
             commit_tx: Some(commit_tx),
             verify_tx: None,
