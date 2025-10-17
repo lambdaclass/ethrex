@@ -2,17 +2,12 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::{
-    array,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 pub use branch::BranchNode;
 use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
+    decode::RLPDecode,
     encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::Decoder,
 };
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
@@ -35,7 +30,7 @@ impl NodeRef {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some(Node::decode_raw(&data[..len as usize])?))
+                Ok(Some(Node::decode(&data[..len as usize])?))
             }
             NodeRef::Hash(hash) => db
                 .get(path)?
@@ -55,22 +50,23 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
+    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>, buf: &mut Vec<u8>) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for (choice, node) in &mut node.choices.iter_mut().enumerate() {
-                            node.commit(path.append_new(choice as u8), acc);
+                            node.commit(path.append_new(choice as u8), acc, buf);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(path.concat(&node.prefix), acc);
+                        node.child.commit(path.concat(&node.prefix), acc, buf);
                     }
                     Node::Leaf(_) => {}
                 }
-                let hash = *hash.get_or_init(|| node.compute_hash());
-                acc.push((path.clone(), node.encode_to_vec()));
+                let encoded = node.encode_to_vec();
+                let hash = *hash.get_or_init(|| NodeHash::from_encoded_raw(&encoded));
+                acc.push((path.clone(), encoded));
 
                 *self = hash.into();
 
@@ -215,70 +211,6 @@ impl Node {
         }
     }
 
-    /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
-        match self {
-            Node::Branch(n) => n.encode_raw(),
-            Node::Extension(n) => n.encode_raw(),
-            Node::Leaf(n) => n.encode_raw(),
-        }
-    }
-
-    /// Decodes the node
-    pub fn decode_raw(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut rlp_items = vec![];
-        let mut decoder = Decoder::new(rlp)?;
-        let mut item;
-        // Get encoded fields
-        loop {
-            (item, decoder) = decoder.get_encoded_item()?;
-            rlp_items.push(item);
-            // Check if we reached the end or if we decoded more items than the ones we need
-            if decoder.is_done() || rlp_items.len() > 17 {
-                break;
-            }
-        }
-        // Deserialize into node depending on the available fields
-        Ok(match rlp_items.len() {
-            // Leaf or Extension Node
-            2 => {
-                let (path, _) = decode_bytes(&rlp_items[0])?;
-                let path = Nibbles::decode_compact(path);
-                if path.is_leaf() {
-                    // Decode as Leaf
-                    let (value, _) = decode_bytes(&rlp_items[1])?;
-                    LeafNode {
-                        partial: path,
-                        value: value.to_vec(),
-                    }
-                    .into()
-                } else {
-                    // Decode as Extension
-                    ExtensionNode {
-                        prefix: path,
-                        child: decode_child(&rlp_items[1]).into(),
-                    }
-                    .into()
-                }
-            }
-            // Branch Node
-            17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
-                let (value, _) = decode_bytes(&rlp_items[16])?;
-                BranchNode {
-                    choices,
-                    value: value.to_vec(),
-                }
-                .into()
-            }
-            n => {
-                return Err(RLPDecodeError::Custom(format!(
-                    "Invalid arg count for Node, expected 2 or 17, got {n}"
-                )));
-            }
-        })
-    }
-
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
         match self {
@@ -286,13 +218,5 @@ impl Node {
             Node::Extension(n) => n.compute_hash(),
             Node::Leaf(n) => n.compute_hash(),
         }
-    }
-}
-
-fn decode_child(rlp: &[u8]) -> NodeHash {
-    match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
-        Ok((&[], &[])) => NodeHash::default(),
-        _ => NodeHash::from_slice(rlp),
     }
 }
