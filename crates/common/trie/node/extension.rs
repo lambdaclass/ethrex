@@ -26,10 +26,16 @@ impl ExtensionNode {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .ok_or_else(|| TrieError::InconsistentTree(self.child.compute_hash().finalize()))?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(
+                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(
+                        self.child.compute_hash().finalize(),
+                        self.compute_hash().finalize(),
+                        self.prefix.clone(),
+                        path.current(),
+                    ),
+                )
+            })?;
 
             child_node.get(db, path)
         } else {
@@ -58,14 +64,21 @@ impl ExtensionNode {
         if match_index == self.prefix.len() {
             let path = path.offset(match_index);
             // Insert into child node
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .ok_or_else(|| TrieError::InconsistentTree(self.child.compute_hash().finalize()))?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(
+                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(
+                        self.child.compute_hash().finalize(),
+                        self.compute_hash().finalize(),
+                        self.prefix.clone(),
+                        path.current(),
+                    ),
+                )
+            })?;
             let new_child_node = child_node.insert(db, path, value)?;
             self.child = new_child_node.into();
             Ok(self.into())
         } else if match_index == 0 {
+            let current_node_hash = self.compute_hash().finalize();
             let new_node = if self.prefix.len() == 1 {
                 self.child
             } else {
@@ -77,7 +90,12 @@ impl ExtensionNode {
                     Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
                     _ => {
                         return Err(TrieError::InconsistentTree(
-                            new_node.compute_hash().finalize(),
+                            crate::InconsistentTreeError::ExtensionNodeInsertionError(
+                                new_node.compute_hash().finalize(),
+                                current_node_hash,
+                                self.prefix,
+                                path.current(),
+                            ),
                         ));
                     }
                 }
@@ -110,10 +128,16 @@ impl ExtensionNode {
 
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .ok_or_else(|| TrieError::InconsistentTree(self.child.compute_hash().finalize()))?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(
+                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(
+                        self.child.compute_hash().finalize(),
+                        self.compute_hash().finalize(),
+                        self.prefix.clone(),
+                        path.current(),
+                    ),
+                )
+            })?;
             // Remove value from child subtrie
             let (child_node, old_value) = child_node.remove(db, path)?;
             // Restructure node based on removal
@@ -178,7 +202,14 @@ impl ExtensionNode {
         // Continue to child
         if path.skip_prefix(&self.prefix) {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
-                TrieError::InconsistentTree(self.child.clone().compute_hash().finalize())
+                TrieError::InconsistentTree(
+                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(
+                        self.child.clone().compute_hash().finalize(),
+                        self.compute_hash().finalize(),
+                        self.prefix.clone(),
+                        path.current(),
+                    ),
+                )
             })?;
             child_node.get_path(db, path, node_path)?;
         }

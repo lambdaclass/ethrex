@@ -41,3 +41,6 @@ c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 
 [lib]
 path = "./src/lib.rs"
+
+[lints.clippy]
+result_large_err = "allow"
