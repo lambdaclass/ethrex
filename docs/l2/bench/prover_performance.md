@@ -31,23 +31,23 @@ Benchmark server hardware:
 | 23426995 | 16.6M | 10m 14s | 09m 54s | 09m 56s | 09m 56s | 09m 52s | 08m 39s | 08m 06s | 07m 19s | 04m 33s |
 | 23426996 | 22.5M | 16m 58s | 16m 37s | 15m 48s | 16m 50s | 15m 42s | 14m 44s | 14m 08s | 12m 59s | 06m 39s |
 
-### Relative improvement vs ethrex main (`(base - opt) / base * 100`)
+### Relative improvement vs ethrex main (`(opt - base)/base * 100`)
 
-| Block (Mainnet) | Gas | ethrex (jumpdest opt.) | ethrex (ecpairing precompile) | ethrex (trie opt1.) | ethrex (trie opt2.) | ethrex (trie opt3.) | ethrex (trie opt1. + trie opt2. + trie opt3.) | ethrex risc0_trie | rsp main |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 23426993 | 35.7M | 2.9% | 2.4% | 2.3% | 5.6% | 16.1% | 20.6% | 29.7% | 58.1% |
-| 23426994 | 20.7M | 3.6% | 6.5% | 2.0% | 4.5% | 14.1% | 18.8% | 24.9% | 57.8% |
-| 23426995 | 16.6M | 3.3% | 2.9% | 2.9% | 3.6% | 15.5% | 20.9% | 28.5% | 55.5% |
-| 23426996 | 22.5M | 2.1% | 6.9% | 0.8% | 7.5% | 13.2% | 16.7% | 23.5% | 60.8% |
-
-### Relative to RSP main (`(opt - rsp) / rsp * 100`)
-
-| Block (Mainnet) | Gas | ethrex main (70fc63) | ethrex (jumpdest opt.) | ethrex (ecpairing precompile) | ethrex (trie opt1.) | ethrex (trie opt2.) | ethrex (trie opt3.) | ethrex (trie opt1. + trie opt2. + trie opt3.) | ethrex risc0_trie | rsp main (9a7048) |
+| Block | Gas | ethrex main | ethrex (jumpdest opt.) | ethrex (ecpairing precompile) | ethrex (trie opt1.) | ethrex (trie opt2.) | ethrex (trie opt3.) | ethrex (trie opt1+2+3) | ethrex (all opts) | ethrex (risc0_trie) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 23426993 | 35.7M | 139.1% | 132.1% | 133.2% | 133.6% | 125.7% | 100.4% | 89.6% | 68.0% | 0% |
-| 23426994 | 20.7M | 137.2% | 128.6% | 121.8% | 132.6% | 126.7% | 103.8% | 92.6% | 78.2% | 0% |
-| 23426995 | 16.6M | 124.9% | 117.6% | 118.3% | 118.3% | 116.8% | 90.1% | 78.0% | 60.8% | 0% |
-| 23426996 | 22.5M | 155.1% | 149.9% | 137.7% | 153.1% | 136.1% | 121.5% | 112.5% | 95.2% | 0% |
+| 23426993 | 35.7M | 0.0% | -2.9% | -2.4% | -2.3% | -5.6% | -16.1% | -20.6% | -20.5% | -29.7% |
+| 23426994 | 20.7M | 0.0% | -3.6% | -6.5% | -2.0% | -4.5% | -14.1% | -18.8% | -23.5% | -24.9% |
+| 23426995 | 16.6M | 0.0% | -3.3% | -2.9% | -2.9% | -3.6% | -15.5% | -20.8% | -20.5% | -28.5% |
+| 23426996 | 22.5M | 0.0% | -2.1% | -6.9% | -0.8% | -7.5% | -13.2% | -16.7% | -21.5% | -23.5% |
+
+### Relative to RSP main (`(opt - rsp)/rsp * 100`)
+
+| Block | Gas | ethrex main | ethrex (jumpdest opt.) | ethrex (ecpairing precompile) | ethrex (trie opt1.) | ethrex (trie opt2.) | ethrex (trie opt3.) | ethrex (trie opt1+2+3) | ethrex (all opts) | ethrex (risc0_trie) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 23426993 | 35.7M | 138.9% | 132.0% | 133.1% | 133.5% | 125.6% | 100.4% | 89.6% | 90.0% | 68.0% |
+| 23426994 | 20.7M | 137.2% | 128.6% | 121.8% | 132.4% | 126.5% | 103.8% | 92.6% | 81.4% | 78.2% |
+| 23426995 | 16.6M | 124.9% | 117.6% | 118.3% | 118.3% | 116.8% | 90.1% | 78.0% | 78.8% | 60.8% |
+| 23426996 | 22.5M | 155.1% | 149.9% | 137.6% | 153.1% | 136.1% | 121.6% | 112.5% | 100.3% | 95.2% |
 
 # ethrex-trie optimization for zkvm
 
