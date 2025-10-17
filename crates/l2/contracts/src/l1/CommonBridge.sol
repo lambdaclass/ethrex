@@ -62,16 +62,15 @@ contract CommonBridge is
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
-    /// @dev The token can take the value {NATIVE_TOKEN_L2} to represent the token of the L2
+    /// @dev The token can take the value {ETH_TOKEN} to represent ETH
     mapping(address => mapping(address => uint256)) public deposits;
 
-    /// @notice Token address used to represent the token of the L2
-    address public constant NATIVE_TOKEN_L2 =
+    /// @notice Token address used to represent ETH
+    address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /// @notice Owner of the L2 system contract proxies
-    address public constant L2_PROXY_ADMIN =
-        0x000000000000000000000000000000000000f000;
+    address public constant L2_PROXY_ADMIN =  0x000000000000000000000000000000000000f000;
 
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping for the message id
@@ -87,11 +86,6 @@ contract CommonBridge is
     /// @notice Deadline for the sequencer to include the transaction.
     mapping(bytes32 => uint256) public privilegedTxDeadline;
 
-    /// @notice The L1 token address that is treated as the one to be bridged to the L2.
-    /// @dev If set to address(0), ETH is considered the native token.
-    /// Otherwise, this address is used for native token deposits and withdrawals.
-    address public NATIVE_TOKEN_L1;
-
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -105,13 +99,10 @@ contract CommonBridge is
     /// @dev It sets the OnChainProposer address.
     /// @param owner the address of the owner who can perform upgrades.
     /// @param onChainProposer the address of the OnChainProposer contract.
-    /// @param inclusionMaxWait the maximum time the sequencer is allowed to take without processing a privileged transaction.
-    /// @param _nativeToken the address of the native token on L1, or address(0) if ETH is the native token.
     function initialize(
         address owner,
         address onChainProposer,
-        uint256 inclusionMaxWait,
-        address _nativeToken
+        uint256 inclusionMaxWait
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -123,8 +114,6 @@ contract CommonBridge is
         transactionId = 0;
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
-
-        NATIVE_TOKEN_L1 = _nativeToken;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -145,6 +134,7 @@ contract CommonBridge is
         while (startingGas - gasleft() < amount) {}
     }
 
+
     /// EIP-7702 delegated accounts have code beginning with this.
     bytes3 internal constant EIP7702_PREFIX = 0xef0100;
     /// Code size in bytes of an EIP-7702 delegated account
@@ -152,8 +142,7 @@ contract CommonBridge is
     uint256 internal constant EIP7702_CODE_LENGTH = 23;
 
     /// This is intentionally different from the constant Optimism uses, but arbitrary.
-    uint256 internal constant ADDRESS_ALIASING =
-        uint256(uint160(0xEe110000000000000000000000000000000011Ff));
+    uint256 internal constant ADDRESS_ALIASING = uint256(uint160(0xEe110000000000000000000000000000000011Ff));
 
     /// @notice This implements address aliasing, inspired by [Optimism](https://docs.optimism.io/stack/differences#address-aliasing)
     /// @dev The purpose of this is to prevent L2 contracts from being impersonated by malicious L1 contracts at the same address
@@ -170,8 +159,7 @@ contract CommonBridge is
                 return msg.sender;
             }
         }
-        return
-            address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
+        return address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
@@ -206,72 +194,32 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function sendToL2(
-        SendValues calldata sendValues
-    ) public override whenNotPaused {
+    function sendToL2(SendValues calldata sendValues) public override whenNotPaused {
         _sendToL2(_getSenderAlias(), sendValues);
     }
 
     /// @inheritdoc ICommonBridge
-    function deposit(
-        uint256 _amount,
-        address l2Recipient
-    ) public payable override whenNotPaused {
-        uint256 value;
+    function deposit(address l2Recipient) public payable override whenNotPaused {
+        _deposit(l2Recipient);
+    }
 
-        // Here we define value depending on whether the native token is ETH or an ERC20
-        if (NATIVE_TOKEN_L1 == address(0)) {
-            require(
-                msg.value > 0,
-                "CommonBridge: the native token is ETH, msg.value must be greater than zero"
-            );
-
-            require(
-                _amount == 0,
-                "CommonBridge: the native token is ETH, _amount must be zero"
-            );
-
-            value = msg.value;
-        } else {
-            require(
-                msg.value == 0,
-                "CommonBridge: the native token is an ERC20, msg.value must be zero"
-            );
-
-            require(
-                _amount > 0,
-                "CommonBridge: the native token is an ERC20, _amount must be greater than zero"
-            );
-
-            value = _amount;
-
-            // We lock the tokens in the bridge contract
-            IERC20(NATIVE_TOKEN_L1).transferFrom(
-                msg.sender,
-                address(this),
-                value
-            );
-        }
-
-        deposits[NATIVE_TOKEN_L2][NATIVE_TOKEN_L2] += value;
-
+    function _deposit(address l2Recipient) private {
+        deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintETH,
             (l2Recipient)
         );
-
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
             gasLimit: 21000 * 5,
-            value: value,
+            value: msg.value,
             data: callData
         });
-
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
     receive() external payable whenNotPaused {
-        deposit(0, msg.sender);
+        _deposit(msg.sender);
     }
 
     function depositERC20(
@@ -281,10 +229,6 @@ contract CommonBridge is
         uint256 amount
     ) external whenNotPaused {
         require(amount > 0, "CommonBridge: amount to deposit is zero");
-        require(
-            tokenL1 != NATIVE_TOKEN_L1,
-            "CommonBridge: tokenL1 is the native token address, use deposit() instead"
-        );
         deposits[tokenL1][tokenL2] += amount;
         IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
 
@@ -381,23 +325,15 @@ contract CommonBridge is
         bytes32[] calldata withdrawalProof
     ) public override whenNotPaused {
         _claimWithdrawal(
-            NATIVE_TOKEN_L2,
-            NATIVE_TOKEN_L2,
+            ETH_TOKEN,
+            ETH_TOKEN,
             claimedAmount,
             withdrawalBatchNumber,
             withdrawalMessageId,
             withdrawalProof
         );
-
-        if (NATIVE_TOKEN_L1 == address(0)) {
-            (bool success, ) = payable(msg.sender).call{value: claimedAmount}(
-                ""
-            );
-
-            require(success, "CommonBridge: failed to send the claimed amount");
-        } else {
-            IERC20(NATIVE_TOKEN_L1).safeTransfer(msg.sender, claimedAmount);
-        }
+        (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
+        require(success, "CommonBridge: failed to send the claimed amount");
     }
 
     /// @inheritdoc ICommonBridge
@@ -408,17 +344,7 @@ contract CommonBridge is
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public override nonReentrant whenNotPaused {
-        require(
-            tokenL1 != NATIVE_TOKEN_L2,
-            "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
-        );
-
-        require(
-            tokenL1 != NATIVE_TOKEN_L1,
-            "CommonBridge: attempted to withdraw the native token as if it were ERC20, use claimWithdrawal() instead"
-        );
-
+    ) public nonReentrant override whenNotPaused {
         _claimWithdrawal(
             tokenL1,
             tokenL2,
@@ -427,7 +353,10 @@ contract CommonBridge is
             withdrawalMessageId,
             withdrawalProof
         );
-
+        require(
+            tokenL1 != ETH_TOKEN,
+            "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
+        );
         IERC20(tokenL1).safeTransfer(msg.sender, claimedAmount);
     }
 
@@ -480,7 +409,11 @@ contract CommonBridge is
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
         bytes32 withdrawalLeaf = keccak256(
-            abi.encodePacked(L2_BRIDGE_ADDRESS, msgHash, withdrawalMessageId)
+            abi.encodePacked(
+                L2_BRIDGE_ADDRESS,
+                msgHash,
+                withdrawalMessageId
+            )
         );
         return
             MerkleProof.verify(
@@ -490,16 +423,8 @@ contract CommonBridge is
             );
     }
 
-    function upgradeL2Contract(
-        address l2Contract,
-        address newImplementation,
-        uint256 gasLimit,
-        bytes calldata data
-    ) public onlyOwner {
-        bytes memory callData = abi.encodeCall(
-            ITransparentUpgradeableProxy.upgradeToAndCall,
-            (newImplementation, data)
-        );
+    function upgradeL2Contract(address l2Contract, address newImplementation, uint256 gasLimit, bytes calldata data) public onlyOwner {
+        bytes memory callData = abi.encodeCall(ITransparentUpgradeableProxy.upgradeToAndCall, (newImplementation, data));
         SendValues memory sendValues = SendValues({
             to: l2Contract,
             gasLimit: gasLimit,

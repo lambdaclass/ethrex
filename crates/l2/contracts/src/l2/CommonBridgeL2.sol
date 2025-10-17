@@ -12,8 +12,8 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         0x000000000000000000000000000000000000FFFE;
     address public constant BURN_ADDRESS =
         0x0000000000000000000000000000000000000000;
-    /// @notice Token address used to represent the token of the L2
-    address public constant NATIVE_TOKEN_L2 =
+    /// @notice Token address used to represent ETH
+    address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
@@ -35,12 +35,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
 
         IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(
             keccak256(
-                abi.encodePacked(
-                    NATIVE_TOKEN_L2,
-                    NATIVE_TOKEN_L2,
-                    _receiverOnL1,
-                    msg.value
-                )
+                abi.encodePacked(ETH_TOKEN, ETH_TOKEN, _receiverOnL1, msg.value)
             )
         );
     }
