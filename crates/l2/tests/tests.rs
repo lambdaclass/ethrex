@@ -64,6 +64,7 @@ use tokio::task::JoinSet;
 /// INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS: The address of the l2 coinbase
 /// INTEGRATION_TEST_PROPOSER_BASE_FEE_VAULT_ADDRESS: The address of the l2 base_fee_vault
 /// INTEGRATION_TEST_PROPOSER_OPERATOR_FEE_VAULT_ADDRESS: The address of the l2 operator_fee_vault
+/// INTEGRATION_TEST_PROPOSER_L1_FEE_VAULT_ADDRESS: The address of the l2 l1_fee_vault
 ///
 /// Test parameters:
 ///
@@ -108,6 +109,7 @@ const DEFAULT_OPERATOR_FEE_VAULT_ADDRESS: Address = H160([
 ]);
 
 // 0x45681AE1768a8936FB87aB11453B4755e322ceec
+// pk: 0x3a7b2002e24304d2dfa39e37a10b44585d10395d1c18f127dfa7b90232cfc5e4
 const DEFAULT_L1_FEE_VAULT_ADDRESS: Address = H160([
     0x45, 0x68, 0x1a, 0xe1, 0x76, 0x8a, 0x89, 0x36, 0xfb, 0x87, 0xab, 0x11, 0x45, 0x3b, 0x47, 0x55,
     0xe3, 0x22, 0xce, 0xec,
