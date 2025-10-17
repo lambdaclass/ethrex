@@ -4,6 +4,7 @@ use ethrex_common::{
 };
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
+use tracing::error;
 
 use crate::{
     error::{self, InvalidForkChoice},
@@ -109,10 +110,16 @@ pub async fn apply_fork_choice(
         )
         .await?;
 
-    metrics!(
-        use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+    #[cfg(feature = "metrics")]
+    let chain_id = store.get_chain_config()?.chain_id;
 
-        let _ = METRICS_BLOCKS.set_head_height(head.number);
+    metrics!(
+        use ethrex_metrics::metrics_blocks::{METRICS_BLOCKS, NetworkLabels};
+
+        let labels = NetworkLabels::new(chain_id);
+        if let Err(err) = METRICS_BLOCKS.set_head_height(&labels, head.number) {
+            error!(%err, "Failed to set metric head_height");
+        }
     );
 
     Ok(head)

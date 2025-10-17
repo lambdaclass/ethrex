@@ -1,5 +1,6 @@
-use prometheus::{Encoder, Gauge, IntGauge, Registry, TextEncoder};
-use std::sync::LazyLock;
+use ethrex_common::types::NETWORK_NAMES;
+use prometheus::{Encoder, GaugeVec, IntGaugeVec, Opts, Registry, TextEncoder};
+use std::{borrow::Cow, sync::LazyLock};
 
 use crate::MetricsError;
 
@@ -7,16 +8,14 @@ pub static METRICS_BLOCKS: LazyLock<MetricsBlocks> = LazyLock::new(MetricsBlocks
 
 #[derive(Debug, Clone)]
 pub struct MetricsBlocks {
-    gas_limit: Gauge,
-    /// Keeps track of the block number of the last processed block
-    block_number: IntGauge,
-    gigagas: Gauge,
-    gigagas_block_building: Gauge,
-    block_building_ms: IntGauge,
-    block_building_base_fee: IntGauge,
-    gas_used: Gauge,
+    gas_limit: GaugeVec,
+    gigagas: GaugeVec,
+    gigagas_block_building: GaugeVec,
+    block_building_ms: IntGaugeVec,
+    block_building_base_fee: IntGaugeVec,
+    gas_used: GaugeVec,
     /// Keeps track of the head block number
-    head_height: IntGauge,
+    head_height: IntGaugeVec,
 }
 
 impl Default for MetricsBlocks {
@@ -25,96 +24,218 @@ impl Default for MetricsBlocks {
     }
 }
 
+const BLOCK_LABELS: &[&str] = &["network", "chain_id", "block_number"];
+const NETWORK_LABELS: &[&str] = &["network", "chain_id"];
+
+#[derive(Debug, Clone)]
+pub struct NetworkLabels {
+    network: Cow<'static, str>,
+    chain_id: String,
+}
+
+impl NetworkLabels {
+    pub fn new(chain_id: u64) -> Self {
+        let network = NETWORK_NAMES
+            .get(&chain_id)
+            .copied()
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| Cow::Owned(format!("chain-{chain_id}")));
+
+        Self {
+            network,
+            chain_id: chain_id.to_string(),
+        }
+    }
+
+    fn values(&self) -> [&str; 2] {
+        [self.network.as_ref(), &self.chain_id]
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockMetricLabels {
+    network: NetworkLabels,
+    block_number: String,
+}
+
+impl BlockMetricLabels {
+    pub fn new(chain_id: u64, block_number: u64) -> Self {
+        Self {
+            network: NetworkLabels::new(chain_id),
+            block_number: block_number.to_string(),
+        }
+    }
+
+    fn values(&self) -> [&str; 3] {
+        [
+            self.network.network.as_ref(),
+            &self.network.chain_id,
+            &self.block_number,
+        ]
+    }
+
+    pub fn network_labels(&self) -> &NetworkLabels {
+        &self.network
+    }
+}
+
 impl MetricsBlocks {
     pub fn new() -> Self {
         MetricsBlocks {
-            gas_limit: Gauge::new(
-                "gas_limit",
-                "Keeps track of the percentage of gas limit used by the last processed block",
+            gas_limit: GaugeVec::new(
+                Opts::new(
+                    "gas_limit",
+                    "Keeps track of the percentage of gas limit used by the last processed block",
+                ),
+                BLOCK_LABELS,
             )
             .unwrap(),
-            block_number: IntGauge::new(
-                "block_number",
-                "Keeps track of the block number for the last processed block",
+            gigagas: GaugeVec::new(
+                Opts::new(
+                    "gigagas",
+                    "Keeps track of the block execution throughput through gigagas/s",
+                ),
+                BLOCK_LABELS,
             )
             .unwrap(),
-            gigagas: Gauge::new(
-                "gigagas",
-                "Keeps track of the block execution throughput through gigagas/s",
+            gigagas_block_building: GaugeVec::new(
+                Opts::new(
+                    "gigagas_block_building",
+                    "Keeps track of the block building throughput through gigagas/s",
+                ),
+                BLOCK_LABELS,
             )
             .unwrap(),
-            gigagas_block_building: Gauge::new(
-                "gigagas_block_building",
-                "Keeps track of the block building throughput through gigagas/s",
+            block_building_ms: IntGaugeVec::new(
+                Opts::new(
+                    "block_building_ms",
+                    "Keeps track of the block building throughput through miliseconds",
+                ),
+                BLOCK_LABELS,
             )
             .unwrap(),
-            block_building_ms: IntGauge::new(
-                "block_building_ms",
-                "Keeps track of the block building throughput through miliseconds",
+            block_building_base_fee: IntGaugeVec::new(
+                Opts::new(
+                    "block_building_base_fee",
+                    "Keeps track of the block building base fee",
+                ),
+                BLOCK_LABELS,
             )
             .unwrap(),
-            block_building_base_fee: IntGauge::new(
-                "block_building_base_fee",
-                "Keeps track of the block building base fee",
+            gas_used: GaugeVec::new(
+                Opts::new(
+                    "gas_used",
+                    "Keeps track of the gas used in the last processed block",
+                ),
+                BLOCK_LABELS,
             )
             .unwrap(),
-            gas_used: Gauge::new(
-                "gas_used",
-                "Keeps track of the gas used in the last processed block",
-            )
-            .unwrap(),
-            head_height: IntGauge::new(
-                "head_height",
-                "Keeps track of the block number for the head of the chain",
+            head_height: IntGaugeVec::new(
+                Opts::new(
+                    "head_height",
+                    "Keeps track of the block number for the head of the chain",
+                ),
+                NETWORK_LABELS,
             )
             .unwrap(),
         }
     }
 
-    pub fn set_latest_block_gas_limit(&self, gas_limit: f64) {
-        self.gas_limit.set(gas_limit);
-    }
-
-    pub fn set_latest_gigagas(&self, gigagas: f64) {
-        self.gigagas.set(gigagas);
-    }
-
-    pub fn set_latest_gigagas_block_building(&self, gigagas: f64) {
-        self.gigagas_block_building.set(gigagas);
-    }
-
-    pub fn set_block_building_ms(&self, ms: i64) {
-        self.block_building_ms.set(ms);
-    }
-
-    pub fn set_block_building_base_fee(&self, base_fee: i64) {
-        self.block_building_base_fee.set(base_fee);
-    }
-
-    pub fn set_block_number(&self, block_number: u64) -> Result<(), MetricsError> {
-        self.block_number.set(block_number.try_into()?);
+    pub fn set_latest_block_gas_limit(
+        &self,
+        labels: &BlockMetricLabels,
+        gas_limit: f64,
+    ) -> Result<(), MetricsError> {
+        let values = labels.values();
+        self.gas_limit
+            .get_metric_with_label_values(&values)
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?
+            .set(gas_limit);
         Ok(())
     }
 
-    pub fn set_head_height(&self, head_height: u64) -> Result<(), MetricsError> {
-        self.head_height.set(head_height.try_into()?);
+    pub fn set_latest_gigagas(
+        &self,
+        labels: &BlockMetricLabels,
+        gigagas: f64,
+    ) -> Result<(), MetricsError> {
+        let values = labels.values();
+        self.gigagas
+            .get_metric_with_label_values(&values)
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?
+            .set(gigagas);
         Ok(())
     }
 
-    pub fn set_latest_gas_used(&self, gas_used: f64) {
-        self.gas_used.set(gas_used);
+    pub fn set_latest_gigagas_block_building(
+        &self,
+        labels: &BlockMetricLabels,
+        gigagas: f64,
+    ) -> Result<(), MetricsError> {
+        let values = labels.values();
+        self.gigagas_block_building
+            .get_metric_with_label_values(&values)
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?
+            .set(gigagas);
+        Ok(())
+    }
+
+    pub fn set_block_building_ms(
+        &self,
+        labels: &BlockMetricLabels,
+        ms: i64,
+    ) -> Result<(), MetricsError> {
+        let values = labels.values();
+        self.block_building_ms
+            .get_metric_with_label_values(&values)
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?
+            .set(ms);
+        Ok(())
+    }
+
+    pub fn set_block_building_base_fee(
+        &self,
+        labels: &BlockMetricLabels,
+        base_fee: i64,
+    ) -> Result<(), MetricsError> {
+        let values = labels.values();
+        self.block_building_base_fee
+            .get_metric_with_label_values(&values)
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?
+            .set(base_fee);
+        Ok(())
+    }
+
+    pub fn set_head_height(
+        &self,
+        labels: &NetworkLabels,
+        head_height: u64,
+    ) -> Result<(), MetricsError> {
+        let values = labels.values();
+        self.head_height
+            .get_metric_with_label_values(&values)
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?
+            .set(head_height.try_into()?);
+        Ok(())
+    }
+
+    pub fn set_latest_gas_used(
+        &self,
+        labels: &BlockMetricLabels,
+        gas_used: f64,
+    ) -> Result<(), MetricsError> {
+        let values = labels.values();
+        self.gas_used
+            .get_metric_with_label_values(&values)
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?
+            .set(gas_used);
+        Ok(())
     }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
-        if self.block_number.get() <= 0 {
-            return Ok(String::new());
-        }
-
         let r = Registry::new();
 
         r.register(Box::new(self.gas_limit.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.block_number.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.gigagas.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;

@@ -33,7 +33,10 @@ use super::errors::BlockProducerError;
 
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
+use ethrex_metrics::{
+    metrics_blocks::{METRICS_BLOCKS, NetworkLabels},
+    metrics_transactions::METRICS_TX,
+};
 
 #[derive(Clone)]
 pub enum CallMessage {
@@ -218,11 +221,10 @@ impl BlockProducer {
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
-            let _ = METRICS_BLOCKS
-            .set_block_number(block_number)
-            .inspect_err(|e| {
-                tracing::error!("Failed to set metric: block_number {}", e.to_string())
-            });
+            let labels = NetworkLabels::new(chain_config.chain_id);
+            if let Err(err) = METRICS_BLOCKS.set_head_height(&labels, block_number) {
+                error!(%err, "Failed to set metric head_height");
+            }
             #[allow(clippy::as_conversions)]
             let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);

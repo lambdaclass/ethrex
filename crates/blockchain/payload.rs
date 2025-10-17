@@ -28,7 +28,7 @@ use sha3::{Digest, Keccak256};
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+use ethrex_metrics::metrics_blocks::{BlockMetricLabels, METRICS_BLOCKS};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
 use tokio_util::sync::CancellationToken;
@@ -271,7 +271,7 @@ impl PayloadBuildContext {
         self.payload.header.number
     }
 
-    fn chain_config(&self) -> Result<ChainConfig, EvmError> {
+    pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
         self.store
             .get_chain_config()
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -408,14 +408,38 @@ impl Blockchain {
             "[METRIC] BUILDING PAYLOAD TOOK: {interval} ms, base fee {}",
             base_fee
         );
-        metrics!(METRICS_BLOCKS.set_block_building_ms(interval as i64));
-        metrics!(METRICS_BLOCKS.set_block_building_base_fee(base_fee as i64));
+        #[cfg(feature = "metrics")]
+        let block_metric_labels = match context
+            .chain_config()
+            .map(|cfg| BlockMetricLabels::new(cfg.chain_id, context.block_number()))
+        {
+            Ok(labels) => Some(labels),
+            Err(err) => {
+                error!(%err, "Failed to fetch chain config for block metrics");
+                None
+            }
+        };
+
+        metrics!(if let Some(labels) = block_metric_labels.as_ref() {
+            if let Err(err) = METRICS_BLOCKS.set_block_building_ms(labels, interval as i64) {
+                error!(%err, "Failed to set metric block_building_ms");
+            }
+            if let Err(err) = METRICS_BLOCKS.set_block_building_base_fee(labels, base_fee as i64) {
+                error!(%err, "Failed to set metric block_building_base_fee");
+            }
+        });
         if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
             let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
             if interval != 0 {
                 let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-                metrics!(METRICS_BLOCKS.set_latest_gigagas_block_building(throughput));
+                metrics!(if let Some(labels) = block_metric_labels.as_ref() {
+                    if let Err(err) =
+                        METRICS_BLOCKS.set_latest_gigagas_block_building(labels, throughput)
+                    {
+                        error!(%err, "Failed to set metric gigagas_block_building");
+                    }
+                });
 
                 tracing::debug!(
                     "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"

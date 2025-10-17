@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info};
+use ::tracing::{debug, error, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -43,7 +43,7 @@ use tokio_util::sync::CancellationToken;
 use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+use ethrex_metrics::metrics_blocks::{BlockMetricLabels, METRICS_BLOCKS};
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
@@ -445,7 +445,14 @@ impl Blockchain {
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
+            let chain_id = self
+                .storage
+                .get_chain_config()
+                .map_err(ChainError::from)?
+                .chain_id;
+
             Self::print_add_block_logs(
+                chain_id,
                 gas_used,
                 gas_limit,
                 block_number,
@@ -461,6 +468,7 @@ impl Blockchain {
 
     #[allow(clippy::too_many_arguments)]
     fn print_add_block_logs(
+        chain_id: u64,
         gas_used: u64,
         gas_limit: u64,
         block_number: u64,
@@ -476,10 +484,17 @@ impl Blockchain {
             let throughput = as_gigas / interval * 1000_f64;
 
             metrics!(
-                let _ = METRICS_BLOCKS.set_block_number(block_number);
-                METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
-                METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
-                METRICS_BLOCKS.set_latest_gigagas(throughput);
+                let labels = BlockMetricLabels::new(chain_id, block_number);
+                if let Err(err) = METRICS_BLOCKS.set_latest_gas_used(&labels, gas_used as f64) {
+                    error!(%err, "Failed to set metric gas_used");
+                }
+                if let Err(err) = METRICS_BLOCKS.set_latest_block_gas_limit(&labels, gas_limit as f64)
+                {
+                    error!(%err, "Failed to set metric gas_limit");
+                }
+                if let Err(err) = METRICS_BLOCKS.set_latest_gigagas(&labels, throughput) {
+                    error!(%err, "Failed to set metric gigagas");
+                }
             );
 
             let base_log = format!(
@@ -639,11 +654,21 @@ impl Blockchain {
         }
 
         metrics!(
-            let _ = METRICS_BLOCKS.set_block_number(last_block_number);
-            METRICS_BLOCKS.set_latest_block_gas_limit(last_block_gas_limit as f64);
+            let labels = BlockMetricLabels::new(chain_config.chain_id, last_block_number);
+            if let Err(err) = METRICS_BLOCKS
+                .set_latest_block_gas_limit(&labels, last_block_gas_limit as f64)
+            {
+                error!(%err, "Failed to set metric gas_limit");
+            }
             // Set the latest gas used as the average gas used per block in the batch
-            METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
-            METRICS_BLOCKS.set_latest_gigagas(throughput);
+            if let Err(err) = METRICS_BLOCKS
+                .set_latest_gas_used(&labels, total_gas_used as f64 / blocks_len as f64)
+            {
+                error!(%err, "Failed to set metric gas_used");
+            }
+            if let Err(err) = METRICS_BLOCKS.set_latest_gigagas(&labels, throughput) {
+                error!(%err, "Failed to set metric gigagas");
+            }
         );
 
         if self.options.perf_logs_enabled {

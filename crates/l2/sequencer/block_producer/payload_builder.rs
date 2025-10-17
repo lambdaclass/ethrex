@@ -21,7 +21,7 @@ use ethrex_l2_common::{
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
-    metrics_blocks::METRICS_BLOCKS,
+    metrics_blocks::{BlockMetricLabels, METRICS_BLOCKS},
     metrics_transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_storage::Store;
@@ -60,25 +60,46 @@ pub async fn build_payload(
     let interval = Instant::now().duration_since(since).as_millis();
     // TODO: expose as a proper metric
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
+    #[cfg(feature = "metrics")]
+    let block_metric_labels = match context
+        .chain_config()
+        .map(|cfg| BlockMetricLabels::new(cfg.chain_id, context.block_number()))
+    {
+        Ok(labels) => Some(labels),
+        Err(err) => {
+            error!(%err, "Failed to fetch chain config for block metrics");
+            None
+        }
+    };
     #[allow(clippy::as_conversions)]
     if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
         let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
-        if interval != 0 {
+        let throughput = if interval != 0 {
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
             // TODO: expose as a proper metric
             tracing::info!(
                 "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
-            metrics!(METRICS_BLOCKS.set_latest_gigagas(throughput));
+            throughput
         } else {
-            metrics!(METRICS_BLOCKS.set_latest_gigagas(0_f64));
-        }
+            0_f64
+        };
+
+        metrics!(if let Some(labels) = block_metric_labels.as_ref() {
+            if let Err(err) = METRICS_BLOCKS.set_latest_gigagas(labels, throughput) {
+                error!(%err, "Failed to set metric gigagas");
+            }
+        });
     }
 
     metrics!(
         #[allow(clippy::as_conversions)]
-        METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
+        if let Some(labels) = block_metric_labels.as_ref() {
+            if let Err(err) = METRICS_BLOCKS.set_latest_block_gas_limit(labels, gas_limit as f64) {
+                error!(%err, "Failed to set metric gas_limit");
+            }
+        }
         // L2 does not allow for blob transactions so the blob pool can be ignored
         let (tx_pool_size, _blob_pool_size) = blockchain
             .mempool
