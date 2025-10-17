@@ -12,6 +12,7 @@ pub mod trie_sorted;
 mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
+use ethrex_rlp::encode::RLPEncode;
 use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -208,7 +209,8 @@ impl Trie {
     pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
-            self.root.commit(Nibbles::default(), &mut acc);
+            let mut buf = Vec::new();
+            self.root.commit(Nibbles::default(), &mut acc, &mut buf);
         }
         if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
             acc.push((Nibbles::default(), vec![RLP_NULL]))
@@ -258,7 +260,7 @@ impl Trie {
                 .root
                 .get_node(self.db.as_ref(), Nibbles::default())?
                 .ok_or(TrieError::InconsistentTree)?
-                .encode_raw();
+                .encode_to_vec();
 
             let mut node_path = HashSet::new();
             for path in paths {
@@ -297,7 +299,7 @@ impl Trie {
             all_nodes: &BTreeMap<H256, Vec<u8>>,
             cur_node_rlp: &[u8],
         ) -> Result<Node, TrieError> {
-            let cur_node = Node::decode_raw(cur_node_rlp)?;
+            let cur_node = Node::decode(cur_node_rlp)?;
 
             Ok(match cur_node {
                 Node::Branch(mut node) => {
@@ -407,7 +409,7 @@ impl Trie {
         ) -> Result<Vec<u8>, TrieError> {
             // If we reached the end of the partial path, return the current node
             if partial_path.is_empty() {
-                return Ok(node.encode_raw());
+                return Ok(node.encode_to_vec());
             }
             match node {
                 Node::Branch(branch_node) => match partial_path.next_choice() {
