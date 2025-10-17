@@ -65,4 +65,3 @@ rocksdb = ["dep:rocksdb"]
 
 [lints.clippy]
 unwrap_used = "deny"
-result_large_err = "allow"

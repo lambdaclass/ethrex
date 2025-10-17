@@ -45,6 +45,3 @@ path = "./trie.rs"
 [[bench]]
 name = "trie_bench"
 harness = false
-
-[lints.clippy]
-result_large_err = "allow"

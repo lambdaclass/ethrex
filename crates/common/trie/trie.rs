@@ -25,7 +25,7 @@ pub use self::{
     node_hash::NodeHash,
 };
 
-pub use self::error::{InconsistentTreeError, TrieError};
+pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
@@ -441,12 +441,19 @@ impl Trie {
                             .get_node(db, child_path.clone())?
                             .ok_or_else(|| {
                                 TrieError::InconsistentTree(
-                                    InconsistentTreeError::NodeNotFoundOnExtensionNode(
-                                        extension_node.child.compute_hash().finalize(),
-                                        extension_node.compute_hash().finalize(),
-                                        extension_node.prefix,
-                                        child_path.clone(),
-                                    ),
+                                    InconsistentTreeError::NodeNotFoundOnExtensionNode(Box::new(
+                                        ExtensionNodeErrorData {
+                                            node_hash: extension_node
+                                                .child
+                                                .compute_hash()
+                                                .finalize(),
+                                            extension_node_hash: extension_node
+                                                .compute_hash()
+                                                .finalize(),
+                                            extension_node_prefix: extension_node.prefix,
+                                            node_path: child_path.clone(),
+                                        },
+                                    )),
                                 )
                             })?;
                         get_node_inner(db, child_path, child_node, partial_path)

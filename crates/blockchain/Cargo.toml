@@ -38,4 +38,3 @@ metrics = ["ethrex-metrics/transactions"]
 
 [lints.clippy]
 unwrap_used = "deny"
-result_large_err = "allow"

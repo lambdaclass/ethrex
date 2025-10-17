@@ -3,7 +3,10 @@ use ethrex_rlp::structs::Encoder;
 use crate::ValueRLP;
 use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
-use crate::{TrieDB, error::TrieError};
+use crate::{
+    TrieDB,
+    error::{ExtensionNodeErrorData, TrieError},
+};
 
 use super::{BranchNode, Node, NodeRef, ValueOrHash};
 
@@ -28,12 +31,14 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(
-                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(
-                        self.child.compute_hash().finalize(),
-                        self.compute_hash().finalize(),
-                        self.prefix.clone(),
-                        path.current(),
-                    ),
+                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(Box::new(
+                        ExtensionNodeErrorData {
+                            node_hash: self.child.compute_hash().finalize(),
+                            extension_node_hash: self.compute_hash().finalize(),
+                            extension_node_prefix: self.prefix.clone(),
+                            node_path: path.current(),
+                        },
+                    )),
                 )
             })?;
 
@@ -66,12 +71,14 @@ impl ExtensionNode {
             // Insert into child node
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(
-                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(
-                        self.child.compute_hash().finalize(),
-                        self.compute_hash().finalize(),
-                        self.prefix.clone(),
-                        path.current(),
-                    ),
+                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(Box::new(
+                        ExtensionNodeErrorData {
+                            node_hash: self.child.compute_hash().finalize(),
+                            extension_node_hash: self.compute_hash().finalize(),
+                            extension_node_prefix: self.prefix.clone(),
+                            node_path: path.current(),
+                        },
+                    )),
                 )
             })?;
             let new_child_node = child_node.insert(db, path, value)?;
@@ -90,12 +97,14 @@ impl ExtensionNode {
                     Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
                     _ => {
                         return Err(TrieError::InconsistentTree(
-                            crate::InconsistentTreeError::ExtensionNodeInsertionError(
-                                new_node.compute_hash().finalize(),
-                                current_node_hash,
-                                self.prefix,
-                                path.current(),
-                            ),
+                            crate::InconsistentTreeError::ExtensionNodeInsertionError(Box::new(
+                                ExtensionNodeErrorData {
+                                    node_hash: new_node.compute_hash().finalize(),
+                                    extension_node_hash: current_node_hash,
+                                    extension_node_prefix: self.prefix,
+                                    node_path: path.current(),
+                                },
+                            )),
                         ));
                     }
                 }
@@ -130,12 +139,14 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(
-                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(
-                        self.child.compute_hash().finalize(),
-                        self.compute_hash().finalize(),
-                        self.prefix.clone(),
-                        path.current(),
-                    ),
+                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(Box::new(
+                        ExtensionNodeErrorData {
+                            node_hash: self.child.compute_hash().finalize(),
+                            extension_node_hash: self.compute_hash().finalize(),
+                            extension_node_prefix: self.prefix.clone(),
+                            node_path: path.current(),
+                        },
+                    )),
                 )
             })?;
             // Remove value from child subtrie
@@ -203,12 +214,14 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(
-                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(
-                        self.child.clone().compute_hash().finalize(),
-                        self.compute_hash().finalize(),
-                        self.prefix.clone(),
-                        path.current(),
-                    ),
+                    crate::InconsistentTreeError::NodeNotFoundOnExtensionNode(Box::new(
+                        ExtensionNodeErrorData {
+                            node_hash: self.child.clone().compute_hash().finalize(),
+                            extension_node_hash: self.compute_hash().finalize(),
+                            extension_node_prefix: self.prefix.clone(),
+                            node_path: path.current(),
+                        },
+                    )),
                 )
             })?;
             child_node.get_path(db, path, node_path)?;

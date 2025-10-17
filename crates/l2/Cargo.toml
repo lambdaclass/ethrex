@@ -77,7 +77,6 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
-result_large_err = "allow"
 
 [features]
 default = ["l2"]
