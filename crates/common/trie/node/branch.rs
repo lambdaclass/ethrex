@@ -1,4 +1,7 @@
-use ethrex_rlp::structs::Encoder;
+use ethrex_rlp::{
+    constants::RLP_NULL,
+    encode::{RLPEncode, encode_length},
+};
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
@@ -214,19 +217,26 @@ impl BranchNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        let mut encoder = Encoder::new(&mut buf);
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let choices_len = self.choices.iter().fold(0, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())
+        });
+        let payload_len = choices_len + value_len;
+
+        let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
+
+        encode_length(payload_len, &mut buf);
         for child in self.choices.iter() {
-            match child.compute_hash() {
-                NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
-                child @ NodeHash::Inline(raw) if raw.1 != 0 => {
-                    encoder = encoder.encode_raw(child.as_ref())
+            match child.compute_hash_ref() {
+                NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+                NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => {
+                    buf.extend_from_slice(&encoded[..*len as usize])
                 }
-                _ => encoder = encoder.encode_bytes(&[]),
             }
         }
-        encoder = encoder.encode_bytes(&self.value);
-        encoder.finish();
+        <[u8] as RLPEncode>::encode(&self.value, &mut buf);
+
         buf
     }
 
