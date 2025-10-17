@@ -20,7 +20,7 @@ jobs:
       matrix:
         platform:
           - ubuntu-22.04
-          - ubuntu-24.04-arm
+          - ubuntu-22.04-arm
           - macos-latest
         stack:
           - l1
@@ -34,7 +34,7 @@ jobs:
             os: linux
             arch: x86_64
             cpu_flags: RUSTFLAGS='-C target-cpu=x86-64-v2'
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             os: linux
             arch: aarch64
           - platform: macos-latest
@@ -49,10 +49,10 @@ jobs:
           - platform: ubuntu-22.04
             stack: l2_gpu
             features: l2,l2-sql,sp1,risc0,gpu
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             stack: l2
             features: l2,l2-sql,sp1
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             stack: l2_gpu
             features: l2,l2-sql,sp1,gpu
           - stack: l2_gpu
@@ -86,7 +86,7 @@ jobs:
           ~/.sp1/bin/sp1up --version 5.0.8
 
       - name: Set up QEMU (only Linux ARM)
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
@@ -111,7 +111,7 @@ jobs:
           sub-packages: '["nvcc"]'
 
       - name: Install solc
-        if: ${{ matrix.platform != 'ubuntu-24.04-arm' }}
+        if: ${{ matrix.platform != 'ubuntu-22.04-arm' }}
         uses: lambdaclass/get-solc@master
         with:
           version: v0.8.29
@@ -123,7 +123,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc (Linux ARM)
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         run: |
           sudo curl -L -o /usr/local/bin/solc https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29
           sudo chmod +x /usr/local/bin/solc
