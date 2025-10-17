@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "benches",
   "cmd/ethrex",
   "crates/blockchain",
   "crates/blockchain/dev",
@@ -30,6 +31,7 @@ members = [
   "tooling/archive_sync",
   "crates/common/config",
   "tooling/reorgs",
+  "crates/concurrency",
   "tooling/migrations",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
@@ -38,7 +40,7 @@ resolver = "2"
 default-members = ["cmd/ethrex"]
 
 [workspace.package]
-version = "0.1.0"
+version = "3.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
@@ -74,6 +76,7 @@ ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
+ethrex-threadpool = { path = "./crates/concurrency" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -102,7 +105,7 @@ secp256k1 = { version = "0.30.0", default-features = false, features = [
   "recovery",
   "rand",
 ] }
-axum = "0.8.1"
+axum = { version = "0.8.1" }
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
@@ -111,15 +114,17 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-spawned-concurrency = "0.4.0"
-spawned-rt = "0.4.0"
+spawned-concurrency = "0.4.1"
+spawned-rt = "0.4.1"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
+crossbeam = "0.8.4"
 rayon = "1.10.0"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
+indexmap = { version = "2.11.4" }
 
 rocksdb = "0.24.0"
 

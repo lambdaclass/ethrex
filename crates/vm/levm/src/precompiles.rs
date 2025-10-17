@@ -24,7 +24,6 @@ use lambdaworks_math::{
                     curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
                     field_extension::{
                         BN254_PRIME_FIELD_ORDER, BN254FieldModulus, Degree2ExtensionField,
-                        Degree12ExtensionField,
                     },
                     pairing::BN254AtePairing,
                     twist::BN254TwistCurve,
@@ -303,7 +302,7 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    (matches!(vm_type, VMType::L2) && *address == P256_VERIFICATION.address)
+    (matches!(vm_type, VMType::L2(_)) && *address == P256_VERIFICATION.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
@@ -593,16 +592,16 @@ fn get_slice_or_default<'c>(
     size_to_expand: usize,
 ) -> Cow<'c, [u8]> {
     let upper_limit = calldata.len().min(upper_limit);
-    if let Some(data) = calldata.get(lower_limit..upper_limit) {
-        if !data.is_empty() {
-            if data.len() == size_to_expand {
-                return data.into();
-            }
-            let mut extended = vec![0u8; size_to_expand];
-            let copy_size = size_to_expand.min(data.len());
-            extended[..copy_size].copy_from_slice(&data[..copy_size]);
-            return extended.into();
+    if let Some(data) = calldata.get(lower_limit..upper_limit)
+        && !data.is_empty()
+    {
+        if data.len() == size_to_expand {
+            return data.into();
         }
+        let mut extended = vec![0u8; size_to_expand];
+        let copy_size = size_to_expand.min(data.len());
+        extended[..copy_size].copy_from_slice(&data[..copy_size]);
+        return extended.into();
     }
     Vec::new().into()
 }
@@ -908,7 +907,7 @@ fn validate_pairing(
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
-    if calldata.len() % 192 != 0 {
+    if !calldata.len().is_multiple_of(192) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -919,7 +918,6 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let mut valid_pairs = Vec::new();
-    let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
 
     for input in calldata.chunks_exact(192) {
         #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
@@ -936,22 +934,19 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
         }
     }
 
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "library will not panic on mul overflow"
-    )]
-    if !valid_pairs.is_empty() {
+    let success = if valid_pairs.is_empty() {
+        true
+    } else {
         let batch: Vec<_> = valid_pairs.iter().map(|(p1, p2)| (p1, p2)).collect();
         let pairing_result = BN254AtePairing::compute_batch(&batch)
             .map_err(|_| PrecompileError::BN254AtePairingError)?;
-        mul *= pairing_result;
-    }
+        pairing_result.eq(&QuadraticExtensionFieldElement::one())
+    };
 
     // Generate the result from the variable mul
-    let success = mul.eq(&QuadraticExtensionFieldElement::one());
     let mut result = [0; 32];
     result[31] = u8::from(success);
-    Ok(Bytes::from(result.to_vec()))
+    Ok(Bytes::from_owner(result))
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
@@ -1262,7 +1257,7 @@ pub fn bls12_g1msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G1_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1436,7 +1431,7 @@ pub fn bls12_g2msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_G2_MSM_PAIR_LENGTH != 0 {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G2_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1491,7 +1486,11 @@ pub fn bls12_pairing_check(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
+    if calldata.is_empty()
+        || !calldata
+            .len()
+            .is_multiple_of(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
+    {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
