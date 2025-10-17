@@ -120,13 +120,7 @@ impl Trie {
 
         self.root = if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
-            self.root
-                .get_node(self.db.as_ref(), Nibbles::default())?
-                .ok_or_else(|| {
-                    TrieError::InconsistentTree(InconsistentTreeError::RootNotFound(
-                        self.root.compute_hash().finalize(),
-                    ))
-                })?
+            self.get_root_node(Nibbles::default())?
                 .insert(self.db.as_ref(), path, value)?
                 .into()
         } else {
@@ -145,13 +139,7 @@ impl Trie {
         }
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
-            .root
-            .get_node(self.db.as_ref(), Nibbles::default())?
-            .ok_or_else(|| {
-                TrieError::InconsistentTree(InconsistentTreeError::RootNotFound(
-                    self.root.compute_hash().finalize(),
-                ))
-            })?
+            .get_root_node(Nibbles::default())?
             .remove(self.db.as_ref(), Nibbles::from_bytes(path))?;
         self.root = node.map(Into::into).unwrap_or_default();
 
@@ -174,6 +162,14 @@ impl Trie {
         } else {
             *EMPTY_TRIE_HASH
         }
+    }
+
+    pub fn get_root_node(&self, path: Nibbles) -> Result<Node, TrieError> {
+        self.root.get_node(self.db.as_ref(), path)?.ok_or_else(|| {
+            TrieError::InconsistentTree(InconsistentTreeError::RootNotFound(
+                self.root.compute_hash().finalize(),
+            ))
+        })
     }
 
     /// Returns a list of changes in a TrieNode format since last root hash processed.
@@ -249,15 +245,7 @@ impl Trie {
         paths: &[PathRLP],
     ) -> Result<(Option<NodeRLP>, Vec<NodeRLP>), TrieError> {
         if self.root.is_valid() {
-            let encoded_root = self
-                .root
-                .get_node(self.db.as_ref(), Nibbles::default())?
-                .ok_or_else(|| {
-                    TrieError::InconsistentTree(InconsistentTreeError::RootNotFound(
-                        self.root.compute_hash().finalize(),
-                    ))
-                })?
-                .encode_raw();
+            let encoded_root = self.get_root_node(Nibbles::default())?.encode_raw();
 
             let mut node_path = HashSet::new();
             for path in paths {
@@ -470,13 +458,7 @@ impl Trie {
             get_node_inner(
                 self.db.as_ref(),
                 Default::default(),
-                self.root
-                    .get_node(self.db.as_ref(), Default::default())?
-                    .ok_or_else(|| {
-                        TrieError::InconsistentTree(InconsistentTreeError::RootNotFound(
-                            self.root.compute_hash().finalize(),
-                        ))
-                    })?,
+                self.get_root_node(Default::default())?,
                 partial_path,
             )
         } else {
