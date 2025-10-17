@@ -26,7 +26,6 @@ impl TopLevelCache {
         let Some(new_top) = layers.get(&state_root) else {
             return self.regenerate(layers, state_root);
         };
-        println!("current: {state_root:x} parent={:x}, old={:x}", new_top.parent, self.root);
         if new_top.parent == self.root {
             self.nodes.append(&mut new_top.nodes.clone());
             self.root = state_root;
@@ -36,7 +35,6 @@ impl TopLevelCache {
         }
     }
     fn regenerate(&mut self, layers: &BTreeMap<H256, TrieLayer>, state_root: H256) {
-        println!("regenerating at counter={} new_root={state_root:x}", self.counter);
         self.nodes.clear();
         let mut current_state_root = state_root;
         let mut roots_to_add = Vec::new();
