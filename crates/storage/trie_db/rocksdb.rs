@@ -141,7 +141,7 @@ impl TrieDB for RocksDBTrieDB {
 mod tests {
     use super::*;
     use ethrex_trie::Nibbles;
-    use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
+    use rocksdb::{ColumnFamilyDescriptor, DBCommon, MultiThreaded, Options};
     use tempfile::TempDir;
 
     #[test]
@@ -155,10 +155,12 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor],
+            vec![cf_descriptor, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
@@ -194,11 +196,13 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
+        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor],
+            vec![cf_descriptor, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
@@ -231,11 +235,13 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
+        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor],
+            vec![cf_descriptor, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
