@@ -757,6 +757,7 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
         _ => unimplemented!("{prover_type}"),
     };
 
+    info!("Reading vk in path {vk_path:?}");
     if !required_type {
         Ok(Bytes::new())
     } else if let Some(vk_path) = vk_path {
