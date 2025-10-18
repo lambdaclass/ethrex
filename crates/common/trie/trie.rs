@@ -267,7 +267,7 @@ impl Trie {
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
     pub fn get_embedded_root(
-        all_nodes: &BTreeMap<H256, Vec<u8>>,
+        all_nodes: &mut BTreeMap<H256, Vec<u8>>,
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
@@ -276,14 +276,14 @@ impl Trie {
         }
 
         let root_rlp = all_nodes
-            .get(&root_hash)
+            .remove(&root_hash)
             .ok_or(TrieError::InconsistentTree)?;
 
         fn get_embedded_node(
-            all_nodes: &BTreeMap<H256, Vec<u8>>,
-            cur_node_rlp: &[u8],
+            all_nodes: &mut BTreeMap<H256, Vec<u8>>,
+            cur_node_rlp: Vec<u8>,
         ) -> Result<Node, TrieError> {
-            let cur_node = Node::decode_raw(cur_node_rlp)?;
+            let cur_node = Node::decode_raw_owned(cur_node_rlp)?;
 
             Ok(match cur_node {
                 Node::Branch(mut node) => {
@@ -293,7 +293,7 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match all_nodes.get(&hash.finalize()) {
+                            *choice = match all_nodes.remove(&hash.finalize()) {
                                 Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
                                 None => hash.into(),
                             };
@@ -307,7 +307,7 @@ impl Trie {
                         unreachable!()
                     };
 
-                    node.child = match all_nodes.get(&hash.finalize()) {
+                    node.child = match all_nodes.remove(&hash.finalize()) {
                         Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
                         None => hash.into(),
                     };
@@ -331,7 +331,7 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
+        state_nodes: &mut BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
         let root = Self::get_embedded_root(state_nodes, root_hash)?;

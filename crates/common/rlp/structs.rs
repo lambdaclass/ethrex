@@ -116,6 +116,92 @@ impl<'a> Decoder<'a> {
     }
 }
 
+/// # Struct decoding helper
+///
+/// Used to decode a struct from RLP format, taking ownership of the encoded buffer.
+/// Unlike [`Decoder`], this struct owns the buffer and modifies it during decoding,
+/// minimizing cloning and reallocation.
+///
+/// The encoded data is expected to be a single RLP list.
+///
+/// # Examples
+///
+/// ```
+/// # use ethrex_rlp::structs::OwnedDecoder;
+/// # use ethrex_rlp::error::RLPDecodeError;
+/// #[derive(Debug, PartialEq, Eq)]
+/// struct Simple {
+///     pub a: u8,
+///     pub b: u16,
+/// }
+///
+/// impl Simple {
+///     fn decode_owned(buf: Vec<u8>) -> Result<Self, RLPDecodeError> {
+///         let mut decoder = OwnedDecoder::new(buf)?;
+///         let a = decoder.decode_next_item()?;
+///         let b = decoder.decode_next_item()?;
+///         Ok(Simple { a: a[0], b: u16::from_be_bytes([b[0], b[1]]) })
+///     }
+/// }
+///
+/// let bytes = vec![0xc2, 61, 75];
+/// let decoded = Simple::decode_owned(bytes).unwrap();
+///
+/// assert_eq!(decoded, Simple { a: 61, b: 75 });
+/// ```
+#[derive(Debug)]
+pub struct OwnedDecoder {
+    buf: Vec<u8>,
+}
+
+impl OwnedDecoder {
+    /// Creates a new decoder that takes ownership of the encoded buffer.
+    ///
+    /// # Caution
+    /// The buffer is expected to be a single element list.
+    pub fn new(mut buf: Vec<u8>) -> Result<Self, RLPDecodeError> {
+        let (is_list, payload, rest) = decode_rlp_item(&buf)?;
+        if !is_list || !rest.is_empty() {
+            return Err(RLPDecodeError::UnexpectedList);
+        }
+
+        // remove prefix
+        let payload_start = payload.as_ptr() as usize - buf.as_ptr() as usize;
+        buf.drain(..payload_start);
+        Ok(Self { buf })
+    }
+
+    /// Returns the next encoded item, splitting it off the buffer.
+    pub fn get_encoded_item(&mut self) -> Result<Vec<u8>, RLPDecodeError> {
+        let (_, rest) = get_item_with_prefix(&self.buf)?;
+        let rest_start = rest.as_ptr() as usize - self.buf.as_ptr() as usize;
+        Ok(self.buf.drain(..rest_start).collect())
+    }
+
+    /// Returns the next decoded item, splitting it off the buffer.
+    pub fn decode_next_item(&mut self) -> Result<Vec<u8>, RLPDecodeError> {
+        let (_, rest) = get_item_with_prefix(&self.buf)?;
+
+        let rest_start = rest.as_ptr() as usize - self.buf.as_ptr() as usize;
+        let mut encoded_item: Vec<u8> = self.buf.drain(..rest_start).collect();
+
+        let (_, decoded_item, _) = decode_rlp_item(&encoded_item)?;
+        let payload_start = decoded_item.as_ptr() as usize - encoded_item.as_ptr() as usize;
+        Ok(encoded_item.split_off(payload_start))
+    }
+
+    // Returns the remaining item count of the list
+    pub fn length(&self) -> Result<usize, RLPDecodeError> {
+        let mut rest = self.buf.as_slice();
+        let mut length = 0;
+        while !rest.is_empty() {
+            (_, rest) = get_item_with_prefix(rest)?;
+            length += 1;
+        }
+        Ok(length)
+    }
+}
+
 fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeError {
     let typ = std::any::type_name::<T>();
     let err_msg = format!("Error decoding field '{field_name}' of type {typ}: {err}");

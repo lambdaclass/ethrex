@@ -47,6 +47,16 @@ impl NodeHash {
         }
     }
 
+    pub fn from_vec(vec: Vec<u8>) -> NodeHash {
+        match vec.len() {
+            len @ 0..32 => {
+                let buffer: [u8; 31] = vec.try_into().unwrap();
+                NodeHash::Inline((buffer, len as u8))
+            }
+            _ => NodeHash::Hashed(H256::from_slice(&vec)),
+        }
+    }
+
     /// Returns the finalized hash
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
     pub fn finalize(self) -> H256 {
