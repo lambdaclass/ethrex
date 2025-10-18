@@ -23,8 +23,7 @@ pub async fn main() -> Result<(), RunnerError> {
     }
     println!(
         "\nTests finished running.
-    Find successful tests (if any) report at: './success_report.txt'.
-    Find failing    tests (if any) report at: './failure_report.txt'.
+    Find reports in the './reports' directory.
     "
     );
     Ok(())

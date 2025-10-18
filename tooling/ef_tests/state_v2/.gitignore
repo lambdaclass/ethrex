@@ -1,4 +1,9 @@
+# Legacy report files (now generated in reports/ directory)
 ./success_report.txt
 ./failure_report.txt
+
+# Generated test reports directory
+./reports/
+
 # vectors is not yet part of this folder but will be soon.
 ./vectors
