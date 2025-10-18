@@ -962,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -980,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "kzg-rs",
  "thiserror",
@@ -1016,7 +1016,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1034,7 +1034,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1089,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1116,7 +1116,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1137,7 +1137,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -1343,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
