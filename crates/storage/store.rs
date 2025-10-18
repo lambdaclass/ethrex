@@ -1358,6 +1358,10 @@ impl Store {
     pub async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
         self.engine.clear_fullsync_headers().await
     }
+
+    pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        self.engine.generate_flatkeyvalue()
+    }
 }
 
 pub struct AccountProof {
@@ -1456,17 +1460,19 @@ mod tests {
         F: FnOnce(Store) -> Fut,
         Fut: std::future::Future<Output = ()>,
     {
+        let nonce: u64 = H256::random().to_low_u64_be();
+        let path = format!("store-test-db-{nonce}");
         // Remove preexistent DBs in case of a failed previous test
         if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs("store-test-db");
+            remove_test_dbs(&path);
         };
         // Build a new store
-        let store = Store::new("store-test-db", engine_type).expect("Failed to create test db");
+        let store = Store::new(&path, engine_type).expect("Failed to create test db");
         // Run the test
         test_func(store).await;
         // Remove store (if needed)
         if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs("store-test-db");
+            remove_test_dbs(&path);
         };
     }
 

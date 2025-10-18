@@ -10,11 +10,10 @@ use crate::{
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
-    opcodes::Opcode,
     vm::{Substate, VM},
 };
 use ExceptionalHalt::OutOfGas;
-use bytes::{Bytes, buf::IntoIter};
+use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
@@ -29,7 +28,7 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::{collections::HashMap, iter::Enumerate};
+use std::collections::HashMap;
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -71,69 +70,6 @@ pub fn calculate_create2_address(
         .ok_or(InternalError::Slicing)?,
     );
     Ok(generated_address)
-}
-
-/// # Filter for jump target offsets.
-///
-/// Used to filter which program offsets are not valid jump targets. Implemented as a sorted list of
-/// offsets of bytes `0x5B` (`JUMPDEST`) within push constants.
-#[derive(Debug)]
-pub struct JumpTargetFilter {
-    /// The list of invalid jump target offsets.
-    filter: Vec<usize>,
-    /// The last processed offset, plus one.
-    offset: usize,
-
-    /// Program bytecode iterator.
-    iter: Enumerate<IntoIter<Bytes>>,
-    /// Number of bytes remaining to process from the last push instruction.
-    partial: usize,
-}
-
-impl JumpTargetFilter {
-    /// Create an empty `JumpTargetFilter`.
-    pub fn new(bytecode: Bytes) -> Self {
-        Self {
-            filter: Vec::new(),
-            offset: 0,
-
-            iter: bytecode.into_iter().enumerate(),
-            partial: 0,
-        }
-    }
-
-    /// Check whether a target jump address is blacklisted or not.
-    ///
-    /// This method may potentially grow the filter if the requested address is out of range.
-    pub fn is_blacklisted(&mut self, address: usize) -> bool {
-        if let Some(delta) = address.checked_sub(self.offset) {
-            // It is not realistic to expect a bytecode offset to overflow an `usize`.
-            #[expect(clippy::arithmetic_side_effects)]
-            for (offset, value) in (&mut self.iter).take(delta + 1) {
-                match self.partial.checked_sub(1) {
-                    None => {
-                        // Neither the `as` conversions nor the subtraction can fail here.
-                        #[expect(clippy::as_conversions)]
-                        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&Opcode::from(value)) {
-                            self.partial = value as usize - Opcode::PUSH0 as usize;
-                        }
-                    }
-                    Some(partial) => {
-                        self.partial = partial;
-
-                        #[expect(clippy::as_conversions)]
-                        if value == Opcode::JUMPDEST as u8 {
-                            self.filter.push(offset);
-                        }
-                    }
-                }
-            }
-
-            self.filter.last() == Some(&address)
-        } else {
-            self.filter.binary_search(&address).is_ok()
-        }
-    }
 }
 
 // ================== Backup related functions =======================

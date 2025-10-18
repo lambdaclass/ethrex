@@ -504,7 +504,7 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
 
     // Assign code and code_address to callframe
     vm.current_call_frame.code_address = code_address;
-    vm.current_call_frame.set_code(bytecode)?;
+    vm.current_call_frame.set_code(bytecode);
 
     Ok(())
 }
