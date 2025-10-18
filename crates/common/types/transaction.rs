@@ -1,7 +1,7 @@
 use std::{cmp::min, fmt::Display};
 
 use crate::utils::keccak;
-use bytes::Bytes;
+use bytes::{BufMut as _, Bytes};
 use ethereum_types::{Address, H256, Signature, U256};
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -70,7 +70,7 @@ impl TryInto<Transaction> for P2PTransaction {
 }
 
 impl RLPEncode for P2PTransaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             P2PTransaction::LegacyTransaction(t) => t.encode(buf),
             tx => Bytes::copy_from_slice(&tx.encode_canonical_to_vec()).encode(buf),
@@ -125,7 +125,7 @@ pub struct WrappedEIP4844Transaction {
 }
 
 impl RLPEncode for WrappedEIP4844Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let encoder = Encoder::new(buf);
         encoder
             .encode_field(&self.tx)
@@ -398,7 +398,7 @@ impl RLPEncode for Transaction {
     /// A) Legacy transactions: rlp(LegacyTransaction)
     /// B) Non legacy transactions: rlp(Bytes) where Bytes represents the canonical encoding for the transaction as a bytes object.
     /// Checkout [Transaction::encode_canonical] for more information
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             Transaction::LegacyTransaction(t) => t.encode(buf),
             tx => Bytes::copy_from_slice(&tx.encode_canonical_to_vec()).encode(buf),
@@ -458,7 +458,7 @@ pub enum TxKind {
 }
 
 impl RLPEncode for TxKind {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             Self::Call(address) => address.encode(buf),
             Self::Create => buf.put_u8(RLP_NULL),
@@ -477,7 +477,7 @@ impl RLPDecode for TxKind {
 }
 
 impl RLPEncode for LegacyTransaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.nonce)
             .encode_field(&self.gas_price)
@@ -493,7 +493,7 @@ impl RLPEncode for LegacyTransaction {
 }
 
 impl RLPEncode for EIP2930Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -511,7 +511,7 @@ impl RLPEncode for EIP2930Transaction {
 }
 
 impl RLPEncode for EIP1559Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -530,7 +530,7 @@ impl RLPEncode for EIP1559Transaction {
 }
 
 impl RLPEncode for EIP4844Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -551,11 +551,7 @@ impl RLPEncode for EIP4844Transaction {
 }
 
 impl EIP4844Transaction {
-    pub fn rlp_encode_as_pooled_tx(
-        &self,
-        buf: &mut dyn bytes::BufMut,
-        tx_blobs_bundle: &BlobsBundle,
-    ) {
+    pub fn rlp_encode_as_pooled_tx(&self, buf: &mut Vec<u8>, tx_blobs_bundle: &BlobsBundle) {
         buf.put_bytes(TxType::EIP4844.into(), 1);
         self.encode(buf);
         let mut encoded_blobs = Vec::new();
@@ -580,7 +576,7 @@ impl EIP4844Transaction {
 }
 
 impl RLPEncode for EIP7702Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -600,7 +596,7 @@ impl RLPEncode for EIP7702Transaction {
 }
 
 impl RLPEncode for PrivilegedL2Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -617,7 +613,7 @@ impl RLPEncode for PrivilegedL2Transaction {
 }
 
 impl PayloadRLPEncode for Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         match self {
             Transaction::LegacyTransaction(tx) => tx.encode_payload(buf),
             Transaction::EIP1559Transaction(tx) => tx.encode_payload(buf),
@@ -630,7 +626,7 @@ impl PayloadRLPEncode for Transaction {
 }
 
 impl PayloadRLPEncode for LegacyTransaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.nonce)
             .encode_field(&self.gas_price)
@@ -643,7 +639,7 @@ impl PayloadRLPEncode for LegacyTransaction {
 }
 
 impl PayloadRLPEncode for EIP1559Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -659,7 +655,7 @@ impl PayloadRLPEncode for EIP1559Transaction {
 }
 
 impl PayloadRLPEncode for EIP2930Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -674,7 +670,7 @@ impl PayloadRLPEncode for EIP2930Transaction {
 }
 
 impl PayloadRLPEncode for EIP4844Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -692,7 +688,7 @@ impl PayloadRLPEncode for EIP4844Transaction {
 }
 
 impl PayloadRLPEncode for EIP7702Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -709,7 +705,7 @@ impl PayloadRLPEncode for EIP7702Transaction {
 }
 
 impl PayloadRLPEncode for PrivilegedL2Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -1403,7 +1399,7 @@ mod canonic_encoding {
         /// Transactions can be encoded in the following formats:
         /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
         /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
-        pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
+        pub fn encode_canonical(&self, buf: &mut Vec<u8>) {
             match self {
                 // Legacy transactions don't have a prefix
                 Transaction::LegacyTransaction(_) => {}
@@ -1443,7 +1439,7 @@ mod canonic_encoding {
             }
         }
 
-        pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
+        pub fn encode_canonical(&self, buf: &mut Vec<u8>) {
             match self {
                 // Legacy transactions don't have a prefix
                 P2PTransaction::LegacyTransaction(_) => {}
@@ -2553,7 +2549,7 @@ mod mempool {
     }
 
     impl RLPEncode for MempoolTransaction {
-        fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        fn encode(&self, buf: &mut Vec<u8>) {
             Encoder::new(buf)
                 .encode_field(&self.timestamp)
                 .encode_field(&*self.inner)

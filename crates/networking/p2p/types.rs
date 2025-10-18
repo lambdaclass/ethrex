@@ -1,4 +1,4 @@
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use ethrex_common::types::ForkId;
 use ethrex_common::{H256, H264, H512};
 use ethrex_rlp::{
@@ -51,7 +51,7 @@ impl Endpoint {
 }
 
 impl RLPEncode for Endpoint {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.ip)
             .encode_field(&self.udp_port)
@@ -479,7 +479,7 @@ fn decode_node_record_optional_fields(
 }
 
 impl RLPEncode for NodeRecord {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.signature)
             .encode_field(&self.seq)
@@ -489,7 +489,7 @@ impl RLPEncode for NodeRecord {
 }
 
 impl RLPEncode for Node {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.ip)
             .encode_field(&self.udp_port)

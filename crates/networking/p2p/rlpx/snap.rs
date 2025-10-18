@@ -83,7 +83,7 @@ pub struct TrieNodes {
 
 impl RLPxMessage for GetAccountRange {
     const CODE: u8 = 0x00;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -120,7 +120,7 @@ impl RLPxMessage for GetAccountRange {
 
 impl RLPxMessage for AccountRange {
     const CODE: u8 = 0x01;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -151,7 +151,7 @@ impl RLPxMessage for AccountRange {
 
 impl RLPxMessage for GetStorageRanges {
     const CODE: u8 = 0x02;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -201,7 +201,7 @@ impl RLPxMessage for GetStorageRanges {
 
 impl RLPxMessage for StorageRanges {
     const CODE: u8 = 0x03;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -228,7 +228,7 @@ impl RLPxMessage for StorageRanges {
 
 impl RLPxMessage for GetByteCodes {
     const CODE: u8 = 0x04;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -255,7 +255,7 @@ impl RLPxMessage for GetByteCodes {
 
 impl RLPxMessage for ByteCodes {
     const CODE: u8 = 0x05;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -280,7 +280,7 @@ impl RLPxMessage for ByteCodes {
 
 impl RLPxMessage for GetTrieNodes {
     const CODE: u8 = 0x06;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -314,7 +314,7 @@ impl RLPxMessage for GetTrieNodes {
 
 impl RLPxMessage for TrieNodes {
     const CODE: u8 = 0x07;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -360,7 +360,7 @@ pub struct StorageSlot {
 }
 
 impl RLPEncode for AccountRangeUnit {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.hash)
             .encode_field(&self.account)
@@ -378,7 +378,7 @@ impl RLPDecode for AccountRangeUnit {
 }
 
 impl RLPEncode for AccountStateSlim {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.nonce)
             .encode_field(&self.balance)
@@ -450,7 +450,7 @@ impl From<AccountStateSlim> for AccountState {
 }
 
 impl RLPEncode for StorageSlot {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.hash)
             .encode_bytes(&self.data.encode_to_vec())

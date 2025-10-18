@@ -167,7 +167,7 @@ impl Message {
         buf.put_slice(&data[..]);
     }
 
-    fn encode_with_type(&self, buf: &mut dyn BufMut) {
+    fn encode_with_type(&self, buf: &mut Vec<u8>) {
         buf.put_u8(self.packet_type());
         match self {
             Message::Ping(msg) => msg.encode(buf),
@@ -260,7 +260,7 @@ impl PingMessage {
 }
 
 impl RLPEncode for PingMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.version)
             .encode_field(&self.from)
@@ -288,7 +288,7 @@ impl FindNodeMessage {
 }
 
 impl RLPEncode for FindNodeMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.target)
             .encode_field(&self.expiration)
@@ -393,7 +393,7 @@ impl PongMessage {
 }
 
 impl RLPEncode for PongMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.to)
             .encode_field(&self.ping_hash)
@@ -449,7 +449,7 @@ impl RLPDecode for NeighborsMessage {
 }
 
 impl RLPEncode for NeighborsMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.nodes)
             .encode_field(&self.expiration)
@@ -508,7 +508,7 @@ impl RLPDecode for ENRRequestMessage {
 }
 
 impl RLPEncode for ENRRequestMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.expiration)
             .finish();
@@ -516,7 +516,7 @@ impl RLPEncode for ENRRequestMessage {
 }
 
 impl RLPEncode for ENRResponseMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.request_hash)
             .encode_field(&self.node_record)

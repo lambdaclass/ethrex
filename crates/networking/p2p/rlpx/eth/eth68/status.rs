@@ -27,7 +27,7 @@ pub struct StatusMessage68 {
 
 impl RLPxMessage for StatusMessage68 {
     const CODE: u8 = 0x00;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.eth_version)

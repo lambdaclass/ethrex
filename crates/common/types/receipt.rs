@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::{BufMut as _, Bytes};
 use ethereum_types::{Address, Bloom, BloomInput, H256};
 use ethrex_rlp::{
     decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
@@ -74,7 +74,7 @@ pub fn bloom_from_logs(logs: &[Log]) -> Bloom {
 }
 
 impl RLPEncode for Receipt {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let encoded_inner = self.encode_inner();
         buf.put_slice(&encoded_inner);
     }
@@ -207,7 +207,7 @@ impl RLPEncode for ReceiptWithBloom {
     /// Receipts can be encoded in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self.tx_type {
             TxType::Legacy => {
                 let legacy_encoded = self.encode_inner();
@@ -298,7 +298,7 @@ pub struct Log {
 }
 
 impl RLPEncode for Log {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.address)
             .encode_field(&self.topics)

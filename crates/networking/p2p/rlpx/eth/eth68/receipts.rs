@@ -53,7 +53,7 @@ impl Receipts68 {
 impl RLPxMessage for Receipts68 {
     const CODE: u8 = 0x10;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
