@@ -3530,7 +3530,7 @@ dependencies = [
  "ethrex-sdk",
  "ethrex-storage 4.0.0",
  "ethrex-storage-rollup",
- "ethrex-trie 3.0.0",
+ "ethrex-trie 4.0.0",
  "ethrex-vm",
  "eyre",
  "genesis-tool",
@@ -3556,16 +3556,16 @@ dependencies = [
 
 [[package]]
 name = "ethrex-benches"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "criterion",
  "ethrex",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 4.0.0",
  "ethrex-config",
  "ethrex-l2-rpc",
- "ethrex-storage 3.0.0",
+ "ethrex-storage 4.0.0",
  "secp256k1",
  "serde_json",
  "tempfile",
