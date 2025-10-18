@@ -120,7 +120,7 @@ impl LeafNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = vec![];
+        let mut buf = Vec::new();
         Encoder::new(&mut buf)
             .encode_bytes(&self.partial.encode_compact())
             .encode_bytes(&self.value)
