@@ -5,7 +5,7 @@ If a new dashboard is designed, it can be mounted only in that `*overrides` file
 
 To run the node with metrics, the next steps should be followed:
 1. Build the `ethrex` binary with the `metrics` feature enabled.
-2. Enable metrics by using the `--metrics` flag when starting the node.
+2. Enable metrics by using the `--metrics.enabled` flag when starting the node.
 3. Set the `--metrics.port` cli arg of the ethrex binary to match the port defined in `metrics/provisioning/prometheus/prometheus*.yaml`
 4. Run the docker containers, example with the L2:
 

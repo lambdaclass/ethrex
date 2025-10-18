@@ -36,7 +36,7 @@ A consensus node must be running for the syncing to work.
 
 To run the execution node on any network with metrics, the next steps should be followed:
 1. Build the `ethrex` binary for the network you want (see node options in [CLI Commands](../../CLI.md#cli-commands)) with the `metrics` feature enabled.
-2. Enable metrics by using the `--metrics` flag when starting the node.
+2. Enable metrics by using the `--metrics.enabled` flag when starting the node.
 3. Set the `--metrics.port` cli arg of the ethrex binary to match the port defined in `metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml`
 4. Run the docker containers:
 

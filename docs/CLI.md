@@ -45,7 +45,7 @@ Node options:
           [env: ETHREX_METRICS_PORT=]
           [default: 9090]
 
-      --metrics
+      --metrics.enabled
           Enable metrics collection and exposition
 
       --dev
@@ -198,7 +198,7 @@ Node options:
           [env: ETHREX_METRICS_PORT=]
           [default: 9090]
 
-      --metrics
+      --metrics.enabled
           Enable metrics collection and exposition
 
       --dev
