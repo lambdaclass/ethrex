@@ -34,8 +34,10 @@ impl NodeRef {
     pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
-            NodeRef::Hash(NodeHash::Inline((data, _))) => {
-                Ok(Some(Node::decode_raw_owned(Vec::from(data))?))
+            NodeRef::Hash(NodeHash::Inline((data, len))) => {
+                let mut inline_node = Vec::from(data);
+                inline_node.truncate(len as usize);
+                Ok(Some(Node::decode_raw_owned(inline_node.to_vec())?))
             }
             NodeRef::Hash(hash) => db
                 .get(path)?
@@ -345,17 +347,20 @@ fn decode_child(rlp: &[u8]) -> NodeHash {
     }
 }
 
-fn decode_child_owned(mut child: Vec<u8>) -> Result<NodeHash, RLPDecodeError> {
-    let (is_list, decoded_item, rest) = decode_rlp_item(&child)?;
+fn decode_child_owned(mut rlp: Vec<u8>) -> Result<NodeHash, RLPDecodeError> {
+    let (is_list, payload, rest) = decode_rlp_item(&rlp)?;
     if is_list || !rest.is_empty() {
         return Err(RLPDecodeError::UnexpectedString);
     }
-    let payload_start = decoded_item.as_ptr() as usize - child.as_ptr() as usize;
-    child.drain(..payload_start);
 
-    if child.is_empty() {
-        Ok(NodeHash::default())
-    } else {
-        Ok(NodeHash::from_vec(child))
+    match payload.len() {
+        0 => Ok(NodeHash::default()),
+        1..=31 => Ok(NodeHash::from_vec(rlp)),
+        32 => {
+            let payload_start = payload.as_ptr() as usize - rlp.as_ptr() as usize;
+            rlp.drain(..payload_start);
+            Ok(NodeHash::from_vec(rlp))
+        }
+        _ => Err(RLPDecodeError::UnexpectedString),
     }
 }
