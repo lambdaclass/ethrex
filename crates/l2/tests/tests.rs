@@ -2174,6 +2174,16 @@ impl AddAssign for FeesDetails {
     }
 }
 
+fn calculate_tx_gas_price(
+    max_fee_per_gas: u64,
+    max_priority_fee_per_gas: u64,
+    base_fee_per_gas: u64,
+    operator_fee_per_gas: u64,
+) -> u64 {
+    let fee_per_gas = base_fee_per_gas + operator_fee_per_gas;
+    min(max_priority_fee_per_gas + fee_per_gas, max_fee_per_gas)
+}
+
 async fn get_fees_details_l2(
     tx_receipt: &RpcReceipt,
     l2_client: &EthClient,
@@ -2192,7 +2202,7 @@ async fn get_fees_details_l2(
     let l1_blob_base_fee_per_gas = get_l1_blob_base_fee_per_gas(l2_client, block_number).await?;
     let l1_fee_per_blob: u64 = l1_blob_base_fee_per_gas * u64::from(GAS_PER_BLOB);
     let l1_fee_per_blob_byte = l1_fee_per_blob / u64::try_from(SAFE_BYTES_PER_BLOB).unwrap();
-    let l1_fee = l1_fee_per_blob_byte * tx_account_diff_size;
+    let calculated_l1_fee = l1_fee_per_blob_byte * tx_account_diff_size;
 
     let base_fee_per_gas = l2_client
         .get_block_by_number(
@@ -2214,12 +2224,18 @@ async fn get_fees_details_l2(
     .try_into()
     .unwrap();
 
-    let gas_price = rpc_tx
-        .tx
-        .effective_gas_price(Some(base_fee_per_gas))
-        .unwrap();
+    let gas_price = calculate_tx_gas_price(
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        base_fee_per_gas,
+        operator_fee_per_gas,
+    );
 
-    let l1_gas = l1_fee / gas_price.as_u64();
+    let mut l1_gas = calculated_l1_fee / gas_price;
+
+    if l1_gas == 0 && calculated_l1_fee > 0 {
+        l1_gas = 1;
+    }
 
     let actual_gas_used = tx_gas_used - l1_gas;
 
@@ -2230,6 +2246,7 @@ async fn get_fees_details_l2(
 
     let operator_fees = operator_fee_per_gas * actual_gas_used;
     let base_fee = base_fee_per_gas * actual_gas_used;
+    let l1_fee = l1_gas * gas_price;
 
     Ok(FeesDetails {
         base_fee,

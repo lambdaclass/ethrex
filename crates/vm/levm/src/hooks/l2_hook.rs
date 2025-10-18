@@ -333,9 +333,15 @@ fn calculate_l1_fee_gas(
         .map_err(|e| InternalError::Custom(format!("Failed to get account diffs size: {}", e)))?;
 
     let l1_fee = calculate_l1_fee(fee_config, account_diffs_size)?;
-    let l1_fee_gas = l1_fee
+    let mut l1_fee_gas = l1_fee
         .checked_div(vm.env.gas_price)
         .ok_or(InternalError::DivisionByZero)?;
+
+    // Ensure at least 1 gas is charged if there is a non-zero l1 fee
+    if l1_fee_gas == U256::zero() && l1_fee > U256::zero() {
+        l1_fee_gas = U256::one();
+    }
+
     Ok(l1_fee_gas.try_into().map_err(|_| InternalError::Overflow)?)
 }
 
@@ -356,6 +362,5 @@ fn pay_to_l1_fee_vault(
     vm.increase_account_balance(fee_config.l1_fee_vault, l1_fee)
         .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
-    vm.increase_account_balance(fee_config.l1_fee_vault, l1_fee)?;
     Ok(())
 }
