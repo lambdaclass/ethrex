@@ -90,52 +90,6 @@ pub struct JumpTargetFilter {
     partial: usize,
 }
 
-impl JumpTargetFilter {
-    /// Create an empty `JumpTargetFilter`.
-    pub fn new(bytecode: Bytes) -> Self {
-        Self {
-            filter: Vec::new(),
-            offset: 0,
-
-            iter: bytecode.into_iter().enumerate(),
-            partial: 0,
-        }
-    }
-
-    /// Check whether a target jump address is blacklisted or not.
-    ///
-    /// This method may potentially grow the filter if the requested address is out of range.
-    pub fn is_blacklisted(&mut self, address: usize) -> bool {
-        if let Some(delta) = address.checked_sub(self.offset) {
-            // It is not realistic to expect a bytecode offset to overflow an `usize`.
-            #[expect(clippy::arithmetic_side_effects)]
-            for (offset, value) in (&mut self.iter).take(delta + 1) {
-                match self.partial.checked_sub(1) {
-                    None => {
-                        // Neither the `as` conversions nor the subtraction can fail here.
-                        #[expect(clippy::as_conversions)]
-                        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&Opcode::from(value)) {
-                            self.partial = value as usize - Opcode::PUSH0 as usize;
-                        }
-                    }
-                    Some(partial) => {
-                        self.partial = partial;
-
-                        #[expect(clippy::as_conversions)]
-                        if value == Opcode::JUMPDEST as u8 {
-                            self.filter.push(offset);
-                        }
-                    }
-                }
-            }
-
-            self.filter.last() == Some(&address)
-        } else {
-            self.filter.binary_search(&address).is_ok()
-        }
-    }
-}
-
 // ================== Backup related functions =======================
 
 /// Restore the state of the cache to the state it in the callframe backup.

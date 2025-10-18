@@ -3,8 +3,7 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    opcodes::Opcode,
-    utils::{JumpTargetFilter, restore_cache_state},
+    utils::restore_cache_state,
     vm::VM,
 };
 use bytes::Bytes;
