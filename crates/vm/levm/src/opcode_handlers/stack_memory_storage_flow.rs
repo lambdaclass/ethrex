@@ -292,6 +292,7 @@ impl<'a> VM<'a> {
     ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
+    #[inline(always)]
     fn target_address_is_valid(call_frame: &mut CallFrame, jump_address: usize) -> bool {
         call_frame.bytecode.get(jump_address) == Some(&(Opcode::JUMPDEST.into()))
     }
@@ -305,6 +306,9 @@ impl<'a> VM<'a> {
         let jump_address_usize: usize = jump_address
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        if !Self::target_address_is_valid(call_frame, jump_address_usize) {
+            return Err(ExceptionalHalt::InvalidJump.into());
+        }
         call_frame.pc = jump_address_usize;
         Ok(())
     }
