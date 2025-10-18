@@ -728,6 +728,12 @@ impl StoreEngine for Store {
         self.inner()?.fullsync_headers.clear();
         Ok(())
     }
+
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        // FlatKeyValue currently not supported for the InMemory DB
+        // Silently ignoring the request to build the FlatKeyValue is harmless
+        Ok(())
+    }
 }
 
 impl Debug for Store {

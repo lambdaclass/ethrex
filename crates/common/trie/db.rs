@@ -25,6 +25,9 @@ pub trait TrieDB: Send + Sync {
     fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
+    fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
+        false
+    }
 }
 
 /// InMemory implementation for the TrieDB trait, with get and put operations.
@@ -101,16 +104,4 @@ impl TrieDB for InMemoryTrieDB {
 
         Ok(())
     }
-}
-
-pub fn nibbles_to_fixed_size(nibbles: Nibbles) -> [u8; 33] {
-    let node_hash_ref = nibbles.to_bytes();
-    let original_len = node_hash_ref.len();
-
-    let mut buffer = [0u8; 33];
-
-    // Encode the node as [node_path..., original_len]
-    buffer[32] = nibbles.len() as u8;
-    buffer[..original_len].copy_from_slice(&node_hash_ref);
-    buffer
 }

@@ -429,6 +429,10 @@ mod test {
         let computed_data = computed_data.lock().unwrap();
         let expected_data = expected_data.lock().unwrap();
         for (k, v) in expected_data.iter() {
+            // skip flatkeyvalues, we don't want them
+            if k.last().cloned() == Some(16) {
+                continue;
+            }
             assert!(computed_data.contains_key(k));
             assert_eq!(*v, computed_data[k]);
         }
