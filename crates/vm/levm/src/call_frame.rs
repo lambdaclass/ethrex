@@ -407,8 +407,8 @@ impl CallFrame {
             // while len == code.len() == processed_bytecode.len() - 32
             // and `while` guard checking i < len.
             unsafe { assert_unchecked(i + 32 < processed_bytecode.len()) };
-            let bc = processed_bytecode[i] & !0x7F; // Keeps the high bits of PUSHN, i.e. the prefix
-            let cnt = processed_bytecode[i] & 0x7F; // Keeps the low bits of PUSHN, i.e. the count
+            let bc = processed_bytecode[i] & !0x1F; // Keeps the high bits of PUSHN, i.e. the prefix
+            let cnt = processed_bytecode[i] & 0x1F; // Keeps the low bits of PUSHN, i.e. the count
             let cnt = cnt as usize;
             i += 1;
             if bc != 0x60 {
