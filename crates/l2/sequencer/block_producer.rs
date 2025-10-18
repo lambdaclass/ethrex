@@ -6,7 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
@@ -83,14 +83,23 @@ impl BlockProducer {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
-            fee_vault_address,
+            base_fee_vault_address,
+            operator_fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
         } = config;
 
-        if fee_vault_address.is_some_and(|fee_vault| fee_vault == *coinbase_address) {
+        if base_fee_vault_address.is_some_and(|base_fee_vault| base_fee_vault == *coinbase_address)
+        {
             warn!(
-                "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected.",
+                "The coinbase address and base fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
+        }
+        if operator_fee_vault_address
+            .is_some_and(|operator_fee_vault| operator_fee_vault == *coinbase_address)
+        {
+            warn!(
+                "The coinbase address and operator fee vault address are the same. Coinbase balance behavior will be affected.",
             );
         }
 
@@ -201,6 +210,7 @@ impl BlockProducer {
         let transactions_count = block.body.transactions.len();
         let block_number = block.header.number;
         let block_hash = block.hash();
+        self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
             .store_block(block, account_updates_list, execution_result)
             .await?;
@@ -228,6 +238,17 @@ impl BlockProducer {
             METRICS_TX.set_transactions_per_second(tps);
         );
 
+        Ok(())
+    }
+    async fn store_fee_config_by_block(&self, block_number: u64) -> Result<(), BlockProducerError> {
+        let BlockchainType::L2(fee_config) = self.blockchain.options.r#type else {
+            error!("Invalid blockchain type. Expected L2.");
+            return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
+        };
+
+        self.rollup_store
+            .store_fee_config_by_block(block_number, fee_config)
+            .await?;
         Ok(())
     }
 }

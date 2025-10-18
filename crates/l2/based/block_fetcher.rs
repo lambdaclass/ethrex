@@ -255,7 +255,9 @@ impl BlockFetcher {
                     "Failed to get the receipt for transaction {:x}",
                     batch_committed_log.transaction_hash
                 )))?
-                .data;
+                .tx
+                .data()
+                .clone();
 
             let batch = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
 

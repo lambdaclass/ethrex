@@ -8,6 +8,7 @@ use crate::{
         block::RpcBlock,
         block_identifier::BlockIdentifier,
         receipt::{RpcLog, RpcReceipt},
+        transaction::RpcTransaction,
     },
     utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
@@ -611,7 +612,7 @@ impl EthClient {
     pub async fn get_transaction_by_hash(
         &self,
         tx_hash: H256,
-    ) -> Result<Option<GetTransactionByHashTransaction>, EthClientError> {
+    ) -> Result<Option<RpcTransaction>, EthClientError> {
         let params = Some(vec![json!(format!("{tx_hash:#x}"))]);
         let request = RpcRequest::new("eth_getTransactionByHash", params);
 
