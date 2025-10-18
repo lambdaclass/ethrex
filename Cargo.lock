@@ -3513,7 +3513,6 @@ dependencies = [
  "bytes",
  "clap 4.5.48",
  "clap_complete",
- "criterion",
  "directories 5.0.1",
  "ethrex-blockchain",
  "ethrex-common 3.0.0",
@@ -3544,7 +3543,6 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
@@ -3554,6 +3552,24 @@ dependencies = [
  "tui-logger",
  "url",
  "vergen-git2",
+]
+
+[[package]]
+name = "ethrex-benches"
+version = "3.0.0"
+dependencies = [
+ "bytes",
+ "criterion",
+ "ethrex",
+ "ethrex-blockchain",
+ "ethrex-common 3.0.0",
+ "ethrex-config",
+ "ethrex-l2-rpc",
+ "ethrex-storage 3.0.0",
+ "secp256k1",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -3805,6 +3821,7 @@ dependencies = [
  "sha3",
  "spinoff",
  "strum 0.27.2",
+ "substrate-bn",
  "thiserror 2.0.17",
  "walkdir",
 ]
@@ -10922,6 +10939,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "substrate-bn"
+version = "0.6.0"
+source = "git+https://github.com/sp1-patches/bn?tag=patch-0.6.0-sp1-5.0.0#e0d67f219b2ad6a1887e3275b7ba09ada4b1afb6"
+dependencies = [
+ "bytemuck",
+ "byteorder",
+ "cfg-if 1.0.3",
+ "crunchy",
+ "lazy_static",
+ "num-bigint 0.4.6",
+ "rand 0.8.5",
+ "rustc-hex",
+ "sp1-lib",
 ]
 
 [[package]]
