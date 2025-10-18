@@ -408,13 +408,13 @@ impl CallFrame {
             // and `while` guard checking i < len.
             unsafe { assert_unchecked(i + 32 < processed_bytecode.len()) };
             let bc = processed_bytecode[i] & !0x1F; // Keeps the high bits of PUSHN, i.e. the prefix
-            let cnt = (processed_bytecode[i] & 0x1F) + 1; // Keeps the low bits of PUSHN, i.e. the count
+            let cnt = processed_bytecode[i] & 0x1F; // Keeps the low bits of PUSHN, i.e. the count - 1
             let cnt = cnt as usize;
             i += 1;
             if bc != 0x60 {
                 continue;
             }
-            processed_bytecode[i..i + cnt].fill(0xFE);
+            processed_bytecode[i..=i + cnt].fill(0xFE);
             i += cnt;
         }
         self.bytecode = code;
