@@ -58,9 +58,9 @@ impl InMemoryTrieDB {
 
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
+        mut state_nodes: BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
-        let mut embedded_root = Trie::get_embedded_root(state_nodes, root_hash)?;
+        let mut embedded_root = Trie::get_embedded_root(&mut state_nodes, root_hash)?;
         let mut hashed_nodes = vec![];
         embedded_root.commit(Nibbles::default(), &mut hashed_nodes);
 
