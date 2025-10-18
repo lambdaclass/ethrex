@@ -540,7 +540,7 @@ impl ProofCoordinator {
                 .get_fee_config_by_block(block_number)
                 .await?
                 .ok_or(ProofCoordinatorError::InternalError(
-                    "L1 blob base fee not found".to_string(),
+                    "Fee config not found".to_string(),
                 ))?;
 
             fee_configs.push(fee_config);

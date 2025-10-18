@@ -9,15 +9,18 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address, U256,
-    types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction, TxType},
+    types::{
+        Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction, TxType,
+        account_diff::{AccountStateDiff, get_accounts_diff_size},
+    },
 };
 use ethrex_l2_common::state_diff::{
-    AccountStateDiff, BLOCK_HEADER_LEN, L1MESSAGE_LOG_LEN, PRIVILEGED_TX_LOG_LEN,
-    SIMPLE_TX_STATE_DIFF_SIZE, StateDiffError,
+    BLOCK_HEADER_LEN, L1MESSAGE_LOG_LEN, PRIVILEGED_TX_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE,
 };
 use ethrex_l2_common::{
     l1_messages::get_block_l1_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
 };
+use ethrex_levm::utils::get_account_diffs_in_tx;
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
@@ -25,11 +28,11 @@ use ethrex_metrics::{
     metrics_transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_storage::Store;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::ops::Div;
 use std::sync::Arc;
 use tokio::time::Instant;
-use tracing::{debug, error};
+use tracing::debug;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -45,7 +48,8 @@ pub async fn build_payload(
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context = PayloadBuildContext::new(payload, store, blockchain.options.r#type.clone())?;
+    let mut context =
+        PayloadBuildContext::new(payload, store, blockchain.options.r#type.clone()).await?;
 
     fill_transactions(
         blockchain.clone(),
@@ -203,7 +207,13 @@ pub async fn fill_transactions(
             }
         };
 
-        let account_diffs_in_tx = get_account_diffs_in_tx(context)?;
+        let tx_backup = context.vm.db.get_tx_backup().map_err(|e| {
+            BlockProducerError::FailedToGetDataFrom(format!("transaction backup: {e}"))
+        })?;
+        let account_diffs_in_tx =
+            get_account_diffs_in_tx(&context.vm.db, tx_backup).map_err(|e| {
+                BlockProducerError::Custom(format!("Failed to get account diffs from tx: {e}"))
+            })?;
         let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
 
         let (tx_size_without_accounts, new_accounts_diff_size) =
@@ -284,97 +294,6 @@ fn fetch_mempool_transactions(
     Ok(plain_txs)
 }
 
-/// Returns the state diffs introduced by the transaction by comparing the call frame backup
-/// (which holds the state before executing the transaction) with the current state of the cache
-/// (which contains all the writes performed by the transaction).
-fn get_account_diffs_in_tx(
-    context: &PayloadBuildContext,
-) -> Result<HashMap<Address, AccountStateDiff>, BlockProducerError> {
-    let mut modified_accounts = HashMap::new();
-
-    let db = &context.vm.db;
-    let transaction_backup = db
-        .get_tx_backup()
-        .map_err(|e| BlockProducerError::FailedToGetDataFrom(format!("TransactionBackup: {e}")))?;
-    // First we add the account info
-    for (address, original_account) in transaction_backup.original_accounts_info.iter() {
-        let new_account = db.current_accounts_state.get(address).ok_or(
-            BlockProducerError::FailedToGetDataFrom("DB Cache".to_owned()),
-        )?;
-
-        let nonce_diff: u16 = (new_account.info.nonce - original_account.info.nonce)
-            .try_into()
-            .map_err(BlockProducerError::TryIntoError)?;
-
-        let new_balance = if new_account.info.balance != original_account.info.balance {
-            Some(new_account.info.balance)
-        } else {
-            None
-        };
-
-        let bytecode = if new_account.info.code_hash != original_account.info.code_hash {
-            // After execution the code should be in db.codes
-            let code = db.codes.get(&new_account.info.code_hash).ok_or_else(|| {
-                BlockProducerError::FailedToGetDataFrom("Code DB Cache".to_owned())
-            })?;
-            Some(code.clone())
-        } else {
-            None
-        };
-
-        let account_state_diff = AccountStateDiff {
-            new_balance,
-            nonce_diff,
-            storage: BTreeMap::new(), // We add the storage later
-            bytecode,
-            bytecode_hash: None,
-        };
-
-        modified_accounts.insert(*address, account_state_diff);
-    }
-
-    // Then if there is any storage change, we add it to the account state diff
-    for (address, original_storage_slots) in
-        transaction_backup.original_account_storage_slots.iter()
-    {
-        let account_info = db.current_accounts_state.get(address).ok_or(
-            BlockProducerError::FailedToGetDataFrom("DB Cache".to_owned()),
-        )?;
-
-        let mut added_storage = BTreeMap::new();
-        for key in original_storage_slots.keys() {
-            added_storage.insert(
-                *key,
-                *account_info
-                    .storage
-                    .get(key)
-                    .ok_or(BlockProducerError::FailedToGetDataFrom(
-                        "Account info Storage".to_owned(),
-                    ))?,
-            );
-        }
-        if let Some(account_state_diff) = modified_accounts.get_mut(address) {
-            account_state_diff.storage = added_storage;
-        } else {
-            // If the account is not in the modified accounts, we create a new one
-            let account_state_diff = AccountStateDiff {
-                new_balance: None,
-                nonce_diff: 0,
-                storage: added_storage,
-                bytecode: None,
-                bytecode_hash: None,
-            };
-
-            // If account state diff is NOT empty
-            if account_state_diff != AccountStateDiff::default() {
-                modified_accounts.insert(*address, account_state_diff);
-            }
-        }
-    }
-
-    Ok(modified_accounts)
-}
-
 /// Combines the diffs from the current transaction with the existing block diffs.
 /// Transaction diffs represent state changes from the latest transaction execution,
 /// while previous diffs accumulate all changes included in the block so far.
@@ -419,24 +338,11 @@ fn calculate_tx_diff_size(
     head_tx: &HeadTransaction,
     receipt: &Receipt,
 ) -> Result<(u64, u64), BlockProducerError> {
-    let mut tx_state_diff_size = 0;
-    let mut new_accounts_diff_size = 0;
+    let new_accounts_diff_size = get_accounts_diff_size(merged_diffs).map_err(|e| {
+        BlockProducerError::Custom(format!("Failed to calculate account diffs size: {}", e))
+    })?;
 
-    for (address, diff) in merged_diffs.iter() {
-        let encoded = match diff.encode(address) {
-            Ok(encoded) => encoded,
-            Err(StateDiffError::EmptyAccountDiff) => {
-                debug!("Skipping empty account diff for address: {address}");
-                continue;
-            }
-            Err(e) => {
-                error!("Failed to encode account state diff: {e}");
-                return Err(BlockProducerError::FailedToEncodeAccountStateDiff(e));
-            }
-        };
-        let encoded_len: u64 = encoded.len().try_into()?;
-        new_accounts_diff_size += encoded_len;
-    }
+    let mut tx_state_diff_size = 0;
 
     if is_privileged_tx(head_tx) {
         tx_state_diff_size += PRIVILEGED_TX_LOG_LEN;
