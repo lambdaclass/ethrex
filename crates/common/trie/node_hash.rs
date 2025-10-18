@@ -47,6 +47,16 @@ impl NodeHash {
         }
     }
 
+    pub fn from_vec(vec: Vec<u8>) -> NodeHash {
+        match vec.len() {
+            len @ 0..32 => {
+                let buffer: [u8; 31] = vec.try_into().unwrap();
+                NodeHash::Inline((buffer, len as u8))
+            }
+            _ => NodeHash::Hashed(H256::from_slice(&vec)),
+        }
+    }
+
     /// Returns the finalized hash
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
     pub fn finalize(self) -> H256 {
@@ -124,6 +134,14 @@ impl Default for NodeHash {
 impl RLPEncode for NodeHash {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         RLPEncode::encode(&Into::<Vec<u8>>::into(self), buf)
+    }
+
+    fn length(&self) -> usize {
+        match self {
+            NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
+            NodeHash::Inline((_, 0)) => 1,               // if empty then it's encoded to RLP_NULL
+            NodeHash::Inline((_, len)) => *len as usize, // already encoded
+        }
     }
 }
 

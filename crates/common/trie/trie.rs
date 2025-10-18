@@ -117,17 +117,17 @@ impl Trie {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
 
-        self.root = if self.root.is_valid() {
+        if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
             self.root
-                .get_node(self.db.as_ref(), Nibbles::default())?
+                .get_node_mut(self.db.as_ref(), Nibbles::default())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.db.as_ref(), path, value)?
-                .into()
+                .insert(self.db.as_ref(), path, value)?;
         } else {
             // If the trie is empty, just add a leaf.
-            Node::from(LeafNode::new(path, value)).into()
+            self.root = Node::from(LeafNode::new(path, value)).into()
         };
+        self.root.clear_hash();
 
         Ok(())
     }
@@ -139,12 +139,16 @@ impl Trie {
             return Ok(None);
         }
         // If the trie is not empty, call the root node's removal logic.
-        let (node, value) = self
+        let (empty_trie, value) = self
             .root
-            .get_node(self.db.as_ref(), Nibbles::default())?
+            .get_node_mut(self.db.as_ref(), Nibbles::default())?
             .ok_or(TrieError::InconsistentTree)?
             .remove(self.db.as_ref(), Nibbles::from_bytes(path))?;
-        self.root = node.map(Into::into).unwrap_or_default();
+        if empty_trie {
+            self.root = NodeRef::default();
+        } else {
+            self.root.clear_hash();
+        }
 
         Ok(value)
     }
@@ -267,7 +271,7 @@ impl Trie {
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
     pub fn get_embedded_root(
-        all_nodes: &BTreeMap<H256, Vec<u8>>,
+        all_nodes: &mut BTreeMap<H256, Vec<u8>>,
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
@@ -276,14 +280,14 @@ impl Trie {
         }
 
         let root_rlp = all_nodes
-            .get(&root_hash)
+            .remove(&root_hash)
             .ok_or(TrieError::InconsistentTree)?;
 
         fn get_embedded_node(
-            all_nodes: &BTreeMap<H256, Vec<u8>>,
-            cur_node_rlp: &[u8],
+            all_nodes: &mut BTreeMap<H256, Vec<u8>>,
+            cur_node_rlp: Vec<u8>,
         ) -> Result<Node, TrieError> {
-            let cur_node = Node::decode_raw(cur_node_rlp)?;
+            let cur_node = Node::decode_raw_owned(cur_node_rlp)?;
 
             Ok(match cur_node {
                 Node::Branch(mut node) => {
@@ -293,8 +297,12 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match all_nodes.get(&hash.finalize()) {
-                                Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
+                            *choice = match all_nodes.remove(&hash.finalize()) {
+                                Some(rlp) => {
+                                    let node_ref: NodeRef =
+                                        get_embedded_node(all_nodes, rlp)?.into();
+                                    node_ref.with_hash_unchecked(hash)
+                                }
                                 None => hash.into(),
                             };
                         }
@@ -307,8 +315,11 @@ impl Trie {
                         unreachable!()
                     };
 
-                    node.child = match all_nodes.get(&hash.finalize()) {
-                        Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
+                    node.child = match all_nodes.remove(&hash.finalize()) {
+                        Some(rlp) => {
+                            let node_ref: NodeRef = get_embedded_node(all_nodes, rlp)?.into();
+                            node_ref.with_hash_unchecked(hash)
+                        }
                         None => hash.into(),
                     };
 
@@ -318,8 +329,8 @@ impl Trie {
             })
         }
 
-        let root = get_embedded_node(all_nodes, root_rlp)?;
-        Ok(root.into())
+        let root: NodeRef = get_embedded_node(all_nodes, root_rlp)?.into();
+        Ok(root.with_hash_unchecked(root_hash.into()))
     }
 
     /// Builds a trie from a set of nodes with an empty InMemoryTrieDB as a backend because the nodes are embedded in the root.
@@ -331,7 +342,7 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
+        state_nodes: &mut BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
         let root = Self::get_embedded_root(state_nodes, root_hash)?;
@@ -388,14 +399,14 @@ impl Trie {
         fn get_node_inner(
             db: &dyn TrieDB,
             current_path: Nibbles,
-            node: Node,
+            node: Arc<Node>,
             mut partial_path: Nibbles,
         ) -> Result<Vec<u8>, TrieError> {
             // If we reached the end of the partial path, return the current node
             if partial_path.is_empty() {
                 return Ok(node.encode_raw());
             }
-            match node {
+            match &*node {
                 Node::Branch(branch_node) => match partial_path.next_choice() {
                     Some(idx) => {
                         let child_ref = &branch_node.choices[idx];
@@ -448,7 +459,11 @@ impl Trie {
         if self.hash_no_commit() == *EMPTY_TRIE_HASH {
             return Ok(None);
         }
-        self.root.get_node(self.db.as_ref(), Nibbles::default())
+        let node = self
+            .root
+            .get_node(self.db.as_ref(), Nibbles::default())?
+            .unwrap();
+        Ok(Some((*node).clone()))
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
@@ -476,16 +491,16 @@ impl ProofTrie {
         partial_path: Nibbles,
         external_ref: NodeHash,
     ) -> Result<(), TrieError> {
-        self.0.root = if self.0.root.is_valid() {
+        if self.0.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
             self.0
                 .root
-                .get_node(self.0.db.as_ref(), Nibbles::default())?
+                .get_node_mut(self.0.db.as_ref(), Nibbles::default())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.0.db.as_ref(), partial_path, external_ref)?
-                .into()
+                .insert(self.0.db.as_ref(), partial_path, external_ref)?;
+            self.0.root.clear_hash();
         } else {
-            external_ref.into()
+            self.0.root = external_ref.into();
         };
 
         Ok(())
@@ -922,12 +937,12 @@ mod test {
                 if *should_remove {
                     trie.remove(val).unwrap();
                     cita_trie.remove(val).unwrap();
+                    // Compare hashes
+                    let hash = trie.hash().unwrap().0.to_vec();
+                    let cita_hash = cita_trie.root().unwrap();
+                    prop_assert_eq!(hash, cita_hash);
                 }
             }
-            // Compare hashes
-            let hash = trie.hash().unwrap().0.to_vec();
-            let cita_hash = cita_trie.root().unwrap();
-            prop_assert_eq!(hash, cita_hash);
         }
 
         #[test]
@@ -950,12 +965,12 @@ mod test {
                 if remove(val) {
                     trie.remove(val).unwrap();
                     cita_trie.remove(val).unwrap();
+                    // Compare hashes
+                    let hash = trie.hash().unwrap().0.to_vec();
+                    let cita_hash = cita_trie.root().unwrap();
+                    prop_assert_eq!(hash, cita_hash);
                 }
             }
-            // Compare hashes
-            let hash = trie.hash().unwrap().0.to_vec();
-            let cita_hash = cita_trie.root().unwrap();
-            prop_assert_eq!(hash, cita_hash);
         }
 
         #[test]
