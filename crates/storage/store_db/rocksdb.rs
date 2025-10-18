@@ -538,10 +538,10 @@ impl Store {
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
-                batch.put_cf(&cf_misc, "last_written", path.as_ref());
                 batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
                 ctr += 1;
                 if ctr > 10_000 {
+                    batch.put_cf(&cf_misc, "last_written", path.as_ref());
                     self.db.write(std::mem::take(&mut batch))?;
                 }
 
@@ -557,10 +557,10 @@ impl Store {
                         return Ok(());
                     };
                     let key = apply_prefix(Some(account_hash), path);
-                    batch.put_cf(&cf_misc, "last_written", key.as_ref());
                     batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
                     ctr += 1;
                     if ctr > 10_000 {
+                        batch.put_cf(&cf_misc, "last_written", key.as_ref());
                         self.db.write(std::mem::take(&mut batch))?;
                     }
                     if let Ok(value) = control_rx.try_recv() {
