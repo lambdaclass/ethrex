@@ -1,0 +1,54 @@
+name: Ethrex Release
+
+on:
+  release:
+    types:
+      - edited
+
+permissions:
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  retag_docker_images:
+    name: "Tag latest Docker images"
+    runs-on: ubuntu-latest
+    if: ${{ github.event.changes.make_latest.to == true }}
+
+    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
+    permissions:
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Get new tag
+        run: echo "TAG_VERSION=$(echo ${{ github.event.release.tag_name.from }} | cut -d- -f1 | tr -d v)" >> $GITHUB_ENV
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Docker images
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }}-l2
+
+      - name: Retag Docker images
+        run: |
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }}-l2 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }}-l2 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
+
+      - name: Push retagged Docker images
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2
