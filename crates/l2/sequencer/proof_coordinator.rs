@@ -1,9 +1,6 @@
+use crate::SequencerConfig;
 use crate::sequencer::errors::{ConnectionHandlerError, ProofCoordinatorError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
-use crate::sequencer::utils::get_latest_sent_batch;
-use crate::{
-    BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-};
 use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::BlobsBundle;
@@ -13,7 +10,7 @@ use ethrex_common::{
     Address,
     types::{Block, blobs_bundle},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
@@ -87,6 +84,7 @@ pub enum ProofData {
     BatchResponse {
         batch_number: Option<u64>,
         input: Option<ProverInputData>,
+        format: Option<ProofFormat>,
     },
 
     /// 6.
@@ -126,10 +124,11 @@ impl ProofData {
     }
 
     /// Builder function for creating a BatchResponse
-    pub fn batch_response(batch_number: u64, input: ProverInputData) -> Self {
+    pub fn batch_response(batch_number: u64, input: ProverInputData, format: ProofFormat) -> Self {
         ProofData::BatchResponse {
             batch_number: Some(batch_number),
             input: Some(input),
+            format: Some(format),
         }
     }
 
@@ -137,6 +136,7 @@ impl ProofData {
         ProofData::BatchResponse {
             batch_number: None,
             input: None,
+            format: None,
         }
     }
 
@@ -183,35 +183,33 @@ pub struct ProofCoordinator {
     validium: bool,
     needed_proof_types: Vec<ProverType>,
     commit_hash: String,
+    aligned: bool,
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
     qpl_tool_path: Option<String>,
 }
 
 impl ProofCoordinator {
-    #[allow(clippy::too_many_arguments)]
     pub async fn new(
-        config: &ProofCoordinatorConfig,
-        committer_config: &CommitterConfig,
-        eth_config: &EthConfig,
-        proposer_config: &BlockProducerConfig,
+        config: &SequencerConfig,
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofCoordinatorError> {
         let eth_client = EthClient::new_with_config(
-            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
-            eth_config.max_number_of_retries,
-            eth_config.backoff_factor,
-            eth_config.min_retry_delay,
-            eth_config.max_retry_delay,
-            Some(eth_config.maximum_allowed_max_fee_per_gas),
-            Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
+            config.eth.rpc_url.iter().map(AsRef::as_ref).collect(),
+            config.eth.max_number_of_retries,
+            config.eth.backoff_factor,
+            config.eth.min_retry_delay,
+            config.eth.max_retry_delay,
+            Some(config.eth.maximum_allowed_max_fee_per_gas),
+            Some(config.eth.maximum_allowed_max_fee_per_blob_gas),
         )?;
-        let on_chain_proposer_address = committer_config.on_chain_proposer_address;
+        let on_chain_proposer_address = config.l1_committer.on_chain_proposer_address;
 
-        let rpc_url = eth_config
+        let rpc_url = config
+            .eth
             .rpc_url
             .first()
             .ok_or(ProofCoordinatorError::Custom(
@@ -220,22 +218,23 @@ impl ProofCoordinator {
             .to_string();
 
         Ok(Self {
-            listen_ip: config.listen_ip,
-            port: config.listen_port,
+            listen_ip: config.proof_coordinator.listen_ip,
+            port: config.proof_coordinator.listen_port,
             store,
             eth_client,
             on_chain_proposer_address,
-            elasticity_multiplier: proposer_config.elasticity_multiplier,
+            elasticity_multiplier: config.block_producer.elasticity_multiplier,
             rollup_store,
             rpc_url,
-            tdx_private_key: config.tdx_private_key,
+            tdx_private_key: config.proof_coordinator.tdx_private_key,
             blockchain,
-            validium: config.validium,
+            validium: config.proof_coordinator.validium,
             needed_proof_types,
             commit_hash: get_commit_hash(),
+            aligned: config.aligned.aligned_mode,
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
-            qpl_tool_path: config.qpl_tool_path.clone(),
+            qpl_tool_path: config.proof_coordinator.qpl_tool_path.clone(),
         })
     }
 
@@ -246,17 +245,7 @@ impl ProofCoordinator {
         blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofCoordinatorError> {
-        let state = Self::new(
-            &cfg.proof_coordinator,
-            &cfg.l1_committer,
-            &cfg.eth,
-            &cfg.block_producer,
-            store,
-            rollup_store,
-            blockchain,
-            needed_proof_types,
-        )
-        .await?;
+        let state = Self::new(&cfg, store, rollup_store, blockchain, needed_proof_types).await?;
         let listener =
             Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
         let mut proof_coordinator = ProofCoordinator::start(state);
@@ -298,6 +287,7 @@ impl ProofCoordinator {
         commit_hash: String,
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received");
+        let batch_to_prove = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
 
         if commit_hash != self.commit_hash {
             error!(
@@ -311,20 +301,11 @@ impl ProofCoordinator {
             return Ok(());
         }
 
-        let batch_to_verify = 1 + get_latest_sent_batch(
-            self.needed_proof_types.clone(),
-            &self.rollup_store,
-            &self.eth_client,
-            self.on_chain_proposer_address,
-        )
-        .await
-        .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
-
         let mut all_proofs_exist = true;
         for proof_type in &self.needed_proof_types {
             if self
                 .rollup_store
-                .get_proof_by_batch_and_type(batch_to_verify, *proof_type)
+                .get_proof_by_batch_and_type(batch_to_prove, *proof_type)
                 .await?
                 .is_none()
             {
@@ -334,12 +315,16 @@ impl ProofCoordinator {
         }
 
         let response =
-            if all_proofs_exist || !self.rollup_store.contains_batch(&batch_to_verify).await? {
+            if all_proofs_exist || !self.rollup_store.contains_batch(&batch_to_prove).await? {
                 debug!("Sending empty BatchResponse");
                 ProofData::empty_batch_response()
             } else {
-                let input = self.create_prover_input(batch_to_verify).await?;
-                debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+                let input = self.create_prover_input(batch_to_prove).await?;
+                let format = if self.aligned {
+                    ProofFormat::Compressed
+                } else {
+                    ProofFormat::Groth16
+                };
                 metrics!(
                     // First request starts a timer until a proof is received. The elapsed time will be
                     // the estimated proving time.
@@ -348,13 +333,14 @@ impl ProofCoordinator {
                     //   2. Communication does not fail
                     //   3. Communication adds negligible overhead in comparison with proving time
                     let mut lock = self.request_timestamp.lock().await;
-                    lock.entry(batch_to_verify).or_insert(SystemTime::now());
+                    lock.entry(batch_to_prove).or_insert(SystemTime::now());
                 );
-                ProofData::batch_response(batch_to_verify, input)
+                debug!("Sending BatchResponse for block_number: {batch_to_prove}");
+                ProofData::batch_response(batch_to_prove, input, format)
             };
 
         send_response(stream, &response).await?;
-        info!("BatchResponse sent for batch number: {batch_to_verify}");
+        info!("BatchResponse sent for batch number: {batch_to_prove}");
 
         Ok(())
     }

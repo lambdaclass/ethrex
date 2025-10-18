@@ -95,7 +95,7 @@ async fn get_tdx_address(
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
 ) -> Result<Address, ProofCoordinatorError> {
-    let calldata = keccak("TDXVERIFIER()")[..4].to_vec();
+    let calldata = keccak("TDX_VERIFIER_ADDRESS()")[..4].to_vec();
 
     let response = eth_client
         .call(
@@ -109,7 +109,7 @@ async fn get_tdx_address(
 
     Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
         ProofCoordinatorError::InternalError(
-            "Failed to convert TDXVERIFIER result to address".to_owned(),
+            "Failed to convert TDX_VERIFIER_ADDRESS result to address".to_owned(),
         )
     })
 }
