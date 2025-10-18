@@ -397,6 +397,9 @@ impl Store {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
+            if update.removed_storage {
+                account_state.storage_root = *EMPTY_TRIE_HASH;
+            }
             if let Some(info) = &update.info {
                 account_state.nonce = info.nonce;
                 account_state.balance = info.balance;
@@ -467,6 +470,9 @@ impl Store {
                     if let Some(code) = &update.code {
                         self.add_account_code(info.code_hash, code.clone()).await?;
                     }
+                }
+                if update.removed_storage {
+                    account_state.storage_root = *EMPTY_TRIE_HASH;
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
@@ -1454,17 +1460,19 @@ mod tests {
         F: FnOnce(Store) -> Fut,
         Fut: std::future::Future<Output = ()>,
     {
+        let nonce: u64 = H256::random().to_low_u64_be();
+        let path = format!("store-test-db-{nonce}");
         // Remove preexistent DBs in case of a failed previous test
         if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs("store-test-db");
+            remove_test_dbs(&path);
         };
         // Build a new store
-        let store = Store::new("store-test-db", engine_type).expect("Failed to create test db");
+        let store = Store::new(&path, engine_type).expect("Failed to create test db");
         // Run the test
         test_func(store).await;
         // Remove store (if needed)
         if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs("store-test-db");
+            remove_test_dbs(&path);
         };
     }
 

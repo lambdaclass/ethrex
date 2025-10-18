@@ -1,7 +1,7 @@
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
-use rocksdb::{MultiThreaded, OptimisticTransactionDB};
+use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Column family name
     cf_name: String,
     /// Storage trie address prefix
@@ -23,7 +23,7 @@ pub struct RocksDBTrieDB {
 
 impl RocksDBTrieDB {
     pub fn new(
-        db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+        db: Arc<DBWithThreadMode<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
@@ -95,7 +95,7 @@ impl TrieDB for RocksDBTrieDB {
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
         let cf_snapshot = self.cf_handle_flatkeyvalue()?;
-        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        let mut batch = rocksdb::WriteBatch::default();
 
         for (key, value) in key_values {
             let cf = if key.is_leaf() { &cf_snapshot } else { &cf };
@@ -115,7 +115,7 @@ impl TrieDB for RocksDBTrieDB {
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
         let cf_flatkeyvalue = self.cf_handle_flatkeyvalue()?;
-        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        let mut batch = rocksdb::WriteBatch::default();
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
 
@@ -141,7 +141,7 @@ impl TrieDB for RocksDBTrieDB {
 mod tests {
     use super::*;
     use ethrex_trie::Nibbles;
-    use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
+    use rocksdb::{ColumnFamilyDescriptor, DBCommon, MultiThreaded, Options};
     use tempfile::TempDir;
 
     #[test]
@@ -155,10 +155,12 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor],
+            vec![cf_descriptor, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
@@ -194,11 +196,13 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
+        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor],
+            vec![cf_descriptor, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
@@ -231,11 +235,13 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
+        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor],
+            vec![cf_descriptor, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
