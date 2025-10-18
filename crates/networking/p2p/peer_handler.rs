@@ -19,7 +19,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
+    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
@@ -469,11 +469,13 @@ impl PeerHandler {
                     )
                     .await
                     {
-                        if are_block_headers_chained(&block_headers, &order) {
+                        if !block_headers.is_empty()
+                            && are_block_headers_chained(&block_headers, &order)
+                        {
                             return Ok(Some(block_headers));
                         } else {
                             warn!(
-                                "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
+                                "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
                             );
                         }
                     }
@@ -678,7 +680,7 @@ impl PeerHandler {
         limit: H256,
         account_state_snapshots_dir: &Path,
         pivot_header: &mut BlockHeader,
-        block_sync_state: &mut BlockSyncState,
+        block_sync_state: &mut SnapBlockSyncState,
     ) -> Result<(), PeerHandlerError> {
         METRICS
             .current_step
