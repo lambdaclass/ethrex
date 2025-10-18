@@ -3,6 +3,7 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
+    opcodes::Opcode,
     utils::{JumpTargetFilter, restore_cache_state},
     vm::VM,
 };
@@ -12,6 +13,7 @@ use ethrex_common::{Address, U256};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
+    hint::assert_unchecked,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -242,8 +244,10 @@ pub struct CallFrame {
     pub to: Address,
     /// Address of the code to execute. Usually the same as `to`, but can be different
     pub code_address: Address,
-    /// Bytecode to execute
+    /// Verbatim bytecode for CODECOPY et al
     pub bytecode: Bytes,
+    /// Executable bytecode
+    pub processed_bytecode: Bytes,
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
@@ -258,9 +262,6 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
-    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
-    /// push instructions).
-    pub jump_target_filter: JumpTargetFilter,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -335,18 +336,18 @@ impl CallFrame {
         // Note: Do not use ..Default::default() because it has runtime cost.
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
-        Self {
+        let mut frame = Self {
             gas_limit,
             gas_remaining: gas_limit as i64,
             msg_sender,
             to,
             code_address,
-            bytecode: bytecode.clone(),
+            bytecode: Default::default(),
+            processed_bytecode: Default::default(),
             msg_value,
             calldata,
             is_static,
             depth,
-            jump_target_filter: JumpTargetFilter::new(bytecode),
             should_transfer_value,
             is_create,
             ret_offset,
@@ -357,15 +358,17 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
-        }
+        };
+        frame.set_code(bytecode);
+        frame
     }
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        if self.pc < self.bytecode.len() {
+        if self.pc < self.processed_bytecode.len() {
             #[expect(unsafe_code, reason = "bounds checked above")]
             unsafe {
-                *self.bytecode.get_unchecked(self.pc)
+                *self.processed_bytecode.get_unchecked(self.pc)
             }
         } else {
             0
@@ -390,10 +393,32 @@ impl CallFrame {
         Ok(())
     }
 
-    pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.jump_target_filter = JumpTargetFilter::new(code.clone());
+    // TODO: receive processed bytecode, cache on DB
+    #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
+    pub fn set_code(&mut self, code: Bytes) {
+        let len = code.len();
+        let mut processed_bytecode = code.to_vec();
+        // This simplifies the loop while keeping everything else valid.
+        // 0xFE: INVALID opcode
+        processed_bytecode.resize(len + 32, 0xFE);
+        let mut i = 0;
+        while i < len {
+            // SAFETY: we just extended processed_bytecode by 32 elements,
+            // while len == code.len() == processed_bytecode.len() - 32
+            // and `while` guard checking i < len.
+            unsafe { assert_unchecked(i + 32 < processed_bytecode.len()) };
+            let bc = processed_bytecode[i] & !0xE; // Keeps the high bits of PUSHN, i.e. the prefix
+            let cnt = processed_bytecode[i] & 0xE; // Keeps the low bits of PUSHN, i.e. the count
+            let cnt = cnt as usize;
+            i += 1;
+            if bc != 0x60 {
+                continue;
+            }
+            processed_bytecode[i..i + cnt].fill(0xFE);
+            i += cnt;
+        }
         self.bytecode = code;
-        Ok(())
+        self.processed_bytecode = Bytes::from_owner(processed_bytecode);
     }
 }
 
