@@ -1,5 +1,5 @@
 use crate::{
-    cli::remove_db,
+    cli::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2, remove_db},
     initializers::{init_l1, init_store, init_tracing},
     l2::{
         self,
@@ -39,13 +39,9 @@ const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
-pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
-pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
-
 const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
 const UNPAUSE_CONTRACT_SELECTOR: &str = "unpause()";
 const REVERT_BATCH_SELECTOR: &str = "revertBatch(uint256)";
-
 #[derive(Parser)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct L2Command {
@@ -87,10 +83,8 @@ impl L2Command {
             let contract_addresses =
                 l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;
 
-            l2_options = l2::options::Options {
-                node_opts: crate::cli::Options::default_l2(),
-                ..Default::default()
-            };
+            l2_options.node_opts = crate::cli::Options::default_l2();
+            l2_options.populate_with_defaults();
             l2_options
                 .sequencer_opts
                 .committer_opts
@@ -384,8 +378,10 @@ impl Command {
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
 
-                #[cfg(feature = "rollup_storage_sql")]
+                #[cfg(feature = "l2-sql")]
                 let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
+                #[cfg(not(feature = "l2-sql"))]
+                let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::InMemory;
 
                 // Init stores
                 let store = Store::new_from_genesis(
