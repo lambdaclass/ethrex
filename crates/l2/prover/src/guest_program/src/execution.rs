@@ -194,8 +194,14 @@ pub fn stateless_validation_l2(
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
+        use bytes::Bytes;
+        use ethrex_common::types::Code;
+
         let mut guest_program_state = GuestProgramState {
-            codes_hashed,
+            codes_hashed: codes_hashed
+                .into_iter()
+                .map(|(h, c)| (h, Code::from_bytecode(Bytes::from_owner(c))))
+                .collect(),
             parent_block_header,
             first_block_number: initial_db.first_block_number,
             chain_config: initial_db.chain_config,
@@ -274,7 +280,11 @@ fn execute_stateless(
     #[cfg(feature = "l2")]
     let nodes_hashed = guest_program_state.nodes_hashed.clone();
     #[cfg(feature = "l2")]
-    let codes_hashed = guest_program_state.codes_hashed.clone();
+    let codes_hashed = guest_program_state
+        .codes_hashed
+        .iter()
+        .map(|(h, c)| (*h, c.bytecode.to_vec()))
+        .collect();
     #[cfg(feature = "l2")]
     let parent_block_header_clone = guest_program_state.parent_block_header.clone();
 

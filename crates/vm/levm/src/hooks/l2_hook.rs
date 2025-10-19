@@ -5,7 +5,10 @@ use crate::{
     vm::VM,
 };
 
-use ethrex_common::{Address, H160, U256, types::fee_config::FeeConfig};
+use ethrex_common::{
+    Address, H160, H256, U256,
+    types::{Code, fee_config::FeeConfig},
+};
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -91,8 +94,11 @@ impl Hook for L2Hook {
             // If the transaction failed some validation, but it must still be included
             // To prevent it from taking effect, we force it to revert
             vm.current_call_frame.msg_value = U256::zero();
-            vm.current_call_frame
-                .set_code(vec![Opcode::INVALID.into()].into())?;
+            vm.current_call_frame.set_code(Code {
+                hash: H256::zero(),
+                bytecode: vec![Opcode::INVALID.into()].into(),
+                jump_targets: Vec::new(),
+            })?;
             return Ok(());
         }
 

@@ -9,7 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
@@ -35,7 +35,7 @@ pub struct StoreInner {
     bodies: HashMap<BlockHash, BlockBody>,
     headers: HashMap<BlockHash, BlockHeader>,
     // Maps code hashes to code
-    account_codes: HashMap<H256, Bytes>,
+    account_codes: HashMap<H256, Code>,
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
@@ -373,12 +373,12 @@ impl StoreEngine for Store {
             .cloned())
     }
 
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        self.inner()?.account_codes.insert(code_hash, code);
+    async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
+        self.inner()?.account_codes.insert(code.hash, code);
         Ok(())
     }
 
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         Ok(self.inner()?.account_codes.get(&code_hash).cloned())
     }
 
@@ -692,7 +692,9 @@ impl StoreEngine for Store {
         let mut store = self.inner()?;
 
         for (code_hash, code) in account_codes {
-            store.account_codes.insert(code_hash, code);
+            store
+                .account_codes
+                .insert(code_hash, Code::from_bytecode(code));
         }
 
         Ok(())

@@ -19,11 +19,47 @@ use crate::{
     utils::keccak,
 };
 
-#[allow(unused)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Code {
+    pub hash: H256,
+    pub bytecode: Bytes,
+    pub jump_targets: Vec<u16>,
+}
+
+impl Code {
+    pub fn from_bytecode(code: Bytes) -> Self {
+        let jump_targets = Self::compute_jump_targets(&code);
+        Self {
+            hash: keccak(code.as_ref()),
+            bytecode: code,
+            jump_targets,
+        }
+    }
+
+    fn compute_jump_targets(code: &[u8]) -> Vec<u16> {
+        debug_assert!(code.len() <= u16::MAX as usize);
+        let mut targets = Vec::new();
+        let mut i = 0;
+        while i < code.len() {
+            match code[i] {
+                0x5B => {
+                    targets.push(i as u16);
+                }
+                c @ 0x60..0x80 => {
+                    i += (c - 0x59) as usize;
+                }
+                _ => (),
+            }
+            i += 1;
+        }
+        targets
+    }
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub info: AccountInfo,
-    pub code: Bytes,
+    pub code: Code,
     pub storage: BTreeMap<H256, U256>,
 }
 
@@ -71,7 +107,7 @@ impl From<GenesisAccount> for Account {
                 balance: genesis.balance,
                 nonce: genesis.nonce,
             },
-            code: genesis.code,
+            code: Code::from_bytecode(genesis.code),
             storage: genesis
                 .storage
                 .iter()
@@ -160,11 +196,11 @@ impl From<&GenesisAccount> for AccountState {
 }
 
 impl Account {
-    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: BTreeMap<H256, U256>) -> Self {
+    pub fn new(balance: U256, code: Code, nonce: u64, storage: BTreeMap<H256, U256>) -> Self {
         Self {
             info: AccountInfo {
                 balance,
-                code_hash: keccak(code.as_ref()).0.into(),
+                code_hash: code.hash,
                 nonce,
             },
             code,
