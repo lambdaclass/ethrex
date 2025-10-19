@@ -3530,7 +3530,6 @@ dependencies = [
  "ethrex-sdk",
  "ethrex-storage 4.0.0",
  "ethrex-storage-rollup",
- "ethrex-trie 4.0.0",
  "ethrex-vm",
  "eyre",
  "genesis-tool",
