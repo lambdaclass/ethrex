@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       network:
-        description: "Network name"
+        description: "Network name (use 'all' to run both)"
         required: false
         default: "hoodi"
       timeout:
@@ -22,6 +22,23 @@ on:
         description: "Minimum block height for progress check"
         required: false
         default: "10"
+  workflow_call:
+    inputs:
+      network:
+        description: "Network name"
+        required: false
+        default: "hoodi"
+        type: string
+      timeout:
+        description: "Assertoor test timeout"
+        required: false
+        default: "120m"
+        type: string
+      minBlockHeight:
+        description: "Minimum block height for progress check"
+        required: false
+        default: "10"
+        type: string
 
 permissions:
   contents: read
@@ -31,57 +48,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  run-kurtosis-assertoor:
-    name: Run Kurtosis Assertoor
-    runs-on: ethrex-sync
-    env:
-      NETWORK_NAME: ${{ inputs.network || 'hoodi' }}
-      TIMEOUT: ${{ inputs.timeout || '120m' }}
-      MIN_BLOCK_HEIGHT: ${{ inputs.minBlockHeight || '10' }}
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Generate Kurtosis args
+      - id: targets
         run: |
-          cat > .github/config/assertoor/network_params.generated.yaml <<YAML
-          participants:
-            - el_type: ethrex
-              el_image: ghcr.io/lambdaclass/ethrex:main
-              el_extra_params:
-                - "--syncmode=snap"
-              cl_type: lighthouse
-              cl_image: sigp/lighthouse:v7.1.0
-              count: 1
-
-          network_params:
-            network: "${NETWORK_NAME}"
-
-          additional_services:
-            - assertoor
-
-          assertoor_params:
-            tests:
-              - test_url: https://raw.githubusercontent.com/lambdaclass/ethrex/${GITHUB_SHA}/.github/config/assertoor/syncing-check.yaml
-                config:
-                  timeout: "${TIMEOUT}"
-                  minBlockHeight: ${MIN_BLOCK_HEIGHT}
-          YAML
-
-      - name: Show generated args
-        if: always()
-        run: |
-          echo '--- Generated Kurtosis args ---'
-          if [ -f .github/config/assertoor/network_params.generated.yaml ]; then
-            cat .github/config/assertoor/network_params.generated.yaml
+          event_name="${GITHUB_EVENT_NAME}"
+          if [[ "$event_name" == "schedule" ]]; then
+            json='[{"network":"hoodi","timeout":"120m","minBlockHeight":"10"},{"network":"sepolia","timeout":"120m","minBlockHeight":"10"}]'
+          elif [[ "$event_name" == "pull_request" ]]; then
+            json='[{"network":"hoodi","timeout":"120m","minBlockHeight":"10"}]'
           else
-            echo 'Generated file not found'
-          fi
+            network=$(jq -r '.inputs.network // empty' "$GITHUB_EVENT_PATH")
+            timeout=$(jq -r '.inputs.timeout // empty' "$GITHUB_EVENT_PATH")
+            min_block_height=$(jq -r '.inputs.minBlockHeight // empty' "$GITHUB_EVENT_PATH")
 
-      - name: Run assertoor
-        uses: ethpandaops/kurtosis-assertoor-github-action@v1
+            timeout=${timeout:-120m}
+            min_block_height=${min_block_height:-10}
+
+            if [[ -z "$network" || "$network" == "all" ]]; then
+              json='[{"network":"hoodi","timeout":"'"$timeout"'","minBlockHeight":"'"$min_block_height"'"},{"network":"sepolia","timeout":"'"$timeout"'","minBlockHeight":"'"$min_block_height"'"}]'
+            else
+              json='[{"network":"'"$network"'","timeout":"'"$timeout"'","minBlockHeight":"'"$min_block_height"'"}]'
+            fi
+          fi
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+
+  sync:
+    needs: prepare
+    name: Sync ${{ matrix.network }}
+    runs-on: ethrex-sync
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: ./.github/actions/snapsync-run
         with:
-          enclave_name: "ethrex-assertoor-hoodi"
-          kurtosis_version: "1.10.2"
-          ethereum_package_url: "github.com/ethpandaops/ethereum-package"
-          ethereum_package_branch: "82e5a7178138d892c0c31c3839c89d53ffd42d9a"
-          ethereum_package_args: ".github/config/assertoor/network_params.generated.yaml"
+          network: ${{ matrix.network }}
+          timeout: ${{ matrix.timeout }}
+          minBlockHeight: ${{ matrix.minBlockHeight }}

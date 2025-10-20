@@ -1,0 +1,67 @@
+name: Ethrex Snapsync
+description: Run an ethrex snapsync assertion against a specified network.
+inputs:
+  network:
+    description: Network name to target.
+    required: true
+  timeout:
+    description: Assertoor test timeout.
+    required: true
+  minBlockHeight:
+    description: Minimum block height for progress check.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+
+    - name: Generate Kurtosis args
+      shell: bash
+      env:
+        NETWORK_NAME: ${{ inputs.network }}
+        TIMEOUT: ${{ inputs.timeout }}
+        MIN_BLOCK_HEIGHT: ${{ inputs.minBlockHeight }}
+      run: |
+        cat > .github/config/assertoor/network_params.generated.yaml <<YAML
+        participants:
+          - el_type: ethrex
+            el_image: ghcr.io/lambdaclass/ethrex:main
+            el_extra_params:
+              - "--syncmode=snap"
+            cl_type: lighthouse
+            cl_image: sigp/lighthouse:v7.1.0
+            count: 1
+
+        network_params:
+          network: "${NETWORK_NAME}"
+
+        additional_services:
+          - assertoor
+
+        assertoor_params:
+          tests:
+            - test_url: https://raw.githubusercontent.com/lambdaclass/ethrex/${GITHUB_SHA}/.github/config/assertoor/syncing-check.yaml
+              config:
+                timeout: "${TIMEOUT}"
+                minBlockHeight: ${MIN_BLOCK_HEIGHT}
+        YAML
+
+    - name: Show generated args
+      if: always()
+      shell: bash
+      run: |
+        echo '--- Generated Kurtosis args ---'
+        if [ -f .github/config/assertoor/network_params.generated.yaml ]; then
+          cat .github/config/assertoor/network_params.generated.yaml
+        else
+          echo 'Generated file not found'
+        fi
+
+    - name: Run assertoor
+      uses: ethpandaops/kurtosis-assertoor-github-action@v1
+      with:
+        enclave_name: ethrex-assertoor-${{ inputs.network }}
+        kurtosis_version: 1.10.2
+        ethereum_package_url: github.com/ethpandaops/ethereum-package
+        ethereum_package_branch: 82e5a7178138d892c0c31c3839c89d53ffd42d9a
+        ethereum_package_args: .github/config/assertoor/network_params.generated.yaml
