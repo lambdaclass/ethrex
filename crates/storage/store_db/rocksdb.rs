@@ -1,19 +1,21 @@
 use crate::{
+    AccountUpdatesList, hash_address, hash_key,
     rlp::AccountCodeHashRLP,
     trie_db::{
         layering::{TrieLayerCache, TrieWrapper, apply_prefix},
         rocksdb_locked::RocksDBLockedTrieDB,
+        rocksdb_preread::RocksDBPreRead,
     },
 };
 use bytes::Bytes;
 use ethrex_common::{
     H256,
     types::{
-        AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-        Receipt, Transaction,
+        AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, Index, Receipt, Transaction,
     },
 };
-use ethrex_trie::{Nibbles, Node, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch,
@@ -92,7 +94,7 @@ const CF_SNAP_STATE: &str = "snap_state";
 /// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
 /// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-const CF_TRIE_NODES: &str = "trie_nodes";
+pub(crate) const CF_TRIE_NODES: &str = "trie_nodes";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -109,9 +111,9 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
 const CF_FULLSYNC_HEADERS: &str = "fullsync_headers";
 
-pub const CF_FLATKEYVALUE: &str = "flatkeyvalue";
+pub(crate) const CF_FLATKEYVALUE: &str = "flatkeyvalue";
 
-pub const CF_MISC_VALUES: &str = "misc_values";
+pub(crate) const CF_MISC_VALUES: &str = "misc_values";
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -609,6 +611,77 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    fn apply_account_updates_from_trie_batch(
+        &self,
+        state_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> Result<AccountUpdatesList, StoreError> {
+        let mut ret_storage_updates = Vec::new();
+        let mut code_updates = Vec::new();
+        let trie = Arc::new(RocksDBPreRead::new(
+            self.db.clone(),
+            account_updates,
+            self.trie_cache.clone(),
+            state_root,
+        )?);
+
+        let mut state_trie = Trie::open(Box::new(trie.state_trie()), state_root);
+        for update in account_updates {
+            let hashed_address = hash_address(&update.address);
+            if update.removed {
+                // Remove account from trie
+                state_trie.remove(&hashed_address)?;
+                continue;
+            }
+            // Add or update AccountState in the trie
+            // Fetch current state or create a new state to be inserted
+            let mut account_state = match state_trie.get(&hashed_address)? {
+                Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                None => AccountState::default(),
+            };
+            if update.removed_storage {
+                account_state.storage_root = *EMPTY_TRIE_HASH;
+            }
+            if let Some(info) = &update.info {
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+                // Store updated code in DB
+                if let Some(code) = &update.code {
+                    code_updates.push((info.code_hash, code.clone()));
+                }
+            }
+            // Store the added storage in the account's storage trie and compute its new root
+            if !update.added_storage.is_empty() {
+                let mut storage_trie = Trie::open(
+                    Box::new(trie.storage_trie(H256::from_slice(&hashed_address))),
+                    account_state.storage_root,
+                );
+                for (storage_key, storage_value) in &update.added_storage {
+                    let hashed_key = hash_key(storage_key);
+                    if storage_value.is_zero() {
+                        storage_trie.remove(&hashed_key)?;
+                    } else {
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    }
+                }
+                let (storage_hash, storage_updates) =
+                    storage_trie.collect_changes_since_last_hash();
+                account_state.storage_root = storage_hash;
+                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+            }
+            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+        }
+        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+
+        Ok(AccountUpdatesList {
+            state_trie_hash,
+            state_updates,
+            storage_updates: ret_storage_updates,
+            code_updates,
+        })
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         let trie_cache = self.trie_cache.clone();
