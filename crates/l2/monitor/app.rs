@@ -29,19 +29,18 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
-use crate::monitor::utils::SelectableScroller;
-use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
-use crate::sequencer::configs::MonitorConfig;
 use crate::{
     SequencerConfig,
-    monitor::widget::{
-        BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable,
-        L2ToL1MessagesTable, MempoolTable, NodeStatusTable, tabs::TabsState,
+    based::sequencer_state::SequencerState,
+    monitor::{
+        utils::SelectableScroller,
+        widget::{
+            BatchesTable, BlocksTable, ETHREX_LOGO, GlobalChainStatusTable, L1ToL2MessagesTable,
+            L2ToL1MessagesTable, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS, MempoolTable,
+            NodeStatusTable, rich_accounts::RichAccountsTable, tabs::TabsState,
+        },
     },
-    sequencer::errors::MonitorError,
-};
-use crate::{
-    based::sequencer_state::SequencerState, monitor::widget::rich_accounts::RichAccountsTable,
+    sequencer::{configs::MonitorConfig, errors::MonitorError},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
