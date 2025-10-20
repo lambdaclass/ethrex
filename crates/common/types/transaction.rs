@@ -139,7 +139,6 @@ impl RLPEncode for WrappedEIP4844Transaction {
 
 impl RLPDecode for WrappedEIP4844Transaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedEIP4844Transaction, &[u8]), RLPDecodeError> {
-        // Check if what we have is a blobless tx
         let decoder = Decoder::new(rlp)?;
         let Ok((tx, decoder)) = decoder.decode_field("tx") else {
             // Handle the case of blobless transaction
