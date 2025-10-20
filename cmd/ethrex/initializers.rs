@@ -532,6 +532,11 @@ pub async fn regenerate_head_state(
 
     // Find the last block with a known state root
     while !store.has_state_root(current_last_header.state_root)? {
+        if current_last_header.number == 0 {
+            return Err(eyre::eyre!(
+                "Unknown state found in DB. Please run `ethrex removedb` and restart node"
+            ));
+        }
         let parent_number = current_last_header.number - 1;
 
         debug!("Need to regenerate state for block {parent_number}");
