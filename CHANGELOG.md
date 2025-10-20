@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-20
+
+- Remove duplicate subgroup check in ecpairing precompile [#4960](https://github.com/lambdaclass/ethrex/pull/4960)
+
 ### 2025-10-14
 
 - Improve get_closest_nodes p2p performance [#4838](https://github.com/lambdaclass/ethrex/pull/4838)
