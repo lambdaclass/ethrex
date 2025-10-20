@@ -1026,14 +1026,16 @@ async fn handle_incoming_message(
                 let is_l2_mode = false;
                 match msg.handle(&state.node, &state.blockchain, is_l2_mode).await {
                     // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
-                    Err(MempoolError::BlobsBundleError(
-                        BlobsBundleError::BlobBundleEmptyError
-                        | BlobsBundleError::BlobsBundleWrongLen
-                        | BlobsBundleError::BlobVersionedHashesError,
-                    )) => {
+                    Err(
+                        error @ MempoolError::BlobsBundleError(
+                            BlobsBundleError::BlobBundleEmptyError
+                            | BlobsBundleError::BlobsBundleWrongLen
+                            | BlobsBundleError::BlobVersionedHashesError,
+                        ),
+                    ) => {
                         log_peer_warn(
                             &state.node,
-                            &format!("disconnected from peer. Reason: Invalid/Missing Blobs"),
+                            &format!("disconnected from peer. Reason: {error}"),
                         );
                         send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
                             .await;
