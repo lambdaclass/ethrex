@@ -231,13 +231,13 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let mut acc_priority_fees = 0;
     let mut acc_base_fees = 0;
     let mut acc_operator_fee = 0;
-    let mut acc_l1_fee = 0;
+    let mut acc_l1_fees = 0;
     while let Some(res) = set.join_next().await {
         let fees_details = res??;
-        acc_priority_fees += fees_details.priority_fee;
-        acc_base_fees += fees_details.base_fee;
+        acc_priority_fees += fees_details.priority_fees;
+        acc_base_fees += fees_details.base_fees;
         acc_operator_fee += fees_details.operator_fees;
-        acc_l1_fee += fees_details.l1_fee;
+        acc_l1_fees += fees_details.l1_fees;
     }
 
     let coinbase_balance_after_tests = l2_client
@@ -280,7 +280,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(
         l1_fee_vault_balance_after_tests,
-        l1_fee_vault_balance_before_tests + acc_l1_fee,
+        l1_fee_vault_balance_before_tests + acc_l1_fees,
         "L1 fee vault is not correct after tests"
     );
 
@@ -1767,14 +1767,14 @@ async fn test_n_withdraws(
 
     assert_eq!(
         coinbase_balance_after_withdrawal,
-        coinbase_balance_before_withdrawal + total_withdraw_fees_l2.priority_fee,
+        coinbase_balance_before_withdrawal + total_withdraw_fees_l2.priority_fees,
         "Coinbase balance didn't increase as expected after withdrawal"
     );
 
     if std::env::var("INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK").is_err() {
         assert_eq!(
             base_fee_vault_balance_after_withdrawal,
-            base_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.base_fee,
+            base_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.base_fees,
             "Base fee vault balance didn't increase as expected after withdrawal"
         );
     }
@@ -1787,7 +1787,7 @@ async fn test_n_withdraws(
 
     assert_eq!(
         l1_fee_vault_balance_after_withdrawal,
-        l1_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.l1_fee,
+        l1_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.l1_fees,
         "L1 fee vault balance didn't increase as expected after withdrawal"
     );
 
@@ -2140,15 +2140,15 @@ fn bridge_owner_private_key() -> SecretKey {
 
 #[derive(Debug, Default)]
 struct FeesDetails {
-    base_fee: u64,
-    priority_fee: u64,
+    base_fees: u64,
+    priority_fees: u64,
     operator_fees: u64,
-    l1_fee: u64,
+    l1_fees: u64,
 }
 
 impl FeesDetails {
     fn total(&self) -> u64 {
-        self.base_fee + self.priority_fee + self.operator_fees + self.l1_fee
+        self.base_fees + self.priority_fees + self.operator_fees + self.l1_fees
     }
 }
 
@@ -2157,20 +2157,20 @@ impl Add for FeesDetails {
 
     fn add(self, other: Self) -> Self {
         Self {
-            base_fee: self.base_fee + other.base_fee,
-            priority_fee: self.priority_fee + other.priority_fee,
+            base_fees: self.base_fees + other.base_fees,
+            priority_fees: self.priority_fees + other.priority_fees,
             operator_fees: self.operator_fees + other.operator_fees,
-            l1_fee: self.l1_fee + other.l1_fee,
+            l1_fees: self.l1_fees + other.l1_fees,
         }
     }
 }
 
 impl AddAssign for FeesDetails {
     fn add_assign(&mut self, other: Self) {
-        self.base_fee += other.base_fee;
-        self.priority_fee += other.priority_fee;
+        self.base_fees += other.base_fees;
+        self.priority_fees += other.priority_fees;
         self.operator_fees += other.operator_fees;
-        self.l1_fee += other.l1_fee;
+        self.l1_fees += other.l1_fees;
     }
 }
 
@@ -2239,20 +2239,20 @@ async fn get_fees_details_l2(
 
     let actual_gas_used = tx_gas_used - l1_gas;
 
-    let priority_fee = min(
+    let priority_fees = min(
         max_priority_fee_per_gas,
         max_fee_per_gas - base_fee_per_gas - operator_fee_per_gas,
     ) * actual_gas_used;
 
     let operator_fees = operator_fee_per_gas * actual_gas_used;
-    let base_fee = base_fee_per_gas * actual_gas_used;
-    let l1_fee = l1_gas * gas_price;
+    let base_fees = base_fee_per_gas * actual_gas_used;
+    let l1_fees = l1_gas * gas_price;
 
     Ok(FeesDetails {
-        base_fee,
-        priority_fee,
+        base_fees,
+        priority_fees,
         operator_fees,
-        l1_fee,
+        l1_fees,
     })
 }
 

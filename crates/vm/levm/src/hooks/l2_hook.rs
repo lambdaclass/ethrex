@@ -152,7 +152,7 @@ impl Hook for L2Hook {
                 &self.fee_config.l1_fee_config,
             )?;
 
-            let total_gas = actual_gas_used
+            let mut total_gas = actual_gas_used
                 .checked_add(l1_gas)
                 .ok_or(InternalError::Overflow)?;
 
@@ -176,6 +176,8 @@ impl Hook for L2Hook {
                     .current_call_frame
                     .gas_limit
                     .saturating_sub(actual_gas_used);
+
+                total_gas = vm.current_call_frame.gas_limit
             }
 
             delete_self_destruct_accounts(vm)?;
