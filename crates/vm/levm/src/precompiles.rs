@@ -938,9 +938,6 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
             LambdaworksG2::create_point_from_affine(g2_x, g2_y)
                 .map_err(|_| PrecompileError::InvalidPoint)?
         };
-        if !g2.is_in_subgroup() {
-            return Err(PrecompileError::PointNotInSubgroup.into());
-        }
 
         if g1.is_neutral_element() || g2.is_neutral_element() {
             continue;
