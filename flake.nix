@@ -66,8 +66,8 @@
             pkgs.openssl
           ];
           shellHook = ''
-            echo "Entered Ethrex dev shell (${system})"
-            export PS1="(ethrex-dev-${system}) \\u@\\h:\\w\\$ "
+            echo "Entered Ethrex shell (${system})"
+            export PS1="(ethrex-${system}) \\u@\\h:\\w\\$ "
           '';
         };
 
