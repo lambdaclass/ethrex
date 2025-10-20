@@ -243,9 +243,8 @@ impl PooledTransactions {
         fork: Fork,
     ) -> Result<(), MempoolError> {
         for tx in &self.pooled_transactions {
-            dbg!(&tx);
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                dbg!(itx.blobs_bundle.as_ref())
+                itx.blobs_bundle.as_ref()
                     .ok_or(MempoolError::BlobTxNoBlobsBundle)?
                     .validate(&itx.tx, fork)?;
             }
@@ -288,7 +287,6 @@ impl PooledTransactions {
                     continue;
                 }
                 let Some(blobs_bundle) = itx.blobs_bundle else {
-                    dbg!("yes");
                     return Err(MempoolError::BlobTxNoBlobsBundle);
                 };
                 if let Err(e) = blockchain
