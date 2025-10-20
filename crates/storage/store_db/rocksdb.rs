@@ -123,7 +123,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<RwLock<TrieLayerCache>>,
+    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
 }
 
@@ -664,7 +664,13 @@ impl StoreEngine for Store {
 
             let mut updated_trie = false;
 
-            let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
+            let mut trie = TrieLayerCache::clone(
+                &trie_cache
+                    .read()
+                    .map_err(|_| StoreError::LockError)?
+                    .clone(),
+            );
+
             if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
                 updated_trie = true;
                 // If the channel is closed, there's nobody to notify
@@ -704,6 +710,8 @@ impl StoreEngine for Store {
                     .chain(update_batch.account_updates)
                     .collect(),
             );
+
+            *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie);
 
             for block in update_batch.blocks {
                 let block_number = block.header.number;

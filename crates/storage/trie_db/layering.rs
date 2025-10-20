@@ -4,14 +4,14 @@ use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: HashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
@@ -105,7 +105,7 @@ impl TrieLayerCache {
 
 pub struct TrieWrapper {
     pub state_root: H256,
-    pub inner: Arc<RwLock<TrieLayerCache>>,
+    pub inner: Arc<RwLock<Arc<TrieLayerCache>>>,
     pub db: Box<dyn TrieDB>,
     pub prefix: Option<H256>,
 }
@@ -149,7 +149,13 @@ impl TrieDB for TrieWrapper {
             }
             None => *EMPTY_TRIE_HASH,
         };
-        let mut inner = self.inner.write().map_err(|_| TrieError::LockError)?;
+        let mut inner = TrieLayerCache::clone(
+            &self
+                .inner
+                .write()
+                .map_err(|_| TrieError::LockError)?
+                .clone(),
+        );
         inner.put_batch(
             self.state_root,
             new_state_root,
@@ -158,6 +164,7 @@ impl TrieDB for TrieWrapper {
                 .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
                 .collect(),
         );
+        *self.inner.write().map_err(|_| TrieError::LockError)? = Arc::new(inner);
         Ok(())
     }
 }
