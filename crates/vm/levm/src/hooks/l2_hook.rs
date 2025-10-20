@@ -1,10 +1,17 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     db::gen_db::GeneralizedDatabase,
     errors::{ContextResult, InternalError},
-    hooks::{DefaultHook, default_hook, hook::Hook},
+    hooks::{
+        DefaultHook,
+        default_hook::{self, set_bytecode_and_code_address},
+        fee_token_hook::FeeTokenHook,
+        hook::Hook,
+    },
     opcodes::Opcode,
     tracing::LevmCallTracer,
-    vm::VM,
+    vm::{VM, VMType},
 };
 
 use bytes::Bytes;
@@ -28,94 +35,61 @@ pub struct L2Hook {
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         let sender_address = vm.env.origin;
-        dbg!(sender_address);
-        #[allow(clippy::unwrap_used)]
-        let some_address =
-            Address::from_slice(&hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap());
+        // dbg!(sender_address);
+        // #[allow(clippy::unwrap_used)]
+        // let some_address =
+        //     Address::from_slice(&hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap());
         #[allow(clippy::unwrap_used)]
         let fee_token =
             Address::from_slice(&hex::decode("00e29d532f1c62a923ee51ee439bfc1500b1ce4d").unwrap());
 
-        dbg!(balance_of(&mut vm.db.clone(), fee_token, some_address))?;
-        // let balance_of_selector = vec![0x70, 0xa0, 0x82, 0x31];
+        // dbg!(balance_of(&mut vm.db.clone(), fee_token, some_address))?;
 
-        // let mut data = vec![];
-        // data.extend_from_slice(&balance_of_selector);
-        // data.extend_from_slice(&[0u8; 12]);
-        // data.extend_from_slice(&some_address.0);
-        // dbg!(vm.current_call_frame.ret_offset);
-        // dbg!(vm.current_call_frame.ret_size);
-        // dbg!(vm.generic_call(
-        //     9999999,
-        //     U256::zero(),
-        //     some_address,
-        //     fee_token,
-        //     fee_token,
-        //     false,
-        //     true,
-        //     data.into(),
-        //     vm.current_call_frame.ret_offset.wrapping_add(32),
-        //     32,
-        //     Bytes::new(),
-        //     false,
-        // ))?;
-        // if sender_address == some_address {
-        // // 0x70a08231
-        // let balance_of_selector = vec![0x70, 0xa0, 0x82, 0x31];
+        // 0x70a08231
+        let balance_of_selector = vec![0x70, 0xa0, 0x82, 0x31];
+        let mut data = vec![];
+        data.extend_from_slice(&balance_of_selector);
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&sender_address.0);
+        dbg!("{:?}", &hex::encode(&data));
+        #[allow(clippy::unwrap_used)]
+        let a = vm
+            .db
+            .get_account(Address::from_slice(
+                &hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap(),
+            ))?
+            .info
+            .nonce;
+        dbg!(a);
 
-        // let mut data = vec![];
-        // data.extend_from_slice(&balance_of_selector);
-        // data.extend_from_slice(&[0u8; 12]);
-        // data.extend_from_slice(&sender_address.0);
-        // dbg!("{:?}", &hex::encode(&data));
-        // #[allow(clippy::unwrap_used)]
-        // let a = vm
-        //     .db
-        //     .get_account(Address::from_slice(
-        //         &hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap(),
-        //     ))?
-        //     .info
-        //     .nonce;
-        // dbg!(a);
-        // #[allow(clippy::unwrap_used)]
-        // let fee_token =
-        //     Address::from_slice(&hex::decode("00e29d532f1c62a923ee51ee439bfc1500b1ce4d").unwrap());
-        // dbg!("{:?}", &fee_token);
-        // let tx_check_balance = EIP1559Transaction {
-        //     chain_id: 65536999,
-        //     nonce: a,
-        //     max_priority_fee_per_gas: 9999999,
-        //     max_fee_per_gas: 9999999,
-        //     gas_limit: 9999999,
-        //     to: TxKind::Call(fee_token),
-        //     value: U256::zero(),
-        //     data: data.into(),
-        //     ..Default::default()
-        // };
-
-        // // Missing signing step
-        // let tx_check_balance = Transaction::EIP1559Transaction(tx_check_balance);
-        // let mut binding = vm.db.clone();
-        // let mut call_env = vm.env.clone();
-        // call_env.is_privileged = false;
-        // let mut new_vm = VM::new(
-        //     call_env,
-        //     &mut binding,
-        //     &tx_check_balance,
-        //     LevmCallTracer::disabled(),
-        //     crate::vm::VMType::L1,
-        // )?;
-        // let res = new_vm.execute()?;
-        // dbg!("{:?}", &res.output);
-        // dbg!("{:?}", &res.output);
-        // dbg!("{:?}", &res.output);
-        // dbg!("{:?}", &res.output);
-        // dbg!("{:?}", &res.output);
-        // dbg!("{:?}", &res.output);
-        // dbg!("{:?}", &res.output);
-        // dbg!("{:?}", &res.output);
-        // dbg!("{:?}", &res.output);
-        // }
+        let mut db_clone = vm.db.clone();
+        let tx_check_balance = EIP1559Transaction {
+            chain_id: 65536999,
+            nonce: a,
+            max_priority_fee_per_gas: 9999999,
+            max_fee_per_gas: 9999999,
+            gas_limit: 9999999,
+            to: TxKind::Call(fee_token),
+            value: U256::zero(),
+            data: data.into(),
+            ..Default::default()
+        };
+        let tx_check_balance = Transaction::EIP1559Transaction(tx_check_balance);
+        let mut env_clone = vm.env.clone();
+        env_clone.is_privileged = false;
+        let mut new_vm = VM::new(
+            env_clone,
+            &mut db_clone,
+            &tx_check_balance,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+        )?;
+        new_vm.hooks = vec![Rc::new(RefCell::new(FeeTokenHook {
+            fee_token_address: fee_token,
+        }))];
+        set_bytecode_and_code_address(&mut new_vm)?;
+        let b = new_vm.execute()?;
+        println!("{:?}", &b.output);
         if !vm.env.is_privileged {
             return DefaultHook.prepare_execution(vm);
         }

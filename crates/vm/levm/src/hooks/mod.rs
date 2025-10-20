@@ -1,5 +1,6 @@
 pub mod backup_hook;
 pub mod default_hook;
+pub mod fee_token_hook;
 pub mod hook;
 pub mod l2_hook;
 
