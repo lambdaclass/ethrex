@@ -84,9 +84,11 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout sources
+        uses: actions/checkout@v4
 
-      - uses: ./.github/actions/snapsync-run
+      - name: Run Snapsync Test
+        uses: ./.github/actions/snapsync-run
         with:
           network: ${{ matrix.network }}
           timeout: ${{ matrix.timeout }}
