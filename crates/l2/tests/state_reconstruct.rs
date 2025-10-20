@@ -50,10 +50,15 @@ async fn test_state_reconstruct() {
         })
         .collect::<Vec<_>>();
 
-    test_state_block(&addresses, 0, 0).await;
-    test_state_block(&addresses, 6, 50).await;
-    test_state_block(&addresses, 11, 100).await;
-    test_state_block(&addresses, 16, 150).await;
+    // TODO: Historical state is not supported in the DB currently by the client.
+    // This is due to the newest path-based trie implementation.
+    // A potential fix would be to store the historical state in the DB through
+    // diff layers. The commented tests below make no sense until then.
+    //
+    // test_state_block(&addresses, 0, 0).await;
+    // test_state_block(&addresses, 6, 50).await;
+    // test_state_block(&addresses, 11, 100).await;
+    // test_state_block(&addresses, 16, 150).await;
     test_state_block(&addresses, 21, addresses.len() as u64).await;
 }
 
@@ -68,10 +73,15 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
         if index < rich_accounts as usize {
             assert_eq!(
                 balance,
-                U256::from_dec_str("500000000000000000000000000").unwrap()
+                U256::from_dec_str("500000000000000000000000000").unwrap(),
+                "Balance mismatch for address {address:#x} at block {block_number}. Expected 500000000000000000000000000, got {balance}"
             );
         } else {
-            assert_eq!(balance, U256::zero());
+            assert_eq!(
+                balance,
+                U256::zero(),
+                "Balance should be zero for address {address:#x} at block {block_number}. Expected 0, got {balance}"
+            );
         }
     }
 }

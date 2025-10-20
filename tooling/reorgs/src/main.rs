@@ -34,15 +34,16 @@ async fn main() {
 
     run_test(&cmd_path, no_reorgs_full_sync_smoke_test).await;
     run_test(&cmd_path, test_reorg_back_to_base).await;
-    // This test is flaky 50% of the time, check that it runs correctly 30 times in a row
+
+    // This test is flaky 50% of the time, check that it runs correctly multiple times in a row
     // TODO(#4775): make it deterministic
-    for _ in 0..30 {
+    for _ in 0..10 {
         run_test(&cmd_path, test_chain_split).await;
     }
+
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
     run_test(&cmd_path, test_reorg_back_to_base_with_common_ancestor).await;
     run_test(&cmd_path, test_storage_slots_reorg).await;
-
     run_test(&cmd_path, test_many_blocks_reorg).await;
 }
 

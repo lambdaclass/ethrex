@@ -22,7 +22,7 @@ use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     BlockProducerConfig, SequencerConfig,
@@ -83,9 +83,17 @@ impl BlockProducer {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
         } = config;
+
+        if fee_vault_address.is_some_and(|fee_vault| fee_vault == *coinbase_address) {
+            warn!(
+                "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
+        }
+
         Self {
             store,
             blockchain,
@@ -190,27 +198,33 @@ impl BlockProducer {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        let transactions_count = block.body.transactions.len();
+        let block_number = block.header.number;
+        let block_hash = block.hash();
         self.blockchain
-            .store_block(&block, account_updates_list, execution_result)
+            .store_block(block, account_updates_list, execution_result)
             .await?;
-        info!("Stored new block {:x}", block.hash());
+        info!(
+            "Stored new block {:x}, transaction_count {}",
+            block_hash, transactions_count
+        );
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         self.rollup_store
-            .store_account_updates_by_block_number(block.header.number, account_updates)
+            .store_account_updates_by_block_number(block_number, account_updates)
             .await?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&self.store, block.hash(), block.hash(), block.hash()).await?;
+        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
             let _ = METRICS_BLOCKS
-            .set_block_number(block.header.number)
+            .set_block_number(block_number)
             .inspect_err(|e| {
                 tracing::error!("Failed to set metric: block_number {}", e.to_string())
             });
             #[allow(clippy::as_conversions)]
-            let tps = block.body.transactions.len() as f64 / (self.block_time_ms as f64 / 1000_f64);
+            let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
         );
 

@@ -1,5 +1,5 @@
 use crate::{
-    EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError,
+    EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
 };
 use crossbeam::channel::{Receiver, Sender, bounded};
@@ -83,10 +83,10 @@ fn is_child(this: &Nibbles, other: &StackElement) -> bool {
 
 /// Creates a parent element that can have as children both the parent and the closest nibbles
 /// That parent is created with no children
-fn create_parent(center_side: &CenterSide, closest_nibbles: &Nibbles) -> StackElement {
-    let new_parent_nibbles = center_side
+fn create_parent(current_node: &CenterSide, closest_nibbles: &Nibbles) -> StackElement {
+    let new_parent_nibbles = current_node
         .path
-        .slice(0, center_side.path.count_prefix(closest_nibbles));
+        .slice(0, current_node.path.count_prefix(closest_nibbles));
     StackElement {
         path: new_parent_nibbles,
         element: BranchNode {
@@ -96,40 +96,47 @@ fn create_parent(center_side: &CenterSide, closest_nibbles: &Nibbles) -> StackEl
     }
 }
 
-/// This function modifies a parent element to include the `center_side` element, and
-/// then adds the `center_side` to the write queue.
-/// When adding the center_side to the write queue we use create an extension if needed
+/// This function modifies a parent element to include the `current_node` element, and
+/// then adds the `current_node` to the write queue.
+/// When adding the current_node to the write queue we use create an extension if needed
 fn add_current_to_parent_and_write_queue(
-    nodes_to_write: &mut Vec<(NodeHash, Node)>,
-    center_side: &CenterSide,
+    nodes_to_write: &mut Vec<(Nibbles, Node)>,
+    current_node: &CenterSide,
     parent_element: &mut StackElement,
 ) -> Result<(), TrieGenerationError> {
-    debug!("{:x?}", center_side.path);
+    debug!("{:x?}", current_node.path);
     debug!("{:x?}", parent_element.path);
-    let mut path = center_side.path.clone();
+    let mut path = current_node.path.clone();
     path.skip_prefix(&parent_element.path);
-    let index = path
-        .next()
-        .ok_or(TrieGenerationError::IndexNotFound(center_side.path.clone()))?;
-    let node: Node = match &center_side.element {
+    let index = path.next().ok_or(TrieGenerationError::IndexNotFound(
+        current_node.path.clone(),
+    ))?;
+    let top_path = parent_element.path.append_new(index);
+    let (target_path, node): (Nibbles, Node) = match &current_node.element {
         CenterSideElement::Branch { node } => {
             if path.is_empty() {
-                node.clone().into()
+                (top_path, node.clone().into())
             } else {
                 let hash = node.compute_hash();
-                nodes_to_write.push((hash, node.clone().into()));
-                ExtensionNode {
-                    prefix: path,
-                    child: hash.into(),
-                }
-                .into()
+                nodes_to_write.push((current_node.path.clone(), node.clone().into()));
+                (
+                    top_path,
+                    ExtensionNode {
+                        prefix: path,
+                        child: hash.into(),
+                    }
+                    .into(),
+                )
             }
         }
-        CenterSideElement::Leaf { value } => LeafNode {
-            partial: path,
-            value: value.clone(),
-        }
-        .into(),
+        CenterSideElement::Leaf { value } => (
+            top_path,
+            LeafNode {
+                partial: path,
+                value: value.clone(),
+            }
+            .into(),
+        ),
     };
     parent_element.element.choices[index as usize] = node.compute_hash().into();
     debug!(
@@ -142,16 +149,16 @@ fn add_current_to_parent_and_write_queue(
             .filter_map(|(index, child)| child.is_valid().then_some(index))
             .collect::<Vec<_>>()
     );
-    nodes_to_write.push((node.compute_hash(), node));
+    nodes_to_write.push((target_path, node));
     Ok(())
 }
 
 /// flush_nodes_to_write writes the nodes into the database, and when it's done it
 /// done returns the vector used to write nodes into the channel for future use
 fn flush_nodes_to_write(
-    mut nodes_to_write: Vec<(NodeHash, Node)>,
+    mut nodes_to_write: Vec<(Nibbles, Node)>,
     db: &dyn TrieDB,
-    sender: Sender<Vec<(NodeHash, Node)>>,
+    sender: Sender<Vec<(Nibbles, Node)>>,
 ) -> Result<(), TrieGenerationError> {
     db.put_batch_no_alloc(&nodes_to_write)
         .map_err(TrieGenerationError::FlushToDbError)?;
@@ -166,13 +173,12 @@ fn flush_nodes_to_write(
 /// To limit the amount of memory this function can use, we use a crossbeam multiproducer
 /// multiconsumer queue, which gives the function a buffer to write nodes into before
 /// flushing to the db.
-#[inline(never)]
 pub fn trie_from_sorted_accounts<'scope, T>(
     db: &'scope dyn TrieDB,
     data_iter: &mut T,
     scope: Arc<ThreadPool<'scope>>,
-    buffer_sender: Sender<Vec<(NodeHash, Node)>>,
-    buffer_receiver: Receiver<Vec<(NodeHash, Node)>>,
+    buffer_sender: Sender<Vec<(Nibbles, Node)>>,
+    buffer_receiver: Receiver<Vec<(Nibbles, Node)>>,
 ) -> Result<H256, TrieGenerationError>
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
@@ -180,10 +186,9 @@ where
     let Some(initial_value) = data_iter.next() else {
         return Ok(*EMPTY_TRIE_HASH);
     };
-    let mut nodes_to_write: Vec<(NodeHash, Node)> = buffer_receiver
+    let mut nodes_to_write: Vec<(Nibbles, Node)> = buffer_receiver
         .recv()
         .expect("This channel shouldn't close");
-
     // We have a stack of the parents of the current parent
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64); // Optimized for H256
 
@@ -197,9 +202,7 @@ where
     let mut current_node: CenterSide = CenterSide::from_value(initial_value.clone());
     let mut next_value_opt: Option<(H256, Vec<u8>)> = data_iter.next();
 
-    // When the iterator returns none, we have finished computing the tree
     while let Some(next_value) = next_value_opt {
-        // If we have enought to write, we send this to the threadpool to write concurrently
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
             let buffer_sender = buffer_sender.clone();
             scope.execute_priority(Box::new(move || {
@@ -211,11 +214,12 @@ where
                 .expect("This channel shouldn't close");
         }
 
-        let next_path = Nibbles::from_bytes(next_value.0.as_bytes());
+        let next_value_path = Nibbles::from_bytes(next_value.0.as_bytes());
+
         // If the current parent isn't a parent of the next value, that means
         // that the current value doesn't have a brother to the right
         // As such we write this node and change the current node to the current parent
-        while !is_child(&next_path, &current_parent) {
+        while !is_child(&next_value_path, &current_parent) {
             add_current_to_parent_and_write_queue(
                 &mut nodes_to_write,
                 &current_node,
@@ -235,7 +239,7 @@ where
         // current element and change the current with the next value while
         // advancing the iterator for our next value
         if current_node.path.count_prefix(&current_parent.path)
-            == current_node.path.count_prefix(&next_path)
+            == current_node.path.count_prefix(&next_value_path)
         {
             add_current_to_parent_and_write_queue(
                 &mut nodes_to_write,
@@ -252,7 +256,7 @@ where
         // The old parent goes into the stack
         // Then we advance the iterator for our next value
         } else {
-            let mut element = create_parent(&current_node, &next_path);
+            let mut element = create_parent(&current_node, &next_value_path);
             add_current_to_parent_and_write_queue(
                 &mut nodes_to_write,
                 &current_node,
@@ -277,8 +281,6 @@ where
         current_parent = parent_node;
     }
 
-    // Edge case, if the parent is a branch with a single children that means we need to
-    // change it to an extension, extend the current extension or extend the current leaf
     let hash = if current_parent
         .element
         .choices
@@ -295,8 +297,7 @@ where
             .find(|(_, child)| child.is_valid())
             .unwrap();
 
-        debug_assert!(nodes_to_write.last().unwrap().0 == child.compute_hash());
-        let (node_hash, node_hash_ref) = nodes_to_write.iter_mut().last().unwrap();
+        let (target_path, node_hash_ref) = nodes_to_write.iter_mut().last().unwrap();
         match node_hash_ref {
             Node::Branch(_) => {
                 let node: Node = ExtensionNode {
@@ -304,33 +305,37 @@ where
                     child,
                 }
                 .into();
-                nodes_to_write.push((node.compute_hash(), node));
+                nodes_to_write.push((Nibbles::default(), node));
                 nodes_to_write
                     .last()
                     .expect("we just inserted")
-                    .0
+                    .1
+                    .compute_hash()
                     .finalize()
             }
             Node::Extension(extension_node) => {
-                extension_node.prefix.data.insert(0, index as u8);
-                *node_hash = extension_node.compute_hash();
-                node_hash.finalize()
+                extension_node.prefix.prepend(index as u8);
+                // This next works because this target path is always length of 1 element,
+                // and we're just removing that one element
+                target_path.next();
+                extension_node.compute_hash().finalize()
             }
             Node::Leaf(leaf_node) => {
-                leaf_node.partial.data.insert(0, index as u8);
-                *node_hash = leaf_node.compute_hash();
-                node_hash.finalize()
+                leaf_node.partial.prepend(index as u8);
+                // This next works because this target path is always length of 1 element,
+                // and we're just removing that one element
+                target_path.next();
+                leaf_node.compute_hash().finalize()
             }
         }
     } else {
-        // If there are multiple children this means this is just
-        // a regular branch that we can write into the db
         let node: Node = current_parent.element.into();
-        nodes_to_write.push((node.compute_hash(), node));
+        nodes_to_write.push((Nibbles::default(), node));
         nodes_to_write
             .last()
             .expect("we just inserted")
-            .0
+            .1
+            .compute_hash()
             .finalize()
     };
 
@@ -347,7 +352,7 @@ pub fn trie_from_sorted_accounts_wrap<T>(
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
-    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(BUFFER_COUNT as usize);
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<(Nibbles, Node)>>(BUFFER_COUNT as usize);
     for _ in 0..BUFFER_COUNT {
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
@@ -476,9 +481,13 @@ mod test {
 
         let computed_data = computed_data.lock().unwrap();
         let expected_data = expected_data.lock().unwrap();
-        for (k, v) in computed_data.iter() {
-            assert!(expected_data.contains_key(k));
-            assert_eq!(*v, expected_data[k]);
+        for (k, v) in expected_data.iter() {
+            // skip flatkeyvalues, we don't want them
+            if k.last().cloned() == Some(16) {
+                continue;
+            }
+            assert!(computed_data.contains_key(k));
+            assert_eq!(*v, computed_data[k]);
         }
     }
 

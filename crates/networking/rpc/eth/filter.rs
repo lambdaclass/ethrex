@@ -532,7 +532,7 @@ mod tests {
     async fn background_job_removes_filter_smoke_test() {
         // Start a test server to start the cleanup
         // task in the background
-        let server_handle = tokio::spawn(async move { start_test_api().await });
+        let server_handle = start_test_api().await;
 
         // Give the server some time to start
         tokio::time::sleep(Duration::from_secs(1)).await;

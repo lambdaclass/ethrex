@@ -36,10 +36,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
+// 0x36664d7c5031bd965bbb405b55495a90dd780740
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x8c, 0xcf, 0x74, 0x99, 0x9c, 0x49, 0x6e, 0x4d, 0x27, 0xa2, 0xb0, 0x29, 0x41, 0x67, 0x3f, 0x41,
-    0xdd, 0x0d, 0xab, 0x2a,
+    0x36, 0x66, 0x4d, 0x7c, 0x50, 0x31, 0xbd, 0x96, 0x5b, 0xbb, 0x40, 0x5b, 0x55, 0x49, 0x5a, 0x90,
+    0xdd, 0x78, 0x07, 0x40,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -75,7 +75,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
+/// BRIDGE_ADDRESS or 0x36664d7c5031bd965bbb405b55495a90dd780740
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
@@ -719,15 +719,14 @@ pub async fn send_tx_bump_gas_exponential_backoff(
         }
 
         // Check blob gas fees only for EIP4844 transactions
-        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
-            if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
-                if *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
-                    *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
-                    warn!(
-                        "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
-                    );
-                }
-            }
+        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas
+            && let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas
+            && *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas)
+        {
+            *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+            warn!(
+                "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
+            );
         }
         let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer)
             .await
@@ -905,10 +904,10 @@ async fn priority_fee_from_override_or_rpc(
         return Ok(priority_fee);
     }
 
-    if let Ok(priority_fee) = client.get_max_priority_fee().await {
-        if let Ok(priority_fee_u64) = priority_fee.try_into() {
-            return Ok(priority_fee_u64);
-        }
+    if let Ok(priority_fee) = client.get_max_priority_fee().await
+        && let Ok(priority_fee_u64) = priority_fee.try_into()
+    {
+        return Ok(priority_fee_u64);
     }
 
     get_fee_from_override_or_get_gas_price(client, None).await
