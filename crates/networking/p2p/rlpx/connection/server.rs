@@ -1022,7 +1022,6 @@ async fn handle_incoming_message(
                 }
             }
             if state.blockchain.is_synced() {
-                // TODO(#3745): disconnect from peers that send invalid blob sidecars
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(requested, fork).await {
