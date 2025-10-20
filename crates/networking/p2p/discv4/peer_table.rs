@@ -9,7 +9,7 @@ use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use spawned_concurrency::{
     error::GenServerError,
-    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
+    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, send_message_on},
 };
 use std::{
     collections::HashSet,
@@ -127,7 +127,7 @@ pub struct PeerTable {
 impl PeerTable {
     pub fn spawn(target_peers: usize) -> PeerTable {
         PeerTable {
-            handle: PeerTableServer::new(target_peers).start(),
+            handle: PeerTableServer::new(target_peers).start_on_thread(),
         }
     }
 
@@ -805,6 +805,7 @@ enum CastMessage {
         node_id: H256,
     },
     Prune,
+    Shutdown,
 }
 
 #[derive(Clone, Debug)]
@@ -861,6 +862,15 @@ impl GenServer for PeerTableServer {
     type CastMsg = CastMessage;
     type OutMsg = OutMessage;
     type Error = PeerTableError;
+
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
+        send_message_on(
+            handle.clone(),
+            tokio::signal::ctrl_c(),
+            CastMessage::Shutdown,
+        );
+        Ok(InitResult::Success(self))
+    }
 
     async fn handle_call(
         &mut self,
@@ -1049,6 +1059,7 @@ impl GenServer for PeerTableServer {
                     .and_modify(|c| c.knows_us = true);
             }
             CastMessage::Prune => self.prune(),
+            CastMessage::Shutdown => return CastResponse::Stop,
         }
         CastResponse::NoReply
     }

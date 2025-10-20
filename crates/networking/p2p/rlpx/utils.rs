@@ -6,7 +6,7 @@ use secp256k1::{PublicKey, SecretKey};
 use sha3::{Digest, Keccak256};
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder, max_compress_len};
 use std::array::TryFromSliceError;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
@@ -82,6 +82,10 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     Ok(snappy_decoder.decompress_vec(msg_data)?)
 }
 
+pub(crate) fn log_peer_trace(node: &Node, text: &str) {
+    trace!("{0}/[{1}]: {2}", node.client_name(), node, text)
+}
+
 pub(crate) fn log_peer_debug(node: &Node, text: &str) {
     debug!("{0}/[{1}]: {2}", node.client_name(), node, text)
 }
@@ -89,6 +93,7 @@ pub(crate) fn log_peer_debug(node: &Node, text: &str) {
 pub(crate) fn log_peer_error(node: &Node, text: &str) {
     error!("{0}/[{1}]: {2}", node.client_name(), node, text)
 }
+
 pub(crate) fn log_peer_warn(node: &Node, text: &str) {
     warn!("{0}/[{1}]: {2}", node.client_name(), node, text)
 }
