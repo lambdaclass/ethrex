@@ -78,6 +78,10 @@ impl BlobsBundle {
         Self::default()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.blobs.is_empty() && self.commitments.is_empty() && self.proofs.is_empty()
+    }
+
     // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
     #[cfg(feature = "c-kzg")]
     pub fn create_from_blobs(blobs: &Vec<Blob>) -> Result<Self, BlobsBundleError> {
@@ -170,7 +174,10 @@ impl BlobsBundle {
         Ok(())
     }
 
-    pub fn validate_blob_commitment_hashes(&self, blob_versioned_hashes: &[H256]) -> Result<(), BlobsBundleError> {
+    pub fn validate_blob_commitment_hashes(
+        &self,
+        blob_versioned_hashes: &[H256],
+    ) -> Result<(), BlobsBundleError> {
         if self.commitments.len() != blob_versioned_hashes.len() {
             return Err(BlobsBundleError::BlobVersionedHashesError);
         }

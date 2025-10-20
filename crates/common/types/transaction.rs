@@ -121,7 +121,7 @@ impl RLPDecode for P2PTransaction {
 pub struct WrappedEIP4844Transaction {
     pub tx: EIP4844Transaction,
     pub wrapper_version: Option<u8>,
-    pub blobs_bundle: Option<BlobsBundle>,
+    pub blobs_bundle: BlobsBundle,
 }
 
 impl RLPEncode for WrappedEIP4844Transaction {
@@ -130,9 +130,9 @@ impl RLPEncode for WrappedEIP4844Transaction {
         encoder
             .encode_field(&self.tx)
             .encode_optional_field(&self.wrapper_version)
-            .encode_optional_field(&self.blobs_bundle.as_ref().map(|b| b.blobs.clone()))
-            .encode_optional_field(&self.blobs_bundle.as_ref().map(|b| b.commitments.clone()))
-            .encode_optional_field(&self.blobs_bundle.as_ref().map(|b| b.proofs.clone()))
+            .encode_field(&self.blobs_bundle.blobs)
+            .encode_field(&self.blobs_bundle.commitments)
+            .encode_field(&self.blobs_bundle.proofs)
             .finish();
     }
 }
@@ -148,32 +148,27 @@ impl RLPDecode for WrappedEIP4844Transaction {
                 WrappedEIP4844Transaction {
                     tx,
                     wrapper_version: None,
-                    blobs_bundle: None,
+                    // Empty blobs bundles are not valid
+                    blobs_bundle: BlobsBundle::empty(),
                 },
                 rest,
             ));
         };
 
         let (wrapper_version, decoder) = decoder.decode_optional_field();
-        let (blobs, decoder) = decoder.decode_optional_field();
-        let (commitments, decoder) = decoder.decode_optional_field();
-        let (proofs, decoder) = decoder.decode_optional_field();
-        let blobs_bundle =
-            if let (Some(blobs), Some(commitments), Some(proofs)) = (blobs, commitments, proofs) {
-                Some(BlobsBundle {
-                    blobs,
-                    commitments,
-                    proofs,
-                    version: wrapper_version.unwrap_or_default(),
-                })
-            } else {
-                None
-            };
+        let (blobs, decoder) = decoder.decode_field("blobs")?;
+        let (commitments, decoder) = decoder.decode_field("commitments")?;
+        let (proofs, decoder) = decoder.decode_field("proofs")?;
 
         let wrapped = WrappedEIP4844Transaction {
             tx,
             wrapper_version,
-            blobs_bundle,
+            blobs_bundle: BlobsBundle {
+                blobs,
+                commitments,
+                proofs,
+                version: wrapper_version.unwrap_or_default(),
+            },
         };
         Ok((wrapped, decoder.finish()?))
     }
@@ -2341,7 +2336,7 @@ mod serde_impl {
             Ok(Self {
                 tx: value.try_into()?,
                 wrapper_version: None,
-                blobs_bundle: Some(BlobsBundle::create_from_blobs(&blobs)?),
+                blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
             })
         }
     }

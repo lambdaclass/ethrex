@@ -244,9 +244,7 @@ impl PooledTransactions {
     ) -> Result<(), MempoolError> {
         for tx in &self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.as_ref()
-                    .ok_or(MempoolError::BlobTxNoBlobsBundle)?
-                    .validate(&itx.tx, fork)?;
+                itx.blobs_bundle.validate(&itx.tx, fork)?;
             }
             let tx_hash = tx.compute_hash();
             let Some(pos) = requested
@@ -286,11 +284,8 @@ impl PooledTransactions {
                     );
                     continue;
                 }
-                let Some(blobs_bundle) = itx.blobs_bundle else {
-                    return Err(MempoolError::BlobTxNoBlobsBundle);
-                };
                 if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, blobs_bundle)
+                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
                     log_peer_debug(node, &format!("Error adding transaction: {e}"));
