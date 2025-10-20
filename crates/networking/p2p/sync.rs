@@ -904,6 +904,8 @@ impl Syncer {
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
+        store.generate_flatkeyvalue()?;
+
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
 

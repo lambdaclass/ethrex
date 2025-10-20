@@ -1,24 +1,29 @@
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
-use rocksdb::{MultiThreaded, OptimisticTransactionDB};
+use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
-use crate::trie_db::layering::apply_prefix;
+use crate::{
+    store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES},
+    trie_db::layering::apply_prefix,
+};
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Column family name
     cf_name: String,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
+    /// Last flatkeyvalue path already generated
+    last_computed_flatkeyvalue: Nibbles,
 }
 
 impl RocksDBTrieDB {
     pub fn new(
-        db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+        db: Arc<DBWithThreadMode<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
@@ -29,17 +34,35 @@ impl RocksDBTrieDB {
                 cf_name
             )));
         }
+        let cf_misc = db
+            .cf_handle(CF_MISC_VALUES)
+            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
+        let last_computed_flatkeyvalue = db
+            .get_cf(&cf_misc, "last_written")
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Error reading last_written: {e}")))?
+            .map(|v| Nibbles::from_hex(v.to_vec()))
+            .unwrap_or_default();
+        drop(cf_misc);
 
         Ok(Self {
             db,
             cf_name: cf_name.to_string(),
             address_prefix,
+            last_computed_flatkeyvalue,
         })
     }
 
     fn cf_handle(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
         self.db
             .cf_handle(&self.cf_name)
+            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
+    }
+
+    fn cf_handle_flatkeyvalue(
+        &self,
+    ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
+        self.db
+            .cf_handle(CF_FLATKEYVALUE)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
@@ -51,8 +74,15 @@ impl RocksDBTrieDB {
 }
 
 impl TrieDB for RocksDBTrieDB {
+    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        self.last_computed_flatkeyvalue >= key
+    }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let cf = self.cf_handle()?;
+        let cf = if key.is_leaf() {
+            self.cf_handle_flatkeyvalue()?
+        } else {
+            self.cf_handle()?
+        };
         let db_key = self.make_key(key);
 
         let res = self
@@ -64,14 +94,16 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
-        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        let cf_snapshot = self.cf_handle_flatkeyvalue()?;
+        let mut batch = rocksdb::WriteBatch::default();
 
         for (key, value) in key_values {
+            let cf = if key.is_leaf() { &cf_snapshot } else { &cf };
             let db_key = self.make_key(key);
             if value.is_empty() {
-                batch.delete_cf(&cf, db_key);
+                batch.delete_cf(cf, db_key);
             } else {
-                batch.put_cf(&cf, db_key, value);
+                batch.put_cf(cf, db_key, value);
             }
         }
 
@@ -82,15 +114,21 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
-        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        let cf_flatkeyvalue = self.cf_handle_flatkeyvalue()?;
+        let mut batch = rocksdb::WriteBatch::default();
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
 
         for (hash, node) in key_values {
+            let cf = if hash.is_leaf() {
+                &cf_flatkeyvalue
+            } else {
+                &cf
+            };
             let db_key = self.make_key(hash.clone());
             buffer.clear();
             node.encode(&mut buffer);
-            batch.put_cf(&cf, db_key, &buffer);
+            batch.put_cf(cf, db_key, &buffer);
         }
 
         self.db
@@ -117,10 +155,12 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor],
+            vec![cf_descriptor, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
@@ -156,11 +196,13 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
+        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor],
+            vec![cf_descriptor, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
@@ -193,11 +235,13 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
+        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor],
+            vec![cf_descriptor, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);

@@ -150,9 +150,7 @@ jobs:
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|NewPooledTxs|GetBlockReceipts|BlockRangeUpdate|GetTrieNodes|BlobViolations
-            # Findnode/BasicFindnode fails due to packets being processed out of order
-            # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
+            limit: discv4|eth|snap/Ping|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate|AccountRange|GetTrieNodes|GetByteCodes|GetStorageRanges|Findnode|BlobViolations
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
