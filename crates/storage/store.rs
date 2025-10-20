@@ -1336,7 +1336,7 @@ impl Store {
 
     pub async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
         self.engine.write_account_code_batch(account_codes).await
     }

@@ -27,6 +27,8 @@ pub struct Code {
 }
 
 impl Code {
+    // TODO: also add `from_hashed_bytecode` to optimize the download pipeline,
+    // where hash is already known and checked.
     pub fn from_bytecode(code: Bytes) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
         Self {

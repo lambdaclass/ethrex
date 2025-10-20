@@ -687,14 +687,12 @@ impl StoreEngine for Store {
 
     async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
         for (code_hash, code) in account_codes {
-            store
-                .account_codes
-                .insert(code_hash, Code::from_bytecode(code));
+            store.account_codes.insert(code_hash, code);
         }
 
         Ok(())

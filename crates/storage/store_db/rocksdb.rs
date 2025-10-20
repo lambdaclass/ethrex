@@ -1690,14 +1690,22 @@ impl StoreEngine for Store {
 
     async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 
         for (code_hash, code) in account_codes {
             let key = code_hash.as_bytes().to_vec();
-            let value = AccountCodeRLP::from(code).bytes().clone();
-            batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, value));
+            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            code.bytecode.encode(&mut buf);
+            unsafe {
+                std::slice::from_raw_parts(
+                    code.jump_targets.as_ptr().cast(),
+                    2 * code.jump_targets.len(),
+                )
+            }
+            .encode(&mut buf);
+            batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, buf));
         }
 
         self.write_batch_async(batch_ops).await
