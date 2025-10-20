@@ -1,11 +1,20 @@
 use crate::{
+    db::gen_db::GeneralizedDatabase,
     errors::{ContextResult, InternalError},
     hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
+    tracing::LevmCallTracer,
     vm::VM,
 };
 
-use ethrex_common::{Address, H160, U256, types::fee_config::FeeConfig};
+use bytes::Bytes;
+use ethrex_common::{
+    Address, H160, H256, U256,
+    types::{
+        EIP1559Transaction, PrivilegedL2Transaction, Transaction, TxKind, fee_config::FeeConfig,
+    },
+    utils::{keccak, u256_to_big_endian},
+};
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -18,6 +27,95 @@ pub struct L2Hook {
 
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
+        let sender_address = vm.env.origin;
+        dbg!(sender_address);
+        #[allow(clippy::unwrap_used)]
+        let some_address =
+            Address::from_slice(&hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap());
+        #[allow(clippy::unwrap_used)]
+        let fee_token =
+            Address::from_slice(&hex::decode("00e29d532f1c62a923ee51ee439bfc1500b1ce4d").unwrap());
+
+        dbg!(balance_of(&mut vm.db.clone(), fee_token, some_address))?;
+        // let balance_of_selector = vec![0x70, 0xa0, 0x82, 0x31];
+
+        // let mut data = vec![];
+        // data.extend_from_slice(&balance_of_selector);
+        // data.extend_from_slice(&[0u8; 12]);
+        // data.extend_from_slice(&some_address.0);
+        // dbg!(vm.current_call_frame.ret_offset);
+        // dbg!(vm.current_call_frame.ret_size);
+        // dbg!(vm.generic_call(
+        //     9999999,
+        //     U256::zero(),
+        //     some_address,
+        //     fee_token,
+        //     fee_token,
+        //     false,
+        //     true,
+        //     data.into(),
+        //     vm.current_call_frame.ret_offset.wrapping_add(32),
+        //     32,
+        //     Bytes::new(),
+        //     false,
+        // ))?;
+        // if sender_address == some_address {
+        // // 0x70a08231
+        // let balance_of_selector = vec![0x70, 0xa0, 0x82, 0x31];
+
+        // let mut data = vec![];
+        // data.extend_from_slice(&balance_of_selector);
+        // data.extend_from_slice(&[0u8; 12]);
+        // data.extend_from_slice(&sender_address.0);
+        // dbg!("{:?}", &hex::encode(&data));
+        // #[allow(clippy::unwrap_used)]
+        // let a = vm
+        //     .db
+        //     .get_account(Address::from_slice(
+        //         &hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap(),
+        //     ))?
+        //     .info
+        //     .nonce;
+        // dbg!(a);
+        // #[allow(clippy::unwrap_used)]
+        // let fee_token =
+        //     Address::from_slice(&hex::decode("00e29d532f1c62a923ee51ee439bfc1500b1ce4d").unwrap());
+        // dbg!("{:?}", &fee_token);
+        // let tx_check_balance = EIP1559Transaction {
+        //     chain_id: 65536999,
+        //     nonce: a,
+        //     max_priority_fee_per_gas: 9999999,
+        //     max_fee_per_gas: 9999999,
+        //     gas_limit: 9999999,
+        //     to: TxKind::Call(fee_token),
+        //     value: U256::zero(),
+        //     data: data.into(),
+        //     ..Default::default()
+        // };
+
+        // // Missing signing step
+        // let tx_check_balance = Transaction::EIP1559Transaction(tx_check_balance);
+        // let mut binding = vm.db.clone();
+        // let mut call_env = vm.env.clone();
+        // call_env.is_privileged = false;
+        // let mut new_vm = VM::new(
+        //     call_env,
+        //     &mut binding,
+        //     &tx_check_balance,
+        //     LevmCallTracer::disabled(),
+        //     crate::vm::VMType::L1,
+        // )?;
+        // let res = new_vm.execute()?;
+        // dbg!("{:?}", &res.output);
+        // dbg!("{:?}", &res.output);
+        // dbg!("{:?}", &res.output);
+        // dbg!("{:?}", &res.output);
+        // dbg!("{:?}", &res.output);
+        // dbg!("{:?}", &res.output);
+        // dbg!("{:?}", &res.output);
+        // dbg!("{:?}", &res.output);
+        // dbg!("{:?}", &res.output);
+        // }
         if !vm.env.is_privileged {
             return DefaultHook.prepare_execution(vm);
         }
@@ -142,4 +240,24 @@ fn pay_to_fee_vault(
 
     vm.increase_account_balance(fee_vault, base_fee)?;
     Ok(())
+}
+
+fn balance_of(
+    db: &mut GeneralizedDatabase,
+    token: Address,
+    holder: Address,
+) -> Result<U256, InternalError> {
+    // abi.encode(holder, uint256(0))
+    let mut encoded = [0u8; 64];
+    encoded[12..32].copy_from_slice(&holder.0); // address padding
+    let storage_key = H256(keccak(encoded).0);
+
+    dbg!(hex::encode(&encoded));
+    dbg!(token);
+    dbg!(holder);
+    dbg!(storage_key);
+    // Asegúrate de que la cuenta esté cacheada
+    let contract = db.get_account(token)?;
+    let storage = dbg!(&contract.storage);
+    Ok(storage.get(&storage_key).cloned().unwrap_or(U256::zero()))
 }
