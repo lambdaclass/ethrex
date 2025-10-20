@@ -141,12 +141,12 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Download all results
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs
           pattern: "*_${{ inputs.job_type }}-results.zip"
           merge-multiple: true
-          if-no-artifact-found: ignore
 
       - name: Flatten hive result files
         shell: bash
