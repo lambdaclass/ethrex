@@ -2,7 +2,6 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundleError;
 use ethrex_common::types::MempoolTransaction;
-use ethrex_common::types::P2PTransaction;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_storage::{Store, error::StoreError};

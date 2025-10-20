@@ -142,7 +142,7 @@ impl RLPDecode for WrappedEIP4844Transaction {
         let decoder = Decoder::new(rlp)?;
         let Ok((tx, decoder)) = decoder.decode_field("tx") else {
             // Handle the case of blobless transaction
-            let (tx, rest) = EIP4844Transaction::decode_unfinished(&rlp)?;
+            let (tx, rest) = EIP4844Transaction::decode_unfinished(rlp)?;
             return Ok((
                 WrappedEIP4844Transaction {
                     tx,
