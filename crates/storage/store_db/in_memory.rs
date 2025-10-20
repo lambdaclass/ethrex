@@ -6,7 +6,6 @@ use crate::{
     store::STATE_TRIE_SEGMENTS,
     trie_db::layering::{TrieLayerCache, TrieWrapper},
 };
-use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,

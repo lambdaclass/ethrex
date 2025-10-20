@@ -48,7 +48,7 @@ impl Code {
                     targets.push(i as u16);
                 }
                 c @ 0x60..0x80 => {
-                    i += (c - 0x59) as usize;
+                    i += (c - 0x5F) as usize;
                 }
                 _ => (),
             }

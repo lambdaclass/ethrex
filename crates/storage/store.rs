@@ -3,7 +3,6 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, apply_prefix};
-use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
@@ -1720,8 +1719,8 @@ mod tests {
     }
 
     async fn test_store_account_code(store: Store) {
-        let code_hash = H256::random();
         let code = Code::from_bytecode(Bytes::from("kiwi"));
+        let code_hash = code.hash;
 
         store.add_account_code(code.clone()).await.unwrap();
 

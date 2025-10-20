@@ -29,7 +29,7 @@ use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
     api::StoreEngine,
     error::StoreError,
-    rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
+    rlp::{BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
     trie_db::rocksdb::RocksDBTrieDB,
     utils::{ChainDataIndex, SnapStateIndex},
 };
