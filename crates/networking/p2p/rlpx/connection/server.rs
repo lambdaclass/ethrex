@@ -992,8 +992,10 @@ async fn handle_incoming_message(
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
             let hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
-
             let request = GetPooledTransactions::new(random(), hashes);
+            state
+                .requested_pooled_txs
+                .insert(request.id, new_pooled_transaction_hashes);
             send(state, Message::GetPooledTransactions(request)).await?;
         }
         Message::GetPooledTransactions(msg) => {
