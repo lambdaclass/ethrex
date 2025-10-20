@@ -947,8 +947,13 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
         valid_batch.push((g1, g2));
     }
     let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
-    let result = BN254AtePairing::compute_batch(&valid_batch_refs)
-        .map_err(|PairingError::PointNotInSubgroup| PrecompileError::PointNotInSubgroup)?;
+    let result = BN254AtePairing::compute_batch(&valid_batch_refs).map_err(
+        |PairingError::PointNotInSubgroup| {
+            VMError::ExceptionalHalt(ExceptionalHalt::Precompile(
+                PrecompileError::PointNotInSubgroup,
+            ))
+        },
+    )?;
 
     Ok(result == QuadraticExtensionFieldElement::one())
 }
