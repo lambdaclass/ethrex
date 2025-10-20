@@ -1,10 +1,13 @@
-name: Snapsync Ethrex Test
+name: Daily Snapsync Ethrex
 
 on:
   pull_request:
     branches: ["**"]
+    paths:
+      - ".github/workflows/daily_snapsync.yaml"
   schedule:
-    - cron: "0 */2 * * *"
+    # Every day at UTC 03:00
+    - cron: "0 3 * * 1,2,3,4,5"
   workflow_dispatch:
     inputs:
       network:
