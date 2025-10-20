@@ -141,7 +141,7 @@ impl TrieDB for RocksDBTrieDB {
 mod tests {
     use super::*;
     use ethrex_trie::Nibbles;
-    use rocksdb::{ColumnFamilyDescriptor, DBCommon, MultiThreaded, Options};
+    use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
     use tempfile::TempDir;
 
     #[test]
