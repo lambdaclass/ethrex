@@ -80,18 +80,6 @@ This behavior ensures that transaction senders **never pay more than `max_fee_pe
 > The `eth_gasPrice` RPC endpoint has been **modified** to include the `operator_fee_per_gas` value when the operator fee mechanism is active.  
 > This means that the value returned by `eth_gasPrice` corresponds to `base_fee_per_gas + operator_fee_per_gas + estimated_gas_tip`.
 
-## Useful RPC Methods
-
-The following custom RPC methods are available to query fee-related parameters directly from the L2 node.  
-Each method accepts a single argument: the **`block_number`** to query historical or current values.
-
-| Method Name | Description | Example |
-|--------------|-------------|----------|
-| `ethrex_getBaseFeeVaultAddress` | Returns the address configured to receive the **base fees** collected in the specified block. | ```ethrex_getBaseFeeVaultAddress {"block_number": 12345}``` |
-| `ethrex_getOperatorFeeVaultAddress` | Returns the address configured as the **operator fee vault** in the specified block. | ```ethrex_getOperatorFeeVaultAddress {"block_number": 12345}``` |
-| `ethrex_getOperatorFee` | Returns the **operator fee per gas** value active at the specified block. | ```ethrex_getOperatorFee {"block_number": 12345}``` |
-
-
 ## L1 Fees
 
 L1 fees represent the cost of posting data from the L2 to the L1.  
@@ -104,7 +92,17 @@ The L1 fee for that transaction is computed as:
 l1_fee = blob_base_fee_per_byte * tx_state_diff_size
 ```
 
-This value is deducted from the sender’s balance and transferred to the `L1 Fee Vault` address.
+An additional amount of gas (`l1_gas`) is added to the transaction execution so that:
+
+```
+l1_gas * gas_price = l1_fee
+```
+
+This guarantees that the total amount charged to the user never exceeds `gas_limit * gas_price`, while transparently accounting for the L1 posting cost.  
+Importantly, this process happens automatically — users do **not** need to perform any additional steps.  
+Calls to `eth_estimateGas` already inherit this behavior and will include the extra gas required for the L1 fee.
+
+The computed L1 fee is deducted from the sender’s balance and transferred to the `L1 Fee Vault` address.
 
 The **blob base fee per byte** is derived from the L1 `BlobBaseFee`.  
 The `BlockProducer` periodically fetches the `BlobBaseFee` from L1 (at a configured interval) and uses it to compute:
@@ -113,8 +111,8 @@ The `BlockProducer` periodically fetches the `BlobBaseFee` from L1 (at a configu
 blob_base_fee_per_byte = (l1_fee_per_blob_gas * GAS_PER_BLOB) / SAFE_BYTES_PER_BLOB
 ```
 
-
 See [State Diffs](./state_diffs.md) for more information about how `stateDiffs` works.
+
 
 L1 fee is deactivated by default. To activate it, configure the **L1 fee vault address**:
 
@@ -131,6 +129,15 @@ ethrex l2 --block-producer.blob-base-fee-update-interval <milliseconds>
 > [!CAUTION]  
 > If the L1 fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.
 
-> [!IMPORTANT]  
-> At the moment, the L1 fee is **not capped** by `max_fee_per_gas`.  
-> If it is configured, users must ensure they have enough balance to cover any resulting differences.
+
+## Useful RPC Methods
+
+The following custom RPC methods are available to query fee-related parameters directly from the L2 node.  
+Each method accepts a single argument: the **`block_number`** to query historical or current values.
+
+| Method Name | Description | Example |
+|--------------|-------------|----------|
+| `ethrex_getBaseFeeVaultAddress` | Returns the address configured to receive the **base fees** collected in the specified block. | ```ethrex_getBaseFeeVaultAddress {"block_number": 12345}``` |
+| `ethrex_getOperatorFeeVaultAddress` | Returns the address configured as the **operator fee vault** in the specified block. | ```ethrex_getOperatorFeeVaultAddress {"block_number": 12345}``` |
+| `ethrex_getOperatorFee` | Returns the **operator fee per gas** value active at the specified block. | ```ethrex_getOperatorFee {"block_number": 12345}``` |
+| `ethrex_getL1BlobBaseFee` | Returns the **L1 blob base fee per gas** fetched from L1 and used for L1 fee computation at the specified block. | ```ethrex_getL1BlobBaseFee {"block_number": 12345}``` |
