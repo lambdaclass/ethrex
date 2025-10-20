@@ -139,46 +139,19 @@ impl RLPEncode for WrappedEIP4844Transaction {
 
 impl RLPDecode for WrappedEIP4844Transaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedEIP4844Transaction, &[u8]), RLPDecodeError> {
+        // Check if what we have is a blobless tx
         let decoder = Decoder::new(rlp)?;
-        let (tx, decoder) = if let Ok((tx, decoder)) = decoder.decode_field("tx") {
-            (tx, decoder)
-        } else {
-            let decoder = Decoder::new(rlp)?;
-            let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-            let (nonce, decoder) = decoder.decode_field("nonce")?;
-            let (max_priority_fee_per_gas, decoder) =
-                decoder.decode_field("max_priority_fee_per_gas")?;
-            let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-            let (gas, decoder) = decoder.decode_field("gas")?;
-            let (to, decoder) = decoder.decode_field("to")?;
-            let (value, decoder) = decoder.decode_field("value")?;
-            let (data, decoder) = decoder.decode_field("data")?;
-            let (access_list, decoder) = decoder.decode_field("access_list")?;
-            let (max_fee_per_blob_gas, decoder) = decoder.decode_field("max_fee_per_blob_gas")?;
-            let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
-            let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
-            let (signature_r, decoder) = decoder.decode_field("signature_r")?;
-            let (signature_s, decoder) = decoder.decode_field("signature_s")?;
-            let inner_hash = OnceCell::new();
-
-            let tx = EIP4844Transaction {
-                chain_id,
-                nonce,
-                max_priority_fee_per_gas,
-                max_fee_per_gas,
-                gas,
-                to,
-                value,
-                data,
-                access_list,
-                max_fee_per_blob_gas,
-                blob_versioned_hashes,
-                signature_y_parity,
-                signature_r,
-                signature_s,
-                inner_hash,
-            };
-            (tx, decoder)
+        let Ok((tx, decoder)) = decoder.decode_field("tx") else {
+            // Handle the case of blobless transaction
+            let (tx, rest) = EIP4844Transaction::decode_unfinished(&rlp)?;
+            return Ok((
+                WrappedEIP4844Transaction {
+                    tx,
+                    wrapper_version: None,
+                    blobs_bundle: None,
+                },
+                rest,
+            ));
         };
 
         let (wrapper_version, decoder) = decoder.decode_optional_field();
