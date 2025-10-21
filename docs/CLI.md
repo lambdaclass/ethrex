@@ -82,7 +82,7 @@ P2P options:
           UDP port for P2P discovery.
 
           [default: 30303]
-    
+
       --p2p.tx-broadcasting-interval <INTERVAL_MS>
           Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
 
@@ -143,6 +143,11 @@ Block producer options:
           Block extra data message.
 
           [default: "ethrex 4.0.0"]
+
+      --block-producer.gas-limit <GAS_LIMIT>
+          Target block gas limit.
+
+          [default: 30000000]
 ```
 
 <!-- END_CLI_HELP -->
