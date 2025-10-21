@@ -82,20 +82,44 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     Ok(snappy_decoder.decompress_vec(msg_data)?)
 }
 
+#[track_caller]
 pub(crate) fn log_peer_trace(node: &Node, text: &str) {
-    trace!("{0}/[{1}]: {2}", node.client_name(), node, text)
+    trace!(
+        "{peer_name}/[{peer_node}]: {}",
+        text,
+        peer_name = node.client_name(),
+        peer_node = node,
+    )
 }
 
+#[track_caller]
 pub(crate) fn log_peer_debug(node: &Node, text: &str) {
-    debug!("{0}/[{1}]: {2}", node.client_name(), node, text)
+    debug!(
+        "{peer_name}/[{peer_node}]: {}",
+        text,
+        peer_name = node.client_name(),
+        peer_node = node,
+    )
 }
 
+#[track_caller]
 pub(crate) fn log_peer_error(node: &Node, text: &str) {
-    error!("{0}/[{1}]: {2}", node.client_name(), node, text)
+    error!(
+        "{peer_name}/[{peer_node}]: {}",
+        text,
+        peer_name = node.client_name(),
+        peer_node = node,
+    )
 }
 
+#[track_caller]
 pub(crate) fn log_peer_warn(node: &Node, text: &str) {
-    warn!("{0}/[{1}]: {2}", node.client_name(), node, text)
+    warn!(
+        "{peer_name}/[{peer_node}]: {}",
+        text,
+        peer_name = node.client_name(),
+        peer_node = node,
+    )
 }
 
 #[cfg(test)]
