@@ -749,6 +749,7 @@ impl StoreEngine for Store {
                     .into_iter()
                     .flat_map(|t| t.to_le_bytes())
                     .collect::<Vec<u8>>()
+                    .as_slice()
                     .encode(&mut buf);
                 batch.put_cf(&cf_codes, code_hash.0, buf);
             }
@@ -1124,6 +1125,7 @@ impl StoreEngine for Store {
             .into_iter()
             .flat_map(|t| t.to_le_bytes())
             .collect::<Vec<u8>>()
+            .as_slice()
             .encode(&mut buf);
         self.write_async(CF_ACCOUNT_CODES, hash_key, buf).await
     }
@@ -1697,6 +1699,7 @@ impl StoreEngine for Store {
                 .into_iter()
                 .flat_map(|t| t.to_le_bytes())
                 .collect::<Vec<u8>>()
+                .as_slice()
                 .encode(&mut buf);
             batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, buf));
         }
