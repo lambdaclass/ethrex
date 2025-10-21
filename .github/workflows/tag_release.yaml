@@ -3,7 +3,7 @@ name: Ethrex Release
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+-*"
+      - "v*.*.*-*"
 
 permissions:
   contents: write
@@ -241,9 +241,11 @@ jobs:
 
       - name: Get previous tag
         run: |
-          name=$(git --no-pager tag --sort=creatordate --merged ${{ github.ref_name }} | tail -2 | head -1)
-          echo "PREVIOUS_TAG: $name"
-          echo "PREVIOUS_TAG=$name" >> $GITHUB_ENV
+          last_tag=$(git --no-pager tag --sort=creatordate | grep -v -E '^v[0-9]+\.[0-9]+\.[0-9]+-' | grep -v '${{ github.ref_name }}' | tail -1)
+          echo "Last tag: $last_tag"
+          common_parent=$(git merge-base ${{ github.ref_name }} $last_tag)
+          echo "PREVIOUS_TAG: $common_parent"
+          echo "PREVIOUS_TAG=$common_parent" >> $GITHUB_ENV
 
       - name: Update CHANGELOG
         id: changelog

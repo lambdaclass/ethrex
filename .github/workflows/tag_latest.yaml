@@ -1,4 +1,4 @@
-name: Ethrex Release
+name: Ethrex Latest Release
 
 on:
   release:
@@ -6,6 +6,7 @@ on:
       - edited
 
 permissions:
+  contents: read
   packages: write
 
 env:
@@ -13,19 +14,37 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  get_latest_release:
+    name: "Get latest release tag"
+    runs-on: ubuntu-latest
+    outputs:
+      latest_tag: ${{ steps.get_latest_release.outputs.latest_tag }}
+
+    steps:
+      - name: Get latest release tag from GH API
+        id: get_latest_release
+        run: |
+          tag=$(curl -s https://api.github.com/repos/${{ env.IMAGE_NAME }}/releases/latest | jq -r .tag_name)
+          echo "Latest release tag: $tag"
+          echo "latest_tag=$tag" >> $GITHUB_OUTPUT
+
   retag_docker_images:
     name: "Tag latest Docker images"
     runs-on: ubuntu-latest
-    if: ${{ github.event.changes.make_latest.to == true }}
+    needs: [get_latest_release]
+    if: ${{ needs.get_latest_release.outputs.latest_tag == github.event.release.tag_name }}
 
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
     permissions:
+      contents: read
       packages: write
       id-token: write
 
     steps:
-      - name: Get new tag
-        run: echo "TAG_VERSION=$(echo ${{ github.event.release.tag_name.from }} | cut -d- -f1 | tr -d v)" >> $GITHUB_ENV
+      - name: Set tags
+        run: |
+          echo "PREV_TAG=$(echo ${{ github.event.changes.tag_name.from }} | tr -d v)" >> $GITHUB_ENV
+          echo "NEW_TAG=$(echo ${{ github.event.release.tag_name }} | tr -d v)" >> $GITHUB_ENV
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v2
@@ -36,19 +55,19 @@ jobs:
 
       - name: Download Docker images
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }}-l2
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2
 
       - name: Retag Docker images
         run: |
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }}-l2 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name.from }}-l2 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2
 
       - name: Push retagged Docker images
         run: |
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2
