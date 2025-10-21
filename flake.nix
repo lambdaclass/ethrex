@@ -8,6 +8,16 @@
     rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
+  nixConfig = {
+    substituters = [
+      "https://ethrex.cachix.org"
+      "https://cache.nixos.org"
+    ];
+    trusted-public-keys = [
+      "lambdaclass.cachix.org-1:rYebIu6OLjDu5dqn4xhV9XQJro2fc3+FJhfVBsD9bkw="
+    ];
+  };
+
   outputs = { self, nixpkgs, flake-utils, crane, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
