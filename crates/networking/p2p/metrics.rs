@@ -79,7 +79,7 @@ pub struct Metrics {
     pub storage_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Storage slots
-    pub downloaded_storage_slots: AtomicU64,
+    pub storage_leaves_downloaded: IntCounter,
     pub storage_leaves_inserted: IntCounter,
     pub storage_tries_insert_end_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_insert_start_time: Arc<Mutex<Option<SystemTime>>>,
@@ -624,13 +624,23 @@ impl Default for Metrics {
 
         let storage_leaves_inserted = IntCounter::new(
             "storage_leaves_inserted",
-            "Total number of storage tries state roots computed",
+            "Total number of storage leaves inserted",
         )
         .expect("Failed to create storage_leaves_inserted counter");
 
         registry
             .register(Box::new(storage_leaves_inserted.clone()))
             .expect("Failed to register storage_leaves_inserted counter");
+
+        let storage_leaves_downloaded = IntCounter::new(
+            "storage_leaves_downloaded",
+            "Total number of storage leaves downloaded",
+        )
+        .expect("Failed to create storage_leaves_downloaded counter");
+
+        registry
+            .register(Box::new(storage_leaves_downloaded.clone()))
+            .expect("Failed to register storage_leaves_downloaded counter");
 
         Metrics {
             _registry: registry,
@@ -687,7 +697,7 @@ impl Default for Metrics {
             storage_tries_download_end_time: Arc::new(Mutex::new(None)),
 
             // Storage slots
-            downloaded_storage_slots: AtomicU64::new(0),
+            storage_leaves_downloaded,
 
             // Storage tries state roots
             storage_leaves_inserted,
