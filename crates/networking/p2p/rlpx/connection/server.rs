@@ -1,7 +1,7 @@
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::MempoolTransaction;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
+use ethrex_common::types::{MempoolTransaction, P2PTransaction};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -1000,6 +1000,7 @@ async fn handle_incoming_message(
             send(state, Message::PooledTransactions(response)).await?;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
+            // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
             for tx in &msg.pooled_transactions {
                 if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                     if itx.blobs_bundle.is_empty()
@@ -1010,7 +1011,7 @@ async fn handle_incoming_message(
                     {
                         log_peer_warn(
                             &state.node,
-                            &format!("disconnected from peer. Reason: Invalid/Missing Blobs"),
+                            "disconnected from peer. Reason: Invalid/Missing Blobs",
                         );
                         send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
                             .await;
