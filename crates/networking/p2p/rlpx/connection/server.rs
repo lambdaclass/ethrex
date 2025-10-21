@@ -61,7 +61,7 @@ use crate::{
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
         snap::TrieNodes,
-        utils::{log_peer_debug, log_peer_error, log_peer_warn},
+        utils::{log_peer_debug, log_peer_error, log_peer_trace, log_peer_warn},
     },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
@@ -265,7 +265,7 @@ impl GenServer for PeerConnectionServer {
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
         match handshake::perform(self.state, eth_version.clone()).await {
             Ok((mut established_state, stream)) => {
-                log_peer_debug(&established_state.node, "Starting RLPx connection");
+                log_peer_trace(&established_state.node, "Starting RLPx connection");
 
                 if let Err(reason) =
                     initialize_connection(handle, &mut established_state, stream, eth_version).await
@@ -326,21 +326,21 @@ impl GenServer for PeerConnectionServer {
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message {
                 Self::CastMsg::IncomingMessage(message) => {
-                    log_peer_debug(
+                    log_peer_trace(
                         &established_state.node,
                         &format!("Received incomming message: {message}"),
                     );
                     handle_incoming_message(established_state, message).await
                 }
                 Self::CastMsg::OutgoingMessage(message) => {
-                    log_peer_debug(
+                    log_peer_trace(
                         &established_state.node,
                         &format!("Received outgoing request: {message}"),
                     );
                     handle_outgoing_message(established_state, message).await
                 }
                 Self::CastMsg::OutgoingRequest(message, sender) => {
-                    log_peer_debug(
+                    log_peer_trace(
                         &established_state.node,
                         &format!("Received outgoing request: {message}"),
                     );
@@ -366,19 +366,19 @@ impl GenServer for PeerConnectionServer {
                     send(established_state, Message::Ping(PingMessage {})).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
-                    log_peer_debug(
+                    log_peer_trace(
                         &established_state.node,
                         &format!("Received broadcasted message: {msg}"),
                     );
                     handle_broadcast(established_state, (id, msg)).await
                 }
                 Self::CastMsg::BlockRangeUpdate => {
-                    log_peer_debug(&established_state.node, "Block Range Update");
+                    log_peer_trace(&established_state.node, "Block Range Update");
                     handle_block_range_update(established_state).await
                 }
                 #[cfg(feature = "l2")]
                 Self::CastMsg::L2(msg) if peer_supports_l2 => {
-                    log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
+                    log_peer_trace(&established_state.node, "Handling cast for L2 msg: {msg:?}");
                     match msg {
                         L2Cast::BatchBroadcast => {
                             l2_connection::send_sealed_batch(established_state).await
@@ -458,7 +458,7 @@ impl GenServer for PeerConnectionServer {
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
         match self.state {
             ConnectionState::Established(mut established_state) => {
-                log_peer_debug(
+                log_peer_trace(
                     &established_state.node,
                     "Closing connection with established peer",
                 );
@@ -486,7 +486,7 @@ where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
 {
     if state.peer_table.target_peers_reached().await? {
-        log_peer_warn(&state.node, "Reached target peer connections, discarding.");
+        log_peer_debug(&state.node, "Reached target peer connections, discarding.");
         return Err(PeerConnectionError::TooManyPeers);
     }
     exchange_hello_messages(state, &mut stream).await?;
@@ -516,7 +516,7 @@ where
         )
         .await?;
 
-    log_peer_debug(&state.node, "Peer connection initialized.");
+    log_peer_trace(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
     send_all_pooled_tx_hashes(state, &mut connection).await?;
@@ -612,7 +612,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
         .as_ref()
         .is_some_and(|eth| eth.version >= 69)
     {
-        log_peer_debug(&state.node, "Sending BlockRangeUpdate");
+        log_peer_trace(&state.node, "Sending BlockRangeUpdate");
         let update = BlockRangeUpdate::new(&state.storage).await?;
         let lastet_block = update.latest_block;
         send(state, Message::BlockRangeUpdate(update)).await?;
@@ -651,7 +651,7 @@ where
                 )));
             }
         };
-        log_peer_debug(&state.node, "Sending status");
+        log_peer_trace(&state.node, "Sending status");
         send(state, status).await?;
         // The next immediate message in the ETH protocol is the
         // status, reference here:
@@ -662,11 +662,11 @@ where
         };
         match msg {
             Message::Status68(msg_data) => {
-                log_peer_debug(&state.node, "Received Status(68)");
+                log_peer_trace(&state.node, "Received Status(68)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Status69(msg_data) => {
-                log_peer_debug(&state.node, "Received Status(69)");
+                log_peer_trace(&state.node, "Received Status(69)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
@@ -772,7 +772,7 @@ where
             let mut negotiated_eth_version = 0;
             let mut negotiated_snap_version = 0;
 
-            log_peer_debug(
+            log_peer_trace(
                 &state.node,
                 &format!(
                     "Hello message capabilities {:?}",
@@ -870,7 +870,7 @@ async fn handle_incoming_message(
         Message::Disconnect(msg_data) => {
             let reason = msg_data.reason();
 
-            log_peer_debug(&state.node, &format!("Received Disconnect: {reason}"));
+            log_peer_trace(&state.node, &format!("Received Disconnect: {reason}"));
 
             METRICS
                 .record_new_rlpx_conn_disconnection(
@@ -886,7 +886,7 @@ async fn handle_incoming_message(
             return Err(PeerConnectionError::DisconnectReceived(reason));
         }
         Message::Ping(_) => {
-            log_peer_debug(&state.node, "Sending pong message");
+            log_peer_trace(&state.node, "Sending pong message");
             send(state, Message::Pong(PongMessage {})).await?;
         }
         Message::Pong(_) => {
@@ -970,7 +970,7 @@ async fn handle_incoming_message(
             }
         }
         Message::BlockRangeUpdate(update) => {
-            log_peer_debug(
+            log_peer_trace(
                 &state.node,
                 &format!(
                     "Block range update: {} to {}",
@@ -1084,7 +1084,7 @@ async fn handle_outgoing_message(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
-    log_peer_debug(&state.node, &format!("Sending message {message}"));
+    log_peer_trace(&state.node, &format!("Sending message {message}"));
     send(state, message).await?;
     Ok(())
 }
@@ -1100,7 +1100,7 @@ async fn handle_outgoing_request(
             .current_requests
             .insert(id, (format!("{message}"), sender))
     });
-    log_peer_debug(&state.node, &format!("Sending request {message}"));
+    log_peer_trace(&state.node, &format!("Sending request {message}"));
     send(state, message).await?;
     Ok(())
 }

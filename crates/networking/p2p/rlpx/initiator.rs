@@ -4,7 +4,7 @@ use crate::{
 };
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, send_after},
+    tasks::{CastResponse, GenServer, GenServerHandle, InitResult, send_after, send_message_on},
 };
 use std::time::Duration;
 use tracing::{debug, error, info};
@@ -44,7 +44,7 @@ impl RLPxInitiator {
     pub async fn spawn(context: P2PContext) {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(context);
-        let mut server = RLPxInitiator::start(state.clone());
+        let mut server = RLPxInitiator::start_on_thread(state.clone());
         let _ = server.cast(InMessage::LookForPeers).await;
     }
 
@@ -81,6 +81,7 @@ impl RLPxInitiator {
 #[derive(Debug, Clone)]
 pub enum InMessage {
     LookForPeers,
+    Shutdown,
 }
 
 #[derive(Debug, Clone)]
@@ -94,10 +95,15 @@ impl GenServer for RLPxInitiator {
     type OutMsg = OutMessage;
     type Error = std::convert::Infallible;
 
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
+        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
+        Ok(InitResult::Success(self))
+    }
+
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
+        handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
             Self::CastMsg::LookForPeers => {
@@ -115,6 +121,7 @@ impl GenServer for RLPxInitiator {
 
                 CastResponse::NoReply
             }
+            Self::CastMsg::Shutdown => CastResponse::Stop,
         }
     }
 }
