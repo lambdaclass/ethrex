@@ -1,17 +1,17 @@
-use std::sync::Arc;
+use std::{fs::remove_dir_all, path::Path, sync::Arc};
 
-use ethrex::{cli::remove_db, utils::default_datadir};
+use ethrex::{cli::remove_db, initializers::regenerate_head_state, utils::default_datadir};
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, BlockchainType,
     fork_choice::apply_fork_choice,
-    payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
+    payload::{BuildPayloadArgs, create_payload},
     validate_block,
 };
 use ethrex_common::{
     Address, Bytes, H256, U256,
     types::{
-        Block, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, ELASTICITY_MULTIPLIER, Transaction,
-        TxKind, fee_config::FeeConfig,
+        Block, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, ELASTICITY_MULTIPLIER, Genesis,
+        Transaction, TxKind, fee_config::FeeConfig,
     },
 };
 use ethrex_config::networks::Network;
@@ -70,21 +70,28 @@ async fn main() {
     ));
 
     let mut head_block_hash = genesis.get_block().hash();
+
     let mut head_block_timestamp = genesis.timestamp;
 
     for n_blocks in 1..7200 {
         println!("Testing {n_blocks} blocks batch");
 
-        println!("Producing blocks...");
+        let checkpoint_datadir = datadir.join(format!("checkpoint_{n_blocks}"));
 
-        // let blocks = produce_l1_blocks(
-        //     blockchain.clone(),
-        //     &mut store,
-        //     head_block_hash,
-        //     head_block_timestamp + 12,
-        //     n_blocks,
-        // )
-        // .await;
+        // If the checkpoint directory already exists, remove it
+        if checkpoint_datadir.exists() {
+            println!("Removing existing checkpoint directory at {checkpoint_datadir:?}");
+
+            remove_dir_all(&checkpoint_datadir)
+                .expect("failed to remove existing checkpoint directory");
+        }
+
+        println!("Creating checkpoint at {checkpoint_datadir:?}");
+
+        let (checkpoint_store, checkpoint_blockchain) =
+            create_checkpoint(&store, &checkpoint_datadir, genesis.clone()).await;
+
+        println!("Producing {n_blocks} blocks...");
 
         let blocks = produce_l2_blocks(
             blockchain.clone(),
@@ -100,105 +107,33 @@ async fn main() {
 
         head_block_timestamp = blocks.last().expect("no blocks produced").header.timestamp;
 
+        println!(
+            "Checkpoint head: {}, Store head: {}",
+            checkpoint_store
+                .get_latest_block_number()
+                .await
+                .expect("failed to get latest block number from checkpoint store"),
+            store
+                .get_latest_block_number()
+                .await
+                .expect("failed to get latest block number from main store"),
+        );
+
         println!("Generating witnesses for produced blocks...");
 
-        blockchain
+        checkpoint_blockchain
             .generate_witness_for_blocks(&blocks)
             .await
             .expect("failed to generate witness for blocks");
 
+        println!("Removing checkpoint directory...");
+
+        // The checkpoint has fulfilled its purpose, so we can remove it to
+        // avoid wasting disk space
+        remove_dir_all(&checkpoint_datadir).expect("failed to remove checkpoint directory");
+
         println!("Done!");
     }
-}
-
-/// Produces L1 blocks populated with a single signed transaction each.
-pub async fn produce_l1_blocks(
-    blockchain: Arc<Blockchain>,
-    store: &mut Store,
-    head_block_hash: H256,
-    initial_timestamp: u64,
-    n_blocks: u64,
-) -> Vec<Block> {
-    let mut blocks = Vec::new();
-
-    let mut current_parent_hash = head_block_hash;
-
-    let mut current_timestamp = initial_timestamp;
-
-    for _ in 0..n_blocks {
-        let tx = generate_signed_transaction(store).await;
-
-        blockchain
-            .add_transaction_to_pool(tx)
-            .await
-            .expect("failed to add tx to pool");
-
-        let block = produce_empty_l1_block(
-            blockchain.clone(),
-            store,
-            current_parent_hash,
-            current_timestamp,
-        )
-        .await;
-
-        current_parent_hash = block.hash();
-
-        current_timestamp += 12; // Assuming an average block time of 12 seconds
-
-        blocks.push(block);
-    }
-
-    blocks
-}
-
-/// Produces a single empty L1 block.
-pub async fn produce_empty_l1_block(
-    blockchain: Arc<Blockchain>,
-    store: &mut Store,
-    head_block_hash: H256,
-    timestamp: u64,
-) -> Block {
-    let build_payload_args = BuildPayloadArgs {
-        parent: head_block_hash,
-        timestamp,
-        fee_recipient: Address::zero(),
-        random: H256::zero(),
-        withdrawals: Some(Vec::new()),
-        beacon_root: Some(H256::zero()),
-        version: 3,
-        elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
-    };
-
-    let payload_id = build_payload_args
-        .id()
-        .expect("failed to compute payload ID");
-
-    let payload =
-        create_payload(&build_payload_args, store, Bytes::new()).expect("failed to create payload");
-
-    blockchain
-        .clone()
-        .initiate_payload_build(payload, payload_id)
-        .await;
-
-    let PayloadBuildResult { payload: block, .. } = blockchain
-        .get_payload(payload_id)
-        .await
-        .expect("failed to get payload");
-
-    blockchain
-        .add_block(block.clone())
-        .await
-        .expect("failed to add block");
-
-    let new_block_hash = block.hash();
-
-    apply_fork_choice(store, new_block_hash, new_block_hash, new_block_hash)
-        .await
-        .expect("failed to apply fork choice");
-
-    block
 }
 
 /// Produces L2 blocks populated with a single signed transaction each.
@@ -365,4 +300,119 @@ async fn generate_signed_transaction(store: &Store) -> Transaction {
     .sign(&signer)
     .await
     .expect("failed to sign transaction")
+}
+
+async fn create_checkpoint(
+    store: &Store,
+    path: &Path,
+    genesis: Genesis,
+) -> (Store, Arc<Blockchain>) {
+    store
+        .create_checkpoint(path)
+        .await
+        .expect("failed to create checkpoint");
+
+    let checkpoint_store = {
+        let checkpoint_store_inner =
+            Store::new(path, EngineType::RocksDB).expect("failed to create store");
+
+        checkpoint_store_inner
+            .add_initial_state(genesis.clone())
+            .await
+            .expect("failed to add genesis state to store");
+
+        checkpoint_store_inner
+    };
+
+    let checkpoint_blockchain = Arc::new(Blockchain::new(
+        checkpoint_store.clone(),
+        BlockchainOptions {
+            r#type: BlockchainType::L2(FeeConfig::default()),
+            ..Default::default()
+        },
+    ));
+
+    // let checkpoint_head_block_number = checkpoint_store
+    //     .get_latest_block_number()
+    //     .await
+    //     .expect("failed to get latest block number from checkpoint store");
+
+    // let db_head_block_number = store
+    //     .get_latest_block_number()
+    //     .await
+    //     .expect("failed to get latest block number from main store");
+
+    // // The checkpoint store must be equal to the store at the time of creation.
+    // // Que el checkpoint no tenga el mismo head block al momento de su creacion
+    // // significa que el store tiene bloques guardados en diff layers que aun
+    // // no se han bajado a disco.
+    // // En este caso, debemos popular el checkpoint hasta el head del store.
+    // if dbg!(checkpoint_head_block_number) < dbg!(db_head_block_number) {
+    //     println!(
+    //         "Populating checkpoint store from block {} to {}",
+    //         checkpoint_head_block_number + 1,
+    //         db_head_block_number
+    //     );
+
+    //     // Construimos el estado hasta el head del store en el checkpoint store.
+    //     for block_number in (checkpoint_head_block_number + 1)..=db_head_block_number {
+    //         // Get the block from the main store
+    //         let block = store
+    //             .get_block_by_number(block_number)
+    //             .await
+    //             .expect("failed to get block from main store")
+    //             .expect("block not found in main store");
+
+    //         // Apply the block to the checkpoint store
+    //         checkpoint_blockchain
+    //             .add_block(block)
+    //             .await
+    //             .expect("failed to apply block to checkpoint store");
+    //     }
+    // }
+
+    regenerate_head_state(&checkpoint_store, &checkpoint_blockchain)
+        .await
+        .expect("failed to regenerate head state in checkpoint store");
+
+    let checkpoint_latest_block_number = checkpoint_store
+        .get_latest_block_number()
+        .await
+        .expect("failed to get latest block number from checkpoint store");
+
+    let db_latest_block_number = store
+        .get_latest_block_number()
+        .await
+        .expect("failed to get latest block number from main store");
+
+    let checkpoint_latest_block = checkpoint_store
+        .get_block_by_number(checkpoint_latest_block_number)
+        .await
+        .expect("failed to get latest block from checkpoint store")
+        .expect("latest block not found in checkpoint store");
+
+    let db_latest_block = store
+        .get_block_by_number(db_latest_block_number)
+        .await
+        .expect("failed to get latest block from main store")
+        .expect("latest block not found in main store");
+
+    // Final sanity check
+    assert!(
+        checkpoint_store
+            .has_state_root(checkpoint_latest_block.header.state_root)
+            .expect("failed to check state root in checkpoint store"),
+        "checkpoint store state is not regenerated properly"
+    );
+    assert_eq!(
+        checkpoint_latest_block_number, db_latest_block_number,
+        "latest block numbers do not match after populating checkpoint store"
+    );
+    assert_eq!(
+        checkpoint_latest_block.hash(),
+        db_latest_block.hash(),
+        "latest block hashes do not match after populating checkpoint store"
+    );
+
+    (checkpoint_store, checkpoint_blockchain)
 }

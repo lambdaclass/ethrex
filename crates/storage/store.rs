@@ -1362,6 +1362,10 @@ impl Store {
     pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
         self.engine.generate_flatkeyvalue()
     }
+
+    pub async fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
+        self.engine.create_checkpoint(path.as_ref()).await
+    }
 }
 
 pub struct AccountProof {

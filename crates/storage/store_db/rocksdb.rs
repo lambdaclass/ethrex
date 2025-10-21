@@ -16,7 +16,7 @@ use ethrex_common::{
 use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
-    Options, WriteBatch,
+    Options, WriteBatch, checkpoint::Checkpoint,
 };
 use std::{
     collections::HashSet,
@@ -1726,6 +1726,17 @@ impl StoreEngine for Store {
         self.flatkeyvalue_control_tx
             .send(FKVGeneratorControlMessage::Continue)
             .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
+    }
+
+    async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
+        let checkpoint = Checkpoint::new(&self.db)
+            .map_err(|e| StoreError::Custom(format!("Failed to create checkpoint: {e}")))?;
+
+        checkpoint
+            .create_checkpoint(path)
+            .map_err(|e| StoreError::Custom(format!("Failed to create RocksDB checkpoint: {e}")))?;
+
+        Ok(())
     }
 }
 
