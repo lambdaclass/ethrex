@@ -75,11 +75,11 @@ Disclaimer: We should automate this
         ```
 
     - For the second one:
-        - First download the `ethrex-macos_aarch64` binary from the ethrex release
+        - First download the `ethrex-l2-macos-aarch64` binary from the ethrex release
         - Give exec permissions to binary
 
             ```bash
-            chmod +x ethrex-macos_aarch64
+            chmod +x ethrex-l2-macos-aarch64
             ```
 
         - Create a dir `ethrex/3.0.0/bin` (replace the version as needed)
