@@ -215,7 +215,12 @@ async fn handle_forkchoice(
         ));
     }
 
-    if context.syncer.sync_mode() == SyncMode::Snap {
+    // Don't trigger a sync if the block is already canonical
+    if context.syncer.sync_mode() == SyncMode::Snap
+        && !context
+            .storage
+            .is_canonical_sync(fork_choice_state.head_block_hash)?
+    {
         context
             .syncer
             .sync_to_head(fork_choice_state.head_block_hash);
