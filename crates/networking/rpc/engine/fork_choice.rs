@@ -6,7 +6,7 @@ use ethrex_blockchain::{
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
