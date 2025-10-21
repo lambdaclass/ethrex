@@ -7,6 +7,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::AccountUpdate;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     block_execution_witness::GuestProgramState, block_execution_witness::GuestProgramStateError,
 };
@@ -21,12 +22,9 @@ use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "l2")]
-use ethrex_common::{
-    kzg::KzgError,
-    types::{
-        BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
-        kzg_commitment_to_versioned_hash,
-    },
+use ethrex_common::types::{
+    BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
+    kzg_commitment_to_versioned_hash,
 };
 use ethrex_l2_common::{
     l1_messages::get_block_l1_messages,
@@ -60,13 +58,16 @@ pub enum StatelessExecutionError {
     BlobsBundleError(#[from] BlobsBundleError),
     #[cfg(feature = "l2")]
     #[error("KZG error (proof couldn't be verified): {0}")]
-    KzgError(#[from] KzgError),
+    KzgError(#[from] ethrex_crypto::kzg::KzgError),
     #[cfg(feature = "l2")]
     #[error("Invalid KZG blob proof")]
     InvalidBlobProof,
     #[cfg(feature = "l2")]
     #[error("Invalid state diff")]
     InvalidStateDiff,
+    #[cfg(feature = "l2")]
+    #[error("FeeConfig not provided for L2 execution")]
+    FeeConfigNotFound,
     #[error("Batch has no blocks")]
     EmptyBatchError,
     #[error("Invalid database")]
@@ -100,6 +101,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blocks,
         execution_witness,
         elasticity_multiplier,
+        fee_config: _fee_config,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
@@ -114,6 +116,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &blocks,
             execution_witness,
             elasticity_multiplier,
+            _fee_config,
             blob_commitment,
             blob_proof,
             chain_id,
@@ -135,7 +138,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, None)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
@@ -157,6 +160,7 @@ pub fn stateless_validation_l2(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
+    fee_config: Option<FeeConfig>,
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
@@ -174,7 +178,7 @@ pub fn stateless_validation_l2(
         nodes_hashed,
         codes_hashed,
         parent_block_header,
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, fee_config)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -258,6 +262,7 @@ fn execute_stateless(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
+    fee_config: Option<FeeConfig>,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let guest_program_state: GuestProgramState = execution_witness
         .try_into()
@@ -323,7 +328,10 @@ fn execute_stateless(
 
         // Execute block
         #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
+        let mut vm = Evm::new_for_l2(
+            wrapped_db.clone(),
+            fee_config.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
+        )?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(wrapped_db.clone());
         let result = vm
@@ -440,7 +448,7 @@ fn verify_blob(
     commitment: Commitment,
     proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
-    use ethrex_common::kzg::verify_blob_kzg_proof;
+    use ethrex_crypto::kzg::verify_blob_kzg_proof;
 
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;

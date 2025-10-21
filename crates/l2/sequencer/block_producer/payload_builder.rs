@@ -58,6 +58,7 @@ pub async fn build_payload(
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
+    // TODO: expose as a proper metric
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
     #[allow(clippy::as_conversions)]
     if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
@@ -65,6 +66,7 @@ pub async fn build_payload(
 
         if interval != 0 {
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            // TODO: expose as a proper metric
             tracing::info!(
                 "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
@@ -176,13 +178,13 @@ pub async fn fill_transactions(
             .get_account_info(latest_block_number, head_tx.tx.sender())
             .await?;
 
-        if let Some(acc_info) = maybe_sender_acc_info {
-            if head_tx.nonce() < acc_info.nonce && !head_tx.is_privileged() {
-                debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
-                txs.pop();
-                blockchain.remove_transaction_from_pool(&tx_hash)?;
-                continue;
-            }
+        if maybe_sender_acc_info.is_some_and(|acc_info| head_tx.nonce() < acc_info.nonce)
+            && !head_tx.is_privileged()
+        {
+            debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
+            txs.pop();
+            blockchain.remove_transaction_from_pool(&tx_hash)?;
+            continue;
         }
 
         // Copy remaining gas and block value before executing the transaction
@@ -230,13 +232,11 @@ pub async fn fill_transactions(
                 continue;
             }
             let id = head_tx.nonce();
-            if let Some(last_nonce) = last_privileged_nonce {
-                if id != *last_nonce + 1 {
-                    debug!("Ignoring out-of-order privileged transaction");
-                    txs.pop();
-                    undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-                    continue;
-                }
+            if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
+                debug!("Ignoring out-of-order privileged transaction");
+                txs.pop();
+                undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                continue;
             }
             last_privileged_nonce.replace(id);
             privileged_tx_count += 1;
@@ -441,7 +441,9 @@ fn calculate_tx_diff_size(
     if is_privileged_tx(head_tx) {
         tx_state_diff_size += PRIVILEGED_TX_LOG_LEN;
     }
-    let l1_message_count: u64 = get_block_l1_messages(&[receipt.clone()]).len().try_into()?;
+    let l1_message_count: u64 = get_block_l1_messages(std::slice::from_ref(receipt))
+        .len()
+        .try_into()?;
     tx_state_diff_size += l1_message_count * L1MESSAGE_LOG_LEN;
 
     Ok((tx_state_diff_size, new_accounts_diff_size))

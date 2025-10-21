@@ -7,9 +7,6 @@ use thiserror::Error;
 pub enum StoreError {
     #[error("DecodeError")]
     DecodeError,
-    #[cfg(feature = "libmdbx")]
-    #[error("Libmdbx error: {0}")]
-    LibmdbxError(anyhow::Error),
     #[cfg(feature = "rocksdb")]
     #[error("Rocksdb error: {0}")]
     RocksdbError(#[from] rocksdb::Error),
@@ -39,4 +36,8 @@ pub enum StoreError {
     IncompatibleChainConfig,
     #[error("Failed to convert index: {0}")]
     TryInto(#[from] std::num::TryFromIntError),
+    #[error("Update batch contains no blocks")]
+    UpdateBatchNoBlocks,
+    #[error("Pivot changed")]
+    PivotChanged,
 }

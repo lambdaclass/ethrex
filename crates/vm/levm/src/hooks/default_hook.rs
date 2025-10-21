@@ -11,8 +11,6 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Fork};
 
-use std::cmp::max;
-
 pub const MAX_REFUND_QUOTIENT: u64 = 5;
 
 pub struct DefaultHook;
@@ -87,14 +85,13 @@ impl Hook for DefaultHook {
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             vm.env.tx_max_priority_fee_per_gas,
             vm.env.tx_max_fee_per_gas,
-        ) {
-            if tx_max_priority_fee > tx_max_fee_per_gas {
-                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas {
-                    priority_fee: tx_max_priority_fee,
-                    max_fee_per_gas: tx_max_fee_per_gas,
-                }
-                .into());
+        ) && tx_max_priority_fee > tx_max_fee_per_gas
+        {
+            return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                priority_fee: tx_max_priority_fee,
+                max_fee_per_gas: tx_max_fee_per_gas,
             }
+            .into());
         }
 
         // (9) SENDER_NOT_EOA
@@ -237,7 +234,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
             .backup_account_info(*address, account_to_remove)?;
 
         *account_to_remove = LevmAccount::default();
-        vm.db.destroyed_accounts.insert(*address);
+        account_to_remove.mark_destroyed();
     }
 
     Ok(())
@@ -247,6 +244,10 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
     let calldata = vm.current_call_frame.calldata.clone();
     let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
+
+    if vm.current_call_frame.gas_limit < intrinsic_gas {
+        return Err(TxValidationError::IntrinsicGasTooLow.into());
+    }
 
     // calldata_cost = tokens_in_calldata * 4
     let calldata_cost: u64 = gas_cost::tx_calldata(&calldata)?;
@@ -261,9 +262,8 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         .checked_add(TX_BASE_COST)
         .ok_or(InternalError::Overflow)?;
 
-    let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
-    if vm.current_call_frame.gas_limit < min_gas_limit {
-        return Err(TxValidationError::IntrinsicGasTooLow.into());
+    if vm.current_call_frame.gas_limit < floor_cost_by_tokens {
+        return Err(TxValidationError::IntrinsicGasBelowFloorGasCost.into());
     }
 
     Ok(())
@@ -321,10 +321,11 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
     for blob_hash in blob_hashes {
         let blob_hash = blob_hash.as_bytes();
-        if let Some(first_byte) = blob_hash.first() {
-            if !VALID_BLOB_PREFIXES.contains(first_byte) {
-                return Err(TxValidationError::Type3TxInvalidBlobVersionedHash.into());
-            }
+        if blob_hash
+            .first()
+            .is_some_and(|first_byte| !VALID_BLOB_PREFIXES.contains(first_byte))
+        {
+            return Err(TxValidationError::Type3TxInvalidBlobVersionedHash.into());
         }
     }
 

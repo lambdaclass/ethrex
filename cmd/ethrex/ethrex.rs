@@ -2,9 +2,9 @@ use clap::Parser;
 use ethrex::{
     cli::CLI,
     initializers::{init_l1, init_tracing},
-    utils::{NodeConfigFile, store_node_config_file},
+    utils::{NodeConfigFile, get_client_version, store_node_config_file},
 };
-use ethrex_p2p::{kademlia::Kademlia, types::NodeRecord};
+use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -35,7 +35,7 @@ pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0
 async fn server_shutdown(
     datadir: &Path,
     cancel_token: &CancellationToken,
-    peer_table: Kademlia,
+    peer_table: PeerTable,
     local_node_record: Arc<Mutex<NodeRecord>>,
 ) {
     info!("Server shut down started...");
@@ -57,6 +57,8 @@ async fn main() -> eyre::Result<()> {
     }
 
     let log_filter_handler = init_tracing(&opts);
+
+    info!("ethrex version: {}", get_client_version());
 
     let (datadir, cancel_token, peer_table, local_node_record) =
         init_l1(opts, Some(log_filter_handler)).await?;

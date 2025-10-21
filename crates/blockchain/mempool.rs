@@ -200,10 +200,11 @@ impl Mempool {
             }
 
             // Filter by blob gas fee
-            if let (true, Some(blob_fee)) = (is_blob_tx, filter.blob_fee) {
-                if tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee) {
-                    return false;
-                }
+            if is_blob_tx
+                && let Some(blob_fee) = filter.blob_fee
+                && tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee)
+            {
+                return false;
             }
             true
         };
@@ -362,7 +363,6 @@ impl Mempool {
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
             return Ok(None);
         };
-
         let is_a_replacement_tx = {
             // EIP-1559 values
             let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
@@ -872,6 +872,7 @@ mod tests {
                 blobs: blobs.to_vec(),
                 commitments: commitments.to_vec(),
                 proofs: proofs.to_vec(),
+                version: 0,
             };
             mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
         }

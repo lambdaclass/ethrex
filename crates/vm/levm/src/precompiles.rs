@@ -6,37 +6,29 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
+use ethrex_common::H160;
 use ethrex_common::utils::{keccak, u256_from_big_endian_const};
 use ethrex_common::{
-    Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
+    Address, H256, U256, serde_utils::bool, types::Fork, types::Fork::*,
     utils::u256_from_big_endian,
 };
-use ethrex_crypto::blake2f::blake2b_f;
+use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use k256::elliptic_curve::Field;
+use lambdaworks_math::cyclic_group::IsGroup;
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{
+    BN254FieldElement, BN254TwistCurveFieldElement,
+};
+use lambdaworks_math::elliptic_curve::short_weierstrass::point::ShortWeierstrassProjectivePoint;
 use lambdaworks_math::{
     elliptic_curve::{
-        short_weierstrass::{
-            curves::{
-                bls12_381::{curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve},
-                bn_254::{
-                    curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
-                    field_extension::{
-                        BN254_PRIME_FIELD_ORDER, BN254FieldModulus, Degree2ExtensionField,
-                        Degree12ExtensionField,
-                    },
-                    pairing::BN254AtePairing,
-                    twist::BN254TwistCurve,
-                },
-            },
-            point::ShortWeierstrassProjectivePoint,
+        short_weierstrass::curves::{
+            bls12_381::{curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve},
+            bn_254::{curve::BN254Curve, pairing::BN254AtePairing, twist::BN254TwistCurve},
         },
         traits::{IsEllipticCurve, IsPairing},
     },
-    field::{
-        element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement,
-        fields::montgomery_backed_prime_fields::MontgomeryBackendPrimeField,
-    },
+    field::extensions::quadratic::QuadraticExtensionFieldElement,
     traits::ByteConversion,
     unsigned_integer::element::UnsignedInteger,
 };
@@ -72,102 +64,6 @@ use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::fiel
 use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
 use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
 
-pub const ECRECOVER_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x01,
-]);
-pub const SHA2_256_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x02,
-]);
-pub const RIPEMD_160_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x03,
-]);
-pub const IDENTITY_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x04,
-]);
-pub const MODEXP_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x05,
-]);
-pub const ECADD_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x06,
-]);
-pub const ECMUL_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x07,
-]);
-pub const ECPAIRING_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x08,
-]);
-pub const BLAKE2F_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x09,
-]);
-pub const POINT_EVALUATION_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0a,
-]);
-pub const BLS12_G1ADD_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0b,
-]);
-pub const BLS12_G1MSM_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0c,
-]);
-pub const BLS12_G2ADD_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0d,
-]);
-pub const BLS12_G2MSM_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0e,
-]);
-pub const BLS12_PAIRING_CHECK_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0f,
-]);
-pub const BLS12_MAP_FP_TO_G1_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x10,
-]);
-pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x11,
-]);
-pub const P256_VERIFICATION_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x00,
-]);
-
-pub const PRECOMPILES: [H160; 10] = [
-    ECRECOVER_ADDRESS,
-    SHA2_256_ADDRESS,
-    RIPEMD_160_ADDRESS,
-    IDENTITY_ADDRESS,
-    MODEXP_ADDRESS,
-    ECADD_ADDRESS,
-    ECMUL_ADDRESS,
-    ECPAIRING_ADDRESS,
-    BLAKE2F_ADDRESS,
-    POINT_EVALUATION_ADDRESS,
-];
-
-pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
-    BLS12_G1ADD_ADDRESS,
-    BLS12_G1MSM_ADDRESS,
-    BLS12_G2ADD_ADDRESS,
-    BLS12_G2MSM_ADDRESS,
-    BLS12_PAIRING_CHECK_ADDRESS,
-    BLS12_MAP_FP_TO_G1_ADDRESS,
-    BLS12_MAP_FP2_TO_G2_ADDRESS,
-];
-
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
 pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
@@ -201,26 +97,205 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
+pub struct Precompile {
+    pub address: H160,
+    pub name: &'static str,
+    pub active_since_fork: Fork,
+}
+
+pub const ECRECOVER: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01,
+    ]),
+    name: "ECREC",
+    active_since_fork: Paris,
+};
+
+pub const SHA2_256: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x02,
+    ]),
+    name: "SHA256",
+    active_since_fork: Paris,
+};
+
+pub const RIPEMD_160: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x03,
+    ]),
+    name: "RIPEMD160",
+    active_since_fork: Paris,
+};
+
+pub const IDENTITY: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x04,
+    ]),
+    name: "ID",
+    active_since_fork: Paris,
+};
+
+pub const MODEXP: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x05,
+    ]),
+    name: "MODEXP",
+    active_since_fork: Paris,
+};
+
+pub const ECADD: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x06,
+    ]),
+    name: "BN254_ADD",
+    active_since_fork: Paris,
+};
+
+pub const ECMUL: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x07,
+    ]),
+    name: "BN254_MUL",
+    active_since_fork: Paris,
+};
+
+pub const ECPAIRING: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x08,
+    ]),
+    name: "BN254_PAIRING",
+    active_since_fork: Paris,
+};
+
+pub const BLAKE2F: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x09,
+    ]),
+    name: "BLAKE2F",
+    active_since_fork: Paris,
+};
+
+pub const POINT_EVALUATION: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0a,
+    ]),
+    name: "KZG_POINT_EVALUATION",
+    active_since_fork: Cancun,
+};
+
+pub const BLS12_G1ADD: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0b,
+    ]),
+    name: "BLS12_G1ADD",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_G1MSM: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0c,
+    ]),
+    name: "BLS12_G1MSM",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_G2ADD: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0d,
+    ]),
+    name: "BLS12_G2ADD",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_G2MSM: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0e,
+    ]),
+    name: "BLS12_G2MSM",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_PAIRING_CHECK: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0f,
+    ]),
+    name: "BLS12_PAIRING_CHECK",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_MAP_FP_TO_G1: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x10,
+    ]),
+    name: "BLS12_MAP_FP_TO_G1",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_MAP_FP2_TO_G2: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x11,
+    ]),
+    name: "BLS12_MAP_FP2_TO_G2",
+    active_since_fork: Prague,
+};
+
+pub const P256_VERIFICATION: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01, 0x00,
+    ]),
+    name: "P256_VERIFICATION",
+    active_since_fork: Osaka,
+};
+
+pub const PRECOMPILES: [Precompile; 19] = [
+    ECRECOVER,
+    SHA2_256,
+    RIPEMD_160,
+    IDENTITY,
+    MODEXP,
+    ECADD,
+    ECMUL,
+    ECPAIRING,
+    BLAKE2F,
+    POINT_EVALUATION,
+    BLS12_G1ADD,
+    BLS12_G1MSM,
+    BLS12_G2ADD,
+    BLS12_G2MSM,
+    BLS12_MAP_FP_TO_G1,
+    BLS12_MAP_FP2_TO_G2,
+    BLS12_MAP_FP_TO_G1,
+    BLS12_PAIRING_CHECK,
+    P256_VERIFICATION,
+];
+
+pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
+    PRECOMPILES
+        .into_iter()
+        .filter(move |precompile| precompile.active_since_fork <= fork)
+}
+
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    // Cancun specs is the only one that allows point evaluation precompile
-    if *address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
-        return false;
-    }
-    // Prague or newers forks should only use these precompiles
-    // https://eips.ethereum.org/EIPS/eip-2537
-    if PRECOMPILES_POST_CANCUN.contains(address) && fork < Fork::Prague {
-        return false;
-    }
-
-    // P256 verify Precompile only existed on L2 before Osaka
-    if fork < Fork::Osaka && matches!(vm_type, VMType::L1) && address == &P256_VERIFICATION_ADDRESS
-    {
-        return false;
-    }
-
-    PRECOMPILES.contains(address)
-        || PRECOMPILES_POST_CANCUN.contains(address)
-        || address == &P256_VERIFICATION_ADDRESS
+    (matches!(vm_type, VMType::L2(_)) && *address == P256_VERIFICATION.address)
+        || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
@@ -234,30 +309,30 @@ pub fn execute_precompile(
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
-        precompiles[ECRECOVER_ADDRESS.0[19] as usize] = Some(ecrecover as PrecompileFn);
-        precompiles[IDENTITY_ADDRESS.0[19] as usize] = Some(identity as PrecompileFn);
-        precompiles[SHA2_256_ADDRESS.0[19] as usize] = Some(sha2_256 as PrecompileFn);
-        precompiles[RIPEMD_160_ADDRESS.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
-        precompiles[MODEXP_ADDRESS.0[19] as usize] = Some(modexp as PrecompileFn);
-        precompiles[ECADD_ADDRESS.0[19] as usize] = Some(ecadd as PrecompileFn);
-        precompiles[ECMUL_ADDRESS.0[19] as usize] = Some(ecmul as PrecompileFn);
-        precompiles[ECPAIRING_ADDRESS.0[19] as usize] = Some(ecpairing as PrecompileFn);
-        precompiles[BLAKE2F_ADDRESS.0[19] as usize] = Some(blake2f as PrecompileFn);
-        precompiles[POINT_EVALUATION_ADDRESS.0[19] as usize] =
+        precompiles[ECRECOVER.address.0[19] as usize] = Some(ecrecover as PrecompileFn);
+        precompiles[IDENTITY.address.0[19] as usize] = Some(identity as PrecompileFn);
+        precompiles[SHA2_256.address.0[19] as usize] = Some(sha2_256 as PrecompileFn);
+        precompiles[RIPEMD_160.address.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
+        precompiles[MODEXP.address.0[19] as usize] = Some(modexp as PrecompileFn);
+        precompiles[ECADD.address.0[19] as usize] = Some(ecadd as PrecompileFn);
+        precompiles[ECMUL.address.0[19] as usize] = Some(ecmul as PrecompileFn);
+        precompiles[ECPAIRING.address.0[19] as usize] = Some(ecpairing as PrecompileFn);
+        precompiles[BLAKE2F.address.0[19] as usize] = Some(blake2f as PrecompileFn);
+        precompiles[POINT_EVALUATION.address.0[19] as usize] =
             Some(point_evaluation as PrecompileFn);
-        precompiles[BLS12_G1ADD_ADDRESS.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
-        precompiles[BLS12_G1MSM_ADDRESS.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
-        precompiles[BLS12_G2ADD_ADDRESS.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
-        precompiles[BLS12_G2MSM_ADDRESS.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
-        precompiles[BLS12_PAIRING_CHECK_ADDRESS.0[19] as usize] =
+        precompiles[BLS12_G1ADD.address.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
+        precompiles[BLS12_G1MSM.address.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
+        precompiles[BLS12_G2ADD.address.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
+        precompiles[BLS12_G2MSM.address.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
+        precompiles[BLS12_PAIRING_CHECK.address.0[19] as usize] =
             Some(bls12_pairing_check as PrecompileFn);
-        precompiles[BLS12_MAP_FP_TO_G1_ADDRESS.0[19] as usize] =
+        precompiles[BLS12_MAP_FP_TO_G1.address.0[19] as usize] =
             Some(bls12_map_fp_to_g1 as PrecompileFn);
-        precompiles[BLS12_MAP_FP2_TO_G2_ADDRESS.0[19] as usize] =
+        precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
             Some(bls12_map_fp2_tp_g2 as PrecompileFn);
         precompiles[u16::from_be_bytes([
-            P256_VERIFICATION_ADDRESS.0[18],
-            P256_VERIFICATION_ADDRESS.0[19],
+            P256_VERIFICATION.address.0[18],
+            P256_VERIFICATION.address.0[19],
         ]) as usize] = Some(p_256_verify as PrecompileFn);
         precompiles
     };
@@ -509,16 +584,16 @@ fn get_slice_or_default<'c>(
     size_to_expand: usize,
 ) -> Cow<'c, [u8]> {
     let upper_limit = calldata.len().min(upper_limit);
-    if let Some(data) = calldata.get(lower_limit..upper_limit) {
-        if !data.is_empty() {
-            if data.len() == size_to_expand {
-                return data.into();
-            }
-            let mut extended = vec![0u8; size_to_expand];
-            let copy_size = size_to_expand.min(data.len());
-            extended[..copy_size].copy_from_slice(&data[..copy_size]);
-            return extended.into();
+    if let Some(data) = calldata.get(lower_limit..upper_limit)
+        && !data.is_empty()
+    {
+        if data.len() == size_to_expand {
+            return data.into();
         }
+        let mut extended = vec![0u8; size_to_expand];
+        let copy_size = size_to_expand.min(data.len());
+        extended[..copy_size].copy_from_slice(&data[..copy_size]);
+        return extended.into();
     }
     Vec::new().into()
 }
@@ -681,193 +756,202 @@ const ALT_BN128_PRIME: U256 = U256([
     0x30644e72e131a029,
 ]);
 
-type FirstPointCoordinates = (
-    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-);
-
-/// Parses first point coordinates and makes verification of invalid infinite
-#[inline]
-fn parse_first_point_coordinates(input_data: &[u8; 192]) -> Result<FirstPointCoordinates, VMError> {
-    let first_point_x = UnsignedInteger::from_bytes_be(&input_data[..32])
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    let first_point_y = UnsignedInteger::from_bytes_be(&input_data[32..64])
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (first_point_x == UnsignedInteger::default()) ^ (first_point_y == UnsignedInteger::default())
-    {
-        return Err(PrecompileError::InvalidPoint.into());
+pub struct G1(U256, U256);
+impl G1 {
+    /// According to EIP-197, the point at infinity (also called neutral element of G1 or zero) is encoded as (0, 0)
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero() && self.1.is_zero()
     }
+}
+pub struct G2(U256, U256, U256, U256);
+impl G2 {
+    /// According to EIP-197, the point at infinity (also called neutral element of G2 or zero) is encoded as (0, 0, 0, 0)
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero() && self.1.is_zero() && self.2.is_zero() && self.3.is_zero()
+    }
+}
 
-    if first_point_x > BN254_PRIME_FIELD_ORDER || first_point_y > BN254_PRIME_FIELD_ORDER {
+#[inline]
+fn parse_bn254_coords(buf: &[u8; 192]) -> (G1, G2) {
+    let (g1_x, g1_y) = (
+        u256_from_big_endian(&buf[..32]),
+        u256_from_big_endian(&buf[32..64]),
+    );
+    let (g2_xy, g2_xx, g2_yy, g2_yx) = (
+        u256_from_big_endian(&buf[64..96]),
+        u256_from_big_endian(&buf[96..128]),
+        u256_from_big_endian(&buf[128..160]),
+        u256_from_big_endian(&buf[160..]),
+    );
+
+    (G1(g1_x, g1_y), G2(g2_xx, g2_xy, g2_yx, g2_yy))
+}
+
+#[inline]
+fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<bool, VMError> {
+    // check each element is in field
+    if g1.0 >= ALT_BN128_PRIME || g1.1 >= ALT_BN128_PRIME {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
 
-    let first_point_x = BN254FieldElement::from(&first_point_x);
-    let first_point_y = BN254FieldElement::from(&first_point_y);
-
-    Ok((first_point_x, first_point_y))
-}
-
-/// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
-///
-/// Slice must have len of 192. This function is only called from ecpairing which ensures that.
-fn parse_second_point_coordinates(
-    input_data: &[u8; 192],
-) -> Result<
-    (
-        FieldElement<Degree2ExtensionField>,
-        FieldElement<Degree2ExtensionField>,
-    ),
-    VMError,
-> {
-    let second_point_x_first_part = &input_data[96..128];
-    let second_point_x_second_part = &input_data[64..96];
-
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_x_second_part) == U256::zero())
+    if g2.0 >= ALT_BN128_PRIME
+        || g2.1 >= ALT_BN128_PRIME
+        || g2.2 >= ALT_BN128_PRIME
+        || g2.3 >= ALT_BN128_PRIME
     {
-        return Err(PrecompileError::InvalidPoint.into());
+        return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
 
-    let second_point_y_first_part = &input_data[160..192];
-    let second_point_y_second_part = &input_data[128..160];
-
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_y_second_part) == U256::zero())
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-    if u256_from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::PointNotInTheCurve.into());
-    }
-
-    let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
-    let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
-
-    let second_point_x = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-
-    Ok((second_point_x, second_point_y))
-}
-
-/// Handles pairing given a certain elements, and depending on if elements represent infinity, then
-/// verifies errors on the other point returning None or returns the pairing
-#[inline(always)] // called only from one place, so inlining always wont increase code size.
-#[expect(clippy::type_complexity)]
-fn validate_pairing(
-    first_point_x: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-    first_point_y: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-    second_point_x: FieldElement<Degree2ExtensionField>,
-    second_point_y: FieldElement<Degree2ExtensionField>,
-) -> Result<
-    Option<(
-        ShortWeierstrassProjectivePoint<BN254Curve>,
-        ShortWeierstrassProjectivePoint<BN254TwistCurve>,
-    )>,
-    VMError,
-> {
-    let zero_element = BN254FieldElement::zero();
-    let twcurve_zero_element = BN254TwistCurveFieldElement::zero();
-    let first_point_is_infinity =
-        first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
-    let second_point_is_infinity =
-        second_point_x.eq(&twcurve_zero_element) && second_point_y.eq(&twcurve_zero_element);
-
-    match (first_point_is_infinity, second_point_is_infinity) {
-        (true, true) => {
-            // If both points are infinity, then continue to the next input
-            Ok(None)
-        }
-        (true, false) => {
-            // If the first point is infinity, then do the checks for the second
-            let p2 = BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-
-            if !p2.is_in_subgroup() {
-                return Err(PrecompileError::PointNotInSubgroup.into());
-            }
-            Ok(None)
-        }
-        (false, true) => {
-            // If the second point is infinity, then do the checks for the first
-            BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-            Ok(None)
-        }
-        (false, false) => {
-            // Define the pairing points
-            let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-
-            let second_point =
-                BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                    .map_err(|_| PrecompileError::InvalidPoint)?;
-            if !second_point.is_in_subgroup() {
-                return Err(PrecompileError::PointNotInSubgroup.into());
-            }
-            Ok(Some((first_point, second_point)))
-        }
-    }
+    Ok(true)
 }
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
-    if calldata.len() % 192 != 0 {
+    if !calldata.len().is_multiple_of(192) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     let inputs_amount = calldata.len() / 192;
-
-    // Consume gas
     let gas_cost = gas_cost::ecpairing(inputs_amount)?;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let mut valid_pairs = Vec::new();
-    let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
-
+    let mut batch = Vec::new();
     for input in calldata.chunks_exact(192) {
         #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
         let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
-
-        let (first_point_x, first_point_y) = parse_first_point_coordinates(&input)?;
-
-        let (second_point_x, second_point_y) = parse_second_point_coordinates(&input)?;
-
-        if let Some(pair) =
-            validate_pairing(first_point_x, first_point_y, second_point_x, second_point_y)?
-        {
-            valid_pairs.push(pair);
+        let (g1, g2) = parse_bn254_coords(&input);
+        if validate_bn254_coords(&g1, &g2)? {
+            batch.push((g1, g2));
         }
     }
 
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "library will not panic on mul overflow"
-    )]
-    if !valid_pairs.is_empty() {
-        let batch: Vec<_> = valid_pairs.iter().map(|(p1, p2)| (p1, p2)).collect();
-        let pairing_result = BN254AtePairing::compute_batch(&batch)
-            .map_err(|_| PrecompileError::BN254AtePairingError)?;
-        mul *= pairing_result;
+    let pairing_check = if batch.is_empty() {
+        true
+    } else {
+        pairing_check(&batch)?
+    };
+
+    let mut result = [0; 32];
+    result[31] = u8::from(pairing_check);
+    Ok(Bytes::from_owner(result))
+}
+
+#[cfg(feature = "sp1")]
+#[inline]
+pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+    use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
+
+    if batch.is_empty() {
+        return Ok(true);
+    }
+    let mut valid_batch = Vec::with_capacity(batch.len());
+    for (g1, g2) in batch {
+        let g1: SubstrateG1 = if g1.is_zero() {
+            SubstrateG1::zero()
+        } else {
+            let (g1_x, g1_y) = (
+                Fq::from_slice(&g1.0.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+                Fq::from_slice(&g1.1.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+            );
+            AffineG1::new(g1_x, g1_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+                .into()
+        };
+        let g2: SubstrateG2 = if g2.is_zero() {
+            SubstrateG2::zero()
+        } else {
+            let (g2_x, g2_y) = (
+                Fq2::new(
+                    Fq::from_slice(&g2.0.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                    Fq::from_slice(&g2.1.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                ),
+                Fq2::new(
+                    Fq::from_slice(&g2.2.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                    Fq::from_slice(&g2.3.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                ),
+            );
+            AffineG2::new(g2_x, g2_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+                .into()
+        };
+
+        if g1.is_zero() || g2.is_zero() {
+            continue;
+        }
+        valid_batch.push((g1, g2));
     }
 
-    // Generate the result from the variable mul
-    let success = mul.eq(&QuadraticExtensionFieldElement::one());
-    let mut result = [0; 32];
-    result[31] = u8::from(success);
-    Ok(Bytes::from(result.to_vec()))
+    let result = substrate_bn::pairing_batch(&valid_batch);
+
+    Ok(result == substrate_bn::Gt::one())
+}
+
+#[cfg(not(feature = "sp1"))]
+#[inline]
+pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+    type Fq = BN254FieldElement;
+    type Fq2 = BN254TwistCurveFieldElement;
+    type LambdaworksG1 = BN254Curve;
+    type LambdaworksG2 = BN254TwistCurve;
+    type ProjectiveG1 = ShortWeierstrassProjectivePoint<LambdaworksG1>;
+    type ProjectiveG2 = ShortWeierstrassProjectivePoint<LambdaworksG2>;
+
+    if batch.is_empty() {
+        return Ok(true);
+    }
+
+    let mut valid_batch = Vec::with_capacity(batch.len());
+    for (g1, g2) in batch {
+        let g1 = if g1.is_zero() {
+            ProjectiveG1::neutral_element()
+        } else {
+            let (g1_x, g1_y) = (
+                Fq::from_bytes_be(&g1.0.to_big_endian())
+                    .map_err(|_| InternalError::msg("failed to parse g1 x"))?,
+                Fq::from_bytes_be(&g1.1.to_big_endian())
+                    .map_err(|_| InternalError::msg("failed to parse g1 y"))?,
+            );
+            LambdaworksG1::create_point_from_affine(g1_x, g1_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+        };
+        let g2 = if g2.is_zero() {
+            ProjectiveG2::neutral_element()
+        } else {
+            let (g2_x, g2_y) = {
+                let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
+                let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
+                let (x, y) = (
+                    Fq2::from_bytes_be(&x_bytes)
+                        .map_err(|_| InternalError::msg("failed to parse g2 x"))?,
+                    Fq2::from_bytes_be(&y_bytes)
+                        .map_err(|_| InternalError::msg("failed to parse g2 y"))?,
+                );
+                (x, y)
+            };
+            LambdaworksG2::create_point_from_affine(g2_x, g2_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+        };
+        if !g2.is_in_subgroup() {
+            return Err(PrecompileError::PointNotInSubgroup.into());
+        }
+
+        if g1.is_neutral_element() || g2.is_neutral_element() {
+            continue;
+        }
+        valid_batch.push((g1, g2));
+    }
+    let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
+    let result = BN254AtePairing::compute_batch(&valid_batch_refs)
+        .map_err(|_| PrecompileError::BN254AtePairingError)?;
+
+    Ok(result == QuadraticExtensionFieldElement::one())
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
@@ -1178,7 +1262,7 @@ pub fn bls12_g1msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G1_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1352,7 +1436,7 @@ pub fn bls12_g2msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_G2_MSM_PAIR_LENGTH != 0 {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G2_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1407,7 +1491,11 @@ pub fn bls12_pairing_check(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
+    if calldata.is_empty()
+        || !calldata
+            .len()
+            .is_multiple_of(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
+    {
         return Err(PrecompileError::ParsingInputError.into());
     }
 

@@ -51,12 +51,12 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          make build-prover
+          PROVER=sp1 G=true make build-prover
 
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
-          cargo test l2 --no-run --release
+          cargo test l2 --features l2 --no-run --release
 
       - name: Start L1 & Deploy contracts
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -67,6 +67,13 @@ jobs:
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
           docker compose up --build contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
 
       - name: Ensure admin permissions in _work
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
@@ -79,13 +86,19 @@ jobs:
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
           ETHREX_COMMITTER_COMMIT_TIME=30000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
           docker compose up --build --detach --no-deps ethrex_l2
+
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
 
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
+          RUST_LOG=info,ethrex_prover_lib=debug PROVER=sp1 G=true make init-prover &
           docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
