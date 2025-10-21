@@ -1532,7 +1532,10 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common 4.0.0",
  "ethrex-config",
+ "ethrex-l2",
  "ethrex-storage 4.0.0",
+ "ethrex-storage-rollup",
+ "ethrex-vm",
  "tokio",
 ]
 
