@@ -115,9 +115,9 @@ impl Trie {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => {
                 Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
-                    TrieError::InconsistentTree(InconsistentTreeError::RootNotFound(
+                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
                         hash.finalize(),
-                    ))
+                    )))
                 })?)
                 .map_err(TrieError::RLPDecode)?
                 .get(self.db.as_ref(), path)?
@@ -183,9 +183,9 @@ impl Trie {
 
     pub fn get_root_node(&self, path: Nibbles) -> Result<Node, TrieError> {
         self.root.get_node(self.db.as_ref(), path)?.ok_or_else(|| {
-            TrieError::InconsistentTree(InconsistentTreeError::RootNotFound(
+            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
                 self.root.compute_hash().finalize(),
-            ))
+            )))
         })
     }
 
@@ -294,7 +294,7 @@ impl Trie {
         }
 
         let root_rlp = all_nodes.get(&root_hash).ok_or_else(|| {
-            TrieError::InconsistentTree(InconsistentTreeError::RootNotFound(root_hash))
+            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(root_hash)))
         })?;
 
         fn get_embedded_node(
@@ -421,13 +421,13 @@ impl Trie {
                             let child_path = current_path.append_new(idx as u8);
                             let child_node =
                                 child_ref.get_node(db, child_path.clone())?.ok_or_else(|| {
-                                    TrieError::InconsistentTree(
+                                    TrieError::InconsistentTree(Box::new(
                                         InconsistentTreeError::NodeNotFoundOnBranchNode(
                                             child_ref.compute_hash().finalize(),
                                             branch_node.compute_hash().finalize(),
                                             child_path.clone(),
                                         ),
-                                    )
+                                    ))
                                 })?;
                             get_node_inner(db, child_path, child_node, partial_path)
                         } else {
@@ -445,7 +445,7 @@ impl Trie {
                             .child
                             .get_node(db, child_path.clone())?
                             .ok_or_else(|| {
-                                TrieError::InconsistentTree(
+                                TrieError::InconsistentTree(Box::new(
                                     InconsistentTreeError::ExtensionNodeChildNotFound(Box::new(
                                         ExtensionNodeErrorData {
                                             node_hash: extension_node
@@ -459,7 +459,7 @@ impl Trie {
                                             node_path: child_path.clone(),
                                         },
                                     )),
-                                )
+                                ))
                             })?;
                         get_node_inner(db, child_path, child_node, partial_path)
                     } else {
@@ -521,9 +521,9 @@ impl ProofTrie {
                 .root
                 .get_node(self.0.db.as_ref(), Nibbles::default())?
                 .ok_or_else(|| {
-                    TrieError::InconsistentTree(InconsistentTreeError::RootNotFound(
+                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
                         self.0.root.compute_hash().finalize(),
-                    ))
+                    )))
                 })?
                 .insert(self.0.db.as_ref(), partial_path, external_ref)?
                 .into()

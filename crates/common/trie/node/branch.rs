@@ -48,10 +48,12 @@ impl BranchNode {
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
                 let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
-                    TrieError::InconsistentTree(InconsistentTreeError::NodeNotFoundOnBranchNode(
-                        child_ref.compute_hash().finalize(),
-                        self.compute_hash().finalize(),
-                        path.current(),
+                    TrieError::InconsistentTree(Box::new(
+                        InconsistentTreeError::NodeNotFoundOnBranchNode(
+                            child_ref.compute_hash().finalize(),
+                            self.compute_hash().finalize(),
+                            path.current(),
+                        ),
                     ))
                 })?;
                 child_node.get(db, path)
@@ -83,13 +85,13 @@ impl BranchNode {
                 // Insert into existing child and then update it
                 (choice_ref, ValueOrHash::Value(value)) => {
                     let child_node = choice_ref.get_node(db, path.current())?.ok_or_else(|| {
-                        TrieError::InconsistentTree(
+                        TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::NodeNotFoundOnBranchNode(
                                 choice_ref.compute_hash().finalize(),
                                 self.compute_hash().finalize(),
                                 path.current(),
                             ),
-                        )
+                        ))
                     })?;
 
                     child_node.insert(db, path, value)?.into()
@@ -106,13 +108,13 @@ impl BranchNode {
                         choice_ref
                             .get_node(db, path.current())?
                             .ok_or_else(|| {
-                                TrieError::InconsistentTree(
+                                TrieError::InconsistentTree(Box::new(
                                     InconsistentTreeError::NodeNotFoundOnBranchNode(
                                         choice_ref.compute_hash().finalize(),
                                         self.compute_hash().finalize(),
                                         path.current(),
                                     ),
-                                )
+                                ))
                             })?
                             .insert(db, path, value)?
                             .into()
@@ -163,13 +165,13 @@ impl BranchNode {
                 let child_node = self.choices[choice_index]
                     .get_node(db, path.current())?
                     .ok_or_else(|| {
-                        TrieError::InconsistentTree(
+                        TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::NodeNotFoundOnBranchNode(
                                 self.choices[choice_index].compute_hash().finalize(),
                                 self.compute_hash().finalize(),
                                 path.current(),
                             ),
-                        )
+                        ))
                     })?;
                 // Remove value from child node
                 let (child_node, old_value) = child_node.remove(db, path.clone())?;
@@ -212,13 +214,13 @@ impl BranchNode {
                 let child = child_ref
                     .get_node(db, base_path.current().append_new(choice_index as u8))?
                     .ok_or_else(|| {
-                        TrieError::InconsistentTree(
+                        TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::NodeNotFoundOnBranchNode(
                                 child_ref.compute_hash().finalize(),
                                 self.compute_hash().finalize(),
                                 base_path.current(),
                             ),
-                        )
+                        ))
                     })?;
                 match child {
                     // Replace self with an extension node leading to the child
@@ -287,10 +289,12 @@ impl BranchNode {
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
                 let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
-                    TrieError::InconsistentTree(InconsistentTreeError::NodeNotFoundOnBranchNode(
-                        child_ref.compute_hash().finalize(),
-                        self.compute_hash().finalize(),
-                        path.current(),
+                    TrieError::InconsistentTree(Box::new(
+                        InconsistentTreeError::NodeNotFoundOnBranchNode(
+                            child_ref.compute_hash().finalize(),
+                            self.compute_hash().finalize(),
+                            path.current(),
+                        ),
                     ))
                 })?;
                 child_node.get_path(db, path, node_path)?;

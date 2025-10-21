@@ -11,7 +11,7 @@ pub enum TrieError {
     #[error("Verification Error: {0}")]
     Verify(String),
     #[error("Inconsistent internal tree structure: {0}")]
-    InconsistentTree(#[from] InconsistentTreeError),
+    InconsistentTree(Box<InconsistentTreeError>),
     #[error("Lock Error: Panicked when trying to acquire a lock")]
     LockError,
     #[error("Database error: {0}")]
