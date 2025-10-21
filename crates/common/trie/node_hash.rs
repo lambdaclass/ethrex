@@ -27,7 +27,7 @@ impl NodeHash {
     pub fn from_encoded_raw(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
             let hash = Keccak256::new_with_prefix(encoded).finalize();
-            NodeHash::Hashed(H256::from_slice(hash.as_slice()))
+            NodeHash::Hashed(H256::from_slice(&hash))
         } else {
             NodeHash::from_slice(encoded)
         }
@@ -51,12 +51,9 @@ impl NodeHash {
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
     pub fn finalize(self) -> H256 {
         match self {
-            NodeHash::Inline(_) => H256::from_slice(
-                Keccak256::new()
-                    .chain_update(self.as_ref())
-                    .finalize()
-                    .as_slice(),
-            ),
+            NodeHash::Inline(_) => {
+                H256::from_slice(&Keccak256::new().chain_update(self.as_ref()).finalize())
+            }
             NodeHash::Hashed(x) => x,
         }
     }
