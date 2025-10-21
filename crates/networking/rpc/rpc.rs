@@ -1,5 +1,7 @@
 use crate::authentication::authenticate;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
+use crate::engine::blobs::BlobsV2Request;
+use crate::engine::payload::GetPayloadV5Request;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -11,6 +13,7 @@ use crate::engine::{
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
 };
+use crate::eth::client::Config;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -41,7 +44,8 @@ use crate::utils::{
 };
 use crate::{admin, net};
 use crate::{eth, mempool};
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::ws::WebSocket;
+use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
 use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
     TypedHeader,
@@ -69,6 +73,80 @@ use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+use axum::response::IntoResponse;
+// only works on linux
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)> {
+    let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "jemalloc profiling is not available".into(),
+        ));
+    };
+    let mut prof_ctl = mutex.lock().await;
+    require_profiling_activated(&prof_ctl)?;
+    let pprof = prof_ctl
+        .dump_pprof()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Ok(pprof)
+}
+
+/// Checks whether jemalloc profiling is activated an returns an error response if not.
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+fn require_profiling_activated(
+    prof_ctl: &jemalloc_pprof::JemallocProfCtl,
+) -> Result<(), (StatusCode, String)> {
+    if prof_ctl.activated() {
+        Ok(())
+    } else {
+        Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "heap profiling not activated".into(),
+        ))
+    }
+}
+
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCode, String)> {
+    use axum::body::Body;
+    use axum::http::header::CONTENT_TYPE;
+    use axum::response::Response;
+
+    let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "jemalloc profiling is not available".into(),
+        ));
+    };
+    let mut prof_ctl = mutex.lock().await;
+    require_profiling_activated(&prof_ctl)?;
+    let svg = prof_ctl
+        .dump_flamegraph()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Response::builder()
+        .header(CONTENT_TYPE, "image/svg+xml")
+        .body(Body::from(svg))
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+// Feature-disabled stubs (no dependency on jemalloc_pprof)
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
+pub async fn handle_get_heap() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
+    ))
+}
+
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
+pub async fn handle_get_heap_flamegraph() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
+    ))
+}
+
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestWrapper {
@@ -95,6 +173,7 @@ pub struct NodeData {
     pub local_p2p_node: Node,
     pub local_node_record: NodeRecord,
     pub client_version: String,
+    pub extra_data: Bytes,
 }
 
 #[allow(async_fn_in_trait)]
@@ -120,6 +199,7 @@ pub const FILTER_DURATION: Duration = {
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
+    ws_addr: Option<SocketAddr>,
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
@@ -131,6 +211,7 @@ pub async fn start_api(
     client_version: String,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
+    extra_data: String,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -146,6 +227,7 @@ pub async fn start_api(
             local_p2p_node,
             local_node_record,
             client_version,
+            extra_data: extra_data.into(),
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
@@ -171,8 +253,13 @@ pub async fn start_api(
     let cors = CorsLayer::permissive();
 
     let http_router = Router::new()
+        .route("/debug/pprof/allocs", axum::routing::get(handle_get_heap))
+        .route(
+            "/debug/pprof/allocs/flamegraph",
+            axum::routing::get(handle_get_heap_flamegraph),
+        )
         .route("/", post(handle_http_request))
-        .layer(cors)
+        .layer(cors.clone())
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr)
         .await
@@ -185,7 +272,7 @@ pub async fn start_api(
     let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
-        .with_state(service_context)
+        .with_state(service_context.clone())
         // Bump the body limit for the engine API to 256MB
         // This is needed to receive payloads bigger than the default limit of 2MB
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
@@ -198,8 +285,28 @@ pub async fn start_api(
         .into_future();
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
-    let _ = tokio::try_join!(authrpc_server, http_server)
-        .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    if let Some(address) = ws_addr {
+        let ws_handler = |ws: WebSocketUpgrade, ctx| async {
+            ws.on_upgrade(|socket| handle_websocket(socket, ctx))
+        };
+        let ws_router = Router::new()
+            .route("/", axum::routing::any(ws_handler))
+            .layer(cors)
+            .with_state(service_context);
+        let ws_listener = TcpListener::bind(address)
+            .await
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
+        let ws_server = axum::serve(ws_listener, ws_router)
+            .with_graceful_shutdown(shutdown_signal())
+            .into_future();
+        info!("Starting WS server at {address}");
+
+        let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
+            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    } else {
+        let _ = tokio::try_join!(authrpc_server, http_server)
+            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    }
 
     Ok(())
 }
@@ -263,6 +370,29 @@ pub async fn handle_authrpc_request(
             Ok(Json(
                 rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
             ))
+        }
+    }
+}
+
+async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
+    while let Some(message) = socket.recv().await {
+        let Ok(body) = message
+            .and_then(|msg| msg.into_text())
+            .map(|msg| msg.to_string())
+        else {
+            return;
+        };
+
+        // ok-clone: increase arc reference count
+        let Ok(response) = handle_http_request(state.clone(), body)
+            .await
+            .map(|res| res.to_string())
+        else {
+            return;
+        };
+
+        if socket.send(response.into()).await.is_err() {
+            return;
         }
     }
 }
@@ -342,6 +472,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_maxPriorityFeePerGas" => {
             eth::max_priority_fee::MaxPriorityFee::call(req, context).await
         }
+        "eth_config" => Config::call(req, context).await,
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
@@ -375,6 +506,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
+        "engine_getPayloadV5" => GetPayloadV5Request::call(req, context).await,
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,
@@ -386,14 +518,18 @@ pub async fn map_engine_requests(
             GetPayloadBodiesByRangeV1Request::call(req, context).await
         }
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
+        "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
 
-pub async fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_admin_requests(
+    req: &RpcRequest,
+    mut context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
-        "admin_peers" => admin::peers(&context).await,
+        "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
@@ -454,9 +590,9 @@ mod tests {
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
-    use std::fs::File;
     use std::io::BufReader;
     use std::str::FromStr;
+    use std::{fs::File, path::Path};
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -481,9 +617,11 @@ mod tests {
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
-            "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
-            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
-            "osaka": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+            "cancun": { "baseFeeUpdateFraction": 3338477, "max": 6, "target": 3,  },
+            "prague": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6,  },
+            "osaka": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6,  },
+            "bpo1": { "baseFeeUpdateFraction": 8346193, "max": 15, "target": 10,  },
+            "bpo2": { "baseFeeUpdateFraction": 11684671, "max": 21, "target": 14,  },
         });
         let json = serde_json::json!({
             "jsonrpc": "2.0",
@@ -621,5 +759,127 @@ mod tests {
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
         assert_eq!(response.to_string(), expected_response.to_string());
+    }
+
+    #[tokio::test]
+    async fn eth_config_request_cancun_with_prague_scheduled() {
+        let body = r#"{"jsonrpc":"2.0", "method":"eth_config", "params":[], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let storage = Store::new_from_genesis(
+            Path::new("temp.db"),
+            EngineType::InMemory,
+            "../../../cmd/ethrex/networks/hoodi/genesis.json",
+        )
+        .await
+        .expect("Failed to create test DB");
+        let context = default_context_with_storage(storage).await;
+        let result = map_http_requests(&request, context).await;
+        let rpc_response = rpc_response(request.id, result).unwrap();
+        let json = serde_json::json!({
+            "id": 1,
+            "jsonrpc": "2.0",
+            "result": {
+                "current": {
+                    "activationTime": 0,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 3338477,
+                        "max": 6,
+                        "target": 3
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0xbef71d30",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02"
+                    }
+                },
+                "next": {
+                    "activationTime": 1742999832,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 5007716,
+                        "max": 9,
+                        "target": 6
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0x0929e24e",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
+                        "BLS12_G1MSM": "0x000000000000000000000000000000000000000c",
+                        "BLS12_G2ADD": "0x000000000000000000000000000000000000000d",
+                        "BLS12_G2MSM": "0x000000000000000000000000000000000000000e",
+                        "BLS12_MAP_FP2_TO_G2": "0x0000000000000000000000000000000000000011",
+                        "BLS12_MAP_FP_TO_G1": "0x0000000000000000000000000000000000000010",
+                        "BLS12_PAIRING_CHECK": "0x000000000000000000000000000000000000000f",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
+                        "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                        "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",
+                        "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS": "0x00000961ef480eb55e80d19ad83579a64c007002"
+                    }
+                },
+                "last": {
+                    "activationTime": 1762955544,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 11684671,
+                        "max": 21,
+                        "target": 14,
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0x23aa1351",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
+                        "BLS12_G1MSM": "0x000000000000000000000000000000000000000c",
+                        "BLS12_G2ADD": "0x000000000000000000000000000000000000000d",
+                        "BLS12_G2MSM": "0x000000000000000000000000000000000000000e",
+                        "BLS12_MAP_FP2_TO_G2": "0x0000000000000000000000000000000000000011",
+                        "BLS12_MAP_FP_TO_G1": "0x0000000000000000000000000000000000000010",
+                        "BLS12_PAIRING_CHECK": "0x000000000000000000000000000000000000000f",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "P256_VERIFICATION":"0x0000000000000000000000000000000000000100",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
+                        "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                        "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",
+                        "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS": "0x00000961ef480eb55e80d19ad83579a64c007002"
+                    }
+                },
+            }
+        });
+        let expected_response = to_rpc_response_success_value(&json.to_string());
+        assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 }

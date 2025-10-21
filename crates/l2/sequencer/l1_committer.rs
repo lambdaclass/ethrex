@@ -47,7 +47,7 @@ use std::{
     sync::Arc,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
 use spawned_concurrency::tasks::{
@@ -73,7 +73,6 @@ pub enum InMessage {
     Commit,
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub enum OutMessage {
     Done,
@@ -328,7 +327,7 @@ impl L1Committer {
         #[cfg(feature = "metrics")]
         let mut batch_gas_used = 0_u64;
 
-        info!("Preparing state diff from block {first_block_of_batch}");
+        info!("Preparing state diff from block {first_block_of_batch}, {batch_number}");
 
         loop {
             let block_to_commit_number = last_added_block_number + 1;
@@ -353,13 +352,13 @@ impl L1Committer {
             let current_block_gas_used = block_to_commit_header.gas_used;
 
             // Check if adding this block would exceed the batch gas limit
-            if let Some(batch_gas_limit) = self.batch_gas_limit {
-                if acc_gas_used + current_block_gas_used > batch_gas_limit {
-                    debug!(
-                        "Batch gas limit reached. Any remaining blocks will be processed in the next batch"
-                    );
-                    break;
-                }
+            if self.batch_gas_limit.is_some_and(|batch_gas_limit| {
+                acc_gas_used + current_block_gas_used > batch_gas_limit
+            }) {
+                debug!(
+                    "Batch gas limit reached. Any remaining blocks will be processed in the next batch"
+                );
+                break;
             }
 
             // Get block transactions and receipts
@@ -467,6 +466,8 @@ impl L1Committer {
                 break;
             };
 
+            trace!("Got bundle, latest blob size {latest_blob_size}");
+
             // Save current blobs_bundle and continue to add more blocks.
             blobs_bundle = bundle;
 
@@ -481,6 +482,8 @@ impl L1Committer {
                     .collect::<Vec<H256>>(),
             );
 
+            message_hashes.extend(messages.iter().map(get_l1_message_hash));
+
             new_state_root = self
                 .store
                 .state_trie(block_to_commit.hash())?
@@ -491,7 +494,7 @@ impl L1Committer {
 
             last_added_block_number += 1;
             acc_gas_used += current_block_gas_used;
-        }
+        } // end loop
 
         metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
                 privileged_transactions_hashes.len().try_into(),
@@ -523,9 +526,7 @@ impl L1Committer {
 
         let privileged_transactions_hash =
             compute_privileged_transactions_hash(privileged_transactions_hashes)?;
-        for msg in &acc_messages {
-            message_hashes.push(get_l1_message_hash(msg));
-        }
+
         Ok((
             blobs_bundle,
             new_state_root,

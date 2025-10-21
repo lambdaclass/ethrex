@@ -6,22 +6,25 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainType, error::ChainError};
-use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::sync::SyncMode;
-use ethrex_p2p::types::Node;
+use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
+use ethrex_common::types::{Block, Genesis, fee_config::FeeConfig};
+use ethrex_p2p::{
+    discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
+    types::Node,
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use tracing::{Level, info, warn};
 
 use crate::{
     initializers::{get_network, init_blockchain, init_store, init_tracing, load_store},
-    l2::{
-        self,
-        command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
-    },
-    utils::{self, default_datadir, get_client_version, init_datadir},
+    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
+
+pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
+
+#[cfg(feature = "l2")]
+pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 use ethrex_config::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
@@ -34,7 +37,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser, Debug)]
+#[derive(ClapParser, Debug, Clone)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -52,13 +55,13 @@ pub struct Options {
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
         help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
-        default_value_t = default_datadir(),
+        default_value = default_datadir().into_os_string(),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: String,
+    pub datadir: PathBuf,
     #[arg(
         long = "force",
         help = "Force remove the database",
@@ -67,7 +70,7 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
-    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
+    #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options")]
     pub syncmode: SyncMode,
     #[arg(
         long = "metrics.addr",
@@ -108,6 +111,14 @@ pub struct Options {
         help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
+        help = "Maximum size of the mempool in number of transactions",
+        long = "mempool.maxsize",
+        default_value_t = 10_000,
+        value_name = "MEMPOOL_MAX_SIZE",
+        help_heading = "Node options"
+    )]
+    pub mempool_max_size: usize,
+    #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
         value_name = "ADDRESS",
@@ -125,6 +136,34 @@ pub struct Options {
         env = "ETHREX_HTTP_PORT"
     )]
     pub http_port: String,
+    #[arg(
+        long = "ws.enabled",
+        default_value = "false",
+        help = "Enable websocket rpc server. Disabled by default.",
+        help_heading = "RPC options",
+        env = "ETHREX_ENABLE_WS"
+    )]
+    pub ws_enabled: bool,
+    #[arg(
+        long = "ws.addr",
+        default_value = "0.0.0.0",
+        value_name = "ADDRESS",
+        requires = "ws_enabled",
+        help = "Listening address for the websocket rpc server.",
+        help_heading = "RPC options",
+        env = "ETHREX_WS_ADDR"
+    )]
+    pub ws_addr: String,
+    #[arg(
+        long = "ws.port",
+        default_value = "8546",
+        value_name = "PORT",
+        requires = "ws_enabled",
+        help = "Listening port for the websocket rpc server.",
+        help_heading = "RPC options",
+        env = "ETHREX_WS_PORT"
+    )]
+    pub ws_port: String,
     #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
@@ -167,13 +206,37 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
+    #[arg(
+        long = "p2p.tx-broadcasting-interval",
+        default_value_t = BROADCAST_INTERVAL_MS,
+        value_name = "INTERVAL_MS",
+        help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.",
+        help_heading = "P2P options"
+    )]
+    pub tx_broadcasting_time_interval: u64,
+    #[arg(
+        long = "target.peers",
+        default_value_t = TARGET_PEERS,
+        value_name = "MAX_PEERS",
+        help = "Max amount of connected peers.",
+        help_heading = "P2P options"
+    )]
+    pub target_peers: usize,
+    #[arg(
+        long = "block-producer.extra-data",
+        default_value = get_minimal_client_version(),
+        value_name = "EXTRA_DATA",
+        help = "Block extra data message.",
+        help_heading = "Block producer options"
+    )]
+    pub extra_data: String,
 }
 
 impl Options {
     pub fn default_l1() -> Self {
         Self {
             network: Some(Network::LocalDevnet),
-            datadir: DB_ETHREX_DEV_L1.to_string(),
+            datadir: DB_ETHREX_DEV_L1.into(),
             dev: true,
             http_addr: "0.0.0.0".to_string(),
             http_port: "8545".to_string(),
@@ -184,14 +247,16 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
 
+    #[cfg(feature = "l2")]
     pub fn default_l2() -> Self {
         Self {
             network: Some(Network::LocalDevnetL2),
-            datadir: DB_ETHREX_DEV_L2.to_string(),
+            datadir: DB_ETHREX_DEV_L2.into(),
             metrics_port: "3702".into(),
             metrics_enabled: true,
             dev: true,
@@ -203,6 +268,7 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
@@ -213,6 +279,9 @@ impl Default for Options {
         Self {
             http_addr: Default::default(),
             http_port: Default::default(),
+            ws_enabled: false,
+            ws_addr: Default::default(),
+            ws_port: Default::default(),
             log_level: Level::INFO,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
@@ -229,6 +298,10 @@ impl Default for Options {
             metrics_enabled: Default::default(),
             dev: Default::default(),
             force: false,
+            mempool_max_size: Default::default(),
+            tx_broadcasting_time_interval: Default::default(),
+            target_peers: Default::default(),
+            extra_data: get_minimal_client_version(),
         }
     }
 }
@@ -238,8 +311,8 @@ impl Default for Options {
 pub enum Subcommand {
     #[command(name = "removedb", about = "Remove the database")]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value_t = default_datadir(), required = false)]
-        datadir: String,
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = default_datadir().into_os_string(), required = false)]
+        datadir: PathBuf,
         #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
         force: bool,
     },
@@ -293,14 +366,16 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[cfg(feature = "l2")]
     #[command(name = "l2")]
-    L2(l2::L2Command),
+    L2(crate::l2::L2Command),
 }
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
         match self {
+            #[cfg(feature = "l2")]
             Self::L2(_) => {}
             _ => {
                 init_tracing(opts);
@@ -318,11 +393,21 @@ impl Subcommand {
                 let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
-                    BlockchainType::L2
+                    BlockchainType::L2(FeeConfig::default())
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, blockchain_type).await?;
+                import_blocks(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    BlockchainOptions {
+                        max_mempool_size: opts.mempool_max_size,
+                        r#type: blockchain_type,
+                        ..Default::default()
+                    },
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -332,6 +417,7 @@ impl Subcommand {
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
             }
+            #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
 
@@ -339,13 +425,12 @@ impl Subcommand {
     }
 }
 
-pub fn remove_db(datadir: &str, force: bool) {
-    let data_dir = init_datadir(datadir);
-    let path = Path::new(&data_dir);
+pub fn remove_db(datadir: &Path, force: bool) {
+    init_datadir(datadir);
 
-    if path.exists() {
+    if datadir.exists() {
         if force {
-            std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+            std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
             info!("Database removed successfully.");
         } else {
             print!("Are you sure you want to remove the database? (y/n): ");
@@ -355,27 +440,27 @@ pub fn remove_db(datadir: &str, force: bool) {
             io::stdin().read_line(&mut input).unwrap();
 
             if input.trim().eq_ignore_ascii_case("y") {
-                std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+                std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
                 println!("Database removed successfully.");
             } else {
                 println!("Operation canceled.");
             }
         }
     } else {
-        warn!("Data directory does not exist: {}", data_dir);
+        warn!("Data directory does not exist: {datadir:?}");
     }
 }
 
 pub async fn import_blocks(
     path: &str,
-    data_dir: &str,
+    datadir: &Path,
     genesis: Genesis,
-    blockchain_type: BlockchainType,
+    blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
-    let data_dir = init_datadir(data_dir);
-    let store = init_store(&data_dir, genesis).await;
-    let blockchain = init_blockchain(store.clone(), blockchain_type, false);
+    init_datadir(datadir);
+    let store = init_store(datadir, genesis).await;
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
@@ -411,7 +496,7 @@ pub async fn import_blocks(
             .collect::<Vec<_>>();
         // Execute block by block
         let mut last_progress_log = Instant::now();
-        for (index, block) in blocks.iter().enumerate() {
+        for (index, block) in blocks.into_iter().enumerate() {
             let hash = block.hash();
             let number = block.header.number;
 
@@ -472,12 +557,12 @@ pub async fn import_blocks(
 
 pub async fn export_blocks(
     path: &str,
-    data_dir: &str,
+    datadir: &Path,
     first_number: Option<u64>,
     last_number: Option<u64>,
 ) {
-    let data_dir = init_datadir(data_dir);
-    let store = load_store(&data_dir).await;
+    init_datadir(datadir);
+    let store = load_store(datadir).await;
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {

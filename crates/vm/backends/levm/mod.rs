@@ -2,9 +2,9 @@ pub mod db;
 mod tracing;
 
 use super::BlockExecutionResult;
-use crate::constants::{
+use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
-    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -73,7 +73,7 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
-            VMType::L2 => Default::default(),
+            VMType::L2(_) => Default::default(),
         };
 
         Ok(BlockExecutionResult { receipts, requests })
@@ -90,8 +90,7 @@ impl LEVM {
             .effective_gas_price(block_header.base_fee_per_gas)
             .ok_or(VMError::TxValidation(
                 TxValidationError::InsufficientMaxFeePerGas,
-            ))?
-            .into();
+            ))?;
 
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
@@ -151,7 +150,7 @@ impl LEVM {
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
-        env.block_gas_limit = u64::MAX; // disable block gas limit
+        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
         adjust_disabled_base_fee(&mut env);
 
@@ -193,7 +192,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "beacon_root_contract_call should not be called for L2 VM".to_string(),
             ));
@@ -207,8 +206,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(beacon_root.as_bytes()),
             db,
-            *BEACON_ROOTS_ADDRESS,
-            *SYSTEM_ADDRESS,
+            BEACON_ROOTS_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -219,7 +218,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "process_block_hash_history should not be called for L2 VM".to_string(),
             ));
@@ -229,8 +228,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             db,
-            *HISTORY_STORAGE_ADDRESS,
-            *SYSTEM_ADDRESS,
+            HISTORY_STORAGE_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -240,7 +239,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "read_withdrawal_requests should not be called for L2 VM".to_string(),
             ));
@@ -250,8 +249,8 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
 
@@ -269,7 +268,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "dequeue_consolidation_requests should not be called for L2 VM".to_string(),
             ));
@@ -279,8 +278,8 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
 
@@ -332,7 +331,7 @@ impl LEVM {
         let fork = chain_config.fork(block_header.timestamp);
 
         // TODO: I don't like deciding the behavior based on the VMType here.
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Ok(());
         }
 
@@ -376,9 +375,24 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: u64::MAX, // System calls, have no constraint on the block's gas limit.
+        block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
+    };
+
+    // This check is not necessary in practice, since contract deployment has succesfully happened in all relevant testnets and mainnet
+    // However, it's necessary to pass some of the Hive tests related to system contract deployment, which is why we have it
+    // The error that should be returned for the relevant contracts is indicated in the following:
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md#empty-code-failure
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md#empty-code-failure
+    if PRAGUE_SYSTEM_CONTRACTS
+        .iter()
+        .any(|contract| contract.address == contract_address)
+        && db.get_account_code(contract_address)?.is_empty()
+    {
+        return Err(EvmError::SystemContractCallFailed(format!(
+            "System contract: {contract_address} has no code after deployment"
+        )));
     };
 
     let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -419,7 +433,7 @@ pub fn extract_all_requests_levm(
     header: &BlockHeader,
     vm_type: VMType,
 ) -> Result<Vec<Requests>, EvmError> {
-    if let VMType::L2 = vm_type {
+    if let VMType::L2(_) = vm_type {
         return Err(EvmError::InvalidEVM(
             "extract_all_requests_levm should not be called for L2 VM".to_string(),
         ));

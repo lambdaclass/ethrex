@@ -2,6 +2,7 @@ mod sender;
 
 use configfs_tsm::create_tdx_quote;
 use ethrex_common::Bytes;
+use ethrex_common::utils::keccak;
 use ethrex_l2::sequencer::proof_coordinator::get_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
@@ -9,7 +10,6 @@ use ethrex_l2_common::{
     utils::get_address_from_secret_key,
 };
 use guest_program::input::ProgramInput;
-use keccak_hash::keccak;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
 use std::time::Duration;
@@ -32,7 +32,7 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 
     let (msg_signature_recovery_id, msg_signature) = signed_msg.serialize_compact();
 
-    let msg_signature_recovery_id = msg_signature_recovery_id.to_i32() + 27;
+    let msg_signature_recovery_id = Into::<i32>::into(msg_signature_recovery_id) + 27;
 
     [&msg_signature[..], &[msg_signature_recovery_id as u8]].concat()
 }

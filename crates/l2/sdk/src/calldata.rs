@@ -1,9 +1,10 @@
 use ethrex_common::Bytes;
+use ethrex_common::H256;
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H32, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
-use keccak_hash::{H256, keccak};
 
 use crate::address_to_word;
 
@@ -247,7 +248,7 @@ impl DataType {
                     .consume_u256()?
                     .try_into()
                     .map_err(|_| CalldataDecodeError::OutOfBounds)?;
-                let size = if n % 32 == 0 {
+                let size = if n.is_multiple_of(32) {
                     n
                 } else {
                     n.next_multiple_of(32)

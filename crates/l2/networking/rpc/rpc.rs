@@ -1,4 +1,5 @@
 use crate::l2::batch::{BatchNumberRequest, GetBatchByBatchNumberRequest};
+use crate::l2::fee_vault::GetFeeVaultAddress;
 use crate::l2::l1_message::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
@@ -95,6 +96,7 @@ pub async fn start_api(
                 local_p2p_node,
                 local_node_record,
                 client_version,
+                extra_data: Bytes::new(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler,
@@ -215,6 +217,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
         "ethrex_batchNumber" => BatchNumberRequest::call(req, context).await,
         "ethrex_getBatchByNumber" => GetBatchByBatchNumberRequest::call(req, context).await,
+        "ethrex_getFeeVaultAddress" => GetFeeVaultAddress::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
         }

@@ -67,10 +67,3 @@ Check that Ethrex is installed and working:
 ```sh
 ethrex --version
 ```
-
----
-
-**Next steps:**
-
-- [L1 Quickstart](../quickstart-l1.md)
-- [L2 Quickstart](../quickstart-l2.md)

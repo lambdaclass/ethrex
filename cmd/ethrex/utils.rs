@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    kademlia::Kademlia,
+    discv4::peer_table::PeerTable,
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -15,7 +15,7 @@ use std::{
     fs::File,
     io,
     net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use tracing::{error, info};
 
@@ -26,14 +26,8 @@ pub struct NodeConfigFile {
 }
 
 impl NodeConfigFile {
-    pub async fn new(table: Kademlia, node_record: NodeRecord) -> Self {
-        let connected_peers = table
-            .peers
-            .lock()
-            .await
-            .iter()
-            .map(|(_id, peer)| peer.node.clone())
-            .collect::<Vec<_>>();
+    pub async fn new(mut peer_table: PeerTable, node_record: NodeRecord) -> Self {
+        let connected_peers = peer_table.get_connected_nodes().await.unwrap_or(Vec::new());
 
         NodeConfigFile {
             known_peers: connected_peers,
@@ -99,27 +93,26 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn default_datadir() -> String {
-    let app_name = "ethrex";
+pub fn default_datadir() -> PathBuf {
+    let app_name: &'static str = "ethrex";
     let project_dir = ProjectDirs::from("", "", app_name).expect("Couldn't find home directory");
-    project_dir
-        .data_local_dir()
-        .to_str()
-        .expect("invalid data directory")
-        .to_owned()
+    project_dir.data_local_dir().to_path_buf()
 }
 
-// TODO: Use PathBuf instead of strings
-pub fn init_datadir(data_dir: &str) -> String {
-    let datadir = PathBuf::from(data_dir);
+/// Ensures that the provided data directory exists and is a directory.
+///
+/// # Panics
+///
+/// Panics if the path points to something different than a directory, or
+/// if the directory cannot be created.
+pub fn init_datadir(datadir: &Path) {
     if datadir.exists() {
         if !datadir.is_dir() {
-            panic!("Datadir {:?} exists but is not a directory", datadir);
+            panic!("Datadir {datadir:?} exists but is not a directory");
         }
     } else {
-        std::fs::create_dir_all(&datadir).expect("Failed to create data directory");
+        std::fs::create_dir_all(datadir).expect("Failed to create data directory");
     }
-    datadir.to_str().expect("invalid data directory").to_owned()
 }
 
 pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
@@ -136,10 +129,9 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
     };
 }
 
-#[allow(dead_code)]
-pub fn read_node_config_file(data_dir: &str) -> Result<Option<NodeConfigFile>, String> {
-    const NODE_CONFIG_FILENAME: &str = "/node_config.json";
-    let file_path = PathBuf::from(data_dir.to_owned() + NODE_CONFIG_FILENAME);
+pub fn read_node_config_file(datadir: &Path) -> Result<Option<NodeConfigFile>, String> {
+    const NODE_CONFIG_FILENAME: &str = "node_config.json";
+    let file_path = datadir.join(NODE_CONFIG_FILENAME);
     if file_path.exists() {
         Ok(match std::fs::File::open(file_path) {
             Ok(file) => Some(
@@ -168,6 +160,7 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     }
 }
 
+/// Returns a detailed client version string with git info.
 pub fn get_client_version() -> String {
     format!(
         "{}/v{}-{}-{}/{}/rustc-v{}",
@@ -178,6 +171,11 @@ pub fn get_client_version() -> String {
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         env!("VERGEN_RUSTC_SEMVER")
     )
+}
+
+/// Returns a minimal client version string without git info.
+pub fn get_minimal_client_version() -> String {
+    format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
 }
 
 pub fn display_chain_initialization(genesis: &Genesis) {

@@ -1,45 +1,38 @@
-use std::fs::read_to_string;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-
-use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::Address;
-use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
-use ethrex_l2::SequencerConfig;
-use ethrex_p2p::kademlia::Kademlia;
-use ethrex_p2p::network::peer_table;
-use ethrex_p2p::peer_handler::PeerHandler;
-use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
-use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::{Node, NodeRecord};
-use ethrex_storage::Store;
-use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use secp256k1::SecretKey;
-use tokio::sync::Mutex;
-use tokio::task::JoinSet;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
-use tracing::{error, info, warn};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{EnvFilter, Registry, reload};
-use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
-
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store,
+    get_network, get_signer, init_blockchain, init_network, init_store, regenerate_head_state,
 };
 use crate::l2::L2Options;
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
+use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_l2::SequencerConfig;
+use ethrex_p2p::{
+    discv4::peer_table::PeerTable,
+    peer_handler::PeerHandler,
+    rlpx::l2::l2_connection::P2PBasedContext,
+    sync_manager::SyncManager,
+    types::{Node, NodeRecord},
+};
+use ethrex_storage::Store;
+use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use secp256k1::SecretKey;
+use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
+use tokio::{sync::Mutex, task::JoinSet};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::{error, info, warn};
+use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
+use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 
 #[allow(clippy::too_many_arguments)]
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: Kademlia,
+    peer_table: PeerTable,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -52,14 +45,16 @@ async fn init_rpc_api(
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
+    init_datadir(&opts.datadir);
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        &opts.syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        init_datadir(&opts.datadir),
+        opts.datadir.clone(),
     )
     .await;
 
@@ -102,17 +97,13 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     addresses
 }
 
-pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "rollup_storage_sql")] {
-            let engine_type = EngineTypeRollup::SQL;
-        }
-        else {
-            let engine_type = EngineTypeRollup::InMemory;
-        }
-    }
+pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
+    #[cfg(feature = "l2-sql")]
+    let engine_type = EngineTypeRollup::SQL;
+    #[cfg(not(feature = "l2-sql"))]
+    let engine_type = EngineTypeRollup::InMemory;
     let rollup_store =
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+        StoreRollup::new(datadir, engine_type).expect("Failed to create StoreRollup");
     rollup_store
         .init()
         .await
@@ -155,31 +146,42 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
-    #[cfg(feature = "revm")]
-    panic!("L2 doesn't support REVM");
-
-    let data_dir = init_datadir(&opts.node_opts.datadir);
-    let rollup_store_dir = data_dir.clone() + "/rollup_store";
+    let datadir = opts.node_opts.datadir.clone();
+    init_datadir(&opts.node_opts.datadir);
+    let rollup_store_dir = datadir.join("rollup_store");
 
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&data_dir, genesis).await;
+    let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L2, true);
+    let fee_config = FeeConfig {
+        fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
+        ..Default::default()
+    };
 
-    let signer = get_signer(&data_dir);
+    let blockchain_opts = ethrex_blockchain::BlockchainOptions {
+        max_mempool_size: opts.node_opts.mempool_max_size,
+        r#type: BlockchainType::L2(fee_config),
+        perf_logs_enabled: true,
+    };
+
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
+
+    regenerate_head_state(&store, &blockchain).await?;
+
+    let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
     let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        &data_dir,
+        &datadir,
         &local_p2p_node,
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(peer_table());
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -221,7 +223,7 @@ pub async fn init_l2(
         init_network(
             &opts.node_opts,
             &network,
-            &data_dir,
+            &datadir,
             local_p2p_node,
             local_node_record.clone(),
             signer,
@@ -275,7 +277,7 @@ pub async fn init_l2(
         }
     }
     info!("Server shut down started...");
-    let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+    let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(

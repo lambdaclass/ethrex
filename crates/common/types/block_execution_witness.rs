@@ -6,14 +6,13 @@ use crate::types::Block;
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
-    utils::decode_hex,
+    types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
+    utils::{decode_hex, keccak},
 };
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{NodeHash, NodeRLP, Trie};
-use keccak_hash::keccak;
+use ethrex_trie::{EMPTY_TRIE_HASH, NodeRLP, Trie};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -185,13 +184,10 @@ impl GuestProgramState {
             return Ok(());
         }
 
-        let state_trie = Trie::from_nodes(
-            NodeHash::Hashed(self.parent_block_header.state_root),
-            &self.nodes_hashed,
-        )
-        .map_err(|e| {
-            GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
-        })?;
+        let state_trie = Trie::from_nodes(self.parent_block_header.state_root, &self.nodes_hashed)
+            .map_err(|e| {
+                GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
+            })?;
 
         self.state_trie = Some(state_trie);
 
@@ -211,11 +207,7 @@ impl GuestProgramState {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(
-            NodeHash::Hashed(account_state.storage_root),
-            &self.nodes_hashed,
-        )
-        .ok()
+        Trie::from_nodes(account_state.storage_root, &self.nodes_hashed).ok()
     }
 
     /// Helper function to apply account updates to the execution witness
@@ -254,6 +246,9 @@ impl GuestProgramState {
                         .expect("failed to decode account state"),
                     None => AccountState::default(),
                 };
+                if update.removed_storage {
+                    account_state.storage_root = *EMPTY_TRIE_HASH;
+                }
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
                     account_state.balance = info.balance;
@@ -363,12 +358,12 @@ impl GuestProgramState {
             .ok_or(GuestProgramStateError::MissingParentHeaderOf(block_number))
     }
 
-    /// Retrieves the account info based on what is stored in the state trie.
+    /// Retrieves the account state from the state trie.
     /// Returns an error if the state trie is not rebuilt or if decoding the account state fails.
-    pub fn get_account_info(
+    pub fn get_account_state(
         &mut self,
         address: Address,
-    ) -> Result<Option<AccountInfo>, GuestProgramStateError> {
+    ) -> Result<Option<AccountState>, GuestProgramStateError> {
         let state_trie = self
             .state_trie
             .as_ref()
@@ -388,11 +383,7 @@ impl GuestProgramState {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
         })?;
 
-        Ok(Some(AccountInfo {
-            balance: state.balance,
-            code_hash: state.code_hash,
-            nonce: state.nonce,
-        }))
+        Ok(Some(state))
     }
 
     /// Fetches the block hash for a specific block number.

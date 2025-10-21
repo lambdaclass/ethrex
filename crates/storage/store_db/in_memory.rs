@@ -1,27 +1,34 @@
 use crate::{
     UpdateBatch,
     api::StoreEngine,
+    apply_prefix,
     error::StoreError,
-    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    store::STATE_TRIE_SEGMENTS,
+    trie_db::layering::{TrieLayerCache, TrieWrapper},
 };
 use bytes::Bytes;
-use ethereum_types::{H256, U256};
+use ethereum_types::H256;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fmt::Debug,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, RwLock},
 };
-pub type NodeMap = Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>;
+
+// NOTE: we use a different commit threshold than rocksdb since tests
+// require older states to be available
+// TODO: solve this in some other way, maybe adding logic for arbitrary
+// state access by applying diffs
+const COMMIT_THRESHOLD: usize = 10000;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
 
 #[derive(Default, Debug)]
-struct StoreInner {
+pub struct StoreInner {
     chain_data: ChainData,
     block_numbers: HashMap<BlockHash, BlockNumber>,
     canonical_hashes: HashMap<BlockNumber, BlockHash>,
@@ -32,16 +39,16 @@ struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
+    trie_cache: Arc<RwLock<TrieLayerCache>>,
+    // Contains account trie nodes
     state_trie_nodes: NodeMap,
-    // A storage trie for each hashed account address
-    storage_trie_nodes: HashMap<H256, NodeMap>,
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores invalid blocks and their latest valid ancestor
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
-    // Stores current Snap Sate
+    // Stores current Snap State
     snap_state: SnapState,
-    // Stores Storage trie leafs from the last downloaded tries
-    storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
+    // Stores fetched headers during a fullsync
+    fullsync_headers: HashMap<BlockNumber, BlockHeader>,
 }
 
 #[derive(Default, Debug)]
@@ -73,7 +80,7 @@ impl Store {
     pub fn new() -> Self {
         Self::default()
     }
-    fn inner(&self) -> Result<MutexGuard<'_, StoreInner>, StoreError> {
+    pub fn inner(&self) -> Result<MutexGuard<'_, StoreInner>, StoreError> {
         self.0.lock().map_err(|_| StoreError::LockError)
     }
 }
@@ -82,32 +89,59 @@ impl Store {
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
+
+        // Store trie updates
         {
-            // store account updates
-            let mut state_trie_store = store
+            let mut trie = store
+                .trie_cache
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+            let parent = update_batch
+                .blocks
+                .first()
+                .ok_or(StoreError::UpdateBatchNoBlocks)?
+                .header
+                .parent_hash;
+
+            let pre_state_root = store
+                .headers
+                .get(&parent)
+                .map(|header| header.state_root)
+                .unwrap_or_default();
+
+            let last_state_root = update_batch
+                .blocks
+                .last()
+                .ok_or(StoreError::UpdateBatchNoBlocks)?
+                .header
+                .state_root;
+
+            let mut state_trie = store
                 .state_trie_nodes
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in update_batch.account_updates {
-                state_trie_store.insert(node_hash, node_data);
-            }
-        }
 
-        // store code updates
-        for (code_hash, code) in update_batch.code_updates {
-            store.account_codes.insert(code_hash, code);
-        }
-
-        for (hashed_address, nodes) in update_batch.storage_updates {
-            let mut addr_store = store
-                .storage_trie_nodes
-                .entry(hashed_address)
-                .or_default()
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
+            if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
+                let nodes = trie.commit(root).unwrap_or_default();
+                for (key, value) in nodes {
+                    if value.is_empty() {
+                        state_trie.remove(&key);
+                    } else {
+                        state_trie.insert(key, value);
+                    }
+                }
             }
+            let key_values = update_batch
+                .storage_updates
+                .into_iter()
+                .flat_map(|(account_hash, nodes)| {
+                    nodes
+                        .into_iter()
+                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                })
+                .chain(update_batch.account_updates)
+                .collect();
+            trie.put_batch(pre_state_root, last_state_root, key_values);
         }
 
         for block in update_batch.blocks {
@@ -135,6 +169,11 @@ impl StoreEngine for Store {
                     .or_default()
                     .insert(index as u64, receipt);
             }
+        }
+
+        // store code updates
+        for (code_hash, code) in update_batch.code_updates {
+            store.account_codes.insert(code_hash, code);
         }
 
         Ok(())
@@ -178,10 +217,12 @@ impl StoreEngine for Store {
         let store = self.inner()?;
         let mut res = Vec::new();
         for block_number in from..=to {
-            if let Some(hash) = store.canonical_hashes.get(&block_number) {
-                if let Some(block) = store.bodies.get(hash).cloned() {
-                    res.push(block);
-                }
+            if let Some(block) = store
+                .canonical_hashes
+                .get(&block_number)
+                .and_then(|hash| store.bodies.get(hash))
+            {
+                res.push(block.clone())
             }
         }
         Ok(res)
@@ -259,9 +300,9 @@ impl StoreEngine for Store {
                 .transactions
                 .iter()
                 .enumerate()
-                .map(|(i, tx)| (tx.hash(), number, hash, i as u64));
-
-            self.add_transaction_locations(locations.collect()).await?;
+                .map(|(i, tx)| (number, tx.hash(), i as u64))
+                .collect();
+            self.inner()?.transaction_locations.insert(hash, locations);
             self.add_block_body(hash, block.body.clone()).await?;
             self.add_block_header(hash, header).await?;
         }
@@ -290,21 +331,6 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
         self.get_block_number_sync(block_hash)
-    }
-
-    async fn add_transaction_location(
-        &self,
-        transaction_hash: H256,
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-        index: Index,
-    ) -> Result<(), StoreError> {
-        self.inner()?
-            .transaction_locations
-            .entry(transaction_hash)
-            .or_default()
-            .push((block_number, block_hash, index));
-        Ok(())
     }
 
     async fn get_transaction_location(
@@ -408,17 +434,50 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError> {
-        let mut store = self.inner()?;
-        let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
-        Ok(Trie::open(db, storage_root))
+        let store = self.inner()?;
+        let trie_backend = store.state_trie_nodes.clone();
+        let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: store.trie_cache.clone(),
+            db,
+            prefix: Some(hashed_address),
+        });
+        Ok(Trie::open(wrap_db, storage_root))
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_backend = self.inner()?.state_trie_nodes.clone();
+        let store = self.inner()?;
+        let trie_backend = store.state_trie_nodes.clone();
+        let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: store.trie_cache.clone(),
+            db,
+            prefix: None,
+        });
+        Ok(Trie::open(wrap_db, state_root))
+    }
+
+    fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let store = self.inner()?;
+        let trie_backend = store.state_trie_nodes.clone();
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
         Ok(Trie::open(db, state_root))
+    }
+
+    fn open_direct_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        let store = self.inner()?;
+        let trie_backend = store.state_trie_nodes.clone();
+        let prefix = apply_prefix(Some(hashed_address), Default::default());
+        let db = Box::new(InMemoryTrieDB::new_with_prefix(trie_backend, prefix));
+        Ok(Trie::open(db, storage_root))
     }
 
     async fn get_block_body_by_hash(
@@ -488,7 +547,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+    async fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let store = self.inner()?;
         let Some(receipts_for_block) = store.receipts.get(block_hash) else {
             return Ok(vec![]);
@@ -515,21 +577,6 @@ impl StoreEngine for Store {
         for (index, receipt) in receipts.into_iter().enumerate() {
             entry.insert(index as u64, receipt);
         }
-        Ok(())
-    }
-
-    async fn add_transaction_locations(
-        &self,
-        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
-    ) -> Result<(), StoreError> {
-        for (transaction_hash, block_number, block_hash, index) in locations {
-            self.inner()?
-                .transaction_locations
-                .entry(transaction_hash)
-                .or_default()
-                .push((block_number, block_hash, index));
-        }
-
         Ok(())
     }
 
@@ -568,38 +615,6 @@ impl StoreEngine for Store {
         Ok(self.inner()?.snap_state.state_heal_paths.clone())
     }
 
-    async fn write_snapshot_storage_batch(
-        &self,
-        account_hash: H256,
-        storage_keys: Vec<H256>,
-        storage_values: Vec<U256>,
-    ) -> Result<(), StoreError> {
-        self.inner()?
-            .storage_snapshot
-            .entry(account_hash)
-            .or_default()
-            .extend(storage_keys.into_iter().zip(storage_values));
-        Ok(())
-    }
-    async fn write_snapshot_storage_batches(
-        &self,
-        account_hashes: Vec<H256>,
-        storage_keys: Vec<Vec<H256>>,
-        storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StoreError> {
-        for (account_hash, (storage_keys, storage_values)) in account_hashes
-            .into_iter()
-            .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
-        {
-            self.inner()?
-                .storage_snapshot
-                .entry(account_hash)
-                .or_default()
-                .extend(storage_keys.into_iter().zip(storage_values));
-        }
-        Ok(())
-    }
-
     async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
@@ -612,23 +627,6 @@ impl StoreEngine for Store {
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         Ok(self.inner()?.snap_state.state_trie_rebuild_checkpoint)
-    }
-
-    async fn read_storage_snapshot(
-        &self,
-        start: H256,
-        account_hash: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError> {
-        if let Some(snapshot) = self.inner()?.storage_snapshot.get(&account_hash) {
-            Ok(snapshot
-                .iter()
-                .filter(|(hash, _)| **hash < start)
-                .take(MAX_SNAPSHOT_READS)
-                .map(|(k, v)| (*k, *v))
-                .collect())
-        } else {
-            Ok(vec![])
-        }
     }
 
     async fn set_storage_trie_rebuild_pending(
@@ -669,19 +667,18 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        let mut store = self.inner()?;
+        let store = self.inner()?;
+        let mut trie = store
+            .state_trie_nodes
+            .lock()
+            .map_err(|_| StoreError::LockError)?;
 
         for (hashed_address, nodes) in storage_trie_nodes {
-            let mut addr_store = store
-                .storage_trie_nodes
-                .entry(hashed_address)
-                .or_default()
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
+            for (node_path, node_data) in nodes {
+                let full_path = apply_prefix(Some(hashed_address), node_path);
+                trie.insert(full_path.into_vec(), node_data);
             }
         }
 
@@ -698,6 +695,43 @@ impl StoreEngine for Store {
             store.account_codes.insert(code_hash, code);
         }
 
+        Ok(())
+    }
+
+    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        self.inner()?
+            .fullsync_headers
+            .extend(headers.into_iter().map(|h| (h.number, h)));
+        Ok(())
+    }
+
+    async fn read_fullsync_batch(
+        &self,
+        start: BlockNumber,
+        limit: u64,
+    ) -> Result<Vec<BlockHeader>, StoreError> {
+        let store = self.inner()?;
+        (start..start + limit)
+            .map(|ref n| {
+                store
+                    .fullsync_headers
+                    .get(n)
+                    .cloned()
+                    .ok_or(StoreError::Custom(format!(
+                        "Missing fullsync header for block {n}"
+                    )))
+            })
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
+        self.inner()?.fullsync_headers.clear();
+        Ok(())
+    }
+
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        // FlatKeyValue currently not supported for the InMemory DB
+        // Silently ignoring the request to build the FlatKeyValue is harmless
         Ok(())
     }
 }

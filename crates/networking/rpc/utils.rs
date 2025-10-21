@@ -328,6 +328,7 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
+    use bytes::Bytes;
     use ethrex_blockchain::Blockchain;
     use ethrex_common::{H512, types::DEFAULT_BUILDER_GAS_CEIL};
     use ethrex_p2p::{
@@ -363,14 +364,15 @@ pub mod test_utils {
     // like eth_uninstallFilter.
     // Here's how you would use it:
     // ```
-    // let server_handle = tokio::spawn(async move { start_stest_api().await })
+    // let server_handle = start_stest_api().await;
     // ...
-    // assert!(something_that_needs_the_server)
+    // assert!(something_that_needs_the_server);
     // ...
-    // server_handle.abort()
+    // server_handle.abort();
     // ```
-    pub async fn start_test_api() {
+    pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
+        let ws_addr: SocketAddr = "127.0.0.1:8546".parse().unwrap();
         let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
         let storage =
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
@@ -382,22 +384,26 @@ pub mod test_utils {
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         let local_node_record = example_local_node_record();
-        start_api(
-            http_addr,
-            authrpc_addr,
-            storage,
-            blockchain,
-            jwt_secret,
-            local_p2p_node,
-            local_node_record,
-            SyncManager::dummy(),
-            PeerHandler::dummy(),
-            "ethrex/test".to_string(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        tokio::spawn(async move {
+            start_api(
+                http_addr,
+                Some(ws_addr),
+                authrpc_addr,
+                storage,
+                blockchain,
+                jwt_secret,
+                local_p2p_node,
+                local_node_record,
+                SyncManager::dummy(),
+                PeerHandler::dummy(),
+                "ethrex/test".to_string(),
+                None,
+                None,
+                String::new(),
+            )
+            .await
+            .unwrap()
+        })
     }
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
@@ -414,6 +420,7 @@ pub mod test_utils {
                 local_p2p_node: example_p2p_node(),
                 local_node_record,
                 client_version: "ethrex/test".to_string(),
+                extra_data: Bytes::new(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler: None,

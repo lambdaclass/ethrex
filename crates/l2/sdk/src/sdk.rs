@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
     types::{
@@ -17,7 +18,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::eth::{EthClient, Overrides, errors::EthClientError};
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
@@ -36,10 +36,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
+// 0x36664d7c5031bd965bbb405b55495a90dd780740
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x8c, 0xcf, 0x74, 0x99, 0x9c, 0x49, 0x6e, 0x4d, 0x27, 0xa2, 0xb0, 0x29, 0x41, 0x67, 0x3f, 0x41,
-    0xdd, 0x0d, 0xab, 0x2a,
+    0x36, 0x66, 0x4d, 0x7c, 0x50, 0x31, 0xbd, 0x96, 0x5b, 0xbb, 0x40, 0x5b, 0x55, 0x49, 0x5a, 0x90,
+    0xdd, 0x78, 0x07, 0x40,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -75,7 +75,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
+/// BRIDGE_ADDRESS or 0x36664d7c5031bd965bbb405b55495a90dd780740
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
@@ -346,11 +346,25 @@ where
     let hex = H256::from_slice(&secret_key.secret_bytes());
     hex.serialize(serializer)
 }
-
+// https://github.com/Arachnid/deterministic-deployment-proxy
 // 0x4e59b44847b379578588920cA78FbF26c0B4956C
-const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
+pub const DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS: Address = H160([
     0x4e, 0x59, 0xb4, 0x48, 0x47, 0xb3, 0x79, 0x57, 0x85, 0x88, 0x92, 0x0c, 0xa7, 0x8f, 0xbf, 0x26,
     0xc0, 0xb4, 0x95, 0x6c,
+]);
+
+// https://github.com/safe-global/safe-singleton-factory
+// 0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7
+pub const SAFE_SINGLETON_FACTORY_ADDRESS: Address = H160([
+    0x91, 0x4d, 0x7F, 0xec, 0x6a, 0xac, 0x8c, 0xd5, 0x42, 0xe7, 0x2b, 0xca, 0x78, 0xb3, 0x06, 0x50,
+    0xd4, 0x56, 0x43, 0xd7,
+]);
+
+// https://github.com/pcaversaccio/create2deployer
+// 0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2
+pub const CREATE2DEPLOYER_ADDRESS: Address = H160([
+    0x13, 0xb0, 0xd8, 0x5c, 0xcb, 0x8b, 0xf8, 0x60, 0xb6, 0xb7, 0x9a, 0xf3, 0x02, 0x9f, 0xca, 0x08,
+    0x1a, 0xe9, 0xbe, 0xf2,
 ]);
 
 #[derive(Default)]
@@ -522,7 +536,7 @@ async fn create2_deploy(
     let deploy_tx = build_generic_tx(
         eth_client,
         TxType::EIP1559,
-        DETERMINISTIC_CREATE2_ADDRESS,
+        DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
         deployer.address(),
         calldata.into(),
         Overrides {
@@ -549,7 +563,7 @@ fn create2_address(salt: &[u8], init_code_hash: H256) -> Address {
         &keccak(
             [
                 &[0xff],
-                DETERMINISTIC_CREATE2_ADDRESS.as_bytes(),
+                DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS.as_bytes(),
                 salt,
                 init_code_hash.as_bytes(),
             ]
@@ -705,15 +719,14 @@ pub async fn send_tx_bump_gas_exponential_backoff(
         }
 
         // Check blob gas fees only for EIP4844 transactions
-        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
-            if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
-                if *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
-                    *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
-                    warn!(
-                        "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
-                    );
-                }
-            }
+        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas
+            && let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas
+            && *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas)
+        {
+            *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+            warn!(
+                "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
+            );
         }
         let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer)
             .await
@@ -891,10 +904,10 @@ async fn priority_fee_from_override_or_rpc(
         return Ok(priority_fee);
     }
 
-    if let Ok(priority_fee) = client.get_max_priority_fee().await {
-        if let Ok(priority_fee_u64) = priority_fee.try_into() {
-            return Ok(priority_fee_u64);
-        }
+    if let Ok(priority_fee) = client.get_max_priority_fee().await
+        && let Ok(priority_fee_u64) = priority_fee.try_into()
+    {
+        return Ok(priority_fee_u64);
     }
 
     get_fee_from_override_or_get_gas_price(client, None).await

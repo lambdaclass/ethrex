@@ -153,12 +153,14 @@ fn parse(
                 }
             };
     }
-    if let Some(attr) = &payload_attributes {
-        if !is_v3 && attr.parent_beacon_block_root.is_some() {
-            return Err(RpcErr::InvalidPayloadAttributes(
-                "Attribute parent_beacon_block_root is non-null".to_string(),
-            ));
-        }
+
+    if payload_attributes
+        .as_ref()
+        .is_some_and(|attr| !is_v3 && attr.parent_beacon_block_root.is_some())
+    {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "Attribute parent_beacon_block_root is non-null".to_string(),
+        ));
     }
     Ok((forkchoice_state, payload_attributes))
 }
@@ -194,20 +196,23 @@ async fn handle_forkchoice(
     if let Some(head_block) = context
         .storage
         .get_block_header_by_hash(fork_choice_state.head_block_hash)?
-    {
-        if let Some(latest_valid_hash) = context
+        && let Some(latest_valid_hash) = context
             .storage
             .get_latest_valid_ancestor(head_block.parent_hash)
             .await?
-        {
-            return Ok((
-                None,
-                ForkChoiceResponse::from(PayloadStatus::invalid_with(
-                    latest_valid_hash,
-                    InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string(),
-                )),
-            ));
-        }
+    {
+        // Invalidate the child too
+        context
+            .storage
+            .set_latest_valid_ancestor(head_block.hash(), latest_valid_hash)
+            .await?;
+        return Ok((
+            None,
+            ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                latest_valid_hash,
+                InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string(),
+            )),
+        ));
     }
 
     if context.syncer.sync_mode() == SyncMode::Snap {
@@ -379,7 +384,7 @@ async fn build_payload(
     let payload_id = args
         .id()
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let payload = match create_payload(&args, &context.storage) {
+    let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),
         // Parent block is guaranteed to be present at this point,

@@ -23,6 +23,7 @@ pub struct SequencerConfig {
 pub struct BlockProducerConfig {
     pub block_time_ms: u64,
     pub coinbase_address: Address,
+    pub fee_vault_address: Option<Address>,
     pub elasticity_multiplier: u64,
     pub block_gas_limit: u64,
 }
@@ -65,6 +66,7 @@ pub struct ProofCoordinatorConfig {
     pub signer: Signer,
     pub validium: bool,
     pub tdx_private_key: Option<SecretKey>,
+    pub qpl_tool_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]

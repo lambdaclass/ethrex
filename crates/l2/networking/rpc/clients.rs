@@ -1,4 +1,6 @@
 use crate::l2::batch::RpcBatch;
+use ethrex_common::Address;
+use ethrex_common::H256;
 use ethrex_l2_common::l1_messages::L1MessageProof;
 use ethrex_rpc::{
     EthClient,
@@ -6,12 +8,11 @@ use ethrex_rpc::{
         EthClientError,
         eth::{
             RpcResponse,
-            errors::{GetBatchByNumberError, GetMessageProofError},
+            errors::{GetBatchByNumberError, GetFeeVaultAddressError, GetMessageProofError},
         },
     },
     utils::RpcRequest,
 };
-use keccak_hash::H256;
 use serde_json::json;
 
 pub async fn get_message_proof(
@@ -44,6 +45,19 @@ pub async fn get_batch_by_number(
             .map_err(EthClientError::from),
         RpcResponse::Error(error_response) => {
             Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
+        }
+    }
+}
+
+pub async fn get_fee_vault_address(client: &EthClient) -> Result<Option<Address>, EthClientError> {
+    let request = RpcRequest::new("ethrex_getFeeVaultAddress", None);
+
+    match client.send_request(request).await? {
+        RpcResponse::Success(result) => serde_json::from_value(result.result)
+            .map_err(GetFeeVaultAddressError::SerdeJSONError)
+            .map_err(EthClientError::from),
+        RpcResponse::Error(error_response) => {
+            Err(GetFeeVaultAddressError::RPCError(error_response.error.message).into())
         }
     }
 }

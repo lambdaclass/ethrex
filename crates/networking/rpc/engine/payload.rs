@@ -339,6 +339,58 @@ impl RpcHandler for GetPayloadV4Request {
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
+        if chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!("{:?}", Fork::Osaka)));
+        }
+
+        let response = ExecutionPayloadResponse {
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            block_value: payload_bundle.block_value,
+            blobs_bundle: Some(payload_bundle.blobs_bundle),
+            should_override_builder: Some(false),
+            execution_requests: Some(
+                payload_bundle
+                    .requests
+                    .into_iter()
+                    .filter(|r| !r.is_empty())
+                    .collect(),
+            ),
+        };
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+pub struct GetPayloadV5Request {
+    pub payload_id: u64,
+}
+
+impl From<GetPayloadV5Request> for RpcRequest {
+    fn from(val: GetPayloadV5Request) -> Self {
+        RpcRequest {
+            method: "engine_getPayloadV5".to_string(),
+            params: Some(vec![serde_json::json!(U256::from(val.payload_id))]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for GetPayloadV5Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let payload_id = parse_get_payload_request(params)?;
+        Ok(Self { payload_id })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let payload_bundle = get_payload(self.payload_id, &context).await?;
+        let chain_config = &context.storage.get_chain_config()?;
+
+        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(payload_bundle.block.header.timestamp)
+            )));
+        }
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -519,6 +571,11 @@ async fn validate_ancestors(
         .get_latest_valid_ancestor(block.header.parent_hash)
         .await?
     {
+        // Invalidate child too
+        context
+            .storage
+            .set_latest_valid_ancestor(block.header.hash(), latest_valid_hash)
+            .await?;
         return Ok(Some(PayloadStatus::invalid_with(
             latest_valid_hash,
             "Parent header has been previously invalidated.".into(),
@@ -552,7 +609,7 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status = try_execute_payload(&block, &context, latest_valid_hash).await?;
+    let payload_status = try_execute_payload(block, &context, latest_valid_hash).await?;
     Ok(payload_status)
 }
 
@@ -602,7 +659,8 @@ fn get_block_from_payload(
     requests_hash: Option<H256>,
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
-    info!("Received new payload with block hash: {block_hash:#x}");
+    let block_number = payload.block_number;
+    info!(%block_hash, %block_number, "Received new payload");
 
     payload
         .clone()
@@ -621,19 +679,22 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
 }
 
 async fn try_execute_payload(
-    block: &Block,
+    block: Block,
     context: &RpcApiContext,
     latest_valid_hash: H256,
 ) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
+    let block_number = block.header.number;
     let storage = &context.storage;
-    // Return the valid message directly if we have it.
-    if storage.get_block_by_hash(block_hash).await?.is_some() {
+    // Return the valid message directly if we already have it.
+    // We check for header only as we do not download the block bodies before the pivot during snap sync
+    // https://github.com/lambdaclass/ethrex/issues/1766
+    if storage.get_block_header_by_hash(block_hash)?.is_some() {
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 
     // Execute and store the block
-    info!("Executing payload with block hash: {block_hash:#x}");
+    info!(%block_hash, %block_number, "Executing payload");
 
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {

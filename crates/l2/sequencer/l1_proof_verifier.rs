@@ -68,7 +68,15 @@ impl L1ProofVerifier {
         aligned_cfg: &AlignedConfig,
         rollup_store: StoreRollup,
     ) -> Result<Self, ProofVerifierError> {
-        let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+        let eth_client = EthClient::new_with_config(
+            eth_cfg.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_cfg.max_number_of_retries,
+            eth_cfg.backoff_factor,
+            eth_cfg.min_retry_delay,
+            eth_cfg.max_retry_delay,
+            Some(eth_cfg.maximum_allowed_max_fee_per_gas),
+            Some(eth_cfg.maximum_allowed_max_fee_per_blob_gas),
+        )?;
         let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
         let sp1_vk = get_sp1_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;
@@ -183,15 +191,14 @@ impl L1ProofVerifier {
 
         if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
             send_verify_tx_result.as_ref()
+            && error.contains("Invalid ALIGNED proof")
         {
-            if error.contains("Invalid ALIGNED proof") {
-                warn!("Deleting invalid ALIGNED proof");
-                for i in 0..aggregated_proofs_count {
-                    let batch_number = first_batch_number + i;
-                    self.rollup_store
-                        .delete_proof_by_batch_and_type(batch_number, ProverType::Aligned)
-                        .await?;
-                }
+            warn!("Deleting invalid ALIGNED proof");
+            for i in 0..aggregated_proofs_count {
+                let batch_number = first_batch_number + i;
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, ProverType::Aligned)
+                    .await?;
             }
         }
         let verify_tx_hash = send_verify_tx_result?;
