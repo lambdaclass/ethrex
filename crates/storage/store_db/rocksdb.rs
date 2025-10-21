@@ -231,6 +231,7 @@ impl Store {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
+                    block_opts.disable_cache();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -241,6 +242,7 @@ impl Store {
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
+                    block_opts.disable_cache();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
@@ -254,6 +256,7 @@ impl Store {
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
+                    block_opts.disable_cache();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
@@ -265,6 +268,7 @@ impl Store {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
+                    block_opts.disable_cache();
                     block_opts.set_block_size(32 * 1024); // 32KB
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -276,6 +280,7 @@ impl Store {
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
+                    block_opts.disable_cache();
                     block_opts.set_block_size(16 * 1024);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
