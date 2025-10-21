@@ -72,6 +72,9 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          ref: main
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
