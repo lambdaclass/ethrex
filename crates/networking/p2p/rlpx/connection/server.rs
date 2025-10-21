@@ -483,7 +483,7 @@ where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
 {
     if state.peer_table.target_peers_reached().await? {
-        log_peer_warn!(&state.node, "Reached target peer connections, discarding.");
+        log_peer_debug!(&state.node, "Reached target peer connections, discarding.");
         return Err(PeerConnectionError::TooManyPeers);
     }
     exchange_hello_messages(state, &mut stream).await?;

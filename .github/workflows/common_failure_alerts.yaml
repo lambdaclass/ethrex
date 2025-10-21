@@ -3,6 +3,9 @@ name: Workflow Failure Alerts
 on:
   workflow_run:
     workflows:
+      - Daily Hive Report
+      - Daily Lines of Code Report
+      - Daily Snapsync Check
       - L1
       - L2 (SP1 Backend)
       - L2 (without proving)
@@ -26,7 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       ${{ github.event.workflow_run.conclusion != 'success' &&
-          github.event.workflow_run.event == 'push' }}
+          (github.event.workflow_run.event == 'push' ||
+           github.event.workflow_run.event == 'schedule') }}
     steps:
       - name: Select Slack webhook
         id: select_webhook
