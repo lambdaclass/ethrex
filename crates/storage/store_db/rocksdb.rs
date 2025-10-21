@@ -22,6 +22,7 @@ use std::{
     collections::HashSet,
     path::Path,
     sync::{Arc, RwLock},
+    time::Instant,
 };
 use tracing::{debug, error, info};
 
@@ -664,7 +665,12 @@ impl StoreEngine for Store {
 
             let mut updated_trie = false;
 
+            let now = Instant::now();
             let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
+            info!(
+                took = (Instant::now().duration_since(now)).as_secs_f64(),
+                "TRIE CACHE WRITE LOCK"
+            );
             if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
                 updated_trie = true;
                 // If the channel is closed, there's nobody to notify

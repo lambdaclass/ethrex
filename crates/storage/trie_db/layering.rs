@@ -1,6 +1,11 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+    time::Instant,
+};
+use tracing::info;
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
@@ -128,12 +133,13 @@ impl TrieDB for TrieWrapper {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self
-            .inner
-            .read()
-            .map_err(|_| TrieError::LockError)?
-            .get(self.state_root, key.clone())
-        {
+        let now = Instant::now();
+        let layer = self.inner.read().map_err(|_| TrieError::LockError)?;
+        info!(
+            took = (Instant::now().duration_since(now)).as_secs_f64(),
+            "TRIE LAYERS READ LOCK"
+        );
+        if let Some(value) = layer.get(self.state_root, key.clone()) {
             return Ok(Some(value));
         }
         self.db.get(key)
@@ -149,7 +155,12 @@ impl TrieDB for TrieWrapper {
             }
             None => *EMPTY_TRIE_HASH,
         };
+        let now = Instant::now();
         let mut inner = self.inner.write().map_err(|_| TrieError::LockError)?;
+        info!(
+            took = (Instant::now().duration_since(now)).as_secs_f64(),
+            "TRIE LAYERS WRITE LOCK"
+        );
         inner.put_batch(
             self.state_root,
             new_state_root,
