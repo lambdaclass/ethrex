@@ -399,7 +399,7 @@ impl Transaction {
         ))
     }
 
-    pub fn custom_fee(&self) -> Option<Address> {
+    pub fn custom_fee_token(&self) -> Option<Address> {
         if let Transaction::CustomFeeTransaction(tx) = self {
             Some(tx.custom_fee_token)
         } else {

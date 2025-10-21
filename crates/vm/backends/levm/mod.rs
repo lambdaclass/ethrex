@@ -114,6 +114,7 @@ impl LEVM {
             block_gas_limit: block_header.gas_limit,
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
+            custom_fee_token: tx.custom_fee_token(),
         };
 
         Ok(env)
@@ -159,6 +160,27 @@ impl LEVM {
         vm.execute()
             .map(|value| value.into())
             .map_err(VMError::into)
+    }
+
+    pub fn simulate_tx_from_generic_and_return_vm<'a>(
+        // The transaction to execute.
+        tx: &'a GenericTransaction,
+        // The block header for the current block.
+        block_header: &'a BlockHeader,
+        db: &'a mut GeneralizedDatabase,
+        vm_type: VMType,
+    ) -> Result<(VM<'a>, ExecutionResult), EvmError> {
+        let mut env = env_from_generic(tx, block_header, db)?;
+
+        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+
+        adjust_disabled_base_fee(&mut env);
+
+        let mut vm = vm_from_generic(tx, env, db, vm_type)?;
+
+        let result = vm.execute().map(|value| value.into())?;
+
+        Ok((vm, result))
     }
 
     pub fn get_state_transitions(
@@ -521,6 +543,7 @@ fn env_from_generic(
         block_gas_limit: header.gas_limit,
         difficulty: header.difficulty,
         is_privileged: false,
+        custom_fee_token: tx.custom_fee_token,
     })
 }
 
