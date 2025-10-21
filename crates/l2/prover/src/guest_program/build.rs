@@ -78,7 +78,7 @@ fn build_sp1_program() {
 
     std::fs::write(
         "./src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
-        format!("{}\n", hex::encode(vk.vk.bytes32())),
+        format!("{}\n", vk.vk.bytes32()),
     )
     .expect("could not write SP1 vk-bn254 to file");
     std::fs::write(
