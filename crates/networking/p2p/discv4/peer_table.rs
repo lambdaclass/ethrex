@@ -500,12 +500,6 @@ impl PeerTable {
             _ => unreachable!(),
         }
     }
-
-    /// Shutdown PeerTableServer
-    pub async fn shutdown(&mut self) -> Result<(), PeerTableError> {
-        self.handle.cast(CastMessage::Shutdown).await?;
-        Ok(())
-    }
 }
 
 #[derive(Debug)]
