@@ -47,6 +47,8 @@ pub struct StoreInner {
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
     // Stores current Snap State
     snap_state: SnapState,
+    // Stores fetched headers during a fullsync
+    fullsync_headers: HashMap<BlockNumber, BlockHeader>,
 }
 
 #[derive(Default, Debug)]
@@ -693,6 +695,43 @@ impl StoreEngine for Store {
             store.account_codes.insert(code_hash, code);
         }
 
+        Ok(())
+    }
+
+    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        self.inner()?
+            .fullsync_headers
+            .extend(headers.into_iter().map(|h| (h.number, h)));
+        Ok(())
+    }
+
+    async fn read_fullsync_batch(
+        &self,
+        start: BlockNumber,
+        limit: u64,
+    ) -> Result<Vec<BlockHeader>, StoreError> {
+        let store = self.inner()?;
+        (start..start + limit)
+            .map(|ref n| {
+                store
+                    .fullsync_headers
+                    .get(n)
+                    .cloned()
+                    .ok_or(StoreError::Custom(format!(
+                        "Missing fullsync header for block {n}"
+                    )))
+            })
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
+        self.inner()?.fullsync_headers.clear();
+        Ok(())
+    }
+
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        // FlatKeyValue currently not supported for the InMemory DB
+        // Silently ignoring the request to build the FlatKeyValue is harmless
         Ok(())
     }
 }
