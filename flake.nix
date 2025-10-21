@@ -9,12 +9,8 @@
   };
 
   nixConfig = {
-    substituters = [
-      "https://lambdaclass.cachix.org"
-    ];
-    trusted-public-keys = [
-      "lambdaclass.cachix.org-1:rYebIu6OLjDu5dqn4xhV9XQJro2fc3+FJhfVBsD9bkw="
-    ];
+    extra-substituters = ["https://ethrex.cachix.org"];
+    extra-trusted-public-keys = ["ethrex.cachix.org-1:ejp9KQpR1FBI2onstMQ34yogDm4OgU2ru6lIwPvuCVs="];
   };
 
   outputs = { self, nixpkgs, flake-utils, crane, rust-overlay }:
