@@ -745,8 +745,11 @@ impl StoreEngine for Store {
                 let mut buf =
                     Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
                 code.bytecode.encode(&mut buf);
-                ethrex_rlp::encode::encode_length(2 * code.jump_targets.len(), &mut buf);
-                buf.extend(code.jump_targets.into_iter().flat_map(|t| t.to_le_bytes()));
+                code.jump_targets
+                    .into_iter()
+                    .flat_map(|t| t.to_le_bytes())
+                    .collect::<Vec<u8>>()
+                    .encode(&mut buf);
                 batch.put_cf(&cf_codes, code_hash.0, buf);
             }
 
@@ -1117,8 +1120,11 @@ impl StoreEngine for Store {
         let hash_key = code.hash.0.to_vec();
         let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
         code.bytecode.encode(&mut buf);
-        ethrex_rlp::encode::encode_length(2 * code.jump_targets.len(), &mut buf);
-        buf.extend(code.jump_targets.into_iter().flat_map(|t| t.to_le_bytes()));
+        code.jump_targets
+            .into_iter()
+            .flat_map(|t| t.to_le_bytes())
+            .collect::<Vec<u8>>()
+            .encode(&mut buf);
         self.write_async(CF_ACCOUNT_CODES, hash_key, buf).await
     }
 
@@ -1687,8 +1693,11 @@ impl StoreEngine for Store {
             let key = code_hash.as_bytes().to_vec();
             let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
             code.bytecode.encode(&mut buf);
-            ethrex_rlp::encode::encode_length(2 * code.jump_targets.len(), &mut buf);
-            buf.extend(code.jump_targets.into_iter().flat_map(|t| t.to_le_bytes()));
+            code.jump_targets
+                .into_iter()
+                .flat_map(|t| t.to_le_bytes())
+                .collect::<Vec<u8>>()
+                .encode(&mut buf);
             batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, buf));
         }
 
