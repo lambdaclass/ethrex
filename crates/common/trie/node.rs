@@ -9,7 +9,7 @@ use std::{
 
 pub use branch::BranchNode;
 use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes, decode_rlp_item},
+    decode::{decode_bytes, decode_rlp_item},
     encode::RLPEncode,
     error::RLPDecodeError,
     structs::{Decoder, OwnedDecoder},
