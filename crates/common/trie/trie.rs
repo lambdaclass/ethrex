@@ -446,7 +446,7 @@ impl Trie {
                             .get_node(db, child_path.clone())?
                             .ok_or_else(|| {
                                 TrieError::InconsistentTree(Box::new(
-                                    InconsistentTreeError::ExtensionNodeChildNotFound(Box::new(
+                                    InconsistentTreeError::ExtensionNodeChildNotFound(
                                         ExtensionNodeErrorData {
                                             node_hash: extension_node
                                                 .child
@@ -458,7 +458,7 @@ impl Trie {
                                             extension_node_prefix: extension_node.prefix,
                                             node_path: child_path.clone(),
                                         },
-                                    )),
+                                    ),
                                 ))
                             })?;
                         get_node_inner(db, child_path, child_node, partial_path)

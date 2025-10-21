@@ -31,14 +31,12 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
-                    InconsistentTreeError::ExtensionNodeChildNotFound(Box::new(
-                        ExtensionNodeErrorData {
-                            node_hash: self.child.compute_hash().finalize(),
-                            extension_node_hash: self.compute_hash().finalize(),
-                            extension_node_prefix: self.prefix.clone(),
-                            node_path: path.current(),
-                        },
-                    )),
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
                 ))
             })?;
 
@@ -71,14 +69,12 @@ impl ExtensionNode {
             // Insert into child node
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
-                    InconsistentTreeError::ExtensionNodeChildNotFound(Box::new(
-                        ExtensionNodeErrorData {
-                            node_hash: self.child.compute_hash().finalize(),
-                            extension_node_hash: self.compute_hash().finalize(),
-                            extension_node_prefix: self.prefix.clone(),
-                            node_path: path.current(),
-                        },
-                    )),
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
                 ))
             })?;
             let new_child_node = child_node.insert(db, path, value)?;
@@ -97,26 +93,26 @@ impl ExtensionNode {
                     Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
                     Some(_) => {
                         return Err(TrieError::InconsistentTree(Box::new(
-                            InconsistentTreeError::ExtensionNodeChildDiffers(Box::new(
+                            InconsistentTreeError::ExtensionNodeChildDiffers(
                                 ExtensionNodeErrorData {
                                     node_hash: new_node.compute_hash().finalize(),
                                     extension_node_hash: current_node_hash,
                                     extension_node_prefix: self.prefix,
                                     node_path: path.current(),
                                 },
-                            )),
+                            ),
                         )));
                     }
                     None => {
                         return Err(TrieError::InconsistentTree(Box::new(
-                            InconsistentTreeError::ExtensionNodeChildNotFound(Box::new(
+                            InconsistentTreeError::ExtensionNodeChildNotFound(
                                 ExtensionNodeErrorData {
                                     node_hash: new_node.compute_hash().finalize(),
                                     extension_node_hash: current_node_hash,
                                     extension_node_prefix: self.prefix,
                                     node_path: path.current(),
                                 },
-                            )),
+                            ),
                         )));
                     }
                 }
@@ -151,14 +147,12 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
-                    InconsistentTreeError::ExtensionNodeChildNotFound(Box::new(
-                        ExtensionNodeErrorData {
-                            node_hash: self.child.compute_hash().finalize(),
-                            extension_node_hash: self.compute_hash().finalize(),
-                            extension_node_prefix: self.prefix.clone(),
-                            node_path: path.current(),
-                        },
-                    )),
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
                 ))
             })?;
             // Remove value from child subtrie
@@ -226,14 +220,12 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
-                    InconsistentTreeError::ExtensionNodeChildNotFound(Box::new(
-                        ExtensionNodeErrorData {
-                            node_hash: self.child.clone().compute_hash().finalize(),
-                            extension_node_hash: self.compute_hash().finalize(),
-                            extension_node_prefix: self.prefix.clone(),
-                            node_path: path.current(),
-                        },
-                    )),
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.clone().compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
                 ))
             })?;
             child_node.get_path(db, path, node_path)?;

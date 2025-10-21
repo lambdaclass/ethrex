@@ -23,9 +23,9 @@ pub enum TrieError {
 #[derive(Debug, Error)]
 pub enum InconsistentTreeError {
     #[error("Child node of {0}, differs from expected")]
-    ExtensionNodeChildDiffers(Box<ExtensionNodeErrorData>),
+    ExtensionNodeChildDiffers(ExtensionNodeErrorData),
     #[error("No Child Node found of {0}")]
-    ExtensionNodeChildNotFound(Box<ExtensionNodeErrorData>),
+    ExtensionNodeChildNotFound(ExtensionNodeErrorData),
     #[error("Node with hash {0:#x} not found in Branch Node with hash {1:#x} using path {2:?}")]
     NodeNotFoundOnBranchNode(H256, H256, Nibbles),
     #[error("Root node with hash {0:#x} not found")]
