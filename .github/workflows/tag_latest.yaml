@@ -46,8 +46,8 @@ jobs:
           echo "PREV_TAG=$(echo ${{ github.event.changes.tag_name.from }} | tr -d v)" >> $GITHUB_ENV
           echo "NEW_TAG=$(echo ${{ github.event.release.tag_name }} | tr -d v)" >> $GITHUB_ENV
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v2
+      - name: Login to Docker registry
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
