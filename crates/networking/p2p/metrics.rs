@@ -80,11 +80,9 @@ pub struct Metrics {
 
     // Storage slots
     pub downloaded_storage_slots: AtomicU64,
-    pub storage_accounts_initial: AtomicU64,
-    pub storage_accounts_healed: AtomicU64,
+    pub storage_leaves_inserted: IntCounter,
     pub storage_tries_insert_end_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_insert_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub storage_tries_state_roots_computed: IntCounter,
 
     // Healing
     pub healing_empty_try_recv: AtomicU64,
@@ -624,15 +622,15 @@ impl Default for Metrics {
             .register(Box::new(pings_sent_rate.clone()))
             .expect("Failed to register pings_sent_rate gauge");
 
-        let storage_tries_state_roots_computed = IntCounter::new(
-            "storage_tries_state_roots_computed",
+        let storage_leaves_inserted = IntCounter::new(
+            "storage_leaves_inserted",
             "Total number of storage tries state roots computed",
         )
-        .expect("Failed to create storage_tries_state_roots_computed counter");
+        .expect("Failed to create storage_leaves_inserted counter");
 
         registry
-            .register(Box::new(storage_tries_state_roots_computed.clone()))
-            .expect("Failed to register storage_tries_state_roots_computed counter");
+            .register(Box::new(storage_leaves_inserted.clone()))
+            .expect("Failed to register storage_leaves_inserted counter");
 
         Metrics {
             _registry: registry,
@@ -692,9 +690,7 @@ impl Default for Metrics {
             downloaded_storage_slots: AtomicU64::new(0),
 
             // Storage tries state roots
-            storage_tries_state_roots_computed,
-            storage_accounts_initial: AtomicU64::new(0),
-            storage_accounts_healed: AtomicU64::new(0),
+            storage_leaves_inserted,
             storage_tries_insert_end_time: Arc::new(Mutex::new(None)),
             storage_tries_insert_start_time: Arc::new(Mutex::new(None)),
 
