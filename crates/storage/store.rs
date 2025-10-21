@@ -422,8 +422,9 @@ impl Store {
 
             if !added_storage.is_empty() {
                 // @@@@@@@@@@@@@@
-
+                let hashed_address_h256 = H256::from_slice(&hashed_address);
                 account_state.storage_root = storage_hash;
+                ret_storage_updates.push((hashed_address_h256, storage_updates));
             }
 
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
@@ -441,14 +442,19 @@ impl Store {
     // Store the added storage in the account's storage trie and compute its new root
     fn inner_update_storage(
         added_storage: &BTreeMap<H256, U256>,
-    ) -> (
-        H256, // storage root
-    ) {
-        let mut storage_trie = self.engine.open_storage_trie(
-            H256::from_slice(&hashed_address),
-            account_state.storage_root,
-            state_root,
-        )?;
+        state_root: H256,
+        hashed_address_h256: H256,
+        storage_root: H256,
+        engine: Arc<dyn StoreEngine>,
+    ) -> Result<
+        (
+            H256,                    // storage root,
+            Vec<(Nibbles, Vec<u8>)>, // storage updates
+        ),
+        StoreError,
+    > {
+        let mut storage_trie =
+            engine.open_storage_trie(hashed_address_h256, storage_root, state_root)?;
         for (storage_key, storage_value) in added_storage {
             let hashed_key = hash_key(storage_key);
             if storage_value.is_zero() {
@@ -459,10 +465,7 @@ impl Store {
         }
         let (storage_hash, storage_updates) = storage_trie.collect_changes_since_last_hash();
 
-        ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
-        //return (storage_hash);
-
-        todo!()
+        Ok((storage_hash, storage_updates))
     }
 
     /// Performs the same actions as apply_account_updates_from_trie
