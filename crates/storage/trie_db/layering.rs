@@ -1,6 +1,7 @@
+use arc_swap::ArcSwap;
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use std::{collections::HashMap, sync::Arc};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
@@ -41,11 +42,7 @@ impl TrieLayerCache {
     }
 
     // TODO: use finalized hash to know when to commit
-    pub fn get_commitable(
-        &mut self,
-        mut state_root: H256,
-        commit_threshold: usize,
-    ) -> Option<H256> {
+    pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
@@ -105,7 +102,7 @@ impl TrieLayerCache {
 
 pub struct TrieWrapper {
     pub state_root: H256,
-    pub inner: Arc<RwLock<Arc<TrieLayerCache>>>,
+    pub inner: Arc<ArcSwap<TrieLayerCache>>,
     pub db: Box<dyn TrieDB>,
     pub prefix: Option<H256>,
 }
@@ -128,12 +125,7 @@ impl TrieDB for TrieWrapper {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self
-            .inner
-            .read()
-            .map_err(|_| TrieError::LockError)?
-            .get(self.state_root, key.clone())
-        {
+        if let Some(value) = self.inner.load().get(self.state_root, key.clone()) {
             return Ok(Some(value));
         }
         self.db.get(key)
@@ -141,30 +133,27 @@ impl TrieDB for TrieWrapper {
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // TODO: this is unused, because we call `TrieLayerCache::put_batch` directly
-        let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
+        let last_pair = key_values
+            .iter()
+            .rev()
+            .find(|(_path, rlp)| !rlp.is_empty())
+            .cloned();
         let new_state_root = match last_pair {
             Some((_, noderlp)) => {
-                let root_node = Node::decode(noderlp)?;
+                let root_node = Node::decode(&noderlp)?;
                 root_node.compute_hash().finalize()
             }
             None => *EMPTY_TRIE_HASH,
         };
-        let mut inner = TrieLayerCache::clone(
-            &self
-                .inner
-                .write()
-                .map_err(|_| TrieError::LockError)?
-                .clone(),
-        );
-        inner.put_batch(
-            self.state_root,
-            new_state_root,
-            key_values
-                .into_iter()
-                .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
-                .collect(),
-        );
-        *self.inner.write().map_err(|_| TrieError::LockError)? = Arc::new(inner);
+
+        let mut inner = TrieLayerCache::clone(&self.inner.load());
+        let key_values = key_values
+            .iter()
+            .cloned()
+            .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
+            .collect();
+        inner.put_batch(self.state_root, new_state_root, key_values);
+        self.inner.store(Arc::new(inner));
         Ok(())
     }
 }

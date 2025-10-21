@@ -5,6 +5,7 @@ use crate::{
         rocksdb_locked::RocksDBLockedTrieDB,
     },
 };
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use ethrex_common::{
     H256,
@@ -18,11 +19,7 @@ use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch,
 };
-use std::{
-    collections::HashSet,
-    path::Path,
-    sync::{Arc, RwLock},
-};
+use std::{collections::HashSet, path::Path, sync::Arc};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -123,7 +120,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<ArcSwap<TrieLayerCache>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
 }
 
@@ -663,12 +660,7 @@ impl StoreEngine for Store {
 
             let mut updated_trie = false;
 
-            let mut trie = TrieLayerCache::clone(
-                &trie_cache
-                    .read()
-                    .map_err(|_| StoreError::LockError)?
-                    .clone(),
-            );
+            let mut trie = TrieLayerCache::clone(&trie_cache.load());
 
             if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
                 updated_trie = true;
@@ -710,7 +702,7 @@ impl StoreEngine for Store {
                     .collect(),
             );
 
-            *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie);
+            trie_cache.store(Arc::new(trie));
 
             for block in update_batch.blocks {
                 let block_number = block.header.number;

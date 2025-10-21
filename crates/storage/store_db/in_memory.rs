@@ -6,6 +6,7 @@ use crate::{
     store::STATE_TRIE_SEGMENTS,
     trie_db::layering::{TrieLayerCache, TrieWrapper},
 };
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
@@ -15,7 +16,7 @@ use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
     collections::HashMap,
     fmt::Debug,
-    sync::{Arc, Mutex, MutexGuard, RwLock},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 // NOTE: we use a different commit threshold than rocksdb since tests
@@ -39,7 +40,7 @@ pub struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<ArcSwap<TrieLayerCache>>,
     // Contains account trie nodes
     state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -92,13 +93,7 @@ impl StoreEngine for Store {
 
         // Store trie updates
         {
-            let mut trie = TrieLayerCache::clone(
-                &store
-                    .trie_cache
-                    .read()
-                    .map_err(|_| StoreError::LockError)?
-                    .clone(),
-            );
+            let mut trie = TrieLayerCache::clone(&store.trie_cache.load());
             let parent = update_batch
                 .blocks
                 .first()
@@ -145,10 +140,7 @@ impl StoreEngine for Store {
                 .chain(update_batch.account_updates)
                 .collect();
             trie.put_batch(pre_state_root, last_state_root, key_values);
-            *store
-                .trie_cache
-                .write()
-                .map_err(|_| StoreError::LockError)? = Arc::new(trie);
+            store.trie_cache.store(Arc::new(trie));
         }
 
         for block in update_batch.blocks {
