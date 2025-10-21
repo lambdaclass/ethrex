@@ -22,7 +22,7 @@ use spawned_concurrency::{
     messages::Unused,
     tasks::{
         CastResponse, GenServer, GenServerHandle, InitResult::Success, send_after, send_interval,
-        spawn_listener,
+        send_message_on, spawn_listener,
     },
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -65,6 +65,7 @@ pub enum InMessage {
     Revalidate,
     Lookup,
     Prune,
+    Shutdown,
 }
 
 #[derive(Debug, Clone)]
@@ -112,7 +113,7 @@ impl DiscoveryServer {
             .new_contacts(bootnodes, local_node.node_id())
             .await?;
 
-        discovery_server.start();
+        discovery_server.start_on_thread();
         Ok(())
     }
 
@@ -512,6 +513,8 @@ impl GenServer for DiscoveryServer {
         send_interval(PRUNE_INTERVAL, handle.clone(), InMessage::Prune);
         let _ = handle.clone().cast(InMessage::Lookup).await;
 
+        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
+
         Ok(Success(self))
     }
 
@@ -551,6 +554,7 @@ impl GenServer for DiscoveryServer {
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
             }
+            Self::CastMsg::Shutdown => return CastResponse::Stop,
         }
         CastResponse::NoReply
     }
