@@ -12,6 +12,7 @@ pub enum TrieError {
     Verify(String),
     #[error("Inconsistent internal tree structure: {0}")]
     InconsistentTree(Box<InconsistentTreeError>),
+    // Box was added to make the error smaller since the InconsistentTreeError variants size vary up to more than 168 bytes.
     #[error("Lock Error: Panicked when trying to acquire a lock")]
     LockError,
     #[error("Database error: {0}")]
