@@ -230,6 +230,14 @@ pub struct Options {
         help_heading = "Block producer options"
     )]
     pub extra_data: String,
+    #[arg(
+        long = "block-producer.gas-limit",
+        default_value = None,
+        value_name = "GAS_LIMIT",
+        help = "Target block gas limit.",
+        help_heading = "Block producer options"
+    )]
+    pub gas_limit: Option<u64>,
 }
 
 impl Options {
@@ -302,6 +310,7 @@ impl Default for Options {
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             extra_data: get_minimal_client_version(),
+            gas_limit: None,
         }
     }
 }
