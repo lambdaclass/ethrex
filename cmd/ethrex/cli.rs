@@ -7,7 +7,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
-use ethrex_common::types::{Block, Genesis, fee_config::FeeConfig};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, fee_config::FeeConfig};
 use ethrex_p2p::{
     discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
@@ -232,12 +232,12 @@ pub struct Options {
     pub extra_data: String,
     #[arg(
         long = "block-producer.gas-limit",
-        default_value = None,
+        default_value_t = DEFAULT_BUILDER_GAS_CEIL,
         value_name = "GAS_LIMIT",
         help = "Target block gas limit.",
         help_heading = "Block producer options"
     )]
-    pub gas_limit: Option<u64>,
+    pub gas_limit: u64,
 }
 
 impl Options {
@@ -310,7 +310,7 @@ impl Default for Options {
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             extra_data: get_minimal_client_version(),
-            gas_limit: None,
+            gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }
