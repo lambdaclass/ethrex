@@ -450,7 +450,7 @@ impl RLPDecode for Transaction {
 }
 
 /// The transaction's kind: call or create.
-#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub enum TxKind {
     Call(#[rkyv(with=crate::rkyv_utils::H160Wrapper)] Address),
     #[default]
@@ -1082,12 +1082,12 @@ impl Transaction {
 
     pub fn to(&self) -> TxKind {
         match self {
-            Transaction::LegacyTransaction(tx) => tx.to.clone(),
-            Transaction::EIP2930Transaction(tx) => tx.to.clone(),
-            Transaction::EIP1559Transaction(tx) => tx.to.clone(),
+            Transaction::LegacyTransaction(tx) => tx.to,
+            Transaction::EIP2930Transaction(tx) => tx.to,
+            Transaction::EIP1559Transaction(tx) => tx.to,
             Transaction::EIP4844Transaction(tx) => TxKind::Call(tx.to),
             Transaction::EIP7702Transaction(tx) => TxKind::Call(tx.to),
-            Transaction::PrivilegedL2Transaction(tx) => tx.to.clone(),
+            Transaction::PrivilegedL2Transaction(tx) => tx.to,
         }
     }
 
@@ -1169,14 +1169,14 @@ impl Transaction {
         }
     }
 
-    pub fn blob_versioned_hashes(&self) -> Vec<H256> {
+    pub fn blob_versioned_hashes(&self) -> Option<&Vec<H256>> {
         match self {
-            Transaction::LegacyTransaction(_) => Vec::new(),
-            Transaction::EIP2930Transaction(_) => Vec::new(),
-            Transaction::EIP1559Transaction(_) => Vec::new(),
-            Transaction::EIP4844Transaction(tx) => tx.blob_versioned_hashes.clone(),
-            Transaction::EIP7702Transaction(_) => Vec::new(),
-            Transaction::PrivilegedL2Transaction(_) => Vec::new(),
+            Transaction::LegacyTransaction(_) => None,
+            Transaction::EIP2930Transaction(_) => None,
+            Transaction::EIP1559Transaction(_) => None,
+            Transaction::EIP4844Transaction(tx) => Some(&tx.blob_versioned_hashes),
+            Transaction::EIP7702Transaction(_) => None,
+            Transaction::PrivilegedL2Transaction(_) => None,
         }
     }
 
@@ -1466,26 +1466,10 @@ mod canonic_encoding {
         }
 
         pub fn compute_hash(&self) -> H256 {
-            match self {
-                P2PTransaction::LegacyTransaction(t) => {
-                    Transaction::LegacyTransaction(t.clone()).compute_hash()
-                }
-                P2PTransaction::EIP2930Transaction(t) => {
-                    Transaction::EIP2930Transaction(t.clone()).compute_hash()
-                }
-                P2PTransaction::EIP1559Transaction(t) => {
-                    Transaction::EIP1559Transaction(t.clone()).compute_hash()
-                }
-                P2PTransaction::EIP4844TransactionWithBlobs(t) => {
-                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash()
-                }
-                P2PTransaction::EIP7702Transaction(t) => {
-                    Transaction::EIP7702Transaction(t.clone()).compute_hash()
-                }
-                P2PTransaction::PrivilegedL2Transaction(t) => {
-                    Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
-                }
+            if let P2PTransaction::PrivilegedL2Transaction(tx) = self {
+                return tx.get_privileged_hash().unwrap_or_default();
             }
+            crate::utils::keccak(self.encode_canonical_to_vec())
         }
     }
 }
@@ -1570,7 +1554,7 @@ mod serde_impl {
         fn from(value: &AccessListItem) -> AccessListEntry {
             AccessListEntry {
                 address: value.0,
-                storage_keys: value.1.clone(),
+                storage_keys: value.1.clone(), //ok-clone: access list items cannot be consumed in cast
             }
         }
     }
@@ -2230,7 +2214,7 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data.clone(),
+                input: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2262,7 +2246,7 @@ mod serde_impl {
                 to: value.to,
                 gas_limit: value.gas.unwrap_or_default(),
                 value: value.value,
-                data: value.input.clone(),
+                data: value.input,
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
                 max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
                 access_list: value
@@ -2284,7 +2268,7 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas),
                 value: value.value,
-                input: value.data.clone(),
+                input: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2322,7 +2306,7 @@ mod serde_impl {
             Ok(Self {
                 tx: value.try_into()?,
                 wrapper_version: None,
-                blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
+                blobs_bundle: BlobsBundle::create_from_blobs(blobs)?,
             })
         }
     }
@@ -2337,12 +2321,12 @@ mod serde_impl {
             Ok(Self {
                 nonce: value.nonce.unwrap_or_default(),
                 to: match value.to {
-                    TxKind::Call(to) => to,
+                    TxKind::Call(address) => address,
                     _ => H160::default(),
                 },
                 gas: value.gas.unwrap_or_default(),
                 value: value.value,
-                data: value.input.clone(),
+                data: value.input,
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
                 max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
                 max_fee_per_blob_gas: value.max_fee_per_blob_gas.unwrap_or_default(),
@@ -2366,7 +2350,7 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data.clone(),
+                input: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2399,7 +2383,7 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data.clone(),
+                input: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2430,7 +2414,7 @@ mod serde_impl {
                 to: value.to,
                 gas_limit: value.gas.unwrap_or_default(),
                 value: value.value,
-                data: value.input.clone(),
+                data: value.input,
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
                 max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
                 access_list: value
@@ -2985,7 +2969,7 @@ mod tests {
             signature_s: U256::zero(),
             ..Default::default()
         };
-        let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
+        let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone()); // ok-clone: value is needed later, clone is in test
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
 
         let deserialized_tx: Transaction =
@@ -3023,7 +3007,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone());
+        let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone()); // ok-clone: value is needed later, clone is in test
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
 
         let deserialized_tx: Transaction =
@@ -3113,7 +3097,7 @@ mod tests {
             ),
             value: U256::from(1_000_000_000_000_000_000u64),
             data: Bytes::default(),
-            access_list: access_list.clone(),
+            access_list: access_list.clone(), // ok-clone: value is needed later, clone is in test
             signature_y_parity: false,
             signature_r: U256::from(1),
             signature_s: U256::from(1),

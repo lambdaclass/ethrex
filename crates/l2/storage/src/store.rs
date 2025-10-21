@@ -178,7 +178,7 @@ impl Store {
         let blobs_bundle = BlobsBundle::create_from_blobs(
             // Currently validium mode doesn't generate blobs, so no one will be stored
             // TODO: If/When that behaviour change, this should throw error on None
-            &self
+            self
                 .get_blobs_by_batch(batch_number)
                 .await?
                 .unwrap_or_default()

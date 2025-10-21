@@ -645,7 +645,7 @@ impl PeerHandler {
                     if let Some(receipts) =
                         match PeerHandler::make_request(&mut self.peer_table, peer_id, &mut connection, request, PEER_REPLY_TIMEOUT).await {
                             Ok(RLPxMessage::Receipts68(res)) => {
-                                Some(res.get_receipts())
+                                Some(res.into_receipts())
                             }
                             Ok(RLPxMessage::Receipts69(res)) => {
                                 Some(res.receipts.clone())

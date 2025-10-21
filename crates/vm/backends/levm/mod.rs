@@ -8,6 +8,7 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::types::EIP4844Transaction;
 use ethrex_common::{
     Address, U256,
     types::{
@@ -106,7 +107,6 @@ impl LEVM {
             gas_price,
             block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
             block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-            tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
@@ -513,7 +513,6 @@ fn env_from_generic(
         gas_price,
         block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: header.blob_gas_used.map(U256::from),
-        tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
         tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
         tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
@@ -530,8 +529,8 @@ fn vm_from_generic<'a>(
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
 ) -> Result<VM<'a>, VMError> {
-    let tx = match &tx.authorization_list {
-        Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
+    let tx = if let Some(authorization_list) = &tx.authorization_list {
+        Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
                 TxKind::Create => {
@@ -550,9 +549,28 @@ fn vm_from_generic<'a>(
                 .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
                 .collect(),
             ..Default::default()
-        }),
-        None => Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: tx.to.clone(),
+        })
+    } else if !tx.blob_versioned_hashes.is_empty() {
+        Transaction::EIP4844Transaction(EIP4844Transaction {
+            to: match tx.to {
+                TxKind::Call(to) => to,
+                TxKind::Create => {
+                    return Err(InternalError::msg("Generic Tx cannot be create type").into());
+                }
+            },
+            value: tx.value,
+            data: tx.input.clone(),
+            access_list: tx
+                .access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            blob_versioned_hashes: tx.blob_versioned_hashes.clone(),
+            ..Default::default()
+        })
+    } else {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: tx.to,
             value: tx.value,
             data: tx.input.clone(),
             access_list: tx
@@ -561,7 +579,7 @@ fn vm_from_generic<'a>(
                 .map(|list| (list.address, list.storage_keys.clone()))
                 .collect(),
             ..Default::default()
-        }),
+        })
     };
     VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
 }
