@@ -10,7 +10,7 @@
 
   nixConfig = {
     substituters = [
-      "https://ethrex.cachix.org"
+      "https://lambdaclass.cachix.org"
       "https://cache.nixos.org"
     ];
     trusted-public-keys = [
