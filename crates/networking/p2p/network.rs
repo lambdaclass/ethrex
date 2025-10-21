@@ -262,6 +262,9 @@ pub async fn periodically_show_peer_stats_during_syncing(
             } else {
                 0.0
             };
+            // We round up because of the accounts whose slots get downloaded and then not used
+            let storage_leaves_inserted_percentage =
+                (storage_leaves_inserted_percentage * 10.0).round() / 10.0;
             let storage_leaves_time = format_duration({
                 let end_time = METRICS
                     .storage_tries_download_end_time
