@@ -375,4 +375,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     /// Clear all headers downloaded during fullsync
     async fn clear_fullsync_headers(&self) -> Result<(), StoreError>;
+
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 }
