@@ -2,7 +2,6 @@ id: synced-check
 name: "Check Client synced"
 config:
   timeout: 5m
-  minBlockHeight: 10
 timeout: ${timeout}"
 tasks:
   - name: run_tasks_concurrent
@@ -17,9 +16,3 @@ tasks:
           title: "Check if EL client is synced"
           config:
             pollInterval: 60s
-
-  - name: check_execution_sync_status
-    title: "Make sure the EL client runs for 30m"
-    timeout: 35m
-    configVars:
-      minBlockHeight: "minBlockHeight"

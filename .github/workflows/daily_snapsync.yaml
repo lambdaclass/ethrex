@@ -18,10 +18,6 @@ on:
         description: "Assertoor test timeout"
         required: false
         default: "120m"
-      minBlockHeight:
-        description: "Minimum block height for progress check"
-        required: false
-        default: "10"
   workflow_call:
     inputs:
       network:
@@ -33,11 +29,6 @@ on:
         description: "Assertoor test timeout"
         required: false
         default: "120m"
-        type: string
-      minBlockHeight:
-        description: "Minimum block height for progress check"
-        required: false
-        default: "10"
         type: string
 
 permissions:
@@ -57,21 +48,19 @@ jobs:
         run: |
           event_name="${GITHUB_EVENT_NAME}"
           if [[ "$event_name" == "schedule" ]]; then
-            json='[{"network":"hoodi","timeout":"120m","minBlockHeight":"10"},{"network":"sepolia","timeout":"120m","minBlockHeight":"10"}]'
+            json='[{"network":"hoodi","timeout":"120m"},{"network":"sepolia","timeout":"120m"}]'
           elif [[ "$event_name" == "pull_request" ]]; then
-            json='[{"network":"hoodi","timeout":"120m","minBlockHeight":"10"}]'
+            json='[{"network":"hoodi","timeout":"120m"}]'
           else
             network=$(jq -r '.inputs.network // empty' "$GITHUB_EVENT_PATH")
             timeout=$(jq -r '.inputs.timeout // empty' "$GITHUB_EVENT_PATH")
-            min_block_height=$(jq -r '.inputs.minBlockHeight // empty' "$GITHUB_EVENT_PATH")
 
             timeout=${timeout:-120m}
-            min_block_height=${min_block_height:-10}
 
             if [[ -z "$network" || "$network" == "all" ]]; then
-              json='[{"network":"hoodi","timeout":"'"$timeout"'","minBlockHeight":"'"$min_block_height"'"},{"network":"sepolia","timeout":"'"$timeout"'","minBlockHeight":"'"$min_block_height"'"}]'
+              json='[{"network":"hoodi","timeout":"'"$timeout"'"},{"network":"sepolia","timeout":"'"$timeout"'"}]'
             else
-              json='[{"network":"'"$network"'","timeout":"'"$timeout"'","minBlockHeight":"'"$min_block_height"'"}]'
+              json='[{"network":"'"$network"'","timeout":"'"$timeout"'"}]'
             fi
           fi
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
@@ -92,4 +81,3 @@ jobs:
         with:
           network: ${{ matrix.network }}
           timeout: ${{ matrix.timeout }}
-          minBlockHeight: ${{ matrix.minBlockHeight }}
