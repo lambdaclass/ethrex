@@ -1,7 +1,7 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store,
+    get_network, get_signer, init_blockchain, init_network, init_store, regenerate_head_state,
 };
 use crate::l2::L2Options;
 use crate::utils::{
@@ -98,9 +98,9 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
 }
 
 pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
-    #[cfg(feature = "rollup_storage_sql")]
+    #[cfg(feature = "l2-sql")]
     let engine_type = EngineTypeRollup::SQL;
-    #[cfg(not(feature = "rollup_storage_sql"))]
+    #[cfg(not(feature = "l2-sql"))]
     let engine_type = EngineTypeRollup::InMemory;
     let rollup_store =
         StoreRollup::new(datadir, engine_type).expect("Failed to create StoreRollup");
@@ -168,6 +168,8 @@ pub async fn init_l2(
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
+
+    regenerate_head_state(&store, &blockchain).await?;
 
     let signer = get_signer(&datadir);
 

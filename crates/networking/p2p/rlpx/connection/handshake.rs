@@ -8,15 +8,16 @@ use super::{
     codec::RLPxCodec,
     server::{Initiator, Receiver},
 };
+#[cfg(feature = "l2")]
+use crate::rlpx::l2::l2_connection::L2ConnState;
 use crate::{
     rlpx::{
         connection::server::{ConnectionState, Established},
         error::PeerConnectionError,
-        l2::l2_connection::L2ConnState,
         message::EthCapVersion,
         utils::{
-            compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
-            sha256_hmac,
+            compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, log_peer_trace,
+            sha256, sha256_hmac,
         },
     },
     types::Node,
@@ -82,7 +83,7 @@ pub(crate) async fn perform(
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
-            log_peer_debug(&node, "Completed handshake as initiator");
+            log_peer_trace(&node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec))
         }
         ConnectionState::Receiver(Receiver {
@@ -108,7 +109,7 @@ pub(crate) async fn perform(
                 peer_addr.port(),
                 remote_state.public_key,
             );
-            log_peer_debug(&node, "Completed handshake as receiver");
+            log_peer_trace(&node, "Completed handshake as receiver");
             (context, node, Framed::new(stream, codec))
         }
         ConnectionState::Established(_) => {
@@ -140,6 +141,7 @@ pub(crate) async fn perform(
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
             peer_table: context.table.clone(),
+            #[cfg(feature = "l2")]
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),

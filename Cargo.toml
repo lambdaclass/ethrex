@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "benches",
   "cmd/ethrex",
   "crates/blockchain",
   "crates/blockchain/dev",
@@ -39,7 +40,7 @@ resolver = "2"
 default-members = ["cmd/ethrex"]
 
 [workspace.package]
-version = "3.0.0"
+version = "4.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
@@ -104,7 +105,7 @@ secp256k1 = { version = "0.30.0", default-features = false, features = [
   "recovery",
   "rand",
 ] }
-axum = "0.8.1"
+axum = { version = "0.8.1" }
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
@@ -113,8 +114,8 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-spawned-concurrency = "0.4.1"
-spawned-rt = "0.4.1"
+spawned-concurrency = "0.4.2"
+spawned-rt = "0.4.2"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
