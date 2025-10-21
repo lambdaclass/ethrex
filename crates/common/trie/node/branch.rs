@@ -74,12 +74,11 @@ impl BranchNode {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
         if let Some(choice) = path.next_choice() {
-            let current_node_hash = self.compute_hash().finalize();
-            match (&mut self.choices[choice], value) {
+            self.choices[choice] = match (&self.choices[choice], value) {
                 // Create new child (leaf node)
                 (choice_ref, ValueOrHash::Value(value)) if !choice_ref.is_valid() => {
                     let new_leaf = LeafNode::new(path, value);
-                    *choice_ref = Node::from(new_leaf).into();
+                    Node::from(new_leaf).into()
                 }
                 // Insert into existing child and then update it
                 (choice_ref, ValueOrHash::Value(value)) => {
@@ -87,36 +86,36 @@ impl BranchNode {
                         TrieError::InconsistentTree(
                             InconsistentTreeError::NodeNotFoundOnBranchNode(
                                 choice_ref.compute_hash().finalize(),
-                                current_node_hash,
+                                self.compute_hash().finalize(),
                                 path.current(),
                             ),
                         )
                     })?;
 
-                    *choice_ref = child_node.insert(db, path, value)?.into();
+                    child_node.insert(db, path, value)?.into()
                 }
                 // Insert external node hash if there are no overrides.
                 (choice_ref, value @ ValueOrHash::Hash(hash)) => {
                     if !choice_ref.is_valid() {
-                        *choice_ref = hash.into();
+                        hash.into()
                     } else if path.is_empty() {
                         return Err(TrieError::Verify(
                             "attempt to override proof node with external hash".to_string(),
                         ));
                     } else {
-                        *choice_ref = choice_ref
+                        choice_ref
                             .get_node(db, path.current())?
                             .ok_or_else(|| {
                                 TrieError::InconsistentTree(
                                     InconsistentTreeError::NodeNotFoundOnBranchNode(
                                         choice_ref.compute_hash().finalize(),
-                                        current_node_hash,
+                                        self.compute_hash().finalize(),
                                         path.current(),
                                     ),
                                 )
                             })?
                             .insert(db, path, value)?
-                            .into();
+                            .into()
                     }
                 }
             }

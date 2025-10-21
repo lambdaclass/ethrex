@@ -429,7 +429,7 @@ impl Trie {
                             .get_node(db, child_path.clone())?
                             .ok_or_else(|| {
                                 TrieError::InconsistentTree(
-                                    InconsistentTreeError::NodeNotFoundOnExtensionNode(Box::new(
+                                    InconsistentTreeError::ExtensionNodeChildNotFound(Box::new(
                                         ExtensionNodeErrorData {
                                             node_hash: extension_node
                                                 .child

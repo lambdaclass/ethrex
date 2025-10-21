@@ -22,12 +22,12 @@ pub enum TrieError {
 
 #[derive(Debug, Error)]
 pub enum InconsistentTreeError {
-    #[error("Failed to insert node as child of Extention node: {0}")]
-    ExtensionNodeInsertionError(Box<ExtensionNodeErrorData>),
+    #[error("Child node of {0}, differs from expected")]
+    ExtensionNodeChildDiffers(Box<ExtensionNodeErrorData>),
+    #[error("No Child Node found of {0}")]
+    ExtensionNodeChildNotFound(Box<ExtensionNodeErrorData>),
     #[error("Node with hash {0:#x} not found in Branch Node with hash {1:#x} using path {2:?}")]
     NodeNotFoundOnBranchNode(H256, H256, Nibbles),
-    #[error("{0}")]
-    NodeNotFoundOnExtensionNode(Box<ExtensionNodeErrorData>),
     #[error("Root node with hash {0:#x} not found")]
     RootNotFound(H256),
 }
@@ -44,7 +44,7 @@ impl std::fmt::Display for ExtensionNodeErrorData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Node with hash {:#x} not found as child of Extension Node with hash {:#x} and prefix {:?} using path {:?}",
+            "Node with hash {:#x}, child of the Extension Node (hash {:#x}, prefix {:?}) on path {:?}",
             self.node_hash, self.extension_node_hash, self.extension_node_hash, self.node_path
         )
     }
