@@ -1,8 +1,6 @@
 id: synced-check
 name: "Check Client synced"
-config:
-  timeout: 5m
-timeout: ${{config.timeout}}
+timeout: 12h
 tasks:
   - name: run_tasks_concurrent
     title: "Check if EL & CL clients are synced"

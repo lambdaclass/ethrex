@@ -48,9 +48,9 @@ jobs:
         run: |
           event_name="${GITHUB_EVENT_NAME}"
           if [[ "$event_name" == "schedule" ]]; then
-            json='[{"network":"hoodi","timeout":"120m"},{"network":"sepolia","timeout":"120m"}]'
+            json='[{"network":"hoodi","timeout":"20m"},{"network":"sepolia","timeout":"120m"}]'
           elif [[ "$event_name" == "pull_request" ]]; then
-            json='[{"network":"hoodi","timeout":"120m"}]'
+            json='[{"network":"hoodi","timeout":"5m"}]'
           else
             network=$(jq -r '.inputs.network // empty' "$GITHUB_EVENT_PATH")
             timeout=$(jq -r '.inputs.timeout // empty' "$GITHUB_EVENT_PATH")
