@@ -79,7 +79,7 @@ ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 ethrex-threadpool = { path = "./crates/concurrency" }
 
 tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = { version = "=0.3.19", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
 
 async-trait = "0.1.88"
 ethereum-types = { version = "0.15.1", features = ["serialize"] }
