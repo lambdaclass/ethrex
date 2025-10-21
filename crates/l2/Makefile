@@ -127,6 +127,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
+	--no-monitor \
 	--datadir ${ethrex_L2_DEV_DB} \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
@@ -212,7 +213,7 @@ clean-tee-contract-deps: ## 🧹 Cleans the dependencies for the TEE contracts.
 # ==============================================================================
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	cargo test l2_integration_test --profile release-with-debug -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
+	cargo test custom_fee_test --profile release-with-debug -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
 integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.

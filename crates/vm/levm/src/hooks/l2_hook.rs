@@ -285,8 +285,8 @@ pub fn deduct_caller_custom_token(
     Ok(())
 }
 
+#[allow(clippy::unwrap_used)]
 fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
-    #[allow(clippy::unwrap_used)]
     let fee_token = vm.env.custom_fee_token.unwrap();
 
     let mut db_clone = vm.db.clone(); // expensive
@@ -307,7 +307,8 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     env_clone.base_fee_per_gas = U256::zero();
     env_clone.block_excess_blob_gas = None;
     env_clone.gas_price = U256::zero();
-    env_clone.origin = Address::zero(); // TODO: this should the system contract address    
+    env_clone.origin = // l2 sequencer address
+        Address::from_slice(&hex::decode("0x3d1e15a1a55578f7c920884a9943b3b35d0d885b").unwrap());
 
     let mut new_vm = VM::new(
         env_clone,

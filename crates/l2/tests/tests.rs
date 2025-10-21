@@ -99,6 +99,110 @@ const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.t
 const DEFAULT_TEST_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_tests.txt";
 
 #[tokio::test]
+async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
+    let l2_client = l2_client();
+    let rich_wallet_private_key = get_tests_private_keys()
+        .pop()
+        .expect("No private keys found for tests");
+    let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key)?;
+    println!("Rich wallet address: {rich_wallet_address:#x}");
+    let (fee_token_address, _) = test_deploy(&l2_client, &[], &rich_wallet_private_key, "test")
+        .await
+        .unwrap();
+    let sender_balance_before_transfer = l2_client
+        .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let sender_token_balance_before_transfer =
+        test_balance_of(&l2_client, fee_token_address, rich_wallet_address).await;
+    println!("Fee token address: {fee_token_address:#x}");
+    println!("Sender balance before transfer: {sender_balance_before_transfer}");
+    println!("Sender fee balance before transfer: {sender_token_balance_before_transfer}");
+
+    let recipient_sk = get_tests_private_keys()
+        .pop()
+        .expect("No private keys found for tests");
+    let recipient_address = get_address_from_secret_key(&recipient_sk)?;
+    let recipient_balance_before_transfer = l2_client
+        .get_balance(recipient_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    println!("Recipient address: {recipient_address:#x}");
+    println!("Recipient balance before transfer: {recipient_balance_before_transfer}");
+
+    let burn_address_token_balance_before_transfer =
+        test_balance_of(&l2_client, fee_token_address, ethrex_common::H160::zero()).await;
+    println!(
+        "Burn address fee token balance before transfer: {burn_address_token_balance_before_transfer}"
+    );
+
+    let mut generic_tx = build_generic_tx(
+        &l2_client,
+        TxType::CustomFee,
+        recipient_address,
+        rich_wallet_address,
+        Bytes::new(),
+        Overrides {
+            custom_fee_token: Some(fee_token_address),
+            value: Some(U256::one()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    dbg!(&generic_tx);
+
+    let signer = Signer::Local(LocalSigner::new(rich_wallet_private_key));
+    generic_tx.gas = generic_tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
+    let tx_hash = send_generic_transaction(&l2_client, generic_tx, &signer)
+        .await
+        .unwrap();
+    let receipt = ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 10).await?;
+    dbg!(receipt);
+
+    let sender_balance_after_transfer = l2_client
+        .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    println!("Sender balance after transfer: {sender_balance_after_transfer}");
+    let recipient_balance_after_transfer = l2_client
+        .get_balance(recipient_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    println!("Recipient balance after transfer: {recipient_balance_after_transfer}");
+
+    assert_eq!(
+        sender_balance_after_transfer,
+        sender_balance_before_transfer - 1,
+        "Sender balance did not decrease"
+    );
+
+    assert_eq!(
+        recipient_balance_after_transfer,
+        recipient_balance_before_transfer + 1,
+        "Recipient balance did not increase"
+    );
+
+    let sender_token_balance_after_transfer =
+        test_balance_of(&l2_client, fee_token_address, rich_wallet_address).await;
+    println!("Sender fee token balance after transfer: {sender_token_balance_after_transfer}");
+
+    assert!(
+        sender_token_balance_after_transfer < sender_token_balance_before_transfer,
+        "Sender fee token balance did not decrease"
+    );
+
+    let burn_address_token_balance_after_transfer =
+        test_balance_of(&l2_client, fee_token_address, ethrex_common::H160::zero()).await;
+    println!(
+        "Burn address fee token balance after transfer: {burn_address_token_balance_after_transfer}"
+    );
+    assert!(
+        burn_address_token_balance_after_transfer > burn_address_token_balance_before_transfer,
+        "Burn address fee token balance did not increase"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     read_env_file_by_config();
     let mut private_keys = get_tests_private_keys();
