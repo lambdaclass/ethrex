@@ -384,9 +384,19 @@ impl Store {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
-        for update in account_updates {
-            let hashed_address = hash_address(&update.address);
-            if update.removed {
+        for (hashed_address, removed, removed_storage, info, added_storage, code) in
+            account_updates.into_iter().map(|account_update| {
+                (
+                    hash_address(&account_update.address),
+                    account_update.removed,
+                    account_update.removed_storage,
+                    &account_update.info,
+                    &account_update.added_storage,
+                    &account_update.code,
+                )
+            })
+        {
+            if removed {
                 // Remove account from trie
                 state_trie.remove(&hashed_address)?;
                 continue;
@@ -397,38 +407,25 @@ impl Store {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
-            if update.removed_storage {
+            if removed_storage {
                 account_state.storage_root = *EMPTY_TRIE_HASH;
             }
-            if let Some(info) = &update.info {
+            if let Some(info) = &info {
                 account_state.nonce = info.nonce;
                 account_state.balance = info.balance;
                 account_state.code_hash = info.code_hash;
                 // Store updated code in DB
-                if let Some(code) = &update.code {
+                if let Some(code) = code {
                     code_updates.push((info.code_hash, code.clone()));
                 }
             }
-            // Store the added storage in the account's storage trie and compute its new root
-            if !update.added_storage.is_empty() {
-                let mut storage_trie = self.engine.open_storage_trie(
-                    H256::from_slice(&hashed_address),
-                    account_state.storage_root,
-                    state_root,
-                )?;
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
-                    if storage_value.is_zero() {
-                        storage_trie.remove(&hashed_key)?;
-                    } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
-                    }
-                }
-                let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+
+            if !added_storage.is_empty() {
+                // @@@@@@@@@@@@@@
+
                 account_state.storage_root = storage_hash;
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
             }
+
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
@@ -439,6 +436,33 @@ impl Store {
             storage_updates: ret_storage_updates,
             code_updates,
         })
+    }
+
+    // Store the added storage in the account's storage trie and compute its new root
+    fn inner_update_storage(
+        added_storage: &BTreeMap<H256, U256>,
+    ) -> (
+        H256, // storage root
+    ) {
+        let mut storage_trie = self.engine.open_storage_trie(
+            H256::from_slice(&hashed_address),
+            account_state.storage_root,
+            state_root,
+        )?;
+        for (storage_key, storage_value) in added_storage {
+            let hashed_key = hash_key(storage_key);
+            if storage_value.is_zero() {
+                storage_trie.remove(&hashed_key)?;
+            } else {
+                storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+            }
+        }
+        let (storage_hash, storage_updates) = storage_trie.collect_changes_since_last_hash();
+
+        ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+        //return (storage_hash);
+
+        todo!()
     }
 
     /// Performs the same actions as apply_account_updates_from_trie
@@ -1415,12 +1439,8 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .to_vec()
 }
 
-fn hash_address_fixed(address: &Address) -> H256 {
-    H256(
-        Keccak256::new_with_prefix(address.to_fixed_bytes())
-            .finalize()
-            .into(),
-    )
+pub fn hash_address_fixed(address: &Address) -> H256 {
+    H256(Keccak256::digest(address.to_fixed_bytes()).into())
 }
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
