@@ -170,12 +170,12 @@ async fn handle_forkchoice(
     context: RpcApiContext,
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
-    debug!(
-        "New fork choice request v{} with head: {:#x}, safe: {:#x}, finalized: {:#x}.",
-        version,
-        fork_choice_state.head_block_hash,
-        fork_choice_state.safe_block_hash,
-        fork_choice_state.finalized_block_hash
+    info!(
+        version = format!("v{}", version),
+        head = format!("{:#x}", fork_choice_state.head_block_hash),
+        safe = format!("{:#x}", fork_choice_state.safe_block_hash),
+        finalized = format!("v{:#x}", fork_choice_state.finalized_block_hash),
+        "New fork choice request",
     );
 
     if let Some(latest_valid_hash) = context
@@ -369,7 +369,6 @@ async fn build_payload(
     fork_choice_state: &ForkChoiceState,
     version: u8,
 ) -> Result<u64, RpcErr> {
-    info!("Fork choice updated includes payload attributes. Creating a new payload.");
     let args = BuildPayloadArgs {
         parent: fork_choice_state.head_block_hash,
         timestamp: attributes.timestamp,
@@ -384,6 +383,11 @@ async fn build_payload(
     let payload_id = args
         .id()
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
+
+    info!(
+        id = payload_id,
+        "Fork choice updated includes payload attributes. Creating a new payload"
+    );
     let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),
