@@ -2,17 +2,21 @@ use std::sync::Arc;
 
 use ethrex::{cli::remove_db, utils::default_datadir};
 use ethrex_blockchain::{
-    Blockchain, BlockchainOptions,
+    Blockchain, BlockchainOptions, BlockchainType,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
     validate_block,
 };
 use ethrex_common::{
-    Address, Bytes, H256,
-    types::{Block, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER},
+    Address, Bytes, H256, U256,
+    types::{
+        Block, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, ELASTICITY_MULTIPLIER, Transaction,
+        TxKind, fee_config::FeeConfig,
+    },
 };
 use ethrex_config::networks::Network;
 use ethrex_l2::sequencer::block_producer::build_payload;
+use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use ethrex_vm::BlockExecutionResult;
@@ -57,7 +61,13 @@ async fn main() {
 
     println!("Creating blockchain instance...");
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainOptions::default()));
+    let blockchain = Arc::new(Blockchain::new(
+        store.clone(),
+        BlockchainOptions {
+            r#type: BlockchainType::L2(FeeConfig::default()),
+            ..Default::default()
+        },
+    ));
 
     let mut head_block_hash = genesis.get_block().hash();
     let mut head_block_timestamp = genesis.timestamp;
@@ -101,6 +111,7 @@ async fn main() {
     }
 }
 
+/// Produces L1 blocks populated with a single signed transaction each.
 pub async fn produce_l1_blocks(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
@@ -115,7 +126,14 @@ pub async fn produce_l1_blocks(
     let mut current_timestamp = initial_timestamp;
 
     for _ in 0..n_blocks {
-        let block = produce_l1_block(
+        let tx = generate_signed_transaction(store).await;
+
+        blockchain
+            .add_transaction_to_pool(tx)
+            .await
+            .expect("failed to add tx to pool");
+
+        let block = produce_empty_l1_block(
             blockchain.clone(),
             store,
             current_parent_hash,
@@ -133,7 +151,8 @@ pub async fn produce_l1_blocks(
     blocks
 }
 
-pub async fn produce_l1_block(
+/// Produces a single empty L1 block.
+pub async fn produce_empty_l1_block(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
     head_block_hash: H256,
@@ -182,6 +201,7 @@ pub async fn produce_l1_block(
     block
 }
 
+/// Produces L2 blocks populated with a single signed transaction each.
 pub async fn produce_l2_blocks(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
@@ -199,7 +219,14 @@ pub async fn produce_l2_blocks(
     let mut last_privilege_nonce = None;
 
     for _ in 0..n_blocks {
-        let block = produce_l2_block(
+        let tx = generate_signed_transaction(store).await;
+
+        blockchain
+            .add_transaction_to_pool(tx)
+            .await
+            .expect("failed to add tx to pool");
+
+        let block = produce_empty_l2_block(
             blockchain.clone(),
             store,
             rollup_store,
@@ -219,7 +246,8 @@ pub async fn produce_l2_blocks(
     blocks
 }
 
-pub async fn produce_l2_block(
+/// Produces a single empty L2 block.
+pub async fn produce_empty_l2_block(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
     rollup_store: &StoreRollup,
@@ -299,4 +327,42 @@ pub async fn produce_l2_block(
         .expect("failed to apply fork choice");
 
     new_block
+}
+
+async fn generate_signed_transaction(store: &Store) -> Transaction {
+    // 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e is the
+    // private key for address 0x4417092b70a3e5f10dc504d0947dd256b965fc62, a
+    // pre-funded account in the local devnet genesis.
+    let signer = Signer::Local(LocalSigner::new(
+        "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+            .parse()
+            .expect("invalid private key"),
+    ));
+
+    let current_block_number = store
+        .get_latest_block_number()
+        .await
+        .expect("failed to get latest block header");
+
+    Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: store
+            .get_account_info(current_block_number, signer.address())
+            .await
+            .expect("failed to get account info")
+            .expect("account not found")
+            .nonce,
+        value: U256::one(),
+        gas_limit: 250000,
+        max_fee_per_gas: u64::MAX,
+        max_priority_fee_per_gas: 10,
+        chain_id: store
+            .get_chain_config()
+            .expect("failed to get chain config")
+            .chain_id,
+        to: TxKind::Call(Address::random()),
+        ..Default::default()
+    })
+    .sign(&signer)
+    .await
+    .expect("failed to sign transaction")
 }

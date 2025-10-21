@@ -1533,9 +1533,11 @@ dependencies = [
  "ethrex-common 4.0.0",
  "ethrex-config",
  "ethrex-l2",
+ "ethrex-l2-rpc",
  "ethrex-storage 4.0.0",
  "ethrex-storage-rollup",
  "ethrex-vm",
+ "secp256k1",
  "tokio",
 ]
 
