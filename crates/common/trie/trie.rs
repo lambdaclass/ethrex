@@ -268,6 +268,7 @@ impl Trie {
     /// Gets node with embedded references to child nodes, all in just one `Node`.
     pub fn get_embedded_root(
         all_nodes: &mut BTreeMap<H256, Vec<u8>>,
+        decoded_nodes: &mut BTreeMap<H256, NodeRef>,
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
@@ -275,51 +276,49 @@ impl Trie {
             return Ok(NodeRef::default());
         }
 
-        let root_rlp = all_nodes
-            .remove(&root_hash)
-            .ok_or(TrieError::InconsistentTree)?;
-
         fn get_embedded_node(
             all_nodes: &mut BTreeMap<H256, Vec<u8>>,
-            cur_node_rlp: Vec<u8>,
-        ) -> Result<Node, TrieError> {
-            let cur_node = Node::decode_raw_owned(cur_node_rlp)?;
+            cur_node_hash: H256,
+            decoded_nodes: &mut BTreeMap<H256, NodeRef>,
+        ) -> Result<NodeRef, TrieError> {
+            if let Some(node_ref) = decoded_nodes.get(&cur_node_hash) {
+                return Ok(node_ref.clone());
+            }
 
-            Ok(match cur_node {
-                Node::Branch(mut node) => {
+            let mut cur_node = match all_nodes.remove(&cur_node_hash) {
+                Some(rlp) => Node::decode_raw_owned(rlp)?,
+                None => return Ok(NodeRef::Hash(cur_node_hash.into())),
+            };
+
+            match &mut cur_node {
+                Node::Branch(node) => {
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
                             unreachable!()
                         };
 
                         if hash.is_valid() {
-                            *choice = match all_nodes.remove(&hash.finalize()) {
-                                Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
-                                None => hash.into(),
-                            };
+                            *choice = get_embedded_node(all_nodes, hash.finalize(), decoded_nodes)?;
                         }
                     }
-
-                    (*node).into()
                 }
-                Node::Extension(mut node) => {
+                Node::Extension(node) => {
                     let NodeRef::Hash(hash) = node.child else {
                         unreachable!()
                     };
 
-                    node.child = match all_nodes.remove(&hash.finalize()) {
-                        Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
-                        None => hash.into(),
-                    };
-
-                    node.into()
+                    node.child = get_embedded_node(all_nodes, hash.finalize(), decoded_nodes)?;
                 }
-                Node::Leaf(node) => node.into(),
-            })
+                Node::Leaf(_) => {}
+            };
+
+            let cur_node_ref: NodeRef = cur_node.into();
+            decoded_nodes.insert(cur_node_hash, cur_node_ref.clone());
+            Ok(cur_node_ref)
         }
 
-        let root = get_embedded_node(all_nodes, root_rlp)?;
-        Ok(root.into())
+        let root = get_embedded_node(all_nodes, root_hash, decoded_nodes)?;
+        Ok(root)
     }
 
     /// Builds a trie from a set of nodes with an empty InMemoryTrieDB as a backend because the nodes are embedded in the root.
@@ -332,9 +331,10 @@ impl Trie {
     pub fn from_nodes(
         root_hash: H256,
         state_nodes: &mut BTreeMap<H256, NodeRLP>,
+        decoded_nodes: &mut BTreeMap<H256, NodeRef>,
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
-        let root = Self::get_embedded_root(state_nodes, root_hash)?;
+        let root = Self::get_embedded_root(state_nodes, decoded_nodes, root_hash)?;
         trie.root = root;
 
         Ok(trie)

@@ -12,7 +12,7 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{NodeRLP, Trie};
+use ethrex_trie::{NodeRLP, NodeRef, Trie};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -31,6 +31,12 @@ pub struct GuestProgramState {
     /// before the stateless validation.
     /// It is used to rebuild the state trie and storage tries.
     pub nodes_hashed: BTreeMap<H256, NodeRLP>,
+    /// Map of node hash to the decoded node.
+    /// This is computed during guest program execution inside the zkVM,
+    /// during state trie and storage trie rebuilding.
+    /// Essentially, encoded nodes from `nodes_hashes` are decoded and moved
+    /// into decoded_nodes_hashed, so that consecuent tries can retrieve them.
+    pub decoded_nodes_hashed: BTreeMap<H256, NodeRef>,
     /// Map of code hashes to their corresponding bytecode.
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
@@ -163,6 +169,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             first_block_number: value.first_block_number,
             chain_config: value.chain_config,
             nodes_hashed,
+            decoded_nodes_hashed: BTreeMap::new(),
             account_hashes_by_address: BTreeMap::new(),
         };
 
@@ -184,10 +191,14 @@ impl GuestProgramState {
             return Ok(());
         }
 
-        let state_trie =
-            Trie::from_nodes(self.parent_block_header.state_root, &mut self.nodes_hashed).map_err(
-                |e| GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}")),
-            )?;
+        let state_trie = Trie::from_nodes(
+            self.parent_block_header.state_root,
+            &mut self.nodes_hashed,
+            &mut self.decoded_nodes_hashed,
+        )
+        .map_err(|e| {
+            GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
+        })?;
 
         self.state_trie = Some(state_trie);
 
@@ -207,7 +218,12 @@ impl GuestProgramState {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(account_state.storage_root, &mut self.nodes_hashed).ok()
+        Trie::from_nodes(
+            account_state.storage_root,
+            &mut self.nodes_hashed,
+            &mut self.decoded_nodes_hashed,
+        )
+        .ok()
     }
 
     /// Helper function to apply account updates to the execution witness

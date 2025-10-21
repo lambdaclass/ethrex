@@ -200,6 +200,7 @@ pub fn stateless_validation_l2(
             first_block_number: initial_db.first_block_number,
             chain_config: initial_db.chain_config,
             nodes_hashed,
+            decoded_nodes_hashed: BTreeMap::new(),
             state_trie: None,
             // The following fields are not needed for blob validation.
             storage_tries: BTreeMap::new(),
