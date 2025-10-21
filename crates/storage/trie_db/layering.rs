@@ -1,22 +1,25 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
 #[derive(Debug)]
 struct TrieLayer {
-    nodes: HashMap<Vec<u8>, Vec<u8>>,
+    nodes: BTreeMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: HashMap<H256, TrieLayer>,
+    layers: BTreeMap<H256, Arc<TrieLayer>>,
 }
 
 impl TrieLayerCache {
@@ -41,11 +44,7 @@ impl TrieLayerCache {
     }
 
     // TODO: use finalized hash to know when to commit
-    pub fn get_commitable(
-        &mut self,
-        mut state_root: H256,
-        commit_threshold: usize,
-    ) -> Option<H256> {
+    pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
@@ -74,7 +73,7 @@ impl TrieLayerCache {
             .or_insert_with(|| {
                 self.last_id += 1;
                 TrieLayer {
-                    nodes: HashMap::new(),
+                    nodes: Arc::new(BTreeMap::new()),
                     parent,
                     id: self.last_id,
                 }

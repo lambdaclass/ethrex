@@ -20,8 +20,12 @@ use rocksdb::{
 };
 use std::{
     collections::HashSet,
+    mem::take,
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, Mutex, RwLock,
+        mpsc::{SyncSender, sync_channel},
+    },
 };
 use tracing::{debug, error, info};
 
@@ -123,7 +127,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<RwLock<TrieLayerCache>>,
+    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
 }
 
@@ -323,16 +327,17 @@ impl Store {
                 }
             }
         }
-        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
+        let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(1);
 
         let store = Self {
             db: Arc::new(db),
             trie_cache: Default::default(),
-            flatkeyvalue_control_tx: tx,
+            flatkeyvalue_control_tx: fkv_tx,
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
-            let mut rx = rx;
+            let mut rx = fkv_rx;
             loop {
                 match rx.recv() {
                     Ok(FKVGeneratorControlMessage::Continue) => break,
@@ -349,6 +354,18 @@ impl Store {
                 Err(err) => error!("Error while generating FlatKeyValue: {err}"),
             }
             // rx channel is dropped, closing it
+        });
+        let store_clone = store.clone();
+        std::thread::spawn(move || {
+            let mut rx = trie_upd_rx;
+            loop {
+                match rx.recv() {
+                    Ok((notify, account_updates, storage_updates)) => {
+                        store_clone.apply_trie_updates();
+                    }
+                    Err(err) => error!("Error while reading diff layer: {err}"),
+                }
+            }
         });
         Ok(store)
     }
@@ -605,6 +622,67 @@ impl Store {
             };
         }
     }
+
+    fn apply_trie_updates(
+        &self,
+        notify: SyncSender<Result<(), StoreError>>,
+        parent_state_root: H256,
+        child_state_root: H256,
+        account_updates: Vec<(Nibbles, Vec<u8>)>,
+        storage_updates: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+    ) -> Result<(), StoreError> {
+        let db = &*self.db;
+        let fkv_ctl = &self.flatkeyvalue_control_tx;
+        let trie_cache = &self.trie_cache;
+
+        let new_layer = storage_updates
+            .into_iter()
+            .flat_map(|(account_hash, nodes)| {
+                nodes
+                    .into_iter()
+                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+            })
+            .chain(account_updates)
+            .collect();
+        let mut trie = trie_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let trie_mut = Arc::Arc::make_mut(&mut trie);
+        trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+
+        let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
+            return Ok(());
+        };
+        // If the channel is closed, there's nobody to notify
+        let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
+
+        let mut batch = WriteBatch::default();
+        let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
+            open_cfs(db, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
+
+        let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
+        let nodes = trie.commit(root).unwrap_or_default();
+        for (key, value) in nodes {
+            let is_leaf = key.len() == 65 || key.len() == 131;
+
+            if is_leaf && key > last_written {
+                continue;
+            }
+            let cf = if is_leaf {
+                &cf_flatkeyvalue
+            } else {
+                &cf_trie_nodes
+            };
+            if value.is_empty() {
+                batch.delete_cf(cf, key);
+            } else {
+                batch.put_cf(cf, key, value);
+            }
+        }
+        db.write(batch)?;
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -635,74 +713,44 @@ impl StoreEngine for Store {
             let _span = tracing::trace_span!("Block DB update").entered();
 
             let [
-                cf_trie_nodes,
-                cf_flatkeyvalue,
                 cf_receipts,
                 cf_codes,
                 cf_block_numbers,
                 cf_tx_locations,
                 cf_headers,
                 cf_bodies,
-                cf_misc,
             ] = open_cfs(
                 &db,
                 [
-                    CF_TRIE_NODES,
-                    CF_FLATKEYVALUE,
                     CF_RECEIPTS,
                     CF_ACCOUNT_CODES,
                     CF_BLOCK_NUMBERS,
                     CF_TRANSACTION_LOCATIONS,
                     CF_HEADERS,
                     CF_BODIES,
-                    CF_MISC_VALUES,
                 ],
             )?;
-
+            let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatch::default();
 
-            let mut updated_trie = false;
-
-            let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
-            if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
-                updated_trie = true;
-                // If the channel is closed, there's nobody to notify
-                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Stop);
-
-                let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
-                let nodes = trie.commit(root).unwrap_or_default();
-                for (key, value) in nodes {
-                    let is_leaf = key.len() == 65 || key.len() == 131;
-
-                    if is_leaf && key > last_written {
-                        continue;
-                    }
-                    let cf = if is_leaf {
-                        &cf_flatkeyvalue
-                    } else {
-                        &cf_trie_nodes
-                    };
-                    if value.is_empty() {
-                        batch.delete_cf(cf, key);
-                    } else {
-                        batch.put_cf(cf, key, value);
-                    }
-                }
-            }
-            trie.put_batch(
-                parent_state_root,
-                last_state_root,
-                update_batch
-                    .storage_updates
-                    .into_iter()
-                    .flat_map(|(account_hash, nodes)| {
-                        nodes
-                            .into_iter()
-                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                    })
-                    .chain(update_batch.account_updates)
-                    .collect(),
+            let (account_updates, storage_updates) = (
+                take(&mut update_batch.account_updates),
+                take(&mut update_batch.storage_updates),
             );
+            let wait_for_new_layer = None;
+            let need_new_layer = !account_updates.is_empty() || !storage_updates.is_empty();
+            if need_new_layer {
+                // Capacity one ensures sender just notifies and goes on
+                let (notify_tx, notify_rx) = sync_channel(1);
+                wait_for_new_layer = Some(notify_rx);
+                self.trie_update_worker_tx.send((
+                    notify_tx,
+                    parent_state_root,
+                    last_state_root,
+                    account_updates,
+                    storage_updates,
+                ))?;
+            }
 
             for block in update_batch.blocks {
                 let block_number = block.header.number;
@@ -744,15 +792,15 @@ impl StoreEngine for Store {
                 batch.put_cf(&cf_codes, code_key, code_value);
             }
 
-            // Single write operation
-            let ret = db
-                .write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)));
-            if updated_trie {
-                // If the channel is closed, there's nobody to notify
-                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Continue);
+            if let Some(rx) = wait_for_new_layer {
+                // Wait for an updated top layer so every caller afterwards sees a consistent view.
+                // Specifically, the next block produced MUST see this upper layer.
+                rx.recv()
+                    .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))?;
             }
-            ret
+            // After top-level is addded, we can make the rest of the changes visible.
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1731,7 +1779,7 @@ impl StoreEngine for Store {
 
 /// Open column families
 fn open_cfs<'a, const N: usize>(
-    db: &'a Arc<DBWithThreadMode<MultiThreaded>>,
+    db: &'a DBWithThreadMode<MultiThreaded>,
     names: [&str; N],
 ) -> Result<[Arc<BoundColumnFamily<'a>>; N], StoreError> {
     let mut handles = Vec::with_capacity(N);
