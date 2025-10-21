@@ -2,8 +2,9 @@ use crate::utils::RpcErr;
 use ethrex_common::{
     Address, H256, serde_utils,
     types::{
-        BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
-        LegacyTransaction, PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
+        BlockHash, BlockNumber, CustomFeeTransaction, EIP1559Transaction, EIP2930Transaction,
+        EIP7702Transaction, LegacyTransaction, PrivilegedL2Transaction, Transaction,
+        WrappedEIP4844Transaction,
     },
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
@@ -53,6 +54,7 @@ pub enum SendRawTransactionRequest {
     EIP4844(WrappedEIP4844Transaction),
     EIP7702(EIP7702Transaction),
     PrivilegedL2(PrivilegedL2Transaction),
+    CustomFee(CustomFeeTransaction),
 }
 
 impl SendRawTransactionRequest {
@@ -66,6 +68,7 @@ impl SendRawTransactionRequest {
             SendRawTransactionRequest::PrivilegedL2(t) => {
                 Transaction::PrivilegedL2Transaction(t.clone())
             }
+            SendRawTransactionRequest::CustomFee(t) => Transaction::CustomFeeTransaction(t.clone()),
         }
     }
 
@@ -98,6 +101,8 @@ impl SendRawTransactionRequest {
                     }
                     0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::PrivilegedL2),
+                    0x7f => CustomFeeTransaction::decode(tx_bytes)
+                        .map(SendRawTransactionRequest::CustomFee),
                     ty => Err(RLPDecodeError::Custom(format!(
                         "Invalid transaction type: {ty}"
                     ))),

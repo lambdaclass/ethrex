@@ -106,9 +106,20 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
         .expect("No private keys found for tests");
     let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key)?;
     println!("Rich wallet address: {rich_wallet_address:#x}");
-    let (fee_token_address, _) = test_deploy(&l2_client, &[], &rich_wallet_private_key, "test")
-        .await
-        .unwrap();
+
+    let path = Path::new("../../fixtures/contracts/ERC20/");
+    compile_contract(path, &path.join("FeeToken.sol"), false, None, &[path])?;
+
+    let custom_fee_token_contract =
+        hex::decode(std::fs::read(path.join("solc_out/FeeToken.bin"))?)?;
+    let (fee_token_address, _) = test_deploy(
+        &l2_client,
+        &custom_fee_token_contract,
+        &rich_wallet_private_key,
+        "test",
+    )
+    .await
+    .unwrap();
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;

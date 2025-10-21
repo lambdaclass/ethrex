@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::types::CustomFeeTransaction;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
@@ -676,6 +677,15 @@ pub async fn send_generic_transaction(
                 .map_err(|err| EthClientError::Custom(err.to_string()))?;
 
             tx.encode(&mut encoded_tx);
+        }
+        TxType::CustomFee => {
+            let tx: CustomFeeTransaction = generic_tx.try_into()?;
+            let signed_tx = tx
+                .sign(signer)
+                .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+
+            signed_tx.encode(&mut encoded_tx);
         }
         _ => {
             return Err(EthClientError::Custom(

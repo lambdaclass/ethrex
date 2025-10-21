@@ -69,7 +69,7 @@ down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
 init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
+	../../target/release/ethrex \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
 	--http.addr ${L1_RPC_ADDRESS} \
@@ -78,11 +78,11 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--datadir ${ethrex_L1_DEV_DB}
 
 rm-db-l1: ## 🛑 Removes the DB used by the L1
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_DB} --force
+	../../target/release/ethrex removedb --datadir ${ethrex_L1_DEV_DB} --force
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
+	../../target/release/ethrex l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -119,7 +119,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
-	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
+	../../target/release/ethrex \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -157,7 +157,7 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pgrep -a -f "ethrex l2" | awk '!/prover/ {print $1}' | xargs -r kill -s SIGINT
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
-	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
+	../../target/release/ethrex l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
