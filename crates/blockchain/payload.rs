@@ -634,9 +634,11 @@ impl Blockchain {
     ) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
+        context.account_updates = account_updates.clone(); // TODO!!! change this call
+
         let ret_acount_updates_list = self
             .storage
-            .apply_account_updates_batch(context.parent_hash(), &account_updates)
+            .apply_account_updates_batch(context.parent_hash(), account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
@@ -651,7 +653,6 @@ impl Blockchain {
             .as_ref()
             .map(|requests| compute_requests_hash(requests));
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
-        context.account_updates = account_updates;
 
         let mut logs = vec![];
         for receipt in context.receipts.iter().cloned() {

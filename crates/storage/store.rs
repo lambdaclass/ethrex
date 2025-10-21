@@ -364,7 +364,7 @@ impl Store {
     pub async fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
-        account_updates: &[AccountUpdate],
+        account_updates: Vec<AccountUpdate>,
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
@@ -379,7 +379,7 @@ impl Store {
     pub async fn apply_account_updates_from_trie_batch(
         &self,
         mut state_trie: Trie,
-        account_updates: impl IntoIterator<Item = &AccountUpdate>,
+        account_updates: Vec<AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
@@ -388,20 +388,25 @@ impl Store {
         // TODO!
         // create an actor for storage updates
 
+        /*
         // calculate storage root for each account update in the actor
+        account_updates.for_each(|account_update| {
+            // iterate over account updates to calculate storage roots
+        });
 
-        for (hashed_address, removed, removed_storage, info, added_storage, code) in
-            account_updates.into_iter().map(|account_update| {
-                (
-                    hash_address(&account_update.address),
-                    account_update.removed,
-                    account_update.removed_storage,
-                    &account_update.info,
-                    &account_update.added_storage,
-                    &account_update.code,
-                )
-            })
-        {
+        iter().map(|account_update| {
+            // iterate over account updates to calculate storage roots
+        });
+        */
+
+        for update in account_updates.iter() {
+            let removed = update.removed;
+            let hashed_address = hash_address(&update.address);
+            let removed_storage = update.removed_storage;
+            let info = &update.info;
+            let code = &update.code;
+            let added_storage = &update.added_storage;
+
             if removed {
                 // Remove account from trie
                 state_trie.remove(&hashed_address)?;
