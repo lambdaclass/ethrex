@@ -11,25 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       network:
-        description: "Network name (use 'all' to run both)"
+        description: "Network name (hoodi or sepolia)"
         required: false
         default: "hoodi"
-      timeout:
-        description: "Assertoor test timeout"
-        required: false
-        default: "120m"
-  workflow_call:
-    inputs:
-      network:
-        description: "Network name"
-        required: false
-        default: "hoodi"
-        type: string
-      timeout:
-        description: "Assertoor test timeout"
-        required: false
-        default: "120m"
-        type: string
 
 permissions:
   contents: read
@@ -48,20 +32,24 @@ jobs:
         run: |
           event_name="${GITHUB_EVENT_NAME}"
           if [[ "$event_name" == "schedule" ]]; then
-            json='[{"network":"hoodi","timeout":"20m"},{"network":"sepolia","timeout":"120m"}]'
+            json='[{"network":"hoodi","timeout":"30m"},{"network":"sepolia","timeout":"10h"}]'
           elif [[ "$event_name" == "pull_request" ]]; then
-            json='[{"network":"hoodi","timeout":"5m"}]'
+            json='[{"network":"hoodi","timeout":"30m"}]'
           else
             network=$(jq -r '.inputs.network // empty' "$GITHUB_EVENT_PATH")
-            timeout=$(jq -r '.inputs.timeout // empty' "$GITHUB_EVENT_PATH")
 
-            timeout=${timeout:-120m}
-
-            if [[ -z "$network" || "$network" == "all" ]]; then
-              json='[{"network":"hoodi","timeout":"'"$timeout"'"},{"network":"sepolia","timeout":"'"$timeout"'"}]'
-            else
-              json='[{"network":"'"$network"'","timeout":"'"$timeout"'"}]'
-            fi
+            case "$network" in
+              hoodi)
+                json='[{"network":"hoodi","timeout":"30m"}]'
+                ;;
+              sepolia)
+                json='[{"network":"sepolia","timeout":"10h"}]'
+                ;;
+              *)
+                echo "::error::Unsupported network value '$network'. Allowed values: hoodi, sepolia."
+                exit 1
+                ;;
+            esac
           fi
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
 

@@ -38,8 +38,8 @@ runs:
         assertoor_params:
           tests:
             - file: https://raw.githubusercontent.com/lambdaclass/ethrex/${GITHUB_SHA}/.github/config/assertoor/syncing-check.yaml
-              config:
-                timeout: "${TIMEOUT}"
+              timeout: "${TIMEOUT}"
+
         YAML
 
     - name: Show generated args
