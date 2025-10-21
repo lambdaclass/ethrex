@@ -11,7 +11,6 @@
   nixConfig = {
     substituters = [
       "https://lambdaclass.cachix.org"
-      "https://cache.nixos.org"
     ];
     trusted-public-keys = [
       "lambdaclass.cachix.org-1:rYebIu6OLjDu5dqn4xhV9XQJro2fc3+FJhfVBsD9bkw="
