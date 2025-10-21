@@ -384,6 +384,12 @@ impl Store {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
+
+        // TODO!
+        // create an actor for storage updates
+
+        // calculate storage root for each account update in the actor
+
         for (hashed_address, removed, removed_storage, info, added_storage, code) in
             account_updates.into_iter().map(|account_update| {
                 (
@@ -420,9 +426,18 @@ impl Store {
                 }
             }
 
+            let engine = Arc::clone(&self.engine);
             if !added_storage.is_empty() {
-                // @@@@@@@@@@@@@@
                 let hashed_address_h256 = H256::from_slice(&hashed_address);
+                let storage_root = account_state.storage_root;
+                let (storage_hash, storage_updates) = Store::inner_update_storage(
+                    added_storage,
+                    state_root,
+                    hashed_address_h256,
+                    storage_root,
+                    engine,
+                )
+                .unwrap();
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address_h256, storage_updates));
             }
