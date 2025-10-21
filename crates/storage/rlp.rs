@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use bytes::Bytes;
 use ethrex_common::{
     H256,
     types::{Block, BlockBody, BlockHash, BlockHeader, Receipt},
