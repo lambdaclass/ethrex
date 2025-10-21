@@ -19,10 +19,11 @@ use crate::{
     utils::keccak,
 };
 
-#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Code {
     pub hash: H256,
     pub bytecode: Bytes,
+    // TODO: Consider using Arc<u16> (needs to enable serde rc feature)
     pub jump_targets: Vec<u16>,
 }
 
@@ -55,6 +56,12 @@ impl Code {
             i += 1;
         }
         targets
+    }
+}
+
+impl AsRef<Bytes> for Code {
+    fn as_ref(&self) -> &Bytes {
+        &self.bytecode
     }
 }
 
@@ -97,6 +104,16 @@ impl Default for AccountState {
             balance: Default::default(),
             storage_root: *EMPTY_TRIE_HASH,
             code_hash: *EMPTY_KECCACK_HASH,
+        }
+    }
+}
+
+impl Default for Code {
+    fn default() -> Self {
+        Self {
+            bytecode: Bytes::new(),
+            hash: *EMPTY_KECCACK_HASH,
+            jump_targets: Vec::new(),
         }
     }
 }
