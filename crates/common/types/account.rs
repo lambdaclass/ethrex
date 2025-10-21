@@ -45,9 +45,11 @@ impl Code {
         let mut i = 0;
         while i < code.len() {
             match code[i] {
+                // OP_JUMPDEST
                 0x5B => {
                     targets.push(i as u16);
                 }
+                // OP_PUSH1..32
                 c @ 0x60..0x80 => {
                     i += (c - 0x5F) as usize;
                 }
