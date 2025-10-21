@@ -8,7 +8,7 @@ documentation.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum.workspace = true
+axum = { features = ["ws"], workspace = true }
 tower-http.workspace = true
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
@@ -41,8 +41,6 @@ envy = "0.4.2"
 thiserror.workspace = true
 secp256k1.workspace = true
 uuid.workspace = true
-
-cfg-if.workspace = true
 
 [dev-dependencies]
 hex-literal = "0.4.1"

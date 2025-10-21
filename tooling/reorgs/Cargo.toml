@@ -4,13 +4,14 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ethrex.workspace = true
+ethrex = { workspace = true, features = ["l2"] }
 ethrex-common.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
 ethrex-config.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-l2-rpc.workspace = true
+ethrex-p2p.workspace = true
 
 tokio.workspace = true
 tokio-util.workspace = true

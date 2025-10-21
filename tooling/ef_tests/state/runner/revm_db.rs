@@ -1,27 +1,33 @@
 use ethrex_common::types::{AccountInfo, AccountUpdate, ChainConfig};
 use ethrex_common::{Address as CoreAddress, BigEndianHash, H256, U256};
 use ethrex_vm::{DynVmDatabase, EvmError, VmDatabase};
-use revm::db::AccountStatus;
-use revm::db::states::bundle_state::BundleRetention;
+use revm::context::DBErrorMarker;
+use revm::database::states::{bundle_state::BundleRetention, AccountStatus};
 use revm::primitives::{
-    AccountInfo as RevmAccountInfo, Address as RevmAddress, B256 as RevmB256,
-    Bytecode as RevmBytecode, Bytes as RevmBytes, U256 as RevmU256,
+    Address as RevmAddress, Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
+use revm::state::{AccountInfo as RevmAccountInfo, Bytecode as RevmBytecode};
+
+#[derive(thiserror::Error, Debug)]
+#[error(transparent)]
+pub struct RevmError(#[from] pub EvmError);
+
+impl DBErrorMarker for RevmError {}
 
 /// State used when running the EVM. The state can be represented with a [VmDbWrapper] database
 pub struct RevmState {
-    pub inner: revm::db::State<RevmDynVmDatabase>,
+    pub inner: revm::database::State<RevmDynVmDatabase>,
 }
 
 /// Wrapper used so we can implement revm-specific traits over `DynVmDatabase`
 #[derive(Clone)]
 pub struct RevmDynVmDatabase(DynVmDatabase);
 
-// Needed because revm::db::State is not cloneable and we need to
+// Needed because revm::database::State is not cloneable and we need to
 // restore the previous EVM state after executing a transaction in L2 mode whose resulting state diff doesn't fit in a blob.
 impl Clone for RevmState {
     fn clone(&self) -> Self {
-        let inner = revm::db::State::<RevmDynVmDatabase> {
+        let inner = revm::database::State::<RevmDynVmDatabase> {
             cache: self.inner.cache.clone(),
             database: self.inner.database.clone(),
             transition_state: self.inner.transition_state.clone(),
@@ -36,7 +42,7 @@ impl Clone for RevmState {
 
 /// Builds RevmState from a Store
 pub fn revm_state(db: DynVmDatabase) -> RevmState {
-    let inner = revm::db::State::builder()
+    let inner = revm::database::State::builder()
         .with_database(RevmDynVmDatabase(db))
         .with_bundle_update()
         .without_state_clear()
@@ -45,10 +51,10 @@ pub fn revm_state(db: DynVmDatabase) -> RevmState {
 }
 
 impl revm::Database for RevmDynVmDatabase {
-    type Error = EvmError;
+    type Error = RevmError;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match <dyn VmDatabase>::get_account_info(
+        let acc_info = match <dyn VmDatabase>::get_account_state(
             self.0.as_ref(),
             CoreAddress::from(address.0.as_ref()),
         )? {
@@ -82,16 +88,16 @@ impl revm::Database for RevmDynVmDatabase {
     }
 
     fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
-        <dyn VmDatabase>::get_block_hash(self.0.as_ref(), number)
-            .map(|hash| RevmB256::from_slice(&hash.0))
+        Ok(<dyn VmDatabase>::get_block_hash(self.0.as_ref(), number)
+            .map(|hash| RevmB256::from_slice(&hash.0))?)
     }
 }
 
 impl revm::DatabaseRef for RevmDynVmDatabase {
-    type Error = EvmError;
+    type Error = RevmError;
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match <dyn VmDatabase>::get_account_info(
+        let acc_info = match <dyn VmDatabase>::get_account_state(
             self.0.as_ref(),
             CoreAddress::from(address.0.as_ref()),
         )? {
@@ -125,8 +131,8 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
-        <dyn VmDatabase>::get_block_hash(self.0.as_ref(), number)
-            .map(|hash| RevmB256::from_slice(&hash.0))
+        Ok(<dyn VmDatabase>::get_block_hash(self.0.as_ref(), number)
+            .map(|hash| RevmB256::from_slice(&hash.0))?)
     }
 }
 
@@ -192,6 +198,7 @@ impl RevmState {
                                 )
                             })
                             .collect(),
+                        removed_storage: false,
                     };
                     account_updates.push(new_acc_update);
                 }

@@ -1,19 +1,29 @@
-use crate::{rlp::AccountCodeHashRLP, trie_db::rocksdb_locked::RocksDBLockedTrieDB};
+use crate::{
+    rlp::AccountCodeHashRLP,
+    trie_db::{
+        layering::{TrieLayerCache, TrieWrapper, apply_prefix},
+        rocksdb_locked::RocksDBLockedTrieDB,
+    },
+};
 use bytes::Bytes;
 use ethrex_common::{
     H256,
     types::{
-        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-        Transaction,
+        AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+        Receipt, Transaction,
     },
 };
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
-    OptimisticTransactionDB, Options, WriteBatchWithTransaction,
+    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
+    Options, WriteBatch,
 };
-use std::{collections::HashSet, path::Path, sync::Arc};
-use tracing::info;
+use std::{
+    collections::HashSet,
+    path::Path,
+    sync::{Arc, RwLock},
+};
+use tracing::{debug, error, info};
 
 use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
@@ -25,6 +35,9 @@ use crate::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use std::fmt::Debug;
+
+// TODO: use finalized hash to determine when to commit
+const COMMIT_THRESHOLD: usize = 128;
 
 /// Canonical block hashes column family: [`u8;_`] => [`Vec<u8>`]
 /// - [`u8;_`] = `block_number.to_le_bytes()`
@@ -76,20 +89,10 @@ const CF_CHAIN_DATA: &str = "chain_data";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
 const CF_SNAP_STATE: &str = "snap_state";
 
-/// State trie nodes column family: [`NodeHash`] => [`Vec<u8>`]
-/// - [`NodeHash`] = `node_hash.as_ref()`
+/// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
-
-/// Storage tries nodes column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = Composite key
-///   ```rust,no_run
-///     // let mut key = Vec::with_capacity(64);
-///     // key.extend_from_slice(address_hash.as_bytes());
-///     // key.extend_from_slice(node_hash.as_ref());
-///   ```
-/// - [`Vec<u8>`] = `node_data`
-const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
+const CF_TRIE_NODES: &str = "trie_nodes";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -101,9 +104,27 @@ const CF_PENDING_BLOCKS: &str = "pending_blocks";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(latest_valid).bytes().clone()`
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
-#[derive(Debug)]
+/// Block headers downloaded during fullsync column family: [`u8;_`] => [`Vec<u8>`]
+/// - [`u8;_`] = `block_number.to_le_bytes()`
+/// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
+const CF_FULLSYNC_HEADERS: &str = "fullsync_headers";
+
+pub const CF_FLATKEYVALUE: &str = "flatkeyvalue";
+
+pub const CF_MISC_VALUES: &str = "misc_values";
+
+/// Control messages for the FlatKeyValue generator
+#[derive(Debug, PartialEq)]
+enum FKVGeneratorControlMessage {
+    Stop,
+    Continue,
+}
+
+#[derive(Debug, Clone)]
 pub struct Store {
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    trie_cache: Arc<RwLock<TrieLayerCache>>,
+    flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
 }
 
 impl Store {
@@ -111,8 +132,6 @@ impl Store {
         let mut db_options = Options::default();
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
-
-        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache
 
         db_options.set_max_open_files(-1);
         db_options.set_max_file_opening_threads(16);
@@ -159,25 +178,26 @@ impl Store {
             CF_TRANSACTION_LOCATIONS,
             CF_CHAIN_DATA,
             CF_SNAP_STATE,
-            CF_STATE_TRIE_NODES,
-            CF_STORAGE_TRIES_NODES,
+            CF_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
+            CF_FULLSYNC_HEADERS,
+            CF_FLATKEYVALUE,
+            CF_MISC_VALUES,
         ];
 
         // Get existing column families to know which ones to drop later
-        let existing_cfs =
-            match OptimisticTransactionDB::<MultiThreaded>::list_cf(&db_options, path) {
-                Ok(cfs) => {
-                    info!("Found existing column families: {:?}", cfs);
-                    cfs
-                }
-                Err(_) => {
-                    // Database doesn't exist yet
-                    info!("Database doesn't exist, will create with expected column families");
-                    vec!["default".to_string()]
-                }
-            };
+        let existing_cfs = match DBWithThreadMode::<MultiThreaded>::list_cf(&db_options, path) {
+            Ok(cfs) => {
+                info!("Found existing column families: {:?}", cfs);
+                cfs
+            }
+            Err(_) => {
+                // Database doesn't exist yet
+                info!("Database doesn't exist, will create with expected column families");
+                vec!["default".to_string()]
+            }
+        };
 
         // Create descriptors for ALL existing CFs + expected ones (RocksDB requires opening all existing CFs)
         let mut all_cfs_to_open = HashSet::new();
@@ -211,9 +231,7 @@ impl Store {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&cache);
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
-                    block_opts.set_cache_index_and_filter_blocks(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_CANONICAL_BLOCK_HASHES | CF_BLOCK_NUMBERS => {
@@ -223,13 +241,11 @@ impl Store {
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&cache);
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
-                    block_opts.set_cache_index_and_filter_blocks(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_STATE_TRIE_NODES | CF_STORAGE_TRIES_NODES => {
+                CF_TRIE_NODES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
@@ -239,10 +255,7 @@ impl Store {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_block_cache(&cache);
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    block_opts.set_cache_index_and_filter_blocks(true);
-                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_RECEIPTS | CF_ACCOUNT_CODES => {
@@ -252,9 +265,7 @@ impl Store {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_cache(&cache);
                     block_opts.set_block_size(32 * 1024); // 32KB
-                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 _ => {
@@ -266,7 +277,6 @@ impl Store {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
-                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
             }
@@ -274,7 +284,22 @@ impl Store {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        // Note: we are not using transactions on our Rocksdb instance.
+        // This is safe as long as two conditions are met:
+        // - We never write to the same table from two different places concurrently.
+        // - We always use batch writes. This guarantees atomicity in rocksdb.
+        //
+        // For the first point, we know that all writes to the state and storage tries are
+        // done through the `apply_updates` function, called only after block execution.
+        // There is only one other place where we write to the tries, and that's during snap
+        // sync, through the `write_storage_trie_nodes_batch` function (and similarly for state trie nodes);
+        // this does not pose a problem because there is no block execution until snap sync is done.
+        //
+        // Regardless of transactionality, all writes go through a WAL, which ensures
+        // we get durability (i.e. crash recovery).
+        //
+        // For other less crucial tables refer to the db_safety documentation.
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             path,
             cf_descriptors,
@@ -298,12 +323,41 @@ impl Store {
                 }
             }
         }
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
 
-        Ok(Self { db: Arc::new(db) })
+        let store = Self {
+            db: Arc::new(db),
+            trie_cache: Default::default(),
+            flatkeyvalue_control_tx: tx,
+        };
+        let store_clone = store.clone();
+        std::thread::spawn(move || {
+            let mut rx = rx;
+            loop {
+                match rx.recv() {
+                    Ok(FKVGeneratorControlMessage::Continue) => break,
+                    Ok(FKVGeneratorControlMessage::Stop) => {}
+                    Err(_) => {
+                        debug!("Closing FlatKeyValue generator.");
+                        return;
+                    }
+                }
+            }
+            info!("Generation of FlatKeyValue started.");
+            match store_clone.flatkeyvalue_generator(&mut rx) {
+                Ok(_) => info!("FlatKeyValue generation finished."),
+                Err(err) => error!("Error while generating FlatKeyValue: {err}"),
+            }
+            // rx channel is dropped, closing it
+        });
+        Ok(store)
     }
 
     // Helper method to get column family handle
-    fn cf_handle(&self, cf_name: &str) -> Result<std::sync::Arc<BoundColumnFamily>, StoreError> {
+    fn cf_handle(
+        &self,
+        cf_name: &str,
+    ) -> Result<std::sync::Arc<BoundColumnFamily<'_>>, StoreError> {
         self.db
             .cf_handle(cf_name)
             .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
@@ -365,9 +419,8 @@ impl Store {
         batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
-
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatchWithTransaction::default();
+            let mut batch = WriteBatch::default();
 
             for (cf_name, key, value) in batch_ops {
                 let cf = db.cf_handle(&cf_name).ok_or_else(|| {
@@ -393,7 +446,7 @@ impl Store {
         (index as u8).encode_to_vec()
     }
 
-    // Helper method for bulk reads - equivalent to LibMDBX read_bulk
+    // Helper method for bulk reads
     async fn read_bulk_async<K, V, F>(
         &self,
         cf_name: &str,
@@ -432,53 +485,224 @@ impl Store {
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
+
+    fn flatkeyvalue_generator(
+        &self,
+        control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+    ) -> Result<(), StoreError> {
+        let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
+        let cf_flatkeyvalue = self.cf_handle(CF_FLATKEYVALUE)?;
+
+        let last_written = self
+            .db
+            .get_cf(&cf_misc, "last_written")?
+            .unwrap_or_default();
+        if last_written == vec![0xff] {
+            return Ok(());
+        }
+
+        self.db
+            .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff])?;
+
+        loop {
+            let root = self
+                .read_sync(CF_TRIE_NODES, [])?
+                .ok_or(StoreError::MissingLatestBlockNumber)?;
+            let root: Node = ethrex_trie::Node::decode(&root)?;
+            let state_root = root.compute_hash().finalize();
+
+            let last_written = self
+                .db
+                .get_cf(&cf_misc, "last_written")?
+                .unwrap_or_default();
+            let last_written_account = last_written
+                .get(0..64)
+                .map(|v| Nibbles::from_hex(v.to_vec()))
+                .unwrap_or_default();
+            let mut last_written_storage = last_written
+                .get(66..130)
+                .map(|v| Nibbles::from_hex(v.to_vec()))
+                .unwrap_or_default();
+
+            debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
+
+            let mut ctr = 0;
+            let mut batch = WriteBatch::default();
+            let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
+            if last_written_account > Nibbles::default() {
+                iter.advance(last_written_account.to_bytes())?;
+            }
+            let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
+                let Node::Leaf(node) = node else {
+                    return Ok(());
+                };
+                let account_state = AccountState::decode(&node.value)?;
+                let account_hash = H256::from_slice(&path.to_bytes());
+                batch.put_cf(&cf_misc, "last_written", path.as_ref());
+                batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
+                ctr += 1;
+                if ctr > 10_000 {
+                    self.db.write(std::mem::take(&mut batch))?;
+                }
+
+                let mut iter_inner = self
+                    .open_direct_storage_trie(account_hash, account_state.storage_root)?
+                    .into_iter();
+                if last_written_storage > Nibbles::default() {
+                    iter_inner.advance(last_written_storage.to_bytes())?;
+                    last_written_storage = Nibbles::default();
+                }
+                iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
+                    let Node::Leaf(node) = node else {
+                        return Ok(());
+                    };
+                    let key = apply_prefix(Some(account_hash), path);
+                    batch.put_cf(&cf_misc, "last_written", key.as_ref());
+                    batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
+                    ctr += 1;
+                    if ctr > 10_000 {
+                        self.db.write(std::mem::take(&mut batch))?;
+                    }
+                    if let Ok(value) = control_rx.try_recv() {
+                        match value {
+                            FKVGeneratorControlMessage::Stop => {
+                                return Err(StoreError::PivotChanged);
+                            }
+                            _ => {
+                                return Err(StoreError::Custom("Unexpected message".to_string()));
+                            }
+                        }
+                    }
+                    Ok(())
+                })?;
+                if let Ok(value) = control_rx.try_recv() {
+                    match value {
+                        FKVGeneratorControlMessage::Stop => return Err(StoreError::PivotChanged),
+                        _ => {
+                            return Err(StoreError::Custom("Unexpected message".to_string()));
+                        }
+                    }
+                }
+                Ok(())
+            });
+            match res {
+                Err(StoreError::PivotChanged) => {
+                    if let Ok(value) = control_rx.recv() {
+                        match value {
+                            FKVGeneratorControlMessage::Continue => {}
+                            _ => {
+                                return Err(StoreError::Custom("Unexpected messafe".to_string()));
+                            }
+                        }
+                    }
+                }
+                Err(err) => return Err(err),
+                Ok(()) => {
+                    batch.put_cf(&cf_misc, "last_written", [0xff]);
+                    self.db.write(batch)?;
+                    return Ok(());
+                }
+            };
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
+        let trie_cache = self.trie_cache.clone();
+        let parent_state_root = self
+            .get_block_header_by_hash(
+                update_batch
+                    .blocks
+                    .first()
+                    .ok_or(StoreError::UpdateBatchNoBlocks)?
+                    .header
+                    .parent_hash,
+            )?
+            .map(|header| header.state_root)
+            .unwrap_or_default();
+        let last_state_root = update_batch
+            .blocks
+            .last()
+            .ok_or(StoreError::UpdateBatchNoBlocks)?
+            .header
+            .state_root;
+        let flatkeyvalue_control_tx = self.flatkeyvalue_control_tx.clone();
 
         tokio::task::spawn_blocking(move || {
+            let _span = tracing::trace_span!("Block DB update").entered();
+
             let [
-                cf_state,
-                cf_storage,
+                cf_trie_nodes,
+                cf_flatkeyvalue,
                 cf_receipts,
                 cf_codes,
                 cf_block_numbers,
                 cf_tx_locations,
                 cf_headers,
                 cf_bodies,
+                cf_misc,
             ] = open_cfs(
                 &db,
                 [
-                    CF_STATE_TRIE_NODES,
-                    CF_STORAGE_TRIES_NODES,
+                    CF_TRIE_NODES,
+                    CF_FLATKEYVALUE,
                     CF_RECEIPTS,
                     CF_ACCOUNT_CODES,
                     CF_BLOCK_NUMBERS,
                     CF_TRANSACTION_LOCATIONS,
                     CF_HEADERS,
                     CF_BODIES,
+                    CF_MISC_VALUES,
                 ],
             )?;
 
-            let _span = tracing::trace_span!("Block DB update").entered();
-            let mut batch = WriteBatchWithTransaction::default();
+            let mut batch = WriteBatch::default();
 
-            for (node_hash, node_data) in update_batch.account_updates {
-                batch.put_cf(&cf_state, node_hash.as_ref(), node_data);
-            }
+            let mut updated_trie = false;
 
-            for (address_hash, storage_updates) in update_batch.storage_updates {
-                for (node_hash, node_data) in storage_updates {
-                    // Key: address_hash + node_hash
-                    let mut key = Vec::with_capacity(64);
-                    key.extend_from_slice(address_hash.as_bytes());
-                    key.extend_from_slice(node_hash.as_ref());
-                    batch.put_cf(&cf_storage, key, node_data);
+            let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
+            if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
+                updated_trie = true;
+                // If the channel is closed, there's nobody to notify
+                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Stop);
+
+                let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
+                let nodes = trie.commit(root).unwrap_or_default();
+                for (key, value) in nodes {
+                    let is_leaf = key.len() == 65 || key.len() == 131;
+
+                    if is_leaf && key > last_written {
+                        continue;
+                    }
+                    let cf = if is_leaf {
+                        &cf_flatkeyvalue
+                    } else {
+                        &cf_trie_nodes
+                    };
+                    if value.is_empty() {
+                        batch.delete_cf(cf, key);
+                    } else {
+                        batch.put_cf(cf, key, value);
+                    }
                 }
             }
+            trie.put_batch(
+                parent_state_root,
+                last_state_root,
+                update_batch
+                    .storage_updates
+                    .into_iter()
+                    .flat_map(|(account_hash, nodes)| {
+                        nodes
+                            .into_iter()
+                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                    })
+                    .chain(update_batch.account_updates)
+                    .collect(),
+            );
 
             for block in update_batch.blocks {
                 let block_number = block.header.number;
@@ -521,8 +745,14 @@ impl StoreEngine for Store {
             }
 
             // Single write operation
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            let ret = db
+                .write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)));
+            if updated_trie {
+                // If the channel is closed, there's nobody to notify
+                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Continue);
+            }
+            ret
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -534,7 +764,7 @@ impl StoreEngine for Store {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatchWithTransaction::default();
+            let mut batch = WriteBatch::default();
 
             let [cf_headers, cf_bodies, cf_block_numbers, cf_tx_locations] = open_cfs(
                 &db,
@@ -643,7 +873,7 @@ impl StoreEngine for Store {
     }
 
     async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        let mut batch = WriteBatchWithTransaction::default();
+        let mut batch = WriteBatch::default();
 
         let Some(hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(());
@@ -791,49 +1021,6 @@ impl StoreEngine for Store {
             .transpose()
     }
 
-    async fn add_transaction_location(
-        &self,
-        transaction_hash: H256,
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-        index: Index,
-    ) -> Result<(), StoreError> {
-        // Key: tx_hash + block_hash
-        let mut composite_key = Vec::with_capacity(64);
-        composite_key.extend_from_slice(transaction_hash.as_bytes());
-        composite_key.extend_from_slice(block_hash.as_bytes());
-
-        let location_value = (block_number, block_hash, index).encode_to_vec();
-        self.write_async(CF_TRANSACTION_LOCATIONS, composite_key, location_value)
-            .await
-    }
-
-    // TODO: REVIEW LOGIC AGAINST LIBMDBX
-    // Check also keys
-    async fn add_transaction_locations(
-        &self,
-        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
-    ) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
-
-        for (tx_hash, block_number, block_hash, index) in locations {
-            // Key: tx_hash + block_hash
-            let mut composite_key = Vec::with_capacity(64);
-            composite_key.extend_from_slice(tx_hash.as_bytes());
-            composite_key.extend_from_slice(block_hash.as_bytes());
-
-            let location_value = (block_number, block_hash, index).encode_to_vec();
-            batch_ops.push((
-                CF_TRANSACTION_LOCATIONS.to_string(),
-                composite_key,
-                location_value,
-            ));
-        }
-
-        self.write_batch_async(batch_ops).await
-    }
-
-    // TODO: REVIEW LOGIC AGAINST LIBMDBX
     // Check also keys
     async fn get_transaction_location(
         &self,
@@ -906,7 +1093,6 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    // TODO: Check differences with libmdbx
     async fn get_receipt(
         &self,
         block_hash: BlockHash,
@@ -937,7 +1123,7 @@ impl StoreEngine for Store {
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
             let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-            let mut batch = WriteBatchWithTransaction::default();
+            let mut batch = WriteBatch::default();
 
             while let Some(Ok((key, _))) = iter.next() {
                 batch.delete_cf(&cf, key);
@@ -1112,40 +1298,80 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
+    ) -> Result<Trie, StoreError> {
+        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: self.trie_cache.clone(),
+            db,
+            prefix: Some(hashed_address),
+        });
+        Ok(Trie::open(wrap_db, storage_root))
+    }
+
+    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: self.trie_cache.clone(),
+            db,
+            prefix: None,
+        });
+        Ok(Trie::open(wrap_db, state_root))
+    }
+
+    fn open_direct_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            CF_STORAGE_TRIES_NODES,
+            CF_TRIE_NODES,
             Some(hashed_address),
         )?);
         Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(
-            self.db.clone(),
-            CF_STATE_TRIE_NODES,
-            None,
-        )?);
+    fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         Ok(Trie::open(db, state_root))
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = RocksDBLockedTrieDB::new(self.db.clone(), CF_STATE_TRIE_NODES, None)?;
-        Ok(Trie::open(Box::new(db), state_root))
+        let db = Box::new(RocksDBLockedTrieDB::new(
+            self.db.clone(),
+            CF_TRIE_NODES,
+            None,
+        )?);
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: self.trie_cache.clone(),
+            db,
+            prefix: None,
+        });
+        Ok(Trie::open(wrap_db, state_root))
     }
 
     fn open_locked_storage_trie(
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = RocksDBLockedTrieDB::new(
+        let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
-            CF_STORAGE_TRIES_NODES,
-            Some(hashed_address),
-        )?;
-        Ok(Trie::open(Box::new(db), storage_root))
+            CF_TRIE_NODES,
+            None,
+        )?);
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: self.trie_cache.clone(),
+            db,
+            prefix: Some(hashed_address),
+        });
+        Ok(Trie::open(wrap_db, storage_root))
     }
 
     async fn forkchoice_update(
@@ -1161,7 +1387,7 @@ impl StoreEngine for Store {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatchWithTransaction::default();
+            let mut batch = WriteBatch::default();
 
             let [cf_canonical, cf_chain_data] =
                 open_cfs(&db, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
@@ -1211,15 +1437,16 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    // TODO: REVIEW LOGIC AGAINST LIBMDBX
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let cf = self.cf_handle(CF_RECEIPTS)?;
+    async fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = Vec::new();
         let mut index = 0u64;
 
         loop {
             let key = (*block_hash, index).encode_to_vec();
-            match self.db.get_cf(&cf, key)? {
+            match self.read_async(CF_RECEIPTS, key).await? {
                 Some(receipt_bytes) => {
                     let receipt = Receipt::decode(receipt_bytes.as_slice())?;
                     receipts.push(receipt);
@@ -1401,21 +1628,31 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
+            let cf = db.cf_handle(CF_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom("Column family not found: CF_TRIE_NODES".to_string())
+            })?;
 
-        for (address_hash, nodes) in storage_trie_nodes {
-            for (node_hash, node_data) in nodes {
-                // Create composite key: address_hash + node_hash
-                let mut key = Vec::with_capacity(64);
-                key.extend_from_slice(address_hash.as_bytes());
-                key.extend_from_slice(node_hash.as_ref());
-                batch_ops.push((CF_STORAGE_TRIES_NODES.to_string(), key, node_data));
+            for (address_hash, nodes) in storage_trie_nodes {
+                for (node_hash, node_data) in nodes {
+                    let key = apply_prefix(Some(address_hash), node_hash);
+                    if node_data.is_empty() {
+                        batch.delete_cf(&cf, key.as_ref());
+                    } else {
+                        batch.put_cf(&cf, key.as_ref(), node_data);
+                    }
+                }
             }
-        }
 
-        self.write_batch_async(batch_ops).await
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn write_account_code_batch(
@@ -1432,11 +1669,69 @@ impl StoreEngine for Store {
 
         self.write_batch_async(batch_ops).await
     }
+
+    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        let mut batch_ops = Vec::new();
+
+        for header in headers {
+            let number_value = header.number.to_le_bytes().to_vec();
+            let header_value = BlockHeaderRLP::from(header).bytes().clone();
+
+            batch_ops.push((CF_FULLSYNC_HEADERS.to_string(), number_value, header_value));
+        }
+
+        self.write_batch_async(batch_ops).await
+    }
+
+    async fn read_fullsync_batch(
+        &self,
+        start: BlockNumber,
+        limit: u64,
+    ) -> Result<Vec<BlockHeader>, StoreError> {
+        self.read_bulk_async(
+            CF_FULLSYNC_HEADERS,
+            (start..start + limit).map(|n| n.to_le_bytes()).collect(),
+            |bytes| {
+                BlockHeaderRLP::from_bytes(bytes)
+                    .to()
+                    .map_err(StoreError::from)
+            },
+        )
+        .await
+    }
+
+    async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
+        let db = self.db.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let cf = db
+                .cf_handle(CF_FULLSYNC_HEADERS)
+                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+            let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+            let mut batch = WriteBatch::default();
+
+            while let Some(Ok((key, _))) = iter.next() {
+                batch.delete_cf(&cf, key);
+            }
+
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        self.flatkeyvalue_control_tx
+            .send(FKVGeneratorControlMessage::Continue)
+            .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
+    }
 }
 
 /// Open column families
 fn open_cfs<'a, const N: usize>(
-    db: &'a Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: &'a Arc<DBWithThreadMode<MultiThreaded>>,
     names: [&str; N],
 ) -> Result<[Arc<BoundColumnFamily<'a>>; N], StoreError> {
     let mut handles = Vec::with_capacity(N);

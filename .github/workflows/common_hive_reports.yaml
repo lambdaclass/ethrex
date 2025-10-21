@@ -16,7 +16,10 @@ jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 1200 # allow up to 20 hours for long-running simulations
+    continue-on-error: true
     strategy:
+      fail-fast: false
       matrix:
         test:
           - {
@@ -67,6 +70,11 @@ jobs:
               simulation: ethereum/eest/consume-rlp,
               limit: ".*fork_Osaka.*",
             }
+          - {
+              name: "Execute Blobs tests",
+              file_name: execute-blobs,
+              simulation: ethereum/eest/execute-blobs,
+            }
 
     steps:
       - name: Verify input parameters
@@ -75,24 +83,14 @@ jobs:
           echo "Invalid job_type input: ${{ inputs.job_type }}. Allowed values are 'trigger' or 'daily'."
           exit 1
 
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Pull image
-        run: |
-          docker pull ghcr.io/lambdaclass/ethrex:main
-          # Tests use ethrex:ci so we retag it
-          docker tag ghcr.io/lambdaclass/ethrex:main ethrex:ci
-
-      - name: Load hive client config
-        id: client-config
-        shell: bash
-        run: |
-          {
-            echo "config<<EOF"
-            cat .github/config/hive/clients.yaml
-            echo "EOF"
-          } >>"$GITHUB_OUTPUT"
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
@@ -105,8 +103,8 @@ jobs:
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 1'
           if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
-            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.0.0/fixtures_develop.tar.gz"
-            FLAGS+=" --sim.buildarg branch=v5.0.0"
+            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
+            FLAGS+=" --sim.buildarg branch=main"
             FLAGS+=" --client.checktimelimit=180s"
           fi
           if [[ -n "$SIM_LIMIT" ]]; then
@@ -116,7 +114,7 @@ jobs:
 
       - name: Run Hive Simulation
         id: run-hive-action
-        uses: ethpandaops/hive-github-action@a9ec89442df18ee579d3179b76c47f5f93954307
+        uses: ethpandaops/hive-github-action@v0.5.0
         continue-on-error: true
         with:
           # This uses ethereum/hive as default
@@ -125,7 +123,6 @@ jobs:
           # hive_version: master
           simulator: ${{ matrix.test.simulation }}
           client: ethrex
-          client_config: ${{ steps.client-config.outputs.config }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_${{ inputs.job_type }}
@@ -133,6 +130,7 @@ jobs:
   hive-report:
     name: Generate and Save report
     needs: run-hive
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     outputs:
       artifact_name: results_${{ inputs.job_type }}.md
@@ -143,6 +141,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Download all results
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs

@@ -1,5 +1,7 @@
 use crate::authentication::authenticate;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
+use crate::engine::blobs::BlobsV2Request;
+use crate::engine::payload::GetPayloadV5Request;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -42,7 +44,8 @@ use crate::utils::{
 };
 use crate::{admin, net};
 use crate::{eth, mempool};
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::ws::WebSocket;
+use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
 use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
     TypedHeader,
@@ -196,6 +199,7 @@ pub const FILTER_DURATION: Duration = {
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
+    ws_addr: Option<SocketAddr>,
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
@@ -255,7 +259,7 @@ pub async fn start_api(
             axum::routing::get(handle_get_heap_flamegraph),
         )
         .route("/", post(handle_http_request))
-        .layer(cors)
+        .layer(cors.clone())
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr)
         .await
@@ -268,7 +272,7 @@ pub async fn start_api(
     let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
-        .with_state(service_context)
+        .with_state(service_context.clone())
         // Bump the body limit for the engine API to 256MB
         // This is needed to receive payloads bigger than the default limit of 2MB
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
@@ -281,8 +285,28 @@ pub async fn start_api(
         .into_future();
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
-    let _ = tokio::try_join!(authrpc_server, http_server)
-        .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    if let Some(address) = ws_addr {
+        let ws_handler = |ws: WebSocketUpgrade, ctx| async {
+            ws.on_upgrade(|socket| handle_websocket(socket, ctx))
+        };
+        let ws_router = Router::new()
+            .route("/", axum::routing::any(ws_handler))
+            .layer(cors)
+            .with_state(service_context);
+        let ws_listener = TcpListener::bind(address)
+            .await
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
+        let ws_server = axum::serve(ws_listener, ws_router)
+            .with_graceful_shutdown(shutdown_signal())
+            .into_future();
+        info!("Starting WS server at {address}");
+
+        let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
+            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    } else {
+        let _ = tokio::try_join!(authrpc_server, http_server)
+            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    }
 
     Ok(())
 }
@@ -346,6 +370,29 @@ pub async fn handle_authrpc_request(
             Ok(Json(
                 rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
             ))
+        }
+    }
+}
+
+async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
+    while let Some(message) = socket.recv().await {
+        let Ok(body) = message
+            .and_then(|msg| msg.into_text())
+            .map(|msg| msg.to_string())
+        else {
+            return;
+        };
+
+        // ok-clone: increase arc reference count
+        let Ok(response) = handle_http_request(state.clone(), body)
+            .await
+            .map(|res| res.to_string())
+        else {
+            return;
+        };
+
+        if socket.send(response.into()).await.is_err() {
+            return;
         }
     }
 }
@@ -459,6 +506,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
+        "engine_getPayloadV5" => GetPayloadV5Request::call(req, context).await,
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,
@@ -470,14 +518,18 @@ pub async fn map_engine_requests(
             GetPayloadBodiesByRangeV1Request::call(req, context).await
         }
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
+        "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
 
-pub async fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_admin_requests(
+    req: &RpcRequest,
+    mut context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
-        "admin_peers" => admin::peers(&context).await,
+        "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }

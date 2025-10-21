@@ -16,10 +16,10 @@ use spawned_concurrency::{
 use tracing::{debug, error, info};
 
 use crate::{
-    kademlia::{Kademlia, PeerChannels},
+    discv4::peer_table::{PeerTable, PeerTableError},
     rlpx::{
         Message,
-        connection::server::CastMessage,
+        connection::server::PeerConnection,
         eth::transactions::{NewPooledTransactionHashes, Transactions},
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
     },
@@ -34,8 +34,8 @@ const PRUNE_WAIT_TIME_SECS: u64 = 600; // 10 minutes
 // Amount of seconds between each prune
 const PRUNE_INTERVAL_SECS: u64 = 360; // 6 minutes
 
-// Amount of seconds between each broadcast
-const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
+// Amount of milliseconds between each broadcast
+pub const BROADCAST_INTERVAL_MS: u64 = 1000; // 1 second
 
 #[derive(Debug, Clone, Default)]
 struct PeerMask {
@@ -89,7 +89,7 @@ impl Default for BroadcastRecord {
 
 #[derive(Debug, Clone)]
 pub struct TxBroadcaster {
-    kademlia: Kademlia,
+    peer_table: PeerTable,
     blockchain: Arc<Blockchain>,
     // tx_hash -> broadcast record (which peers know it and when it was last sent)
     known_txs: HashMap<H256, BroadcastRecord>,
@@ -113,13 +113,14 @@ pub enum OutMessage {
 
 impl TxBroadcaster {
     pub async fn spawn(
-        kademlia: Kademlia,
+        kademlia: PeerTable,
         blockchain: Arc<Blockchain>,
+        tx_broadcasting_time_interval: u64,
     ) -> Result<GenServerHandle<TxBroadcaster>, TxBroadcasterError> {
         info!("Starting Transaction Broadcaster");
 
         let state = TxBroadcaster {
-            kademlia,
+            peer_table: kademlia,
             blockchain,
             known_txs: HashMap::new(),
             peer_indexer: HashMap::new(),
@@ -129,7 +130,7 @@ impl TxBroadcaster {
         let server = state.clone().start();
 
         send_interval(
-            Duration::from_secs(BROADCAST_INTERVAL_SECS),
+            Duration::from_millis(tx_broadcasting_time_interval),
             server.clone(),
             InMessage::BroadcastTxs,
         );
@@ -186,7 +187,7 @@ impl TxBroadcaster {
             debug!("No transactions to broadcast");
             return Ok(());
         }
-        let peers = self.kademlia.get_peer_channels_with_capabilities(&[]).await;
+        let peers = self.peer_table.get_peers_with_capabilities().await?;
         let peer_sqrt = (peers.len() as f64).sqrt();
 
         let full_txs = txs_to_broadcast
@@ -207,7 +208,7 @@ impl TxBroadcaster {
         let (peers_to_send_full_txs, peers_to_send_hashes) =
             shuffled_peers.split_at(peer_sqrt.ceil() as usize);
 
-        for (peer_id, mut peer_channels, capabilities) in peers_to_send_full_txs.iter().cloned() {
+        for (peer_id, mut connection, capabilities) in peers_to_send_full_txs.iter().cloned() {
             let peer_idx = self.peer_index(peer_id);
             let txs_to_send = full_txs
                 .iter()
@@ -225,20 +226,18 @@ impl TxBroadcaster {
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send,
             });
-            peer_channels.connection.cast(CastMessage::BackendMessage(
-                txs_message,
-            )).await.unwrap_or_else(|err| {
+            connection.outgoing_message(txs_message).await.unwrap_or_else(|err| {
                 error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
-            self.send_tx_hashes(blob_txs.clone(), capabilities, &mut peer_channels, peer_id)
+            self.send_tx_hashes(blob_txs.clone(), capabilities, &mut connection, peer_id)
                 .await?;
         }
-        for (peer_id, mut peer_channels, capabilities) in peers_to_send_hashes.iter().cloned() {
+        for (peer_id, mut connection, capabilities) in peers_to_send_hashes.iter().cloned() {
             // If a peer is not selected to receive the full transactions, we only send the hashes of all transactions (including blob transactions)
             self.send_tx_hashes(
                 txs_to_broadcast.clone(),
                 capabilities,
-                &mut peer_channels,
+                &mut connection,
                 peer_id,
             )
             .await?;
@@ -251,7 +250,7 @@ impl TxBroadcaster {
         &mut self,
         txs: Vec<MempoolTransaction>,
         capabilities: Vec<Capability>,
-        peer_channels: &mut PeerChannels,
+        connection: &mut PeerConnection,
         peer_id: H256,
     ) -> Result<(), TxBroadcasterError> {
         let peer_idx = self.peer_index(peer_id);
@@ -270,7 +269,7 @@ impl TxBroadcaster {
         send_tx_hashes(
             txs_to_send,
             capabilities,
-            peer_channels,
+            connection,
             peer_id,
             &self.blockchain,
         )
@@ -281,7 +280,7 @@ impl TxBroadcaster {
 pub async fn send_tx_hashes(
     txs: Vec<MempoolTransaction>,
     capabilities: Vec<Capability>,
-    peer_channels: &mut PeerChannels,
+    connection: &mut PeerConnection,
     peer_id: H256,
     blockchain: &Arc<Blockchain>,
 ) -> Result<(), TxBroadcasterError> {
@@ -298,11 +297,9 @@ pub async fn send_tx_hashes(
             let hashes_message = Message::NewPooledTransactionHashes(
                 NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
             );
-            peer_channels.connection.cast(CastMessage::BackendMessage(
-                    hashes_message.clone(),
-                )).await.unwrap_or_else(|err| {
-                    error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
-                });
+            connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
+                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
+            });
         }
     }
     Ok(())
@@ -359,4 +356,6 @@ pub enum TxBroadcasterError {
     Broadcast,
     #[error(transparent)]
     StoreError(#[from] StoreError),
+    #[error(transparent)]
+    PeerTableError(#[from] PeerTableError),
 }

@@ -16,7 +16,6 @@ bytes.workspace = true
 thiserror.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
-cfg-if.workspace = true
 tracing.workspace = true
 serde.workspace = true
 sha3.workspace = true
@@ -34,6 +33,7 @@ path = "./lib.rs"
 default = []
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 debug = ["ethrex-levm/debug"]
+sp1 = ["ethrex-levm/sp1"]
 
 [lints.clippy]
 unwrap_used = "deny"

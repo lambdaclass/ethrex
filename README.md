@@ -39,6 +39,10 @@ Read more about our engineering philosophy [in this post of our blog](https://bl
 - Prioritize code readability and maintainability over premature optimizations.
 - Avoid concurrency split all over the codebase. Concurrency adds complexity. Only use where strictly necessary.
 
+<img width="100%" alt="Lines of Code comparison chart for Ethereum clients" src="https://github.com/user-attachments/assets/4ef7d9db-57a0-4b8b-b170-78950691b47a" />
+
+_(Data from main branch of each project at 2025/09/26)_
+
 ## 🗺️ Roadmap
 
 You can find our current and planned features in our roadmap page.
@@ -66,9 +70,6 @@ The following links, repos, companies and projects have been important in the de
 - [Taiko](https://taiko.xyz/)
 - [RISC Zero](https://risczero.com/)
 - [SP1](https://github.com/succinctlabs/sp1)
-- [Aleo](https://aleo.org/)
-- [Neptune](https://neptune.cash/)
-- [Mina](https://minaprotocol.com/)
 - [Nethermind](https://www.nethermind.io/)
 - [Gattaca](https://github.com/gattaca-com)
 - [Spire](https://www.spire.dev/)

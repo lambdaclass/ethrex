@@ -20,7 +20,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Fork, Log, Transaction},
+    types::{AccessListEntry, Fork, Log, Transaction, fee_config::FeeConfig},
 };
 use std::{
     cell::RefCell,
@@ -35,7 +35,7 @@ pub type Storage = HashMap<U256, H256>;
 pub enum VMType {
     #[default]
     L1,
-    L2,
+    L2(FeeConfig),
 }
 
 /// Information that changes during transaction execution.
@@ -124,13 +124,13 @@ impl Substate {
 
             fn next(&mut self) -> Option<Self::Item> {
                 let next_item = self.iter.next();
-                if next_item.is_none() {
-                    if let Some(parent) = self.parent {
-                        self.parent = parent.parent.as_deref();
-                        self.iter = parent.selfdestruct_set.iter();
+                if next_item.is_none()
+                    && let Some(parent) = self.parent
+                {
+                    self.parent = parent.parent.as_deref();
+                    self.iter = parent.selfdestruct_set.iter();
 
-                        return self.next();
-                    }
+                    return self.next();
                 }
 
                 next_item
@@ -580,11 +580,11 @@ impl Substate {
         // Add access lists contents to accessed accounts and accessed storage slots.
         for (address, keys) in tx.access_list().clone() {
             initial_accessed_addresses.insert(address);
-            let mut warm_slots = BTreeSet::new();
+            // Access lists can have different entries even for the same address, that's why we check if there's an existing set instead of considering it empty
+            let warm_slots = initial_accessed_storage_slots.entry(address).or_default();
             for slot in keys {
                 warm_slots.insert(slot);
             }
-            initial_accessed_storage_slots.insert(address, warm_slots);
         }
 
         let substate =
