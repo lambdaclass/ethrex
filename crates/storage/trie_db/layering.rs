@@ -132,6 +132,7 @@ impl TrieDB for TrieWrapper {
         self.db.flatkeyvalue_computed(key)
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let now_read = Instant::now();
         let key = apply_prefix(self.prefix, key);
         let now = Instant::now();
         let layer = self.inner.read().map_err(|_| TrieError::LockError)?;
@@ -140,9 +141,20 @@ impl TrieDB for TrieWrapper {
             "TRIE LAYERS READ LOCK"
         );
         if let Some(value) = layer.get(self.state_root, key.clone()) {
+            info!(
+                took = (Instant::now().duration_since(now_read)).as_secs_f64(),
+                "TRIE LAYERS READ DURATION"
+            );
             return Ok(Some(value));
         }
-        self.db.get(key)
+        let ret = self.db.get(key);
+
+        info!(
+            took = (Instant::now().duration_since(now_read)).as_secs_f64(),
+            "TRIE LAYERS READ DURATION"
+        );
+
+        ret
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
