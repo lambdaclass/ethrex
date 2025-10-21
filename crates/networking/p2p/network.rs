@@ -267,7 +267,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
                 // Due to downloading the slots for the same tries once but inserting it multiple times,
                 // once for each trie, this number may be slightly off, we clamp it so that it doesn't confuse the user
-                f64::max(
+                f64::min(
                     METRICS.storage_leaves_inserted.get() as f64 / storage_leaves_downloaded as f64,
                     1.0,
                 ) * 100.0
