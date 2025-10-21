@@ -469,32 +469,32 @@ pub async fn init_l1(
     )
     .await;
 
-    if opts.metrics_enabled {
-        init_metrics(&opts, tracker.clone());
-    }
+    // if opts.metrics_enabled {
+    //     init_metrics(&opts, tracker.clone());
+    // }
 
-    if opts.dev {
-        #[cfg(feature = "dev")]
-        init_dev_network(&opts, &store, tracker.clone()).await;
-    } else if opts.p2p_enabled {
-        init_network(
-            &opts,
-            &network,
-            datadir,
-            local_p2p_node,
-            local_node_record.clone(),
-            signer,
-            peer_handler.clone(),
-            store.clone(),
-            tracker.clone(),
-            blockchain.clone(),
-            #[cfg(feature = "l2")]
-            None,
-        )
-        .await;
-    } else {
-        info!("P2P is disabled");
-    }
+    // if opts.dev {
+    //     #[cfg(feature = "dev")]
+    //     init_dev_network(&opts, &store, tracker.clone()).await;
+    // } else if opts.p2p_enabled {
+    //     init_network(
+    //         &opts,
+    //         &network,
+    //         datadir,
+    //         local_p2p_node,
+    //         local_node_record.clone(),
+    //         signer,
+    //         peer_handler.clone(),
+    //         store.clone(),
+    //         tracker.clone(),
+    //         blockchain.clone(),
+    //         #[cfg(feature = "l2")]
+    //         None,
+    //     )
+    //     .await;
+    // } else {
+    //     info!("P2P is disabled");
+    // }
 
     Ok((
         datadir.clone(),
