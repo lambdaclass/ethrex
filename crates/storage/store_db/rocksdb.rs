@@ -662,7 +662,6 @@ impl StoreEngine for Store {
                 ],
             )?;
 
-            let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatch::default();
 
             let mut updated_trie = false;
