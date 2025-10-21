@@ -264,7 +264,6 @@ impl GenServer for PeerConnectionServer {
         match handshake::perform(self.state, eth_version.clone()).await {
             Ok((mut established_state, stream)) => {
                 log_peer_trace!(&established_state.node, "Starting RLPx connection");
-
                 if let Err(reason) =
                     initialize_connection(handle, &mut established_state, stream, eth_version).await
                 {
@@ -867,9 +866,7 @@ async fn handle_incoming_message(
     match message {
         Message::Disconnect(msg_data) => {
             let reason = msg_data.reason();
-
             log_peer_trace!(&state.node, &format!("Received Disconnect: {reason}"));
-
             METRICS
                 .record_new_rlpx_conn_disconnection(
                     &state.node.version.clone().unwrap_or("Unknown".to_string()),
