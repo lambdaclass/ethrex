@@ -70,6 +70,9 @@ impl NodeRef {
                     Node::Leaf(_) => {}
                 }
                 let hash = *hash.get_or_init(|| node.compute_hash());
+                if let Node::Leaf(leaf) = node.as_ref() {
+                    acc.push((path.concat(&leaf.partial), leaf.value.clone()));
+                }
                 acc.push((path.clone(), node.encode_to_vec()));
 
                 *self = hash.into();

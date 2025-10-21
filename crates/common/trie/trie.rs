@@ -98,6 +98,19 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
+        if pathrlp.len() == 32
+            && !self.pending_removal.contains(&path)
+            && self.db().flatkeyvalue_computed(path.clone())
+        {
+            let Some(value_rlp) = self.db.get(path)? else {
+                return Ok(None);
+            };
+            if value_rlp.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(value_rlp));
+        }
+
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => {
@@ -137,6 +150,10 @@ impl Trie {
         if !self.root.is_valid() {
             return Ok(None);
         }
+        if path.len() == 32 {
+            self.pending_removal.insert(Nibbles::from_bytes(path));
+        }
+
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
             .get_root_node(Nibbles::default())?
