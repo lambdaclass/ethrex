@@ -148,6 +148,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .collect();
 
         // hash codes
+        // TODO: codes here probably needs to be Vec<Code>, rather than recomputing here. This requires rkyv implementation.
         let codes_hashed = value
             .codes
             .into_iter()
