@@ -22,7 +22,7 @@ use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     BlockProducerConfig, SequencerConfig,
@@ -83,9 +83,17 @@ impl BlockProducer {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
         } = config;
+
+        if fee_vault_address.is_some_and(|fee_vault| fee_vault == *coinbase_address) {
+            warn!(
+                "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
+        }
+
         Self {
             store,
             blockchain,
@@ -196,7 +204,10 @@ impl BlockProducer {
         self.blockchain
             .store_block(block, account_updates_list, execution_result)
             .await?;
-        info!("Stored new block {:x}", block_hash);
+        info!(
+            "Stored new block {:x}, transaction_count {}",
+            block_hash, transactions_count
+        );
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         self.rollup_store

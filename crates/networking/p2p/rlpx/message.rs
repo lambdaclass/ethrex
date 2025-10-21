@@ -14,7 +14,9 @@ use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
 use super::eth::update::BlockRangeUpdate;
+#[cfg(feature = "l2")]
 use super::l2::messages::{BatchSealed, L2Message, NewBlock};
+#[cfg(feature = "l2")]
 use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 
@@ -93,6 +95,7 @@ pub enum Message {
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
     // based capability
+    #[cfg(feature = "l2")]
     L2(messages::L2Message),
 }
 
@@ -145,6 +148,7 @@ impl Message {
             Message::GetTrieNodes(_) => eth_version.snap_capability_offset() + GetTrieNodes::CODE,
             Message::TrieNodes(_) => eth_version.snap_capability_offset() + TrieNodes::CODE,
 
+            #[cfg(feature = "l2")]
             // based capability
             Message::L2(l2_msg) => {
                 eth_version.based_capability_offset() + {
@@ -227,7 +231,8 @@ impl Message {
             }
         } else {
             // based capability
-            Ok(Message::L2(
+            #[cfg(feature = "l2")]
+            return Ok(Message::L2(
                 match msg_id - eth_version.based_capability_offset() {
                     messages::NewBlock::CODE => {
                         let decoded = l2::messages::NewBlock::decode(data)?;
@@ -239,7 +244,10 @@ impl Message {
                     }
                     _ => return Err(RLPDecodeError::MalformedData),
                 },
-            ))
+            ));
+
+            #[cfg(not(feature = "l2"))]
+            Err(RLPDecodeError::MalformedData)
         }
     }
 
@@ -276,10 +284,45 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
+            #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(msg) => msg.encode(buf),
                 L2Message::NewBlock(msg) => msg.encode(buf),
             },
+        }
+    }
+
+    pub fn request_id(&self) -> Option<u64> {
+        match self {
+            Message::GetBlockHeaders(message) => Some(message.id),
+            Message::GetBlockBodies(message) => Some(message.id),
+            Message::GetPooledTransactions(message) => Some(message.id),
+            Message::GetReceipts(message) => Some(message.id),
+            Message::GetAccountRange(message) => Some(message.id),
+            Message::GetStorageRanges(message) => Some(message.id),
+            Message::GetByteCodes(message) => Some(message.id),
+            Message::GetTrieNodes(message) => Some(message.id),
+            Message::BlockHeaders(message) => Some(message.id),
+            Message::BlockBodies(message) => Some(message.id),
+            Message::PooledTransactions(message) => Some(message.id),
+            Message::Receipts68(message) => Some(message.id),
+            Message::Receipts69(message) => Some(message.id),
+            Message::AccountRange(message) => Some(message.id),
+            Message::StorageRanges(message) => Some(message.id),
+            Message::ByteCodes(message) => Some(message.id),
+            Message::TrieNodes(message) => Some(message.id),
+            // The rest of the message types does not have a request id.
+            Message::Hello(_)
+            | Message::Disconnect(_)
+            | Message::Ping(_)
+            | Message::Pong(_)
+            | Message::Status68(_)
+            | Message::Status69(_)
+            | Message::Transactions(_)
+            | Message::NewPooledTransactionHashes(_)
+            | Message::BlockRangeUpdate(_) => None,
+            #[cfg(feature = "l2")]
+            Message::L2(_) => None,
         }
     }
 }
@@ -313,6 +356,7 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
+            #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
                 L2Message::NewBlock(_) => "based:NewBlock".fmt(f),

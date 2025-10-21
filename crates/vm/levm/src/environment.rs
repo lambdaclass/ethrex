@@ -21,7 +21,7 @@ pub struct Environment {
     pub gas_limit: u64,
     pub config: EVMConfig,
     pub block_number: U256,
-    /// Coinbase is the block's beneficiary - the address that receives the block rewards and fees.
+    /// Coinbase is the block's beneficiary - the address that receives the block rewards (priority fees).
     pub coinbase: Address,
     pub timestamp: U256,
     pub prev_randao: Option<H256>,

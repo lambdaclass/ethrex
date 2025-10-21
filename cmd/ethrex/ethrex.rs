@@ -4,7 +4,7 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, get_client_version, store_node_config_file},
 };
-use ethrex_p2p::{discv4::peer_table::PeerTableHandle, types::NodeRecord};
+use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -35,7 +35,7 @@ pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0
 async fn server_shutdown(
     datadir: &Path,
     cancel_token: &CancellationToken,
-    peer_table: PeerTableHandle,
+    peer_table: PeerTable,
     local_node_record: Arc<Mutex<NodeRecord>>,
 ) {
     info!("Server shut down started...");
