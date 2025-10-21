@@ -670,7 +670,7 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         TxType::EIP4844 => {
-            let fork = is_osaka_activated_on_l1(client, None).await?; // TODO: Change this
+            let fork = is_osaka_activated_on_l1(client, None).await?;
             let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, fork)?;
             tx.tx
                 .sign_inplace(signer)
