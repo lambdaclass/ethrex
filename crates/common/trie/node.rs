@@ -42,7 +42,7 @@ impl NodeRef {
             NodeRef::Hash(hash) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
-                .and_then(|rlp| match Node::decode(&rlp) {
+                .and_then(|rlp| match Node::decode_raw_owned(rlp) {
                     Ok(node) => (node.compute_hash() == hash).then_some(Ok(node)),
                     Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
