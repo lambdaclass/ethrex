@@ -16,6 +16,7 @@ use ethrex_common::{
     },
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, Trie};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch,
@@ -23,7 +24,7 @@ use rocksdb::{
 use std::{
     collections::HashSet,
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock}, time::Instant,
 };
 use tracing::{debug, error, info};
 
@@ -616,6 +617,7 @@ impl StoreEngine for Store {
         state_root: H256,
         account_updates: &[AccountUpdate],
     ) -> Result<AccountUpdatesList, StoreError> {
+        let start = Instant::now();
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let trie = Arc::new(RocksDBPreRead::new(
@@ -624,7 +626,6 @@ impl StoreEngine for Store {
             self.trie_cache.clone(),
             state_root,
         )?);
-
         let mut state_trie = Trie::open(Box::new(trie.state_trie()), state_root);
         for update in account_updates {
             let hashed_address = hash_address(&update.address);
@@ -674,6 +675,8 @@ impl StoreEngine for Store {
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
+        println!("{:#?}", trie.metrics);
+        println!("aauftb: {}ms", start.elapsed().as_millis());
         Ok(AccountUpdatesList {
             state_trie_hash,
             state_updates,

@@ -1,6 +1,9 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
@@ -20,10 +23,10 @@ pub struct TrieLayerCache {
 }
 
 impl TrieLayerCache {
-    pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.get(&current_state_root) {
-            if let Some(value) = layer.nodes.get(key.as_ref()) {
+            if let Some(value) = layer.nodes.get(key) {
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
@@ -132,7 +135,7 @@ impl TrieDB for TrieWrapper {
             .inner
             .read()
             .map_err(|_| TrieError::LockError)?
-            .get(self.state_root, key.clone())
+            .get(self.state_root, key.as_ref())
         {
             return Ok(Some(value));
         }

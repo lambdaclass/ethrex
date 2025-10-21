@@ -4055,6 +4055,7 @@ dependencies = [
  "ethrex-trie 4.0.0",
  "hex",
  "hex-literal",
+ "rayon",
  "rocksdb",
  "serde",
  "serde_json",
@@ -6150,6 +6151,7 @@ dependencies = [
  "libc",
  "libz-sys",
  "lz4-sys",
+ "pkg-config",
  "zstd-sys",
 ]
 
