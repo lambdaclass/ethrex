@@ -34,7 +34,7 @@
           owner  = "lambdaclass";
           repo   = "ethrex";
           rev    = "v${version}";
-          sha256 = "sha256-ySFVwekHT839OdMKsAWfh3iTXMrfgmpr8pg6ttUXrWY=";
+          sha256 = "sha256-ajPLu5j/sjxLEFN1F+C/f12cbDenzUapBPfStem0Tj4=";
         };
 
         ethrex = rustPlat.buildRustPackage {
