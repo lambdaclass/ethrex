@@ -129,6 +129,13 @@ pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
+    trie_update_worker_tx: std::sync::mpsc::SyncSender<(
+        std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+        H256,
+        H256,
+        Vec<(Nibbles, Vec<u8>)>,
+        Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+    )>,
 }
 
 impl Store {
@@ -334,6 +341,7 @@ impl Store {
             db: Arc::new(db),
             trie_cache: Default::default(),
             flatkeyvalue_control_tx: fkv_tx,
+            trie_update_worker_tx: trie_upd_tx,
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -357,11 +365,26 @@ impl Store {
         });
         let store_clone = store.clone();
         std::thread::spawn(move || {
-            let mut rx = trie_upd_rx;
+            let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
-                    Ok((notify, account_updates, storage_updates)) => {
-                        store_clone.apply_trie_updates();
+                    Ok((
+                        notify,
+                        parent_state_root,
+                        child_state_root,
+                        account_updates,
+                        storage_updates,
+                    )) => {
+                        // FIXME: what should we do on error?
+                        let _ = store_clone
+                            .apply_trie_updates(
+                                notify,
+                                parent_state_root,
+                                child_state_root,
+                                account_updates,
+                                storage_updates,
+                            )
+                            .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
                     }
                     Err(err) => error!("Error while reading diff layer: {err}"),
                 }
@@ -635,6 +658,7 @@ impl Store {
         let fkv_ctl = &self.flatkeyvalue_control_tx;
         let trie_cache = &self.trie_cache;
 
+        // Phase 1: update the in-memory diff-layers only, then notify block production.
         let new_layer = storage_updates
             .into_iter()
             .flat_map(|(account_hash, nodes)| {
@@ -644,25 +668,39 @@ impl Store {
             })
             .chain(account_updates)
             .collect();
-        let mut trie = trie_cache
+        // Read-Copy-Update the trie cache with a new layer.
+        let trie = trie_cache
             .lock()
             .map_err(|_| StoreError::LockError)?
             .clone();
-        let trie_mut = Arc::Arc::make_mut(&mut trie);
+        let mut trie_mut = (&*trie).clone();
         trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+        *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+        // Update finished, signal block production.
+        notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
+        // Phase 2: update disk layer.
+        let trie = trie_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
         let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
+            // Nothing to commit to disk, move on.
             return Ok(());
         };
-        // If the channel is closed, there's nobody to notify
+        // Stop the flat-key-value generator thread, as the underlying trie is about to change.
+        // Ignore the error, if the channel is closed it means there is no worker to notify.
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
+        // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
+        let mut trie_mut = (&*trie).clone();
         let mut batch = WriteBatch::default();
         let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
             open_cfs(db, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
 
         let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
-        let nodes = trie.commit(root).unwrap_or_default();
+        // Commit removes the bottom layer and returns it, this is the mutation step.
+        let nodes = trie_mut.commit(root).unwrap_or_default();
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
 
@@ -681,15 +719,16 @@ impl Store {
             }
         }
         db.write(batch)?;
+        // Phase 3: update diff layers with the removal of bottom layer.
+        *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         Ok(())
     }
 }
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn apply_updates(&self, mut update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
-        let trie_cache = self.trie_cache.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
                 update_batch
@@ -707,7 +746,7 @@ impl StoreEngine for Store {
             .ok_or(StoreError::UpdateBatchNoBlocks)?
             .header
             .state_root;
-        let flatkeyvalue_control_tx = self.flatkeyvalue_control_tx.clone();
+        let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
@@ -737,19 +776,25 @@ impl StoreEngine for Store {
                 take(&mut update_batch.account_updates),
                 take(&mut update_batch.storage_updates),
             );
-            let wait_for_new_layer = None;
+            let mut wait_for_new_layer = None;
             let need_new_layer = !account_updates.is_empty() || !storage_updates.is_empty();
             if need_new_layer {
                 // Capacity one ensures sender just notifies and goes on
                 let (notify_tx, notify_rx) = sync_channel(1);
                 wait_for_new_layer = Some(notify_rx);
-                self.trie_update_worker_tx.send((
-                    notify_tx,
-                    parent_state_root,
-                    last_state_root,
-                    account_updates,
-                    storage_updates,
-                ))?;
+                trie_upd_worker_tx
+                    .send((
+                        notify_tx,
+                        parent_state_root,
+                        last_state_root,
+                        account_updates,
+                        storage_updates,
+                    ))
+                    .map_err(|e| {
+                        StoreError::Custom(format!(
+                            "failed to read new trie layer notification: {e}"
+                        ))
+                    })?;
             }
 
             for block in update_batch.blocks {
@@ -1348,10 +1393,11 @@ impl StoreEngine for Store {
         storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
+        // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self.trie_cache.clone(),
+            inner: self.trie_cache.lock().unwrap().clone(),
             db,
             prefix: Some(hashed_address),
         });
@@ -1359,10 +1405,11 @@ impl StoreEngine for Store {
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self.trie_cache.clone(),
+            inner: self.trie_cache.lock().unwrap().clone(),
             db,
             prefix: None,
         });
