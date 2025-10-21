@@ -16,7 +16,10 @@ jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 1200 # allow up to 20 hours for long-running simulations
+    continue-on-error: true
     strategy:
+      fail-fast: false
       matrix:
         test:
           - {
@@ -80,6 +83,12 @@ jobs:
           echo "Invalid job_type input: ${{ inputs.job_type }}. Allowed values are 'trigger' or 'daily'."
           exit 1
 
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -94,7 +103,7 @@ jobs:
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 1'
           if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
-            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.1.0/fixtures_stable.tar.gz"
+            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
             FLAGS+=" --sim.buildarg branch=main"
             FLAGS+=" --client.checktimelimit=180s"
           fi
@@ -121,6 +130,7 @@ jobs:
   hive-report:
     name: Generate and Save report
     needs: run-hive
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     outputs:
       artifact_name: results_${{ inputs.job_type }}.md
@@ -131,6 +141,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Download all results
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs

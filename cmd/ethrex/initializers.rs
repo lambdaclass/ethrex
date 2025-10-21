@@ -11,11 +11,12 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
+#[cfg(feature = "l2")]
+use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, PeerTableHandle},
+    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
-    rlpx::l2::l2_connection::P2PBasedContext,
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -29,6 +30,7 @@ use secp256k1::SecretKey;
 use std::env;
 use std::{
     fs,
+    io::IsTerminal,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -54,7 +56,14 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let fmt_layer = fmt::layer().with_filter(filter);
+    let mut layer = fmt::layer();
+
+    if !std::io::stdout().is_terminal() {
+        layer = layer.with_ansi(false);
+    }
+
+    let fmt_layer = layer.with_filter(filter);
+
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
@@ -154,8 +163,15 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let ws_socket_opts = if opts.ws_enabled {
+        Some(get_ws_socket_addr(opts))
+    } else {
+        None
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
+        ws_socket_opts,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -185,7 +201,7 @@ pub async fn init_network(
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
-    based_context: Option<P2PBasedContext>,
+    #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -205,7 +221,9 @@ pub async fn init_network(
         store,
         blockchain.clone(),
         get_client_version(),
+        #[cfg(feature = "l2")]
         based_context,
+        opts.tx_broadcasting_time_interval,
     )
     .await
     .expect("P2P context could not be created");
@@ -358,6 +376,11 @@ pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
         .expect("Failed to parse http address and port")
 }
 
+pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
+    parse_socket_addr(&opts.ws_addr, &opts.ws_port)
+        .expect("Failed to parse websocket address and port")
+}
+
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
     if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
@@ -382,7 +405,7 @@ pub async fn init_l1(
 ) -> eyre::Result<(
     PathBuf,
     CancellationToken,
-    PeerTableHandle,
+    PeerTable,
     Arc<Mutex<NodeRecord>>,
 )> {
     let datadir = &opts.datadir;
@@ -392,6 +415,11 @@ pub async fn init_l1(
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
+
+    raise_fd_limit()?;
+    debug!("Preloading KZG trusted setup");
+    ethrex_crypto::kzg::warm_up_trusted_setup();
+
     let store = init_store(datadir, genesis).await;
 
     #[cfg(feature = "sync-test")]
@@ -406,6 +434,8 @@ pub async fn init_l1(
         },
     );
 
+    regenerate_head_state(&store, &blockchain).await?;
+
     let signer = get_signer(datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
@@ -416,7 +446,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(PeerTable::spawn());
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.target_peers));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -443,8 +473,6 @@ pub async fn init_l1(
         init_metrics(&opts, tracker.clone());
     }
 
-    raise_fd_limit()?;
-
     if opts.dev {
         #[cfg(feature = "dev")]
         init_dev_network(&opts, &store, tracker.clone()).await;
@@ -460,6 +488,7 @@ pub async fn init_l1(
             store.clone(),
             tracker.clone(),
             blockchain.clone(),
+            #[cfg(feature = "l2")]
             None,
         )
         .await;
@@ -473,4 +502,76 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+/// Regenerates the state up to the head block by re-applying blocks from the
+/// last known state root.
+///
+/// Since the path-based feature was added, the database stores the state 128
+/// blocks behind the head block while the state of the blocks in between are
+/// kept in in-memory-diff-layers.
+///
+/// After the node is shut down, those in-memory layers are lost, and the database
+/// won't have the state for those blocks. It will have the blocks though.
+///
+/// When the node is started again, the state needs to be regenerated by
+/// re-applying the blocks from the last known state root up to the head block.
+///
+/// This function performs that regeneration.
+pub async fn regenerate_head_state(
+    store: &Store,
+    blockchain: &Arc<Blockchain>,
+) -> eyre::Result<()> {
+    let head_block_number = store.get_latest_block_number().await?;
+
+    let Some(last_header) = store.get_block_header(head_block_number)? else {
+        unreachable!("Database is empty, genesis block should be present");
+    };
+
+    let mut current_last_header = last_header;
+
+    // Find the last block with a known state root
+    while !store.has_state_root(current_last_header.state_root)? {
+        if current_last_header.number == 0 {
+            return Err(eyre::eyre!(
+                "Unknown state found in DB. Please run `ethrex removedb` and restart node"
+            ));
+        }
+        let parent_number = current_last_header.number - 1;
+
+        debug!("Need to regenerate state for block {parent_number}");
+
+        let Some(parent_header) = store.get_block_header(parent_number)? else {
+            return Err(eyre::eyre!(
+                "Parent header for block {parent_number} not found"
+            ));
+        };
+
+        current_last_header = parent_header;
+    }
+
+    let last_state_number = current_last_header.number;
+
+    if last_state_number == head_block_number {
+        debug!("State is already up to date");
+        return Ok(());
+    }
+
+    info!("Regenerating state from block {last_state_number} to {head_block_number}");
+
+    // Re-apply blocks from the last known state root to the head block
+    for i in (last_state_number + 1)..=head_block_number {
+        debug!("Re-applying block {i} to regenerate state");
+
+        let block = store
+            .get_block_by_number(i)
+            .await?
+            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+
+        blockchain.add_block(block).await?;
+    }
+
+    info!("Finished regenerating state");
+
+    Ok(())
 }

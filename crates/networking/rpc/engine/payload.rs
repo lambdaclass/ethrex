@@ -571,6 +571,11 @@ async fn validate_ancestors(
         .get_latest_valid_ancestor(block.header.parent_hash)
         .await?
     {
+        // Invalidate child too
+        context
+            .storage
+            .set_latest_valid_ancestor(block.header.hash(), latest_valid_hash)
+            .await?;
         return Ok(Some(PayloadStatus::invalid_with(
             latest_valid_hash,
             "Parent header has been previously invalidated.".into(),
@@ -681,8 +686,10 @@ async fn try_execute_payload(
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
-    // Return the valid message directly if we have it.
-    if storage.get_block_by_hash(block_hash).await?.is_some() {
+    // Return the valid message directly if we already have it.
+    // We check for header only as we do not download the block bodies before the pivot during snap sync
+    // https://github.com/lambdaclass/ethrex/issues/1766
+    if storage.get_block_header_by_hash(block_hash)?.is_some() {
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 

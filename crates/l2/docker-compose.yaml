@@ -14,8 +14,12 @@ services:
 
   contract_deployer:
     container_name: contract_deployer
-    image: "ethrex:main"
-    build: ../../
+    image: "ethrex:main-l2"
+    restart: on-failure:10
+    build:
+      context: ../../
+      args:
+        - BUILD_FLAGS=--features l2,l2-sql
     volumes:
       # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${DOCKER_ETHREX_WORKDIR}/contracts
@@ -51,6 +55,7 @@ services:
       - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=${ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS:-false}
       - ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM:-false}
+      - ETHREX_NATIVE_TOKEN_L1_ADDRESS=${ETHREX_NATIVE_TOKEN_L1_ADDRESS:-0x0000000000000000000000000000000000000000}
       - COMPILE_CONTRACTS=true
     depends_on:
       - ethrex_l1
@@ -63,8 +68,11 @@ services:
 
   ethrex_l2:
     container_name: ethrex_l2
-    image: "ethrex:main"
-    build: ../../
+    image: "ethrex:main-l2"
+    build:
+      context: ../../
+      args:
+        - BUILD_FLAGS=--features l2,l2-sql
     ports:
       # RPC
       - 127.0.0.1:1729:1729
@@ -78,6 +86,7 @@ services:
       - ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER:-false}
       - ETHREX_WATCHER_BLOCK_DELAY=${ETHREX_WATCHER_BLOCK_DELAY:-0}
       - ETHREX_BASED=${ETHREX_BASED:-false}
+      - ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS
       - ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY=${ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY:-0x0000000000000000000000000000000000000000}
       - ETHREX_COMMITTER_COMMIT_TIME=${ETHREX_COMMITTER_COMMIT_TIME:-60000}
       - ETHREX_WATCHER_WATCH_INTERVAL=${ETHREX_WATCHER_WATCH_INTERVAL:-12000}
@@ -87,7 +96,7 @@ services:
     entrypoint:
       - /bin/bash
       - -c
-      - export $(xargs < /env/.env); ./ethrex l2 "$0" "$@" 
+      - export $(xargs < /env/.env); ./ethrex l2 "$0" "$@"
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
       --network /genesis/l2.json
@@ -105,8 +114,11 @@ services:
 
   ethrex_prover:
     container_name: ethrex_prover
-    image: "ethrex:main"
-    build: ../../
+    image: "ethrex:main-l2"
+    build:
+      context: ../../
+      args:
+        - BUILD_FLAGS=--features l2,l2-sql
     command: >
       l2 prover
       --backend exec
