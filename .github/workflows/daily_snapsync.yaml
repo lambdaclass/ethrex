@@ -1,4 +1,4 @@
-name: Daily Snapsync Ethrex
+name: Daily Snapsync Check
 
 on:
   pull_request:
