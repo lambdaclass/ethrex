@@ -813,13 +813,18 @@ pub async fn build_generic_tx(
     overrides: Overrides,
 ) -> Result<GenericTransaction, EthClientError> {
     match r#type {
-        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged => {}
+        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged | TxType::CustomFee => {}
         TxType::EIP2930 | TxType::EIP7702 | TxType::Legacy => {
             return Err(EthClientError::Custom(
                 "Unsupported tx type in build_generic_tx".to_owned(),
             ));
         }
     }
+    if overrides.custom_fee_token.is_none() && r#type == TxType::CustomFee {
+        return Err(EthClientError::Custom(
+            "custom_fee_token must be set for CustomFee tx type".to_owned(),
+        ));
+    };
     let mut tx = GenericTransaction {
         r#type,
         to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
@@ -845,6 +850,7 @@ pub async fn build_generic_tx(
             .iter()
             .map(AccessListEntry::from)
             .collect(),
+        custom_fee_token: overrides.custom_fee_token,
         from,
         ..Default::default()
     };

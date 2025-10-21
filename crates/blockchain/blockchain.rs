@@ -912,6 +912,11 @@ impl Blockchain {
                     "Privileged Transactions are not supported in P2P".to_string(),
                 ));
             }
+            Transaction::CustomFeeTransaction(_) => {
+                return Err(StoreError::Custom(
+                    "Custom Fee Transactions are not supported in P2P".to_string(),
+                ));
+            }
         };
 
         Ok(result)

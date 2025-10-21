@@ -255,6 +255,9 @@ fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64
             Transaction::PrivilegedL2Transaction(t) => t
                 .max_priority_fee_per_gas
                 .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+            Transaction::CustomFeeTransaction(t) => t
+                .max_priority_fee_per_gas
+                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
         })
         .collect();
 
