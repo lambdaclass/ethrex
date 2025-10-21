@@ -138,13 +138,13 @@ RPC options:
 
           [default: jwt.hex]
 
-Block producer options:
-      --block-producer.extra-data <EXTRA_DATA>
+Block building options:
+      --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
           [default: "ethrex 4.0.0"]
 
-      --block-producer.gas-limit <GAS_LIMIT>
+      --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
           [default: 30000000]

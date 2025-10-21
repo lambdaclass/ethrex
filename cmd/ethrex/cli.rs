@@ -223,19 +223,19 @@ pub struct Options {
     )]
     pub target_peers: usize,
     #[arg(
-        long = "block-producer.extra-data",
+        long = "builder.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
         help = "Block extra data message.",
-        help_heading = "Block producer options"
+        help_heading = "Block building options"
     )]
     pub extra_data: String,
     #[arg(
-        long = "block-producer.gas-limit",
+        long = "builder.gas-limit",
         default_value_t = DEFAULT_BUILDER_GAS_CEIL,
         value_name = "GAS_LIMIT",
         help = "Target block gas limit.",
-        help_heading = "Block producer options"
+        help_heading = "Block building options"
     )]
     pub gas_limit: u64,
 }
