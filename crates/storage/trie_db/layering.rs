@@ -136,23 +136,24 @@ impl TrieDB for TrieWrapper {
         let last_pair = key_values
             .iter()
             .rev()
-            .find(|(_path, rlp)| !rlp.is_empty())
-            .cloned();
+            .find(|(_path, rlp)| !rlp.is_empty());
         let new_state_root = match last_pair {
             Some((_, noderlp)) => {
-                let root_node = Node::decode(&noderlp)?;
+                let root_node = Node::decode(noderlp)?;
                 root_node.compute_hash().finalize()
             }
             None => *EMPTY_TRIE_HASH,
         };
 
         let mut inner = TrieLayerCache::clone(&self.inner.load());
-        let key_values = key_values
-            .iter()
-            .cloned()
-            .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
-            .collect();
-        inner.put_batch(self.state_root, new_state_root, key_values);
+        inner.put_batch(
+            self.state_root,
+            new_state_root,
+            key_values
+                .into_iter()
+                .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
+                .collect(),
+        );
         self.inner.store(Arc::new(inner));
         Ok(())
     }
