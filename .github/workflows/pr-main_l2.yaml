@@ -10,6 +10,7 @@ on:
       - "crates/blockchain/dev/**"
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_l2.yaml"
+      - "cmd/ethrex/l2/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -51,11 +52,11 @@ jobs:
           touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 
       - name: Run cargo check
-        run: cargo check --workspace
+        run: cargo check --workspace --features l2,l2-sql
 
       - name: Run cargo clippy
         run: |
-          cargo clippy --workspace -- -D warnings
+          cargo clippy --workspace --features l2,l2-sql -- -D warnings
           make lint
 
       - name: Run cargo fmt
@@ -85,26 +86,71 @@ jobs:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
 
+  # We build the docker image for the l2 usage. It needs to add
+  # The build args for l2.
+  build-docker-l2:
+    name: Build docker image L2
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build L2 docker image
+        uses: ./.github/actions/build-docker
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          tags: ethrex:main-l2
+          artifact_path: ethrex_image_l2.tar
+          build_args: BUILD_FLAGS=--features l2
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp/ethrex_image_l2.tar
+
   integration-test:
     name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
-    needs: build-docker
+    needs: [build-docker, build-docker-l2]
     strategy:
       matrix:
         include:
           - name: "Validium"
             validium: true
             web3signer: false
+            use_native_token: false
+            based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla"
             validium: false
             web3signer: false
+            use_native_token: false
+            based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla with Web3signer"
             validium: false
             web3signer: true
+            use_native_token: false
+            based: false
             compose_targets:
               [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
+          - name: "ERC20 as Native Token"
+            validium: false
+            web3signer: false
+            use_native_token: true
+            based: false
+            compose_targets: [docker-compose.yaml]
+          - name: "Based"
+            validium: false
+            web3signer: false
+            use_native_token: false
+            based: true
+            compose_targets: [docker-compose.yaml]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -126,7 +172,7 @@ jobs:
 
       - name: Build test
         run: |
-          cargo test l2 --no-run --release
+          cargo test l2 --features l2 --no-run --release
 
       - name: Start Web3Signer
         if: matrix.web3signer
@@ -144,94 +190,23 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      - name: Start L1 & Deploy contracts
-        run: |
-          touch cmd/.env
-          cd crates/l2
-          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          docker compose up contract_deployer
-
-      - name: Copy env to host
-        run: |
-          docker cp contract_deployer:/env/.env cmd/.env
-          cat cmd/.env
-
-      - name: Start Sequencer
-        run: |
-          cd crates/l2
-          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          ETHREX_WATCHER_BLOCK_DELAY=0 \
-          ETHREX_COMMITTER_COMMIT_TIME=15000 \
-          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
-
-      - name: Run test
-        run: |
-          sudo chmod -R a+rw crates/l2
-          cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
-          docker logs --follow ethrex_l2 &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          killall ethrex -s SIGINT
-
-  integration-test-based:
-    name: Integration Test - Based
-    runs-on: ubuntu-latest
-    needs: build-docker
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-
-      - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
-
-      - name: Download ethrex image artifact
+      - name: Download ethrex L2 image artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex_image
+          name: ethrex_image_l2
           path: /tmp
 
-      - name: Load ethrex image
+      - name: Load ethrex L2 image
         run: |
-          docker load --input /tmp/ethrex_image.tar
+          docker load --input /tmp/ethrex_image_l2.tar
 
-      # also creates empty verification keys (as workflow runs with exec backend)
-      - name: Build prover
+      - name: Start L1
         run: |
           cd crates/l2
-          make build-prover
-          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
-
-      - name: Start L1 & Deploy contracts
-        run: |
-          touch cmd/.env
-          cd crates/l2
-          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
-          COMPILE_CONTRACTS=true \
-          docker compose up contract_deployer
-
-      - name: Copy env to host
-        run: |
-          docker cp contract_deployer:/env/.env cmd/.env
-          cat cmd/.env
+          docker compose up --detach ethrex_l1
 
       - name: Install rex
+        if: ${{ matrix.use_native_token || matrix.based }}
         run: |
           cd ..
           git clone https://github.com/lambdaclass/rex.git
@@ -240,7 +215,51 @@ jobs:
           make cli
           echo "rex install successfully at $(which rex)"
 
+      - name: Deploy native token
+        if: matrix.use_native_token
+        run: |
+          rex deploy $(cat fixtures/contracts/ERC20/NativeTokenTest.bin) 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+
+      - name: Deploy contracts
+        run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries 
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
+          touch cmd/.env
+          cd crates/l2
+          if [ "${{ matrix.use_native_token }}" = true ]; then
+            export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0xb4b46bdaa835f8e4b4d8e208b6559cd267851051
+          else
+            export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0x0000000000000000000000000000000000000000
+          fi
+          if  [ "${{ matrix.based }}" = true ]; then
+            export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
+            export COMPILE_CONTRACTS=true
+          fi
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
+          ETHREX_NATIVE_TOKEN_L1_ADDRESS=$ETHREX_NATIVE_TOKEN_L1_ADDRESS \
+          docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
+
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
+
       - name: Register sequencer
+        if: matrix.based
         run: |
           cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
@@ -255,33 +274,40 @@ jobs:
 
       - name: Start Sequencer
         run: |
-          cd cmd
-          SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
-          export SEQUENCER_REGISTRY
-          cd ../crates/l2
-
+          if  [ "${{ matrix.based }}" = true ]; then
+            cd cmd
+            ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
+            export ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY
+            export ETHREX_BASED=true
+            cd ..
+          else
+           export ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+          fi
+          cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_COMMITTER_VALIDIUM=false \
-          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
-          ETHREX_BASED=true \
-          ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          docker compose up --detach --no-deps ethrex_l2
+          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
 
       - name: Run test
         run: |
+          if  [ "${{ matrix.based }}" = true ]; then
+            export INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true
+          fi
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           docker logs --follow ethrex_l2 &
+          docker logs --follow ethrex_l1 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
   integration-test-tdx:
     name: Integration Test - TDX
     runs-on: ubuntu-latest
-    needs: build-docker
+    needs: [build-docker, build-docker-l2]
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -310,6 +336,16 @@ jobs:
       - name: Load ethrex image
         run: |
           docker load --input /tmp/ethrex_image.tar
+
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Set up Nix
         uses: cachix/install-nix-action@v31
@@ -352,6 +388,7 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
           ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
           docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
 
@@ -377,7 +414,7 @@ jobs:
   state-diff-test:
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
-    needs: build-docker
+    needs: [build-docker, build-docker-l2]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -394,6 +431,16 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
+
       - name: Install solc
         uses: lambdaclass/get-solc@master
         with:
@@ -402,6 +449,10 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries 
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
           touch cmd/.env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
@@ -411,6 +462,13 @@ jobs:
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           COMPILE_CONTRACTS=true \
           docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
 
       - name: Run tests
         run: |
@@ -459,11 +517,13 @@ jobs:
       - name: Init prover
         run: |
           target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 &
-      
+
       - name: Run test
         run: |
           cd crates/l2
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true \
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
+          cargo test l2 --release -- --nocapture --test-threads=1
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
@@ -474,12 +534,11 @@ jobs:
       [
         integration-test,
         state-diff-test,
-        integration-test-based,
         integration-test-tdx,
         integration-test-l2-dev,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' }}
+    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -490,11 +549,6 @@ jobs:
 
           if [ "${{ needs.state-diff-test.result }}" != "success" ]; then
             echo "Job State Reconstruction Tests failed"
-            exit 1
-          fi
-
-          if [ "${{ needs.integration-test-based.result }}" != "success" ]; then
-            echo "Job Integration Tests Based failed"
             exit 1
           fi
 

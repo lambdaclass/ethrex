@@ -5,7 +5,7 @@ use crate::{
             ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
             PacketDecodeErr, PingMessage, PongMessage,
         },
-        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTableError, PeerTableHandle},
+        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     },
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
@@ -22,7 +22,7 @@ use spawned_concurrency::{
     messages::Unused,
     tasks::{
         CastResponse, GenServer, GenServerHandle, InitResult::Success, send_after, send_interval,
-        spawn_listener,
+        send_message_on, spawn_listener,
     },
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -42,10 +42,6 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_secs(5);
 const LOOKUP_INTERVAL: Duration = Duration::from_secs(5 * 60); // 5 minutes
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
-/// The target number of RLPx connections to reach.
-const TARGET_PEERS: usize = 100;
-/// The target number of contacts to maintain in peer_table.
-const TARGET_CONTACTS: usize = 100_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -69,6 +65,7 @@ pub enum InMessage {
     Revalidate,
     Lookup,
     Prune,
+    Shutdown,
 }
 
 #[derive(Debug, Clone)]
@@ -82,7 +79,7 @@ pub struct DiscoveryServer {
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
-    peer_table: PeerTableHandle,
+    peer_table: PeerTable,
 }
 
 impl DiscoveryServer {
@@ -90,7 +87,7 @@ impl DiscoveryServer {
         local_node: Node,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
-        mut peer_table: PeerTableHandle,
+        mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
@@ -116,7 +113,7 @@ impl DiscoveryServer {
             .new_contacts(bootnodes, local_node.node_id())
             .await?;
 
-        discovery_server.start();
+        discovery_server.start_on_thread();
         Ok(())
     }
 
@@ -240,12 +237,7 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        if self
-            .peer_table
-            .target_reached(TARGET_CONTACTS, TARGET_PEERS)
-            .await
-            .unwrap_or(false)
-        {
+        if !self.peer_table.target_reached().await.unwrap_or(false) {
             INITIAL_LOOKUP_INTERVAL
         } else {
             trace!("Reached target number of peers or contacts. Using longer lookup interval.");
@@ -521,6 +513,8 @@ impl GenServer for DiscoveryServer {
         send_interval(PRUNE_INTERVAL, handle.clone(), InMessage::Prune);
         let _ = handle.clone().cast(InMessage::Lookup).await;
 
+        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
+
         Ok(Success(self))
     }
 
@@ -560,6 +554,7 @@ impl GenServer for DiscoveryServer {
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
             }
+            Self::CastMsg::Shutdown => return CastResponse::Stop,
         }
         CastResponse::NoReply
     }
