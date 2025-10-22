@@ -378,12 +378,14 @@ impl Blockchain {
             let building_task =
                 tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
-            if let Some(current_res_res) = cancel_token.run_until_cancelled(building_task).await {
-                if let Ok(current_res) = current_res_res {
+            match cancel_token.run_until_cancelled(building_task).await {
+                Some(Ok(current_res)) => {
                     res = current_res?;
-                } else {
-                    warn!("Error joining payload building task");
                 }
+                Some(Err(err)) => {
+                    warn!(%err, "Payload-building task panicked");
+                }
+                None => {}
             }
         }
         Ok(res)
