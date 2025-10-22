@@ -171,10 +171,10 @@ async fn handle_forkchoice(
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
     info!(
-        version = format!("v{}", version),
-        head = format!("{:#x}", fork_choice_state.head_block_hash),
-        safe = format!("{:#x}", fork_choice_state.safe_block_hash),
-        finalized = format!("v{:#x}", fork_choice_state.finalized_block_hash),
+        version = %format!("v{}", version),
+        head = %format!("{:#x}", fork_choice_state.head_block_hash),
+        safe = %format!("{:#x}", fork_choice_state.safe_block_hash),
+        finalized = %format!("v{:#x}", fork_choice_state.finalized_block_hash),
         "New fork choice update",
     );
 
