@@ -425,6 +425,7 @@ pub mod test_utils {
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler: None,
             gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+            p2p_context,
         }
     }
 }

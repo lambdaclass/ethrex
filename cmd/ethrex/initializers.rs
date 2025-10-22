@@ -143,6 +143,7 @@ pub async fn init_rpc_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
     extra_data: String,
+    p2p_context: P2PContext,
 ) {
     init_datadir(&opts.datadir);
 
@@ -184,6 +185,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         gas_ceil,
         extra_data,
+        p2p_context,
     );
 
     tracker.spawn(rpc_api);
@@ -453,6 +455,22 @@ pub async fn init_l1(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
+    let p2p_context = P2PContext::new(
+        local_p2p_node.clone(),
+        local_node_record.clone(),
+        tracker.clone(),
+        signer,
+        peer_handler.peer_table.clone(),
+        store.clone(),
+        blockchain.clone(),
+        get_client_version(),
+        #[cfg(feature = "l2")]
+        based_context,
+        opts.tx_broadcasting_time_interval,
+    )
+    .await
+    .expect("P2P context could not be created");
+
     init_rpc_api(
         &opts,
         peer_handler.clone(),
@@ -466,6 +484,7 @@ pub async fn init_l1(
         // TODO (#4482): Make this configurable.
         None,
         opts.extra_data.clone(),
+        p2p_context.clone(),
     )
     .await;
 

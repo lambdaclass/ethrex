@@ -1,3 +1,4 @@
+use crate::types::Node;
 use crate::{
     discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext,
     rlpx::connection::server::PeerConnection,
@@ -81,6 +82,7 @@ impl RLPxInitiator {
 #[derive(Debug, Clone)]
 pub enum InMessage {
     LookForPeers,
+    Initiate { node: Node },
     Shutdown,
 }
 
@@ -119,6 +121,11 @@ impl GenServer for RLPxInitiator {
                     Self::CastMsg::LookForPeers,
                 );
 
+                CastResponse::NoReply
+            }
+            Self::CastMsg::Initiate { node } => {
+                PeerConnection::spawn_as_initiator(self.context.clone(), &node).await;
+                METRICS.record_new_rlpx_conn_attempt().await;
                 CastResponse::NoReply
             }
             Self::CastMsg::Shutdown => CastResponse::Stop,

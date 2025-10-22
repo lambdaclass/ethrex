@@ -3977,6 +3977,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",

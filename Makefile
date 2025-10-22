@@ -103,7 +103,7 @@ setup-hive: ## 🐝 Set up Hive testing framework
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
-SIM_PARALLELISM ?= 16
+SIM_PARALLELISM ?= 4
 
 # Runs a Hive testing suite. A web interface showing the results is available at http://127.0.0.1:8080 via the `view-hive` target.
 # The endpoints tested can be filtered by supplying a test pattern in the form "/endpoint_1|endpoint_2|..|endpoint_n".

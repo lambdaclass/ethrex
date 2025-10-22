@@ -1,9 +1,18 @@
 use crate::{rpc::RpcApiContext, utils::RpcErr};
 use core::net::SocketAddr;
 use ethrex_common::H256;
-use ethrex_p2p::{discv4::peer_table::PeerData, rlpx::p2p::Capability};
+use ethrex_p2p::{
+    discv4::peer_table::PeerData,
+    network::P2PContext,
+    rlpx::{
+        initiator::{InMessage, RLPxInitiator},
+        p2p::Capability,
+    },
+    types::Node,
+};
 use serde::Serialize;
 use serde_json::Value;
+use spawned_concurrency::tasks::GenServer;
 
 /// Serializable peer data returned by the node's rpc
 #[derive(Serialize)]
@@ -87,6 +96,33 @@ pub async fn peers(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
         .map(RpcPeer::from)
         .collect::<Vec<_>>();
     Ok(serde_json::to_value(peers)?)
+}
+use crate::utils::RpcRequest;
+pub async fn add_peers(request: &RpcRequest, context: P2PContext) -> Result<Value, RpcErr> {
+    let params = request
+        .params
+        .clone()
+        .ok_or(RpcErr::MissingParam("enode url".to_string()))?;
+
+    if params.len() != 1 {
+        return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+    };
+
+    let url = params
+        .first()
+        .ok_or(RpcErr::MissingParam("enode url".to_string()))?
+        .as_str()
+        .ok_or(RpcErr::WrongParam("Expected string".to_string()))?;
+
+    let node = Node::from_enode_url(url).map_err(|error| RpcErr::BadParams(error.to_string()))?;
+
+    let state = RLPxInitiator::new(context);
+    let mut server = RLPxInitiator::start_on_thread(state.clone());
+
+    match server.cast(InMessage::Initiate { node }).await {
+        Err(_) => Ok(serde_json::to_value(false)?),
+        Ok(_) => Ok(serde_json::to_value(true)?),
+    }
 }
 
 // TODO: Adapt the test to the new P2P architecture.
