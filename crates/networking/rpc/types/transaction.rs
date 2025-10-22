@@ -75,10 +75,11 @@ impl SendRawTransactionRequest {
     pub fn decode_canonical(bytes: &[u8]) -> Result<Self, RLPDecodeError> {
         // Look at the first byte to check if it corresponds to a TransactionType
         match bytes.first() {
-            // First byte is a valid TransactionType
-            Some(tx_type) if *tx_type < 0x7f => {
+            // First byte is a valid TransactionType https://eips.ethereum.org/EIPS/eip-2718#transactiontype-only-goes-up-to-0x7f
+            Some(tx_type) if *tx_type <= 0x7f => {
                 // Decode tx based on type
                 let tx_bytes = &bytes[1..];
+
                 match *tx_type {
                     // Legacy
                     0x0 => {
