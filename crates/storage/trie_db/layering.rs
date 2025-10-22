@@ -1,14 +1,23 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use std::{
+    collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::{Arc, RwLock},
+};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
+
+const N_HASHES: usize = 18;
+const BLOOM_HASH_BITS: u64 = 12;
+const BLOOM_SIZE: usize = 1 << BLOOM_HASH_BITS;
 
 #[derive(Debug)]
 struct TrieLayer {
     nodes: HashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
+    bloom: [u64; BLOOM_SIZE],
 }
 
 #[derive(Debug, Default)]
@@ -20,10 +29,29 @@ pub struct TrieLayerCache {
 }
 
 impl TrieLayerCache {
-    pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         let mut current_state_root = state_root;
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let hash_init = hasher.finish();
         while let Some(layer) = self.layers.get(&current_state_root) {
-            if let Some(value) = layer.nodes.get(key.as_ref()) {
+            let mut missing = false;
+            let mut hash = hash_init;
+            for i in 0..N_HASHES {
+                let idx: u8 = (hash & 0x3F) as u8;
+                hash >>= 6;
+                let filter_index = hash & ((1 << BLOOM_HASH_BITS) - 1);
+                if layer.bloom[filter_index as usize] & (1 << idx) == 0 {
+                    missing = true;
+                    break;
+                }
+                hash ^= hash_init >> i;
+            }
+            if missing {
+                current_state_root = layer.parent;
+                continue;
+            }
+            if let Some(value) = layer.nodes.get(key) {
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
@@ -69,22 +97,34 @@ impl TrieLayerCache {
             tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
             return;
         }
-        self.layers
-            .entry(state_root)
-            .or_insert_with(|| {
-                self.last_id += 1;
-                TrieLayer {
-                    nodes: HashMap::new(),
-                    parent,
-                    id: self.last_id,
-                }
-            })
-            .nodes
-            .extend(
-                key_values
-                    .into_iter()
-                    .map(|(path, node)| (path.into_vec(), node)),
-            );
+        let layer = self.layers.entry(state_root).or_insert_with(|| {
+            self.last_id += 1;
+            TrieLayer {
+                nodes: HashMap::new(),
+                parent,
+                id: self.last_id,
+                bloom: [0u64; BLOOM_SIZE],
+            }
+        });
+
+        for (key, _) in &key_values {
+            let mut hasher = DefaultHasher::new();
+            key.hash(&mut hasher);
+            let hash_init = hasher.finish();
+            let mut hash = hash_init;
+            for i in 0..N_HASHES {
+                let idx: u8 = (hash & 0x3F) as u8;
+                hash >>= 6;
+                let filter_index = hash & ((1 << BLOOM_HASH_BITS) - 1);
+                layer.bloom[filter_index as usize] |= 1 << idx;
+                hash ^= hash_init >> i;
+            }
+        }
+        layer.nodes.extend(
+            key_values
+                .into_iter()
+                .map(|(path, node)| (path.into_vec(), node)),
+        );
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -132,7 +172,7 @@ impl TrieDB for TrieWrapper {
             .inner
             .read()
             .map_err(|_| TrieError::LockError)?
-            .get(self.state_root, key.clone())
+            .get(self.state_root, key.as_ref())
         {
             return Ok(Some(value));
         }
