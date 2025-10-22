@@ -2,6 +2,7 @@ mod sender;
 
 use configfs_tsm::create_tdx_quote;
 use ethrex_common::Bytes;
+use ethrex_common::utils::keccak;
 use ethrex_l2::sequencer::proof_coordinator::get_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
@@ -9,7 +10,6 @@ use ethrex_l2_common::{
     utils::get_address_from_secret_key,
 };
 use guest_program::input::ProgramInput;
-use ethrex_common::utils::keccak;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
 use std::time::Duration;
