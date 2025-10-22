@@ -23,7 +23,7 @@ use std::{
     mem::take,
     path::Path,
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, Mutex,
         mpsc::{SyncSender, sync_channel},
     },
 };
@@ -117,6 +117,16 @@ pub const CF_FLATKEYVALUE: &str = "flatkeyvalue";
 
 pub const CF_MISC_VALUES: &str = "misc_values";
 
+pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+
+pub type TriedUpdateWorkerTx = std::sync::mpsc::SyncSender<(
+    std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+    H256,
+    H256,
+    Vec<(Nibbles, Vec<u8>)>,
+    Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+)>;
+
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
 enum FKVGeneratorControlMessage {
@@ -129,13 +139,7 @@ pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
-    trie_update_worker_tx: std::sync::mpsc::SyncSender<(
-        std::sync::mpsc::SyncSender<Result<(), StoreError>>,
-        H256,
-        H256,
-        Vec<(Nibbles, Vec<u8>)>,
-        Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
-    )>,
+    trie_update_worker_tx: TriedUpdateWorkerTx,
 }
 
 impl Store {
@@ -652,7 +656,7 @@ impl Store {
         parent_state_root: H256,
         child_state_root: H256,
         account_updates: Vec<(Nibbles, Vec<u8>)>,
-        storage_updates: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+        storage_updates: StorageUpdates,
     ) -> Result<(), StoreError> {
         let db = &*self.db;
         let fkv_ctl = &self.flatkeyvalue_control_tx;
@@ -673,7 +677,7 @@ impl Store {
             .lock()
             .map_err(|_| StoreError::LockError)?
             .clone();
-        let mut trie_mut = (&*trie).clone();
+        let mut trie_mut = (*trie).clone();
         trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         // Update finished, signal block production.
@@ -693,7 +697,7 @@ impl Store {
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-        let mut trie_mut = (&*trie).clone();
+        let mut trie_mut = (*trie).clone();
         let mut batch = WriteBatch::default();
         let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
             open_cfs(db, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
@@ -841,7 +845,7 @@ impl StoreEngine for Store {
                 // Wait for an updated top layer so every caller afterwards sees a consistent view.
                 // Specifically, the next block produced MUST see this upper layer.
                 rx.recv()
-                    .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))?;
+                    .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
             }
             // After top-level is addded, we can make the rest of the changes visible.
             db.write(batch)
@@ -1397,7 +1401,11 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self.trie_cache.lock().unwrap().clone(),
+            inner: self
+                .trie_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
             db,
             prefix: Some(hashed_address),
         });
@@ -1409,7 +1417,11 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self.trie_cache.lock().unwrap().clone(),
+            inner: self
+                .trie_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
             db,
             prefix: None,
         });
@@ -1442,7 +1454,11 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self.trie_cache.clone(),
+            inner: self
+                .trie_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
             db,
             prefix: None,
         });
@@ -1462,7 +1478,11 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self.trie_cache.clone(),
+            inner: self
+                .trie_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
             db,
             prefix: Some(hashed_address),
         });
