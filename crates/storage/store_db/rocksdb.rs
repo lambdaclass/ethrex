@@ -153,7 +153,6 @@ impl Store {
 
         db_options.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
         db_options.set_max_total_wal_size(2 * 1024 * 1024 * 1024); // 2GB
-        db_options.set_wal_ttl_seconds(3600);
         db_options.set_wal_bytes_per_sync(32 * 1024 * 1024); // 32MB
         db_options.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
         db_options.set_use_fsync(false); // fdatasync
@@ -659,7 +658,6 @@ impl StoreEngine for Store {
                 ],
             )?;
 
-            let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatch::default();
 
             let mut updated_trie = false;

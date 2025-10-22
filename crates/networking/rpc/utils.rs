@@ -398,7 +398,7 @@ pub mod test_utils {
                 PeerHandler::dummy(),
                 "ethrex/test".to_string(),
                 None,
-                None,
+                DEFAULT_BUILDER_GAS_CEIL,
                 String::new(),
             )
             .await

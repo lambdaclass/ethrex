@@ -393,6 +393,28 @@ fn add_with_proxy(
     Ok(())
 }
 
+fn add_placeholder_proxy(
+    genesis: &mut Genesis,
+    address: Address,
+    out_dir: &Path,
+) -> Result<(), SystemContractsUpdaterError> {
+    let storage: HashMap<U256, U256> = HashMap::from([(
+        get_erc1967_slot("eip1967.proxy.admin"),
+        address_to_word(ADMIN_ADDRESS),
+    )]);
+
+    genesis.alloc.insert(
+        address,
+        GenesisAccount {
+            code: Bytes::from(l2_upgradeable_runtime(out_dir)),
+            storage,
+            balance: U256::zero(),
+            nonce: 1,
+        },
+    );
+    Ok(())
+}
+
 pub fn update_genesis_file(
     l2_genesis_path: &Path,
     out_dir: &Path,
@@ -416,6 +438,10 @@ pub fn update_genesis_file(
         l2_to_l1_messenger_runtime(out_dir),
         out_dir,
     )?;
+
+    for address in 0xff00..0xfffd {
+        add_placeholder_proxy(&mut genesis, Address::from_low_u64_be(address), out_dir)?;
+    }
 
     add_deterministic_deployers(&mut genesis, out_dir);
 
