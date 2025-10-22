@@ -44,6 +44,13 @@ use sha3::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
+    BLS12381Curve, BLS12381FieldElement,
+};
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::field_extension::BLS12381FieldModulus;
+use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
+use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
+
 use crate::constants::{P256_A, P256_B, P256_N};
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
@@ -57,29 +64,56 @@ use crate::{
         G2_MUL_COST, POINT_EVALUATION_COST,
     },
 };
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
-    BLS12381Curve, BLS12381FieldElement,
-};
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::field_extension::BLS12381FieldModulus;
-use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
-use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
 
-pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
+// =============================================================================
+// FORK-SPECIFIC PRECOMPILE COUNTS
+// =============================================================================
 
+/// Number of precompiles available before Cancun fork
 pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
+/// Number of precompiles available from Cancun fork (adds point evaluation)
 pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
+/// Number of precompiles available from Prague fork (adds BLS12-381 precompiles)
 pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
+// =============================================================================
+// BLAKE2F CONSTANTS
+// =============================================================================
+
+/// Size of each element in BLAKE2F input data
+pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
+
+// =============================================================================
+// BLS12-381 CONSTANTS
+// =============================================================================
+
+/// Input length for BLS12-381 Fp field element (single field element)
+const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
+/// Input length for BLS12-381 Fp2 field element (two field elements)
+const BLS12_381_FP2_VALID_INPUT_LENGTH: usize = 128;
+
+/// Input length for BLS12-381 G1 point addition (two G1 points)
+const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
+/// Input length for BLS12-381 G2 point addition (two G2 points)
+const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
+
+/// Length of each G1 point-scalar pair for MSM operations
 pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
+/// Length of each G2 point-scalar pair for MSM operations
 pub const BLS12_381_G2_MSM_PAIR_LENGTH: usize = 288;
+/// Length of each G1-G2 point pair for pairing check operations
 pub const BLS12_381_PAIRING_CHECK_PAIR_LENGTH: usize = 384;
 
-const BLS12_381_FP2_VALID_INPUT_LENGTH: usize = 128;
-const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
-
+/// Length of a BLS12-381 field element without padding
 pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
+/// Length of a BLS12-381 field element with padding
 pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
 
+// =============================================================================
+// BLS12-381 SPECIAL POINTS AND VALUES
+// =============================================================================
+
+/// The result of mapping Fp2 zero element to G2 point
 const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 131, 32, 137, 110, 201, 238, 249, 213, 230,
     25, 132, 141, 194, 156, 226, 102, 244, 19, 208, 45, 211, 29, 155, 157, 68, 236, 12, 121, 205,
@@ -94,7 +128,10 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
     172, 127, 112, 38, 109, 25, 155, 79, 118, 174, 39, 198, 38, 154, 60, 238, 189, 174, 48, 128,
     110, 154, 118, 170, 223, 92,
 ];
+
+/// Representation of G1 point at infinity (all zeros)
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
+/// Representation of G2 point at infinity (all zeros)
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
 pub struct Precompile {
@@ -298,7 +335,7 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
-#[expect(clippy::as_conversions, clippy::indexing_slicing)]
+#[expect(clippy::as_conversions)]
 pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
@@ -749,6 +786,12 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     Ok(Bytes::from(out))
 }
 
+// =============================================================================
+// ELLIPTIC CURVE CONSTANTS
+// =============================================================================
+
+/// Prime field modulus for the alt_bn128 curve (BN254)
+/// Used for coordinate validation in ECADD, ECMUL, and ECPAIRING precompiles
 const ALT_BN128_PRIME: U256 = U256([
     0x3c208c16d87cfd47,
     0x97816a916871ca8d,
@@ -1003,6 +1046,13 @@ fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48]) -> H256 {
     versioned_hash.into()
 }
 
+// =============================================================================
+// POINT EVALUATION CONSTANTS
+// =============================================================================
+
+/// Fixed output for successful point evaluation precompile
+/// First 32 bytes: FIELD_ELEMENTS_PER_BLOB (4096 = 0x1000)
+/// Last 32 bytes: BLS_MODULUS
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
     // Big endian FIELD_ELEMENTS_PER_BLOB bytes
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
