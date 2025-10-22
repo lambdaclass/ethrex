@@ -93,7 +93,7 @@ contract CommonBridge is
     /// Otherwise, this address is used for native token deposits and withdrawals.
     address public NATIVE_TOKEN_L1;
 
-    address public sharedBridgeRouter = address(0);
+    address public SHARED_BRIDGE_ROUTER = address(0);
 
     modifier onlyOnChainProposer() {
         require(
@@ -130,7 +130,7 @@ contract CommonBridge is
 
         NATIVE_TOKEN_L1 = _nativeToken;
 
-        sharedBridgeRouter = _sharedBridgeRouter;
+        SHARED_BRIDGE_ROUTER = _sharedBridgeRouter;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -501,13 +501,13 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function sendMessage(uint256 dstChainId, SendValues memory message) public override onlyOnChainProposer {
-        IRouter(sharedBridgeRouter).sendMessage{value: message.value}(dstChainId, message);
+        IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: message.value}(dstChainId, message);
     }
 
     /// @inheritdoc ICommonBridge
     function receiveMessage(SendValues calldata message) public override payable {
         require(
-            msg.sender == sharedBridgeRouter,
+            msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"
         );
 
