@@ -681,7 +681,7 @@ impl Store {
         trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         // Update finished, signal block production.
-        // notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
+        notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
         // Phase 2: update disk layer.
         let trie = trie_cache
@@ -728,8 +728,6 @@ impl Store {
         result?;
         // Phase 3: update diff layers with the removal of bottom layer.
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
-
-        notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
         Ok(())
     }
 }
