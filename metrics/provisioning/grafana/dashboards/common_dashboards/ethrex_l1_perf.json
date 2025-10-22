@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 41,
+  "id": 47,
   "links": [],
   "panels": [
     {
@@ -305,6 +305,19 @@
       "type": "table"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 50,
+      "panels": [],
+      "title": "Block Processing",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -368,7 +381,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Gas Used %"
+              "options": "Value"
             },
             "properties": [
               {
@@ -387,9 +400,10 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 5
+        "y": 6
       },
       "id": 2,
+      "interval": "10s",
       "options": {
         "legend": {
           "calcs": [],
@@ -410,65 +424,16 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "fullMetaSearch": false,
+          "editorMode": "code",
+          "expr": "sum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance)\n  sum by (instance)(\n    gas_limit{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  )",
           "hide": false,
-          "includeNullMetadata": true,
           "instant": false,
-          "legendFormat": "{{__name__}}",
+          "legendFormat": "{{ instance }}",
           "range": true,
-          "refId": "A",
-          "useBackend": false
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "gas_limit{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "fullMetaSearch": false,
-          "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
-          "legendFormat": "{{__name__}}",
-          "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
       "title": "Gas Used %",
-      "transformations": [
-        {
-          "id": "calculateField",
-          "options": {
-            "alias": "Gas Used %",
-            "binary": {
-              "left": {
-                "matcher": {
-                  "id": "byName",
-                  "options": "gas_used"
-                }
-              },
-              "operator": "/",
-              "right": {
-                "matcher": {
-                  "id": "byName",
-                  "options": "gas_limit"
-                }
-              }
-            },
-            "mode": "binary",
-            "reduce": {
-              "reducer": "sum"
-            },
-            "replaceFields": true
-          }
-        }
-      ],
       "type": "timeseries"
     },
     {
@@ -553,9 +518,10 @@
         "h": 8,
         "w": 7,
         "x": 6,
-        "y": 5
+        "y": 6
       },
       "id": 11,
+      "interval": "10s",
       "options": {
         "legend": {
           "calcs": [
@@ -671,9 +637,10 @@
         "h": 8,
         "w": 11,
         "x": 13,
-        "y": 5
+        "y": 6
       },
       "id": 1,
+      "interval": "10s",
       "options": {
         "legend": {
           "calcs": [],
@@ -736,7 +703,7 @@
             },
             "pointShape": "circle",
             "pointSize": {
-              "fixed": 5
+              "fixed": 7
             },
             "pointStrokeWidth": 1,
             "scaleDistribution": {
@@ -747,7 +714,7 @@
           "links": [
             {
               "title": "Show on Etherscan",
-              "url": "https://${network}.etherscan.io/block/${__data.fields[\"block\"]}"
+              "url": "https://etherscan.io/block/${__data.fields[\"Block\"]}"
             }
           ],
           "mappings": [],
@@ -777,6 +744,22 @@
                 "value": "si:Ggas/s"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/block.*/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": false
+                }
+              }
+            ]
           }
         ]
       },
@@ -784,9 +767,10 @@
         "h": 12,
         "w": 12,
         "x": 0,
-        "y": 13
+        "y": 14
       },
       "id": 47,
+      "interval": "5s",
       "options": {
         "legend": {
           "calcs": [
@@ -810,7 +794,7 @@
             "x": {
               "matcher": {
                 "id": "byName",
-                "options": "Value"
+                "options": "Block"
               }
             },
             "y": {
@@ -835,10 +819,12 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max_over_time(block_number{instance=~\"$instance(:\\\\d+)?$\"}[10s])",
-          "legendFormat": "block {{ instance }}",
+          "expr": "gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "ggas/s {{ instance }}",
           "range": true,
-          "refId": "A"
+          "refId": "Ggas/s"
         },
         {
           "datasource": {
@@ -846,12 +832,25 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "gigagas{instance=~\"$instance(:\\\\d+)?$\"}",
+          "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
           "hide": false,
           "instant": false,
-          "legendFormat": "ggas/s {{ instance }}",
+          "legendFormat": "Block",
           "range": true,
-          "refId": "B"
+          "refId": "Block"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "all_same_block",
+          "range": true,
+          "refId": "all_same_block"
         }
       ],
       "title": "Ggas/s by Block",
@@ -860,6 +859,41 @@
           "id": "joinByField",
           "options": {
             "mode": "inner"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "config": {
+                  "id": "equal",
+                  "options": {
+                    "value": "0"
+                  }
+                },
+                "fieldName": "all_same_block"
+              }
+            ],
+            "match": "any",
+            "type": "exclude"
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Time": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value": {
+                "aggregations": [],
+                "operation": "groupby"
+              }
+            }
           }
         }
       ],
@@ -890,7 +924,7 @@
             "lineWidth": 2,
             "pointShape": "circle",
             "pointSize": {
-              "fixed": 11
+              "fixed": 7
             },
             "pointStrokeWidth": 1,
             "scaleDistribution": {
@@ -925,50 +959,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Gas Used %"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percentunit"
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
-              {
-                "id": "custom.axisSoftMin",
-                "value": 0
-              },
-              {
-                "id": "custom.axisSoftMax",
-                "value": 0.7
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "semi-dark-blue",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.axisLabel",
-                "value": "Gas Used %"
-              },
-              {
-                "id": "custom.hideFrom",
-                "value": {
-                  "legend": true,
-                  "tooltip": false,
-                  "viz": false
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Block Time"
+              "options": "Value"
             },
             "properties": [
               {
@@ -976,8 +967,36 @@
                 "value": "s"
               },
               {
-                "id": "custom.axisLabel",
-                "value": "Block time"
+                "id": "custom.axisPlacement",
+                "value": "left"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/block.*/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Block"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
               }
             ]
           }
@@ -987,9 +1006,10 @@
         "h": 12,
         "w": 12,
         "x": 12,
-        "y": 13
+        "y": 14
       },
       "id": 12,
+      "interval": "5s",
       "options": {
         "legend": {
           "calcs": [
@@ -1000,7 +1020,7 @@
           "placement": "bottom",
           "showLegend": true
         },
-        "mapping": "manual",
+        "mapping": "auto",
         "series": [
           {
             "frame": {
@@ -1012,33 +1032,13 @@
             "x": {
               "matcher": {
                 "id": "byName",
-                "options": "Block Number"
+                "options": "Block"
               }
             },
             "y": {
               "matcher": {
                 "id": "byName",
-                "options": "Gas Used %"
-              }
-            }
-          },
-          {
-            "frame": {
-              "matcher": {
-                "id": "byIndex",
-                "options": 0
-              }
-            },
-            "x": {
-              "matcher": {
-                "id": "byName",
-                "options": "Block Number"
-              }
-            },
-            "y": {
-              "matcher": {
-                "id": "byName",
-                "options": "Block Time"
+                "options": "Value"
               }
             }
           }
@@ -1056,154 +1056,229 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "fullMetaSearch": false,
-          "hide": false,
-          "includeNullMetadata": true,
-          "legendFormat": "Block Number",
-          "range": true,
-          "refId": "A",
-          "useBackend": false
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "fullMetaSearch": false,
+          "exemplar": false,
+          "expr": "sum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance) ( \n  sum by (instance)(\n    gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  ) * 1000000000\n)",
+          "format": "time_series",
           "hide": false,
-          "includeNullMetadata": true,
           "instant": false,
-          "legendFormat": "Gigagas/s",
+          "legendFormat": "Block time {{ instance }}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "block_time"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "fullMetaSearch": false,
+          "editorMode": "code",
+          "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
           "hide": false,
-          "includeNullMetadata": true,
           "instant": false,
-          "legendFormat": "Gas Used",
+          "legendFormat": "Block",
           "range": true,
-          "refId": "C",
-          "useBackend": false
+          "refId": "block"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "gas_limit{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "fullMetaSearch": false,
+          "editorMode": "code",
+          "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
           "hide": false,
-          "includeNullMetadata": true,
           "instant": false,
-          "legendFormat": "Gas Limit",
+          "legendFormat": "all_same_block",
           "range": true,
-          "refId": "D",
-          "useBackend": false
+          "refId": "all_same_block"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by () ( block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} offset 3s )\n!=\nmax by () ( block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} offset 8s )",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "remove_duplicate_blocks",
+          "range": true,
+          "refId": "remove_duplicate_blocks"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max without(instance) (\nsum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance)\n  sum by (instance)(\n    gas_limit{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  )\n)",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "Gas Used %",
+          "range": true,
+          "refId": "gas_used"
         }
       ],
-      "title": "Block time & Gas Used ",
+      "title": "Block Time",
       "transformations": [
         {
-          "id": "calculateField",
+          "id": "joinByField",
           "options": {
-            "alias": "Gas Used %",
-            "binary": {
-              "left": {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Gas Used"
-                }
-              },
-              "operator": "/",
-              "right": {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Gas Limit"
-                }
+            "byField": "Time",
+            "mode": "inner"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "config": {
+                  "id": "equal",
+                  "options": {
+                    "value": "0"
+                  }
+                },
+                "fieldName": "all_same_block"
               }
-            },
-            "mode": "binary",
-            "reduce": {
-              "reducer": "sum"
+            ],
+            "match": "any",
+            "type": "exclude"
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "pattern": "Block.*"
             }
           }
         },
         {
-          "id": "calculateField",
+          "id": "groupBy",
           "options": {
-            "alias": "Gas/s",
-            "binary": {
-              "left": {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Gigagas/s"
-                }
+            "fields": {
+              "Block": {
+                "aggregations": []
               },
-              "operator": "*",
-              "right": {
-                "fixed": "1000000000"
-              }
-            },
-            "mode": "binary",
-            "reduce": {
-              "include": [
-                "Gigagas/s"
-              ],
-              "reducer": "sum"
-            },
-            "window": {
-              "reducer": "mean",
-              "windowAlignment": "trailing",
-              "windowSize": 0.1,
-              "windowSizeMode": "percentage"
-            }
-          }
-        },
-        {
-          "id": "calculateField",
-          "options": {
-            "alias": "Block Time",
-            "binary": {
-              "left": {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Gas Used"
-                }
+              "Block time ethrex-mainnet-3-0-0:3701": {
+                "aggregations": []
               },
-              "operator": "/",
-              "right": {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Gas/s"
-                }
+              "Block time ethrex-mainnet-4-0-0-pathbased:3701": {
+                "aggregations": []
+              },
+              "Value": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "all_same_block": {
+                "aggregations": []
+              },
+              "remove_duplicate_blocks": {
+                "aggregations": []
               }
-            },
-            "mode": "binary",
-            "reduce": {
-              "reducer": "sum"
             }
           }
         }
       ],
       "type": "xychart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 49,
+      "panels": [],
+      "title": "Block Execution Breakdown",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "values": [
+            "percent"
+          ]
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "sort": "desc",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "repeat": "instance",
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "disableTextWrap": false,
+          "editorMode": "code",
+          "expr": "(\n  sum by (function_name) (\n    increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name!=\"Block execution\"}[$__range])\n  )\n)\nor\nlabel_replace(\n  sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Block execution\"}[$__range]) )\n  - sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=~\"Storage read|Account read|Account Read\"}[$__range]) ),\n  \"function_name\",\"Block execution (without db)\",\"__name__\",\".*\"\n)",
+          "fullMetaSearch": false,
+          "includeNullMetadata": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
+        }
+      ],
+      "title": "Block Execution Breakdown - $instance",
+      "type": "piechart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "id": 48,
+      "panels": [],
+      "title": "Process & Server Info",
+      "type": "row"
     },
     {
       "datasource": {
@@ -1237,7 +1312,7 @@
         "h": 3,
         "w": 5,
         "x": 0,
-        "y": 25
+        "y": 36
       },
       "id": 34,
       "options": {
@@ -1306,7 +1381,7 @@
         "h": 3,
         "w": 2,
         "x": 5,
-        "y": 25
+        "y": 36
       },
       "id": 33,
       "options": {
@@ -1374,7 +1449,7 @@
         "h": 3,
         "w": 5,
         "x": 7,
-        "y": 25
+        "y": 36
       },
       "id": 43,
       "options": {
@@ -1416,19 +1491,61 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "This calculates the size in bytes of the datadir path where the DB is stored.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
-          "mappings": []
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "decbytes"
         },
         "overrides": []
       },
@@ -1436,27 +1553,20 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 25
+        "y": 36
       },
-      "id": 18,
+      "id": 46,
       "options": {
         "legend": {
+          "calcs": [
+            "max",
+            "mean",
+            "last"
+          ],
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true,
-          "values": [
-            "percent"
-          ]
+          "showLegend": true
         },
-        "pieType": "pie",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "sort": "desc",
         "tooltip": {
           "hideZeros": false,
           "mode": "single",
@@ -1467,18 +1577,18 @@
       "targets": [
         {
           "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "(\n  sum by (function_name) (\n    increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name!=\"Block execution\"}[$__range])\n  )\n)\nor\nlabel_replace(\n  sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Block execution\"}[$__range]) )\n  - sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=~\"Storage read|Account read|Account Read\"}[$__range]) ),\n  \"function_name\",\"Block execution (without db)\",\"__name__\",\".*\"\n)",
+          "editorMode": "builder",
+          "expr": "datadir_size_bytes{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
           "fullMetaSearch": false,
-          "includeNullMetadata": false,
-          "legendFormat": "__auto",
+          "includeNullMetadata": true,
+          "legendFormat": "{{ instance }} Datadir Size (GB)",
           "range": true,
           "refId": "A",
           "useBackend": false
         }
       ],
-      "title": "Block Execution Breakdown",
-      "type": "piechart"
+      "title": "Datadir Size",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -1550,7 +1660,7 @@
         "h": 5,
         "w": 12,
         "x": 0,
-        "y": 28
+        "y": 39
       },
       "id": 32,
       "options": {
@@ -1591,7 +1701,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "This calculates the size in bytes of the datadir path where the DB is stored.",
+      "description": "This calculates the average numbers of cores used by the ethrex node during the last minute.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1615,7 +1725,7 @@
             },
             "insertNulls": false,
             "lineInterpolation": "linear",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "pointSize": 5,
             "scaleDistribution": {
               "type": "linear"
@@ -1645,23 +1755,22 @@
               }
             ]
           },
-          "unit": "decbytes"
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 6,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 33
+        "y": 44
       },
-      "id": 46,
+      "id": 30,
       "options": {
         "legend": {
           "calcs": [
-            "max",
             "mean",
-            "last"
+            "max"
           ],
           "displayMode": "list",
           "placement": "bottom",
@@ -1676,18 +1785,146 @@
       "pluginVersion": "12.2.0",
       "targets": [
         {
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "datadir_size_bytes{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "fullMetaSearch": false,
-          "includeNullMetadata": true,
-          "legendFormat": "{{ instance }} Datadir Size (GB)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "rate(process_cpu_seconds_total{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[1m])",
+          "legendFormat": "{{ instance }} CPU cores used",
           "range": true,
-          "refId": "A",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "Datadir Size",
+      "title": "Node CPU (avg. cores used)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "This calculates the RSS memory for the ethrex node.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "VSZ"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "left"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RSS"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
+      "id": 31,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "process_resident_memory_bytes{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+          "legendFormat": "{{ instance }} RSS",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Node Memory (RSS)",
       "type": "timeseries"
     },
     {
@@ -1758,7 +1995,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 50
       },
       "id": 45,
       "options": {
@@ -1897,7 +2134,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 50
       },
       "id": 42,
       "options": {
@@ -1942,11 +2179,23 @@
       "type": "timeseries"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
+      "id": 51,
+      "panels": [],
+      "title": "Draft",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "This calculates the average numbers of cores used by the ethrex node during the last minute.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1958,34 +2207,28 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
+            "fillOpacity": 50,
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 7
+            },
+            "pointStrokeWidth": 1,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "show": "points+lines"
           },
+          "links": [
+            {
+              "title": "Show on Etherscan",
+              "url": "https://etherscan.io/block/${__data.fields[\"Block\"]}"
+            }
+          ],
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -1999,28 +2242,641 @@
                 "value": 80
               }
             ]
-          },
-          "unit": "short"
+          }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/block.*/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": false
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^ggas/s.*/"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "si:Ggas/s"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 6,
+        "h": 12,
         "w": 12,
         "x": 0,
-        "y": 47
+        "y": 59
       },
-      "id": 30,
+      "id": 52,
+      "interval": "5s",
       "options": {
         "legend": {
           "calcs": [
             "mean",
-            "max"
+            "max",
+            "last"
           ],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
+        "mapping": "manual",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-hoodi-rpc:6063 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-l1-devnet-5:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-l1-devnet-6:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-mainnet-3-0-0:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-mainnet-4-0-0-pathbased:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-sepolia-rpc:6063 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-2:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-3:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-12:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-13:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-15:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-16:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-17:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-19:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-20:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-2:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-4:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-5:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-7:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-big-9:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-notifications-10:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-notifications-12:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-notifications-13:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-notifications-2:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-notifications-5:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-notifications-6:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-notifications-7:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-notifications-8:3701 (lastNotNull)"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ggas/s ethrex-snapsync-notifications-9:3701 (lastNotNull)"
+              }
+            }
+          }
+        ],
         "tooltip": {
           "hideZeros": false,
           "mode": "single",
@@ -2035,21 +2891,268 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(process_cpu_seconds_total{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[1m])",
-          "legendFormat": "{{ instance }} CPU cores used",
+          "expr": "gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "ggas/s {{ instance }}",
           "range": true,
-          "refId": "A"
+          "refId": "Ggas/s"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Block",
+          "range": true,
+          "refId": "Block"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "all_same_block",
+          "range": true,
+          "refId": "all_same_block"
         }
       ],
-      "title": "Node CPU (avg. cores used)",
-      "type": "timeseries"
+      "title": "Ggas/s by Block",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "mode": "inner"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "config": {
+                  "id": "equal",
+                  "options": {
+                    "value": "0"
+                  }
+                },
+                "fieldName": "all_same_block"
+              }
+            ],
+            "match": "any",
+            "type": "exclude"
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Block": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "Time": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value": {
+                "aggregations": []
+              },
+              "ggas/s ethrex-hoodi-rpc:6063": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-l1-devnet-5:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-l1-devnet-6:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-mainnet-3-0-0:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-mainnet-4-0-0-pathbased:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-sepolia-rpc:6063": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-2:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-3:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-12:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-13:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-15:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-16:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-17:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-19:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-20:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-2:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-4:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-5:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-7:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-big-9:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-notifications-10:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-notifications-12:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-notifications-13:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-notifications-2:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-notifications-5:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-notifications-6:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-notifications-7:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-notifications-8:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "ggas/s ethrex-snapsync-notifications-9:3701": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        }
+      ],
+      "type": "xychart"
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "This calculates the RSS memory for the ethrex node.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2058,37 +3161,34 @@
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
-            "axisColorMode": "text",
+            "axisColorMode": "series",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 15,
-            "gradientMode": "none",
+            "fillOpacity": 50,
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
             "lineWidth": 2,
-            "pointSize": 4,
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 7
+            },
+            "pointStrokeWidth": 1,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "show": "points+lines"
           },
+          "links": [
+            {
+              "oneClick": false,
+              "targetBlank": true,
+              "title": "Show on Etherscan",
+              "url": "https://${network}.etherscan.io/block/${__data.fields.block_number}"
+            }
+          ],
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -2102,16 +3202,19 @@
                 "value": 80
               }
             ]
-          },
-          "unit": "bytes"
+          }
         },
         "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "VSZ"
+              "options": "Value"
             },
             "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
               {
                 "id": "custom.axisPlacement",
                 "value": "left"
@@ -2120,25 +3223,42 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "RSS"
+              "id": "byRegexp",
+              "options": "/block.*/"
             },
             "properties": [
               {
-                "id": "custom.axisPlacement",
-                "value": "right"
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Block"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
               }
             ]
           }
         ]
       },
       "gridPos": {
-        "h": 6,
+        "h": 12,
         "w": 12,
         "x": 12,
-        "y": 47
+        "y": 59
       },
-      "id": 31,
+      "id": 53,
+      "interval": "5s",
       "options": {
         "legend": {
           "calcs": [
@@ -2149,6 +3269,29 @@
           "placement": "bottom",
           "showLegend": true
         },
+        "mapping": "auto",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              }
+            }
+          }
+        ],
         "tooltip": {
           "hideZeros": false,
           "mode": "single",
@@ -2163,14 +3306,131 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "process_resident_memory_bytes{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-          "legendFormat": "{{ instance }} RSS",
+          "exemplar": false,
+          "expr": "sum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance) ( \n  sum by (instance)(\n    gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  ) * 1000000000\n)",
+          "format": "time_series",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Block time {{ instance }}",
           "range": true,
-          "refId": "A"
+          "refId": "block_time"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Block",
+          "range": true,
+          "refId": "block"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "all_same_block",
+          "range": true,
+          "refId": "all_same_block"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by () ( block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} offset 3s )\n!=\nmax by () ( block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} offset 8s )",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "remove_duplicate_blocks",
+          "range": true,
+          "refId": "remove_duplicate_blocks"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max without(instance) (\nsum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance)\n  sum by (instance)(\n    gas_limit{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  )\n)",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "Gas Used %",
+          "range": true,
+          "refId": "gas_used"
         }
       ],
-      "title": "Node Memory (RSS)",
-      "type": "timeseries"
+      "title": "Block Time",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "inner"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "config": {
+                  "id": "equal",
+                  "options": {
+                    "value": "0"
+                  }
+                },
+                "fieldName": "all_same_block"
+              }
+            ],
+            "match": "any",
+            "type": "exclude"
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "pattern": "Block.*"
+            }
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Block": {
+                "aggregations": []
+              },
+              "Block time ethrex-mainnet-3-0-0:3701": {
+                "aggregations": []
+              },
+              "Block time ethrex-mainnet-4-0-0-pathbased:3701": {
+                "aggregations": []
+              },
+              "Value": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "all_same_block": {
+                "aggregations": []
+              },
+              "remove_duplicate_blocks": {
+                "aggregations": []
+              }
+            }
+          }
+        }
+      ],
+      "type": "xychart"
     }
   ],
   "preload": false,
@@ -2255,5 +3515,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 12
+  "version": 23
 }
