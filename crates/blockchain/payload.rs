@@ -42,7 +42,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -370,14 +370,21 @@ impl Blockchain {
         let self_clone = self.clone();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
+        // TODO: start with an empty block
         let mut res = self_clone.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
-            let current_res = self_clone.build_payload(payload);
+            let self_clone = self.clone();
+            let building_task =
+                tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
-            // if let Some(current_res) = cancel_token.run_until_cancelled().await {
-            res = current_res?;
-            // }
+            if let Some(current_res_res) = cancel_token.run_until_cancelled(building_task).await {
+                if let Ok(current_res) = current_res_res {
+                    res = current_res?;
+                } else {
+                    warn!("Error joining payload building task");
+                }
+            }
         }
         Ok(res)
     }
