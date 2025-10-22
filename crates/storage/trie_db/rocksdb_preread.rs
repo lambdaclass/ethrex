@@ -1,15 +1,14 @@
 use ethrex_common::{H256, types::AccountUpdate};
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator};
-use rocksdb::{DBWithThreadMode, MultiThreaded, ReadOptions};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    sync::{Arc, RwLock, atomic::AtomicU64},
-    time::Instant,
+    collections::{BTreeMap, HashSet},
+    sync::{Arc, RwLock},
 };
 
 use crate::{
-    apply_prefix, hash_address, hash_key,
+    hash_address, hash_key,
     store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES, CF_TRIE_NODES},
     trie_db::layering::TrieLayerCache,
 };
@@ -23,15 +22,6 @@ pub struct RocksDBPreRead {
     last_computed_flatkeyvalue: Vec<u8>,
     tlc: Arc<RwLock<TrieLayerCache>>,
     state_root: H256,
-    pub metrics: RDBMetrics
-}
-
-#[derive(Default, Debug)]
-pub struct RDBMetrics {
-    pub hit_cache: AtomicU64,
-    pub hit_tlc: AtomicU64,
-    pub hit_db: AtomicU64,
-    pub miss: AtomicU64
 }
 
 pub struct RocksDBPreReadTrieDB {
@@ -69,7 +59,6 @@ impl RocksDBPreRead {
         tlc: Arc<RwLock<TrieLayerCache>>,
         state_root: H256,
     ) -> Result<Self, TrieError> {
-        let start = Instant::now();
         // Verify column family exists
         let cf_nodes = db
             .cf_handle(CF_TRIE_NODES)
@@ -88,45 +77,44 @@ impl RocksDBPreRead {
             .as_ref()
             .to_vec();
 
-        let mut opt = ReadOptions::default();
-        //opt.set_async_io(true);
-        //opt.fill_cache(false);
-        //opt.set_verify_checksums(false);
-
-        let mut fkv_reads: Vec<_> = updates.par_iter().map(|update| {
-            let addr = hash_address(&update.address);
-            let addr_nib = Nibbles::from_bytes(&addr);
-            addr_nib.as_ref().to_vec()
-        }).collect();
-        let mut reads: Vec<_> = updates.par_iter().flat_map_iter(|update| {
-            let mut prefixes = HashSet::new();
-            let addr = hash_address(&update.address);
-            let addr_nib = Nibbles::from_bytes(&addr);
-            let size_heuristic = if update.added_storage.len() > PREFETCH_DEPTH_BIG_COUNT {
-                PREFETCH_DEPTH_STORAGE_BIG
-            } else {
-                PREFETCH_DEPTH_STORAGE
-            };
-            for (storage_key, _) in &update.added_storage {
-                let key_hash = hash_key(storage_key);
-                let key_nib = Nibbles::from_bytes(&key_hash);
-                insert_prefixes(&mut prefixes, key_nib, Some(addr_nib.clone()), size_heuristic);
-            }
-            insert_prefixes(&mut prefixes, addr_nib, None, PREFETCH_DEPTH_ACCOUNT);
-            prefixes.into_iter()
-        }).collect();
+        let mut fkv_reads: Vec<_> = updates
+            .par_iter()
+            .map(|update| {
+                let addr = hash_address(&update.address);
+                let addr_nib = Nibbles::from_bytes(&addr);
+                addr_nib.as_ref().to_vec()
+            })
+            .collect();
+        let mut reads: Vec<_> = updates
+            .par_iter()
+            .flat_map_iter(|update| {
+                let mut prefixes = HashSet::new();
+                let addr = hash_address(&update.address);
+                let addr_nib = Nibbles::from_bytes(&addr);
+                let size_heuristic = if update.added_storage.len() > PREFETCH_DEPTH_BIG_COUNT {
+                    PREFETCH_DEPTH_STORAGE_BIG
+                } else {
+                    PREFETCH_DEPTH_STORAGE
+                };
+                for (storage_key, _) in &update.added_storage {
+                    let key_hash = hash_key(storage_key);
+                    let key_nib = Nibbles::from_bytes(&key_hash);
+                    insert_prefixes(
+                        &mut prefixes,
+                        key_nib,
+                        Some(addr_nib.clone()),
+                        size_heuristic,
+                    );
+                }
+                insert_prefixes(&mut prefixes, addr_nib, None, PREFETCH_DEPTH_ACCOUNT);
+                prefixes.into_iter()
+            })
+            .collect();
         fkv_reads.sort();
         reads.sort();
 
-        let tlc_lock = tlc.write().map_err(|_| TrieError::LockError)?;
-
-        let fetch_start = Instant::now();
-        let account_results = db.batched_multi_get_cf_opt(&cf_nodes, &reads, true, &opt);
-        let fkv_results =
-            db.batched_multi_get_cf_opt(&cf_flatkeyvalue, &fkv_reads, true, &opt);
-        println!("prefetched {} nodes", account_results.len());
-        println!("fetched in {}ms", fetch_start.elapsed().as_millis());
-        let arr_start = Instant::now();
+        let account_results = db.batched_multi_get_cf(&cf_nodes, &reads, true);
+        let fkv_results = db.batched_multi_get_cf(&cf_flatkeyvalue, &fkv_reads, true);
         let mut results = Vec::with_capacity(account_results.len());
         for (result, key) in account_results.into_iter().zip(reads) {
             if let Some(value) = result
@@ -144,31 +132,29 @@ impl RocksDBPreRead {
                 results.push((key, vec![]));
             }
         }
-        println!("AR arrayized {} in {}ms", results.len(), arr_start.elapsed().as_millis());
-        let insert_start = Instant::now();
-        let cache: BTreeMap<_, _> = results.into_par_iter().map(|(key, value)| {
-            if let Some(value) = tlc_lock.get(state_root, &key) {
-                (key, value)
-            } else {
-                (key, value)
-            }
-        }).collect();
-        println!("inserted in {}ms", insert_start.elapsed().as_millis());
+        let tlc_lock = tlc.write().map_err(|_| TrieError::LockError)?;
+        let cache: BTreeMap<_, _> = results
+            .into_par_iter()
+            .map(|(key, value)| {
+                if let Some(value) = tlc_lock.get(state_root, &key) {
+                    (key, value)
+                } else {
+                    (key, value)
+                }
+            })
+            .collect();
+        drop(tlc_lock);
 
         drop(cf_misc);
         drop(cf_nodes);
         drop(cf_flatkeyvalue);
-        drop(tlc_lock);
-
-        println!("calculated in {}ms", start.elapsed().as_millis());
 
         Ok(Self {
             db,
             cache,
             last_computed_flatkeyvalue,
             tlc,
-            state_root,
-            metrics: Default::default()
+            state_root
         })
     }
 
@@ -197,12 +183,10 @@ impl TrieDB for RocksDBPreReadTrieDB {
             None => key,
         };
         if let Some(value) = self.inner.cache.get(key.as_ref()) {
-            self.inner.metrics.hit_cache.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(Some(value.clone()));
         }
         let tlc = self.inner.tlc.read().map_err(|_| TrieError::LockError)?;
         if let Some(value) = tlc.get(self.inner.state_root, key.as_ref()) {
-            self.inner.metrics.hit_tlc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(Some(value));
         }
 
@@ -215,17 +199,11 @@ impl TrieDB for RocksDBPreReadTrieDB {
                 CF_TRIE_NODES
             })
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
-        let res = self
+        self
             .inner
             .db
             .get_cf(&cf, key.as_ref())
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
-        if res.is_some() {
-            self.inner.metrics.hit_db.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        } else {
-            self.inner.metrics.miss.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-        Ok(res)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {

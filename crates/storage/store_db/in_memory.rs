@@ -1,17 +1,13 @@
 use crate::{
-    UpdateBatch,
-    api::StoreEngine,
-    apply_prefix,
-    error::StoreError,
-    store::STATE_TRIE_SEGMENTS,
-    trie_db::layering::{TrieLayerCache, TrieWrapper},
+    api::StoreEngine, apply_prefix, error::StoreError, hash_address, hash_key, store::STATE_TRIE_SEGMENTS, trie_db::layering::{TrieLayerCache, TrieWrapper}, AccountUpdatesList, UpdateBatch
 };
 use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
+    AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_trie::{db::NodeMap, InMemoryTrieDB, Nibbles, Trie, EMPTY_TRIE_HASH};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -733,6 +729,72 @@ impl StoreEngine for Store {
         // FlatKeyValue currently not supported for the InMemory DB
         // Silently ignoring the request to build the FlatKeyValue is harmless
         Ok(())
+    }
+
+    fn apply_account_updates_from_trie_batch(
+        &self,
+        state_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> Result<AccountUpdatesList, StoreError> {
+        let mut ret_storage_updates = Vec::new();
+        let mut code_updates = Vec::new();
+        let mut state_trie = self.open_state_trie(state_root)?;
+        let state_root = state_trie.hash_no_commit();
+        for update in account_updates {
+            let hashed_address = hash_address(&update.address);
+            if update.removed {
+                // Remove account from trie
+                state_trie.remove(&hashed_address)?;
+                continue;
+            }
+            // Add or update AccountState in the trie
+            // Fetch current state or create a new state to be inserted
+            let mut account_state = match state_trie.get(&hashed_address)? {
+                Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                None => AccountState::default(),
+            };
+            if update.removed_storage {
+                account_state.storage_root = *EMPTY_TRIE_HASH;
+            }
+            if let Some(info) = &update.info {
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+                // Store updated code in DB
+                if let Some(code) = &update.code {
+                    code_updates.push((info.code_hash, code.clone()));
+                }
+            }
+            // Store the added storage in the account's storage trie and compute its new root
+            if !update.added_storage.is_empty() {
+                let mut storage_trie = self.open_storage_trie(
+                    H256::from_slice(&hashed_address),
+                    account_state.storage_root,
+                    state_root,
+                )?;
+                for (storage_key, storage_value) in &update.added_storage {
+                    let hashed_key = hash_key(storage_key);
+                    if storage_value.is_zero() {
+                        storage_trie.remove(&hashed_key)?;
+                    } else {
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    }
+                }
+                let (storage_hash, storage_updates) =
+                    storage_trie.collect_changes_since_last_hash();
+                account_state.storage_root = storage_hash;
+                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+            }
+            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+        }
+        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+
+        Ok(AccountUpdatesList {
+            state_trie_hash,
+            state_updates,
+            storage_updates: ret_storage_updates,
+            code_updates,
+        })
     }
 }
 
