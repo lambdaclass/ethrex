@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 3,
+  "id": 47,
   "links": [],
   "panels": [
     {
@@ -662,7 +662,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "disableTextWrap": false,
-          "editorMode": "builder",
+          "editorMode": "code",
           "expr": "head_height{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
           "format": "time_series",
           "fullMetaSearch": false,
@@ -2253,7 +2253,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 95
+            "y": 59
           },
           "id": 56,
           "options": {
@@ -2278,7 +2278,7 @@
             {
               "editorMode": "code",
               "expr": "block_building_base_fee{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} / 1000000000",
-              "legendFormat": "__auto",
+              "legendFormat": "{{ instance }}",
               "range": true,
               "refId": "A"
             }
@@ -2352,7 +2352,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 95
+            "y": 59
           },
           "id": 57,
           "options": {
@@ -2377,7 +2377,7 @@
             {
               "editorMode": "code",
               "expr": "gigagas_block_building{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} - 0",
-              "legendFormat": "__auto",
+              "legendFormat": "{{instance}}",
               "range": true,
               "refId": "A"
             }
@@ -2452,7 +2452,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 95
+            "y": 59
           },
           "id": 58,
           "options": {
@@ -2477,7 +2477,7 @@
             {
               "editorMode": "code",
               "expr": "block_building_ms{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-              "legendFormat": "__auto",
+              "legendFormat": "{{instance}}",
               "range": true,
               "refId": "A"
             }
@@ -2587,7 +2587,7 @@
             "h": 12,
             "w": 12,
             "x": 0,
-            "y": 160
+            "y": 168
           },
           "id": 52,
           "interval": "5s",
@@ -3563,7 +3563,7 @@
             "h": 12,
             "w": 12,
             "x": 12,
-            "y": 160
+            "y": 168
           },
           "id": 54,
           "interval": "5s",
@@ -3826,5 +3826,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 26
+  "version": 27
 }
