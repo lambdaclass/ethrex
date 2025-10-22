@@ -17,6 +17,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sha3::{Digest as _, Keccak256};
 use std::sync::Arc;
 use std::{
@@ -381,7 +382,7 @@ impl Store {
         mut state_trie: Trie,
         account_updates: Vec<AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
-        let mut ret_storage_updates = Vec::new();
+        //let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
 
@@ -399,56 +400,81 @@ impl Store {
         });
         */
 
-        for update in account_updates.iter() {
-            let removed = update.removed;
-            let hashed_address = hash_address(&update.address);
-            let removed_storage = update.removed_storage;
-            let info = &update.info;
-            let code = &update.code;
-            let added_storage = &update.added_storage;
+        let ret_storage_updates: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)> = account_updates
+            .into_par_iter()
+            .map(|update_for_storage| {
+                let removed = update_for_storage.removed;
+                let removed_storage = update_for_storage.removed_storage;
+                let info = &update_for_storage.info;
+                let code = &update_for_storage.code;
 
-            if removed {
-                // Remove account from trie
-                state_trie.remove(&hashed_address)?;
-                continue;
-            }
-            // Add or update AccountState in the trie
-            // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
-                Some(encoded_state) => AccountState::decode(&encoded_state)?,
-                None => AccountState::default(),
-            };
-            if removed_storage {
-                account_state.storage_root = *EMPTY_TRIE_HASH;
-            }
-            if let Some(info) = &info {
-                account_state.nonce = info.nonce;
-                account_state.balance = info.balance;
-                account_state.code_hash = info.code_hash;
-                // Store updated code in DB
-                if let Some(code) = code {
-                    code_updates.push((info.code_hash, code.clone()));
+                let added_storage = &update_for_storage.added_storage;
+                let hashed_address = hash_address(&update_for_storage.address);
+
+                //if removed {
+                //    // Remove account from trie
+                //    state_trie.remove(&hashed_address).unwrap();
+                //    return None;
+                //}
+
+                // Add or update AccountState in the trie
+                // Fetch current state or create a new state to be inserted
+                let mut account_state = match state_trie.get(&hashed_address).unwrap() {
+                    Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
+                    None => AccountState::default(),
+                };
+                if removed_storage {
+                    account_state.storage_root = *EMPTY_TRIE_HASH;
                 }
-            }
+                if let Some(info) = &info {
+                    account_state.nonce = info.nonce;
+                    account_state.balance = info.balance;
+                    account_state.code_hash = info.code_hash;
+                    // Store updated code in DB
+                    if let Some(code) = code {
+                        code_updates.push((info.code_hash, code.clone()));
+                    }
+                }
 
-            let engine = Arc::clone(&self.engine);
-            if !added_storage.is_empty() {
-                let hashed_address_h256 = H256::from_slice(&hashed_address);
-                let storage_root = account_state.storage_root;
-                let (storage_hash, storage_updates) = Store::inner_update_storage(
-                    added_storage,
-                    state_root,
-                    hashed_address_h256,
-                    storage_root,
-                    engine,
-                )
-                .unwrap();
-                account_state.storage_root = storage_hash;
-                ret_storage_updates.push((hashed_address_h256, storage_updates));
-            }
+                let engine = Arc::clone(&self.engine);
+                if !added_storage.is_empty() {
+                    let hashed_address_h256 = H256::from_slice(&hashed_address);
+                    let mut account_state = match state_trie.get(&hashed_address).unwrap() {
+                        Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
+                        None => AccountState::default(),
+                    };
+                    let storage_root = account_state.storage_root;
+                    let (storage_hash, storage_updates) = Store::inner_update_storage(
+                        added_storage,
+                        state_root,
+                        hashed_address_h256,
+                        storage_root,
+                        engine,
+                    )
+                    .unwrap();
+                    account_state.storage_root = storage_hash;
+                    // %%%%% ret_storage_updates.push();
+                    Some((hashed_address_h256, storage_updates))
+                } else {
+                    None
+                }
+            })
+            .filter(|elem| elem.is_some())
+            .map(|elem| elem.unwrap())
+            .collect::<Vec<_>>();
+
+        /*
+        for update in account_updates.iter() {
+
+
+
+
+
+            //  ########
 
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
+        */
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
         Ok(AccountUpdatesList {
