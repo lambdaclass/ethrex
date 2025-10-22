@@ -292,52 +292,9 @@ impl Trie {
         if root_hash == *EMPTY_TRIE_HASH {
             return Ok(NodeRef::default());
         }
-
-        let root_rlp = all_nodes.get(&root_hash).ok_or_else(|| {
-            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(root_hash)))
-        })?;
-
-        fn get_embedded_node(
-            all_nodes: &BTreeMap<H256, Vec<u8>>,
-            cur_node_rlp: &[u8],
-        ) -> Result<Node, TrieError> {
-            let cur_node = Node::decode_raw(cur_node_rlp)?;
-
-            Ok(match cur_node {
-                Node::Branch(mut node) => {
-                    for choice in &mut node.choices {
-                        let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
-                        };
-
-                        if hash.is_valid() {
-                            *choice = match all_nodes.get(&hash.finalize()) {
-                                Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
-                                None => hash.into(),
-                            };
-                        }
-                    }
-
-                    (*node).into()
-                }
-                Node::Extension(mut node) => {
-                    let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
-                    };
-
-                    node.child = match all_nodes.get(&hash.finalize()) {
-                        Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
-                        None => hash.into(),
-                    };
-
-                    node.into()
-                }
-                Node::Leaf(node) => node.into(),
-            })
-        }
-
-        let root = get_embedded_node(all_nodes, root_rlp)?;
-        Ok(root.into())
+        let mut root = NodeRef::Hash(root_hash.into());
+        root.resolve_subtrie(all_nodes)?;
+        Ok(root)
     }
 
     /// Builds a trie from a set of nodes with an empty InMemoryTrieDB as a backend because the nodes are embedded in the root.

@@ -4,10 +4,12 @@ mod leaf;
 
 use std::{
     array,
+    collections::BTreeMap,
     sync::{Arc, OnceLock},
 };
 
 pub use branch::BranchNode;
+use ethereum_types::H256;
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
@@ -88,6 +90,55 @@ impl NodeRef {
             NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
             NodeRef::Hash(hash) => *hash,
         }
+    }
+
+    pub fn compute_hash_finalized(&mut self) -> &H256 {
+        let node_hash = match self {
+            NodeRef::Node(node, hash) => {
+                // uses get_or_init() instead of set() because the latter doesn't have lazy eval.
+                hash.get_or_init(|| node.compute_hash());
+                hash.get_mut().unwrap()
+            }
+            NodeRef::Hash(hash) => hash,
+        };
+        node_hash.finalize_mut()
+    }
+
+    pub fn resolve_subtrie(
+        &mut self,
+        all_nodes: &BTreeMap<H256, Vec<u8>>,
+    ) -> Result<(), TrieError> {
+        let finalized_hash = self.compute_hash_finalized();
+
+        let mut decoded_node = match all_nodes.get(finalized_hash) {
+            Some(rlp) => Node::decode_raw(rlp)?,
+            None => return Ok(()),
+        };
+
+        match &mut decoded_node {
+            Node::Branch(node) => {
+                for choice in &mut node.choices {
+                    let NodeRef::Hash(hash) = choice else {
+                        unreachable!()
+                    };
+
+                    if hash.is_valid() {
+                        choice.resolve_subtrie(all_nodes)?;
+                    }
+                }
+            }
+            Node::Extension(node) => {
+                let NodeRef::Hash(_) = node.child else {
+                    unreachable!()
+                };
+
+                node.child.resolve_subtrie(all_nodes)?;
+            }
+            Node::Leaf(_) => {}
+        };
+
+        *self = decoded_node.into();
+        Ok(())
     }
 }
 
