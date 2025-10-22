@@ -1100,6 +1100,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "rayon",
  "serde",
  "serde_json",
  "sha3",
