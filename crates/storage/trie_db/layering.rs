@@ -2,12 +2,15 @@ use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
 use std::{
     collections::BTreeMap,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: BTreeMap<Vec<u8>, Vec<u8>>,
     parent: H256,
@@ -18,14 +21,20 @@ struct TrieLayer {
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
-    last_id: usize,
-    layers: BTreeMap<H256, Arc<TrieLayer>>,
+    last_id: Arc<AtomicUsize>,
+    layers: Arc<Mutex<BTreeMap<H256, Arc<TrieLayer>>>>,
 }
 
 impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         let mut current_state_root = state_root;
-        while let Some(layer) = self.layers.get(&current_state_root) {
+        while let Some(layer) = {
+            self.layers
+                .lock()
+                .expect("lock poisoned")
+                .get(&current_state_root)
+                .cloned()
+        } {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
                 return Some(value.clone());
             }
@@ -46,7 +55,13 @@ impl TrieLayerCache {
     // TODO: use finalized hash to know when to commit
     pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
         let mut counter = 0;
-        while let Some(layer) = self.layers.get(&state_root) {
+        while let Some(layer) = {
+            self.layers
+                .lock()
+                .expect("lock poisoned")
+                .get(&state_root)
+                .cloned()
+        } {
             state_root = layer.parent;
             counter += 1;
             if counter > commit_threshold {
@@ -56,47 +71,60 @@ impl TrieLayerCache {
         None
     }
 
-    pub fn put_batch(
-        &mut self,
-        parent: H256,
-        state_root: H256,
-        key_values: Vec<(Nibbles, Vec<u8>)>,
-    ) {
+    pub fn put_batch(&self, parent: H256, state_root: H256, key_values: Vec<(Nibbles, Vec<u8>)>) {
         if parent == state_root && key_values.is_empty() {
             return;
         } else if parent == state_root {
             tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
             return;
         }
-        self.layers
+
+        let entry = self
+            .layers
+            .lock()
+            .expect("lock poisoned")
             .entry(state_root)
             .or_insert_with(|| {
-                self.last_id += 1;
-                TrieLayer {
-                    nodes: Arc::new(BTreeMap::new()),
+                let last_id = self.last_id.fetch_add(1, Ordering::Relaxed);
+                Arc::new(TrieLayer {
+                    nodes: BTreeMap::new(),
                     parent,
-                    id: self.last_id,
-                }
+                    id: last_id + 1,
+                })
             })
-            .nodes
-            .extend(
-                key_values
-                    .into_iter()
-                    .map(|(path, node)| (path.into_vec(), node)),
-            );
+            .clone();
+
+        let mut layer = TrieLayer::clone(&entry);
+
+        layer.nodes.extend(
+            key_values
+                .into_iter()
+                .map(|(path, node)| (path.into_vec(), node)),
+        );
+        self.layers
+            .lock()
+            .expect("lock poisoned")
+            .insert(state_root, entry);
     }
 
-    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let mut layer = self.layers.remove(&state_root)?;
+    pub fn commit(&self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+        let layer = self
+            .layers
+            .lock()
+            .expect("lock poisoned")
+            .remove(&state_root)?;
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
-        self.layers.retain(|_, item| item.id > layer.id);
+        self.layers
+            .lock()
+            .expect("lock poisoned")
+            .retain(|_, item| item.id > layer.id);
         Some(
             parent_nodes
                 .unwrap_or_default()
                 .into_iter()
-                .chain(layer.nodes.drain())
+                .chain((&*layer).nodes.clone().into_iter())
                 .collect(),
         )
     }
@@ -104,7 +132,7 @@ impl TrieLayerCache {
 
 pub struct TrieWrapper {
     pub state_root: H256,
-    pub inner: Arc<RwLock<TrieLayerCache>>,
+    pub inner: Arc<TrieLayerCache>,
     pub db: Box<dyn TrieDB>,
     pub prefix: Option<H256>,
 }
@@ -127,12 +155,7 @@ impl TrieDB for TrieWrapper {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self
-            .inner
-            .read()
-            .map_err(|_| TrieError::LockError)?
-            .get(self.state_root, key.clone())
-        {
+        if let Some(value) = self.inner.get(self.state_root, key.clone()) {
             return Ok(Some(value));
         }
         self.db.get(key)
@@ -148,8 +171,7 @@ impl TrieDB for TrieWrapper {
             }
             None => *EMPTY_TRIE_HASH,
         };
-        let mut inner = self.inner.write().map_err(|_| TrieError::LockError)?;
-        inner.put_batch(
+        self.inner.put_batch(
             self.state_root,
             new_state_root,
             key_values

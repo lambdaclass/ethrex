@@ -23,7 +23,7 @@ use std::{
     mem::take,
     path::Path,
     sync::{
-        Arc, Mutex, RwLock,
+        Arc,
         mpsc::{SyncSender, sync_channel},
     },
 };
@@ -127,7 +127,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<TrieLayerCache>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: std::sync::mpsc::SyncSender<(
         std::sync::mpsc::SyncSender<Result<(), StoreError>>,
@@ -669,22 +669,12 @@ impl Store {
             .chain(account_updates)
             .collect();
         // Read-Copy-Update the trie cache with a new layer.
-        let trie = trie_cache
-            .lock()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
-        let mut trie_mut = (&*trie).clone();
-        trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+        trie_cache.put_batch(parent_state_root, child_state_root, new_layer);
         // Update finished, signal block production.
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
         // Phase 2: update disk layer.
-        let trie = trie_cache
-            .lock()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
-        let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
+        let Some(root) = trie_cache.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
             // Nothing to commit to disk, move on.
             return Ok(());
         };
@@ -693,14 +683,13 @@ impl Store {
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-        let mut trie_mut = (&*trie).clone();
         let mut batch = WriteBatch::default();
         let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
             open_cfs(db, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
 
         let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
         // Commit removes the bottom layer and returns it, this is the mutation step.
-        let nodes = trie_mut.commit(root).unwrap_or_default();
+        let nodes = trie_cache.commit(root).unwrap_or_default();
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
 
@@ -719,8 +708,6 @@ impl Store {
             }
         }
         db.write(batch)?;
-        // Phase 3: update diff layers with the removal of bottom layer.
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         Ok(())
     }
 }
@@ -841,7 +828,7 @@ impl StoreEngine for Store {
                 // Wait for an updated top layer so every caller afterwards sees a consistent view.
                 // Specifically, the next block produced MUST see this upper layer.
                 rx.recv()
-                    .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))?;
+                    .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
             }
             // After top-level is addded, we can make the rest of the changes visible.
             db.write(batch)
@@ -1397,7 +1384,7 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self.trie_cache.lock().unwrap().clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
         });
@@ -1409,7 +1396,7 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self.trie_cache.lock().unwrap().clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: None,
         });

@@ -15,7 +15,7 @@ use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
     collections::HashMap,
     fmt::Debug,
-    sync::{Arc, Mutex, MutexGuard, RwLock},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 // NOTE: we use a different commit threshold than rocksdb since tests
@@ -39,7 +39,7 @@ pub struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    trie_cache: Arc<RwLock<TrieLayerCache>>,
+    trie_cache: Arc<TrieLayerCache>,
     // Contains account trie nodes
     state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -92,10 +92,6 @@ impl StoreEngine for Store {
 
         // Store trie updates
         {
-            let mut trie = store
-                .trie_cache
-                .write()
-                .map_err(|_| StoreError::LockError)?;
             let parent = update_batch
                 .blocks
                 .first()
@@ -121,8 +117,11 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
 
-            if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
-                let nodes = trie.commit(root).unwrap_or_default();
+            if let Some(root) = store
+                .trie_cache
+                .get_commitable(pre_state_root, COMMIT_THRESHOLD)
+            {
+                let nodes = store.trie_cache.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
                     if value.is_empty() {
                         state_trie.remove(&key);
@@ -141,7 +140,9 @@ impl StoreEngine for Store {
                 })
                 .chain(update_batch.account_updates)
                 .collect();
-            trie.put_batch(pre_state_root, last_state_root, key_values);
+            store
+                .trie_cache
+                .put_batch(pre_state_root, last_state_root, key_values);
         }
 
         for block in update_batch.blocks {
