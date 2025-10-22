@@ -53,7 +53,6 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -210,7 +209,7 @@ pub async fn start_api(
     peer_handler: PeerHandler,
     client_version: String,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: Option<u64>,
+    gas_ceil: u64,
     extra_data: String,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
@@ -231,7 +230,7 @@ pub async fn start_api(
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
-        gas_ceil: gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
+        gas_ceil,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
