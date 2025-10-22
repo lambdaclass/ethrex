@@ -93,6 +93,7 @@ async fn main() {
 
         println!("Producing {n_blocks} blocks...");
 
+        // This block production represents the sequencer producing blocks
         let blocks = produce_l2_blocks(
             blockchain.clone(),
             &mut store,
@@ -130,6 +131,8 @@ async fn main() {
 
         // The checkpoint has fulfilled its purpose, so we can remove it to
         // avoid wasting disk space
+        // Ideally, we should keep the batch until it is verified in the L1,
+        // just in case something goes wrong and we need to regenerate it.
         remove_dir_all(&checkpoint_datadir).expect("failed to remove checkpoint directory");
 
         println!("Done!");
