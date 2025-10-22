@@ -65,9 +65,13 @@ pub(crate) async fn perform(
     state: ConnectionState,
     eth_version: Arc<RwLock<EthCapVersion>>,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), PeerConnectionError> {
+    let task_id = tokio::task::id();
+    tracing::info!(task_id = ?task_id, "handshake - start");
     let (context, node, framed) = match state {
         ConnectionState::Initiator(Initiator { context, node, .. }) => {
+            tracing::info!(task_id = ?task_id, "handshake - initiator");
             let addr = SocketAddr::new(node.ip, node.tcp_port);
+            tracing::info!(task_id = ?task_id, "handshake - SocketAddr::new");
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
@@ -76,14 +80,15 @@ pub(crate) async fn perform(
                     return Err(error)?;
                 }
             };
+            tracing::info!(task_id = ?task_id, "handshake - Ok Socket");
             let local_state = send_auth(&context.signer, node.public_key, &mut stream).await?;
+            tracing::info!(task_id = ?task_id, "Auth sent");
             let remote_state = receive_ack(&context.signer, node.public_key, &mut stream).await?;
             // Local node is initator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
-            log_peer_trace(&node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec))
         }
         ConnectionState::Receiver(Receiver {
@@ -164,14 +169,22 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, PeerConnectionError> {
+    let task_id = tokio::task::id();
+
+    tracing::info!(task_id = ?task_id, "send_auth - init");
     let peer_pk =
         compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
+    tracing::info!(task_id = ?task_id, "send_auth - compress_pubkey");
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
+    tracing::info!(task_id = ?task_id, "send_auth - local_nonce");
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
+    tracing::info!(task_id = ?task_id, "send_auth - local_ephemeral_key");
 
     let msg = encode_auth_message(signer, local_nonce, &peer_pk, &local_ephemeral_key)?;
+    tracing::info!(task_id = ?task_id, "send_auth - encode_auth_message");
     stream.write_all(&msg).await?;
+    tracing::info!(task_id = ?task_id, "send_auth - stream.write_all (post await)");
 
     Ok(LocalState {
         nonce: local_nonce,
