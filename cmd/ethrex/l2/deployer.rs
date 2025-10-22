@@ -578,17 +578,17 @@ pub async fn deploy_l1_contracts(
 
     initialize_contracts(contract_addresses, &eth_client, &opts, &genesis, &signer).await?;
 
-    if contract_addresses.router.is_some()
-        && register_chain(
+    if contract_addresses.router.is_some() {
+        let _ = register_chain(
             &eth_client,
             contract_addresses,
             genesis.config.chain_id,
             &signer,
         )
         .await
-        .is_err()
-    {
-        warn!("Could not register chain in shared bridge router");
+        .inspect_err(|err| {
+            warn!(%err, "Could not register chain in shared bridge router");
+        });
     }
 
     if opts.deposit_rich {
