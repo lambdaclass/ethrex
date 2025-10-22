@@ -30,32 +30,32 @@ In a console with `ethrex/crates/l2` as the current directory, run the following
 
 ```bash
 COMPILE_CONTRACTS=true \
-cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--eth-rpc-url <L1_RPC_URL> \
-	--private-key <L1_PRIVATE_KEY> \
-	--genesis-l1-path <GENESIS_L1_PATH> \
-	--genesis-l2-path <GENESIS_L2_PATH> \
-	--contracts-path contracts \
-	--aligned \
-    --aligned.aggregator-address <ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS> \
-    --bridge-owner <ADDRESS> \
-    --on-chain-proposer-owner <ADDRESS> \
-    --private-keys-file-path <PRIVATE_KEYS_FILE_PATH> \
-    --sequencer-registry-owner <ADDRESS> \
-    --sp1-vk-path <SP1_VERIFICATION_KEY_PATH>
+ETHREX_L2_ALIGNED=true \
+ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=<ALIGNED_AGGREGATOR_ADDRESS> \
+ETHREX_L2_SP1=true \
+ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true \
+cargo run --release --features l2,l2-sql --manifest-path "../../Cargo.toml" -- l2 deploy \
+        --eth-rpc-url <ETH_RPC_URL> \
+        --private-key <YOUR_PRIVATE_KEY> \
+        --on-chain-proposer-owner <ON_CHAIN_PROPOSER_OWNER>  \
+        --bridge-owner <ON_CHAIN_PROPOSER_OWNER>  \
+        --genesis-l2-path "../../fixtures/genesis/l2.json" \
+        --proof-sender.l1-address <PROOF_SENDER_L1_ADDRESS>
 ```
 
 > [!NOTE]
 > This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
-> In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.
+> In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers, you can find the address for the aligned aggegator service [here](https://docs.alignedlayer.com/guides/7_contract_addresses)
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
+> Both the private key and the addresses for the on chain proposer, bridge and proof sender should have funds.
 
 ### 3. Deposit funds to the `AlignedBatcherPaymentService` contract from the proof sender
 
 ```bash
-aligned \
+aligned deposit-to-batcher \
 --network <NETWORK> \
 --private_key <PROOF_SENDER_PRIVATE_KEY> \
+--rpc_url <RPC_URL> \
 --amount <DEPOSIT_AMOUNT>
 ```
 
@@ -69,39 +69,56 @@ In a console with `ethrex/crates/l2` as the current directory, run the following
 ```bash
 cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- \
 	l2 \
-	--watcher.block-delay <WATCHER_BLOCK_DELAY> \
-	--network <L2_GENESIS_FILE_PATH> \
-	--http.port <L2_PORT> \
-	--http.addr <L2_RPC_ADDRESS> \
-	--datadir <ethrex_L2_DEV_DB> \
+	--watcher.block-delay 0 \
+	--network "../../fixtures/genesis/l2.json" \
 	--l1.bridge-address <BRIDGE_ADDRESS> \
 	--l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
-	--eth.rpc-url <L1_RPC_URL> \
-	--block-producer.coinbase-address <BLOCK_PRODUCER_COINBASE_ADDRESS> \
-	--committer.l1-private-key <COMMITTER_PRIVATE_KEY> \
-	--proof-coordinator.l1-private-key <PROOF_COORDINATOR_PRIVATE_KEY> \
-	--proof-coordinator.addr <PROOF_COORDINATOR_ADDRESS> \
+	--eth.rpc-url <ETH_RPC_URL> \
 	--aligned \
-    --aligned-verifier-interval-ms <ETHREX_ALIGNED_VERIFIER_INTERVAL_MS> \
-    --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \
-    --aligned-network <ETHREX_ALIGNED_NETWORK> \
-    --fee-estimate <ETHREX_ALIGNED_FEE_ESTIMATE> \
+    --aligned-network <ALIGNED_NETWORK>  \
+    --block-producer.coinbase-address <COINBASE_ADDRESS>  \
+    --committer.l1-private-key <COMMITER_PRIVATE_KEY>  \
+    --proof-coordinator.l1-private-key <PROOF_COORDINATOR_PRIVATE_KEY>  \
+    --aligned.beacon-url <ALIGNED_BEACON_URL> \
+	--datadir ethrex_l2 \
+    --no-monitor
 ```
+
+Both commiter and proof coordinator should have funds.
 
 Aligned params explanation:
 
 - `--aligned`: Enables aligned mode, enforcing all required parameters.
-- `ETHREX_ALIGNED_VERIFIER_INTERVAL_MS`: Interval in millisecs, that the `proof_verifier` will sleep between each proof aggregation check.
-- `ETHREX_ALIGNED_BEACON_CLIENT_URL`: URL of the beacon client used by the Aligned SDK to verify proof aggregations.
-- `ETHREX_ALIGNED_NETWORK` and `ETHREX_ALIGNED_FEE_ESTIMATE`: Parameters used by the [Aligned SDK](https://docs.alignedlayer.com/guides/1.2_sdk_api_reference).
+- `--aligned.beacon-url`: URL of the beacon client used by the Aligned SDK to verify proof aggregations, it has to support `/eth/v1/beacon/blobs`
+- `--aligned-network`: Parameter used by the [Aligned SDK](https://docs.alignedlayer.com/guides/1.2_sdk_api_reference).
+
+If you can't find a beacon client URL which supports that endpoint, you can run your own with lighthouse and ethrex:
+
+Create secrets directory and jwt secret
+
+```bash
+mkdir -p ethereum/secrets/
+cd ethereum/
+openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
+```
+
+```bash
+lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --execution-jwt <PATH_TO_SECRET> --checkpoint-sync-url <CHECKPOINT_URL> --http --purge-db-force --supernode
+```
+
+```bash
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --authrpc.jwtsecret <PATH_TO_SECRET> --network <NETWORK>
+```
 
 ### 4. Running the Prover
 
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
 ```bash
-make init-prover-<sp1/risc0> # optional: GPU=true
+make init-prover-<sp1/risc0> GPU=true # The GPU parameter is optional
 ```
+
+Then you should wait until aligned aggregates your proof
 
 ## How to run (local devnet)
 

@@ -114,6 +114,7 @@ pub fn resolve_aligned_network(network: &str) -> Network {
         "holesky" => Network::Holesky,
         "holesky-stage" => Network::HoleskyStage,
         "mainnet" => Network::Mainnet,
+        "hoodi" => Network::Hoodi,
         _ => Network::Devnet, // TODO: Implement custom networks
     }
 }
