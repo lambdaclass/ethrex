@@ -383,7 +383,7 @@ impl Store {
         account_updates: Vec<AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         //let mut ret_storage_updates = Vec::new();
-        let mut code_updates = Vec::new();
+        let code_updates = std::sync::Mutex::new(Vec::new());
         let state_root = state_trie.hash_no_commit();
 
         // TODO!
@@ -400,7 +400,7 @@ impl Store {
         });
         */
 
-        let ret_storage_updates: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)> = account_updates
+        let ret_account_updates: Vec<_> = account_updates
             .into_par_iter()
             .map(|update_for_storage| {
                 let removed = update_for_storage.removed;
@@ -432,17 +432,16 @@ impl Store {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = code {
-                        code_updates.push((info.code_hash, code.clone()));
+                        code_updates
+                            .lock()
+                            .unwrap()
+                            .push((info.code_hash, code.clone()));
                     }
                 }
 
                 let engine = Arc::clone(&self.engine);
-                if !added_storage.is_empty() {
-                    let hashed_address_h256 = H256::from_slice(&hashed_address);
-                    let mut account_state = match state_trie.get(&hashed_address).unwrap() {
-                        Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
-                        None => AccountState::default(),
-                    };
+                let hashed_address_h256 = H256::from_slice(&hashed_address);
+                let storage_update = if !added_storage.is_empty() {
                     let storage_root = account_state.storage_root;
                     let (storage_hash, storage_updates) = Store::inner_update_storage(
                         added_storage,
@@ -453,35 +452,38 @@ impl Store {
                     )
                     .unwrap();
                     account_state.storage_root = storage_hash;
-                    // %%%%% ret_storage_updates.push();
                     Some((hashed_address_h256, storage_updates))
                 } else {
                     None
-                }
+                };
+                (
+                    hashed_address,
+                    account_state.encode_to_vec(),
+                    storage_update,
+                    removed,
+                )
             })
-            .filter(|elem| elem.is_some())
-            .map(|elem| elem.unwrap())
             .collect::<Vec<_>>();
 
-        /*
-        for update in account_updates.iter() {
+        let mut storage_updates = Vec::new();
 
-
-
-
-
-            //  ########
-
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+        for (pathrlp, account_state, storage_update, removed) in ret_account_updates {
+            if removed {
+                state_trie.remove(&pathrlp)?;
+            } else {
+                state_trie.insert(pathrlp, account_state)?;
+            }
+            if let Some((hashed_address, storage_update)) = storage_update {
+                storage_updates.push((hashed_address, storage_update));
+            }
         }
-        */
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
         Ok(AccountUpdatesList {
             state_trie_hash,
             state_updates,
-            storage_updates: ret_storage_updates,
-            code_updates,
+            storage_updates,
+            code_updates: code_updates.into_inner().unwrap(),
         })
     }
 
