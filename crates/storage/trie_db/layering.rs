@@ -65,24 +65,20 @@ impl TrieLayerCache {
             tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
             return;
         }
+        if self.layers.contains_key(&state_root) {
+            return;
+        }
 
-        let mut entry = if let Some(entry) = self.layers.get(&state_root) {
-            TrieLayer::clone(entry)
-        } else {
-            TrieLayer {
-                nodes: Arc::new(HashMap::new()),
-                parent,
-                id: self.last_id,
-            }
-        };
-
-        let mut nodes = (*entry.nodes).clone();
-        nodes.extend(
+        let nodes = HashMap::from_iter(
             key_values
                 .into_iter()
                 .map(|(path, node)| (path.into_vec(), node)),
         );
-        entry.nodes = Arc::new(nodes);
+        let entry = TrieLayer {
+            nodes: Arc::new(nodes),
+            parent,
+            id: self.last_id + 1,
+        };
         self.layers.insert(state_root, Arc::new(entry));
     }
 
