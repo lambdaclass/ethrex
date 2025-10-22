@@ -308,7 +308,8 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     env_clone.block_excess_blob_gas = None;
     env_clone.gas_price = U256::zero();
     env_clone.origin = // l2 sequencer address
-        Address::from_slice(&hex::decode("0x3d1e15a1a55578f7c920884a9943b3b35d0d885b").unwrap());
+        Address::from_slice(&hex::decode("3d1e15a1a55578f7c920884a9943b3b35d0d885b").unwrap());
+    env_clone.custom_fee_token = None; // prevent recursion
 
     let mut new_vm = VM::new(
         env_clone,
