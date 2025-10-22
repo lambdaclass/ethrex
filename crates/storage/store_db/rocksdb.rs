@@ -722,7 +722,10 @@ impl Store {
                 batch.put_cf(cf, key, value);
             }
         }
-        db.write(batch)?;
+        let result = db.write(batch);
+        // We want to send this message even if there was an error during the batch write
+        let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
+        result?;
         // Phase 3: update diff layers with the removal of bottom layer.
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         Ok(())
