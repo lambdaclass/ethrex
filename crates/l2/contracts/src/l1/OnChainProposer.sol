@@ -92,8 +92,6 @@ contract OnChainProposer is
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
 
-    address public sharedBridgeRouter = address(0);
-
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -120,8 +118,7 @@ contract OnChainProposer is
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses,
-        uint256 chainId,
-        address _sharedBridgeRouter
+        uint256 chainId
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -170,8 +167,6 @@ contract OnChainProposer is
         }
 
         CHAIN_ID = chainId;
-
-        sharedBridgeRouter = _sharedBridgeRouter;
 
         OwnableUpgradeable.__Ownable_init(owner);
     }

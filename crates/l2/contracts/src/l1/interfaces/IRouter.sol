@@ -4,27 +4,10 @@ pragma solidity ^0.8.29;
 import { ICommonBridge } from "./ICommonBridge.sol";
 
 interface IRouter {
-    /// @notice Struct containing information about a registered chain.
-    /// @param onChainProposer The address of the OnChainProposer for the chain.
-    /// @param commonBridge The address of the CommonBridge for the chain.
-    struct ChainInfo {
-        address onChainProposer;
-        address commonBridge;
-    }
-
-    /// @notice Returns the address of the CommonBridge for a given chain ID.
-    /// @param chainId The ID of the chain.
-    function bridge(uint256 chainId) external view returns (address);
-
-    /// @notice Returns the address of the OnChainProposer for a given chain ID.
-    /// @param chainId The ID of the chain.
-    function onChainProposer(uint256 chainId) external view returns (address);
-
     /// @notice Registers a new chain with its OnChainProposer and CommonBridge addresses.
     /// @param chainId The ID of the chain to register.
-    /// @param onChainProposer The address of the OnChainProposer for the chain
     /// @param commonBridge The address of the CommonBridge for the chain.
-    function register(uint256 chainId, address onChainProposer, address commonBridge) external;
+    function register(uint256 chainId, address commonBridge) external;
 
     /// @notice Deregisters a chain
     /// @param chainId The ID of the chain to deregister.
@@ -37,9 +20,8 @@ interface IRouter {
 
     /// @notice Emitted when a new chain is registered.
     /// @param chainId The ID of the registered chain.
-    /// @param onChainProposer The address of the OnChainProposer for the registered chain.
     /// @param commonBridge The address of the CommonBridge for the registered chain.
-    event ChainRegistered(uint256 indexed chainId, address onChainProposer, address commonBridge);
+    event ChainRegistered(uint256 indexed chainId, address commonBridge);
 
     /// @notice Emitted when a chain is deregistered.
     /// @param chainId The ID of the deregistered chain.

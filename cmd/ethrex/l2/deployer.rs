@@ -521,14 +521,14 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 ));
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256,address)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address,address)";
 const ROUTER_INITIALIZER_SIGNATURE: &str = "initialize(address)";
-const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address,address)";
+const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address)";
 
 // deposit(uint256 _amount, address _l2Recipient)
 const NATIVE_TOKEN_DEPOSIT_SIGNATURE: &str = "deposit(uint256,address)";
@@ -933,7 +933,6 @@ async fn initialize_contracts(
                 Value::Address(opts.proof_sender_l1_address),
             ]),
             Value::Uint(genesis.config.chain_id.into()),
-            Value::Address(contract_addresses.router.unwrap_or_default()),
         ];
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
@@ -1047,7 +1046,6 @@ async fn register_chain(
 ) -> Result<(), DeployerError> {
     let params = vec![
         Value::Uint(U256::from(chain_id)),
-        Value::Address(contract_addresses.on_chain_proposer_address),
         Value::Address(contract_addresses.bridge_address),
     ];
 

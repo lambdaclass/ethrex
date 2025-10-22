@@ -17,70 +17,45 @@ contract Router is
     Ownable2StepUpgradeable,
     PausableUpgradeable
 {
-    mapping(uint256 chainId => ChainInfo) public chains;
+    mapping(uint256 chainId => address bridge) public bridges;
 
     function initialize(address owner) public initializer {
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
     /// @inheritdoc IRouter
-    function bridge(uint256 chainId) public view returns (address) {
-        address commonBridge = chains[chainId].commonBridge;
-
-        if (commonBridge == address(0)) {
-            revert ChainNotRegistered(chainId);
-        }
-
-        return commonBridge;
-    }
-
-    /// @inheritdoc IRouter
-    function onChainProposer(uint256 chainId) public view returns (address) {
-        address _onChainProposer = chains[chainId].onChainProposer;
-
-        if (_onChainProposer == address(0)) {
-            revert ChainNotRegistered(chainId);
-        }
-
-        return _onChainProposer;
-    }
-
-    /// @inheritdoc IRouter
-    function register(uint256 chainId, address _onChainProposer, address _commonBridge) onlyOwner whenNotPaused public {
-        if (_onChainProposer == address(0) || _commonBridge == address(0)) {
+    function register(uint256 chainId, address _commonBridge) onlyOwner whenNotPaused public {
+        if (_commonBridge == address(0)) {
             revert InvalidAddress(address(0));
         }
 
-        if (chains[chainId].onChainProposer != address(0)) {
+        if (bridges[chainId] != address(0)) {
             revert ChainAlreadyRegistered(chainId);
         }
 
-        chains[chainId] = ChainInfo({
-            onChainProposer: _onChainProposer,
-            commonBridge: _commonBridge
-        });
+        bridges[chainId] = _commonBridge;
 
-        emit ChainRegistered(chainId, _onChainProposer, _commonBridge);
+        emit ChainRegistered(chainId, _commonBridge);
     }
 
     /// @inheritdoc IRouter
     function deregister(uint256 chainId) onlyOwner whenNotPaused public {
-        if (chains[chainId].onChainProposer == address(0)) {
+        if (bridges[chainId] == address(0)) {
             revert ChainNotRegistered(chainId);
         }
 
-        delete chains[chainId];
+        delete bridges[chainId];
 
         emit ChainDeregistered(chainId);
     }
 
     /// @inheritdoc IRouter
     function sendMessage(uint256 chainId, ICommonBridge.SendValues calldata message) public override payable {
-        if (chains[chainId].commonBridge == address(0)) {
+        if (bridges[chainId] == address(0)) {
             revert ChainNotRegistered(chainId);
         }
 
-        ICommonBridge(chains[chainId].commonBridge).receiveMessage{value: msg.value}(message);
+        ICommonBridge(bridges[chainId]).receiveMessage{value: msg.value}(message);
     }
 
     /// @notice Allow owner to upgrade the contract.
