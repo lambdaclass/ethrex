@@ -93,8 +93,8 @@ async fn main() {
 
         println!("Producing {n_blocks} blocks...");
 
-        // This block production represents the sequencer producing blocks
-        let blocks = produce_l2_blocks(
+        // This block building represents the sequencer building blocks
+        let blocks = build_l2_blocks(
             blockchain.clone(),
             &mut store,
             &rollup_store,
@@ -104,9 +104,9 @@ async fn main() {
         )
         .await;
 
-        head_block_hash = blocks.last().expect("no blocks produced").hash();
+        head_block_hash = blocks.last().expect("no blocks built").hash();
 
-        head_block_timestamp = blocks.last().expect("no blocks produced").header.timestamp;
+        head_block_timestamp = blocks.last().expect("no blocks built").header.timestamp;
 
         println!(
             "Checkpoint head: {}, Store head: {}",
@@ -120,7 +120,7 @@ async fn main() {
                 .expect("failed to get latest block number from main store"),
         );
 
-        println!("Generating witnesses for produced blocks...");
+        println!("Generating witnesses for built blocks...");
 
         checkpoint_blockchain
             .generate_witness_for_blocks(&blocks)
@@ -140,7 +140,7 @@ async fn main() {
 }
 
 /// Produces L2 blocks populated with a single signed transaction each.
-pub async fn produce_l2_blocks(
+pub async fn build_l2_blocks(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
     rollup_store: &StoreRollup,
@@ -164,7 +164,7 @@ pub async fn produce_l2_blocks(
             .await
             .expect("failed to add tx to pool");
 
-        let block = produce_empty_l2_block(
+        let block = build_empty_l2_block(
             blockchain.clone(),
             store,
             rollup_store,
@@ -185,7 +185,7 @@ pub async fn produce_l2_blocks(
 }
 
 /// Produces a single empty L2 block.
-pub async fn produce_empty_l2_block(
+pub async fn build_empty_l2_block(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
     rollup_store: &StoreRollup,
