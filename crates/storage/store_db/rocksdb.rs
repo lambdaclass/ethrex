@@ -690,7 +690,6 @@ impl Store {
             .clone();
         let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
             // Nothing to commit to disk, move on.
-            notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
             return Ok(());
         };
         // Stop the flat-key-value generator thread, as the underlying trie is about to change.
