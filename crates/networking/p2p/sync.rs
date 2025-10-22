@@ -231,7 +231,7 @@ impl Syncer {
 
         // We validate that we have the folders that are being used empty, as we currently assume
         // they are. If they are not empty we empty them folder
-        deletes_leaves_folder(&self.datadir)?;
+        deletes_leaves_folder(&self.datadir);
         loop {
             debug!("Sync Log 1: In snap sync");
             debug!(

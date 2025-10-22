@@ -1,4 +1,4 @@
-use crate::{peer_handler::DumpError, sync::SyncError};
+use crate::peer_handler::DumpError;
 use ethrex_common::{H256, H512, U256, types::AccountState, utils::keccak};
 use ethrex_rlp::encode::RLPEncode;
 use secp256k1::{PublicKey, SecretKey};
@@ -40,22 +40,17 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
 }
 
 /// Deletes the snap folders needed for downloading the leaves during the initial
-/// step of snap sync
-pub fn deletes_leaves_folder(datadir: &Path) -> Result<(), SyncError> {
-    std::fs::remove_dir_all(get_account_state_snapshots_dir(datadir))
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir))
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_code_hashes_snapshots_dir(datadir))
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
+/// step of snap sync.
+pub fn deletes_leaves_folder(datadir: &Path) -> () {
+    // We ignore the errors because this happen when the folder don't exist
+    let _ = std::fs::remove_dir_all(get_account_state_snapshots_dir(datadir));
+    let _ = std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir));
+    let _ = std::fs::remove_dir_all(get_code_hashes_snapshots_dir(datadir));
     #[cfg(feature = "rocksdb")]
     {
-        std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
-            .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
-        std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
-            .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
+        let _ = std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir));
+        let _ = std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir));
     };
-    Ok(())
 }
 
 pub fn get_account_storages_snapshots_dir(datadir: &Path) -> PathBuf {
