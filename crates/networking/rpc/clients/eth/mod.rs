@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt};
+use std::collections::BTreeMap;
 
 use crate::{
     clients::eth::errors::{CallError, GetPeerCountError, GetWitnessError, TxPoolContentError},
@@ -21,12 +21,12 @@ use errors::{
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlobsBundle, Block, GenericTransaction, TxKind, TxType},
+    types::{BlobsBundle, Block, GenericTransaction, TxKind},
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{debug, trace, warn};
 
@@ -683,99 +683,5 @@ impl EthClient {
             map.insert(url.to_string(), response);
         }
         map
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactionByHashTransaction {
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub chain_id: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub nonce: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub max_priority_fee_per_gas: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub max_fee_per_gas: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub gas_limit: u64,
-    #[serde(default)]
-    pub to: Address,
-    #[serde(default)]
-    pub value: U256,
-    #[serde(default, with = "ethrex_common::serde_utils::vec_u8", alias = "input")]
-    pub data: Vec<u8>,
-    #[serde(default)]
-    pub access_list: Vec<(Address, Vec<H256>)>,
-    #[serde(default)]
-    pub r#type: TxType,
-    #[serde(default)]
-    pub signature_y_parity: bool,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub signature_r: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub signature_s: u64,
-    #[serde(default)]
-    pub block_number: U256,
-    #[serde(default)]
-    pub block_hash: H256,
-    #[serde(default)]
-    pub from: Address,
-    #[serde(default)]
-    pub hash: H256,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub transaction_index: u64,
-    #[serde(default)]
-    pub blob_versioned_hashes: Option<Vec<H256>>,
-}
-
-impl fmt::Display for GetTransactionByHashTransaction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            r#"
-chain_id: {},
-nonce: {},
-max_priority_fee_per_gas: {},
-max_fee_per_gas: {},
-gas_limit: {},
-to: {:#x},
-value: {},
-data: {:#?},
-access_list: {:#?},
-type: {:?},
-signature_y_parity: {},
-signature_r: {:x},
-signature_s: {:x},
-block_number: {},
-block_hash: {:#x},
-from: {:#x},
-hash: {:#x},
-transaction_index: {}"#,
-            self.chain_id,
-            self.nonce,
-            self.max_priority_fee_per_gas,
-            self.max_fee_per_gas,
-            self.gas_limit,
-            self.to,
-            self.value,
-            self.data,
-            self.access_list,
-            self.r#type,
-            self.signature_y_parity,
-            self.signature_r,
-            self.signature_s,
-            self.block_number,
-            self.block_hash,
-            self.from,
-            self.hash,
-            self.transaction_index,
-        )?;
-
-        if let Some(blob_versioned_hashes) = &self.blob_versioned_hashes {
-            write!(f, "\nblob_versioned_hashes: {blob_versioned_hashes:#?}")?;
-        }
-
-        fmt::Result::Ok(())
     }
 }
