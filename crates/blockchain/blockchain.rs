@@ -48,6 +48,8 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
 
+use crate::fork_choice::apply_fork_choice;
+
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
@@ -186,13 +188,12 @@ impl Blockchain {
         &self,
         blocks: &[Block],
     ) -> Result<ExecutionWitness, ChainError> {
-        let first_block_header = blocks
+        let first_block_header = &blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
                 "Empty block batch".to_string(),
             ))?
-            .header
-            .clone();
+            .header;
 
         // Get state at previous block
         let trie = self
@@ -217,9 +218,17 @@ impl Blockchain {
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
+
+            // This assumes that the user has the necessary state stored already,
+            // so if the user only has the state previous to the first block, it
+            // will fail in the second iteration of this for loop. To ensure this,
+            // doesn't fail, later in this function we store the new state after
+            // re-execution.
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
                 BlockchainType::L2(fee_config) => {
@@ -228,7 +237,8 @@ impl Blockchain {
             };
 
             // Re-execute block with logger
-            vm.execute_block(block)?;
+            let execution_result = vm.execute_block(block)?;
+
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
@@ -251,7 +261,9 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to get block hashes".to_string())
                 })?
                 .clone();
+
             block_hashes.extend(logger_block_hashes);
+
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
                 for withdrawal in withdrawals {
@@ -295,6 +307,7 @@ impl Blockchain {
                     used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
                 }
             }
+
             // Store all the accessed evm bytecodes
             for code_hash in logger
                 .code_accessed
@@ -317,7 +330,7 @@ impl Blockchain {
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
-            let (updated_trie, storage_tries_after_update) = self
+            let (storage_tries_after_update, account_updates_list) = self
                 .storage
                 .apply_account_updates_from_trie_with_witness(
                     trie,
@@ -325,6 +338,31 @@ impl Blockchain {
                     used_storage_tries,
                 )
                 .await?;
+
+            // We cannot ensure that the users of this function have the necessary
+            // state stored, so in order for it to not assume anything, we update
+            // the storage with the new state after re-execution
+            self.store_block(block.clone(), account_updates_list, execution_result)
+                .await?;
+
+            // Later in this function we query the batch block headers by number,
+            // to do so, they need to be marked as canonical.
+            // Only users that have the state previous to the first batch block
+            // need this step.
+            if self
+                .storage
+                .get_block_header(block.header.number)?
+                .is_none()
+            {
+                apply_fork_choice(&self.storage, block.hash(), block.hash(), block.hash())
+                    .await
+                    .map_err(|e| {
+                        ChainError::WitnessGeneration(format!(
+                            "Failed to apply fork choice after witness generation: {e}"
+                        ))
+                    })?;
+            }
+
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
                     ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
@@ -334,7 +372,13 @@ impl Blockchain {
                 used_trie_nodes.extend_from_slice(&witness);
                 touched_account_storage_slots.entry(address).or_default();
             }
-            trie = updated_trie;
+
+            // Use the updated state trie for the next block
+            trie = self
+                .storage
+                .state_trie(block.hash())
+                .map_err(|_| ChainError::ParentStateNotFound)?
+                .ok_or(ChainError::ParentStateNotFound)?;
         }
 
         // Get the witness for the state trie
@@ -370,7 +414,7 @@ impl Blockchain {
         let mut block_headers_bytes = Vec::new();
         for block_number in first_needed_block_number..=last_needed_block_number {
             let header = self.storage.get_block_header(block_number)?.ok_or(
-                ChainError::WitnessGeneration("Failed to get block header".to_string()),
+                ChainError::WitnessGeneration(format!("Failed to get block {block_number} header")),
             )?;
             block_headers_bytes.push(header.encode_to_vec());
         }
