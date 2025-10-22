@@ -370,22 +370,20 @@ impl Blockchain {
         let self_clone = self.clone();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        let mut res = self_clone.build_payload(payload.clone()).await?;
+        let mut res = self_clone.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
+            let current_res = self_clone.build_payload(payload);
             // Cancel the current build process and return the previous payload if it is requested earlier
-            if let Some(current_res) = cancel_token
-                .run_until_cancelled(self_clone.build_payload(payload))
-                .await
-            {
-                res = current_res?;
-            }
+            // if let Some(current_res) = cancel_token.run_until_cancelled().await {
+            res = current_res?;
+            // }
         }
         Ok(res)
     }
 
     /// Completes the payload building process, return the block value
-    pub async fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+    pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -400,7 +398,7 @@ impl Blockchain {
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
         self.extract_requests(&mut context)?;
-        self.finalize_payload(&mut context).await?;
+        self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
 
@@ -628,16 +626,12 @@ impl Blockchain {
         Ok(())
     }
 
-    pub async fn finalize_payload(
-        &self,
-        context: &mut PayloadBuildContext,
-    ) -> Result<(), ChainError> {
+    pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
         let ret_acount_updates_list = self
             .storage
-            .apply_account_updates_batch(context.parent_hash(), &account_updates)
-            .await?
+            .apply_account_updates_batch(context.parent_hash(), &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let state_root = ret_acount_updates_list.state_trie_hash;
