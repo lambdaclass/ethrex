@@ -3,7 +3,7 @@ use std::array;
 // Contains RLP encoding and decoding implementations for Trie Nodes
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
 use ethrex_rlp::{
-    decode::{decode_bytes, RLPDecode},
+    decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
@@ -71,44 +71,47 @@ impl RLPDecode for Node {
             }
         }
         // Deserialize into node depending on the available fields
-        Ok((match rlp_items.len() {
-            // Leaf or Extension Node
-            2 => {
-                let (path, _) = decode_bytes(&rlp_items[0])?;
-                let path = Nibbles::decode_compact(path);
-                if path.is_leaf() {
-                    // Decode as Leaf
-                    let (value, _) = decode_bytes(&rlp_items[1])?;
-                    LeafNode {
-                        partial: path,
+        Ok((
+            match rlp_items.len() {
+                // Leaf or Extension Node
+                2 => {
+                    let (path, _) = decode_bytes(&rlp_items[0])?;
+                    let path = Nibbles::decode_compact(path);
+                    if path.is_leaf() {
+                        // Decode as Leaf
+                        let (value, _) = decode_bytes(&rlp_items[1])?;
+                        LeafNode {
+                            partial: path,
+                            value: value.to_vec(),
+                        }
+                        .into()
+                    } else {
+                        // Decode as Extension
+                        ExtensionNode {
+                            prefix: path,
+                            child: decode_child(&rlp_items[1]).into(),
+                        }
+                        .into()
+                    }
+                }
+                // Branch Node
+                17 => {
+                    let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
+                    let (value, _) = decode_bytes(&rlp_items[16])?;
+                    BranchNode {
+                        choices,
                         value: value.to_vec(),
                     }
                     .into()
-                } else {
-                    // Decode as Extension
-                    ExtensionNode {
-                        prefix: path,
-                        child: decode_child(&rlp_items[1]).into(),
-                    }
-                    .into()
                 }
-            }
-            // Branch Node
-            17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
-                let (value, _) = decode_bytes(&rlp_items[16])?;
-                BranchNode {
-                    choices,
-                    value: value.to_vec(),
+                n => {
+                    return Err(RLPDecodeError::Custom(format!(
+                        "Invalid arg count for Node, expected 2 or 17, got {n}"
+                    )));
                 }
-                .into()
-            }
-            n => {
-                return Err(RLPDecodeError::Custom(format!(
-                    "Invalid arg count for Node, expected 2 or 17, got {n}"
-                )));
-            }
-        }, decoder.finish()?))
+            },
+            decoder.finish()?,
+        ))
     }
 }
 
