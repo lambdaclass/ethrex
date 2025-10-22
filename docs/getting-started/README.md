@@ -50,7 +50,7 @@ cd ethereum/
 openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 
 # install lightouse and ethrex
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
 chmod +x ethrex
 curl -LO https://github.com/sigp/lighthouse/releases/download/v7.1.0/lighthouse-v7.1.0-x86_64-unknown-linux-gnu.tar.gz
 tar -xvf lighthouse-v7.1.0-x86_64-unknown-linux-gnu.tar.gz
@@ -86,7 +86,7 @@ ethrex l2 --dev
 
 ```sh
 # install ethrex
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
 chmod +x ethrex
 ./ethrex l2 --dev
 ```
