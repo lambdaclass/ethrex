@@ -1,12 +1,12 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: Arc<BTreeMap<Vec<u8>, Vec<u8>>>,
+    nodes: Arc<HashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
 }
@@ -16,7 +16,7 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: BTreeMap<H256, Arc<TrieLayer>>,
+    layers: HashMap<H256, Arc<TrieLayer>>,
 }
 
 impl TrieLayerCache {
@@ -70,7 +70,7 @@ impl TrieLayerCache {
             TrieLayer::clone(entry)
         } else {
             TrieLayer {
-                nodes: Arc::new(BTreeMap::new()),
+                nodes: Arc::new(HashMap::new()),
                 parent,
                 id: self.last_id,
             }
