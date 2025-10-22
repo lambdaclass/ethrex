@@ -1,7 +1,7 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store,
+    get_network, get_signer, init_blockchain, init_network, init_store, regenerate_head_state,
 };
 use crate::l2::L2Options;
 use crate::utils::{
@@ -168,6 +168,8 @@ pub async fn init_l2(
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
+
+    regenerate_head_state(&store, &blockchain).await?;
 
     let signer = get_signer(&datadir);
 
