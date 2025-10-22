@@ -3,7 +3,6 @@ members = [
   "archive_sync",
   "ef_tests/blockchain",
   "ef_tests/state_v2",
-  "genesis",
   "hive_report",
   "load_test",
   "loc",

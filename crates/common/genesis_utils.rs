@@ -1,4 +1,4 @@
-use ethrex_common::types::Genesis;
+use crate::types::Genesis;
 use serde_json::{Map, Value};
 use std::fs::{self, read_dir};
 use std::path::Path;
