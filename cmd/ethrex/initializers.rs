@@ -196,14 +196,11 @@ pub async fn init_network(
     opts: &Options,
     network: &Network,
     datadir: &Path,
-    local_p2p_node: Node,
-    local_node_record: Arc<Mutex<NodeRecord>>,
-    signer: SecretKey,
     peer_handler: PeerHandler,
-    store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
     #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
+    context: P2PContext,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -213,22 +210,6 @@ pub async fn init_network(
     }
 
     let bootnodes = get_bootnodes(opts, network, datadir);
-
-    let context = P2PContext::new(
-        local_p2p_node,
-        local_node_record,
-        tracker.clone(),
-        signer,
-        peer_handler.peer_table.clone(),
-        store,
-        blockchain.clone(),
-        get_client_version(),
-        #[cfg(feature = "l2")]
-        based_context,
-        opts.tx_broadcasting_time_interval,
-    )
-    .await
-    .expect("P2P context could not be created");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
@@ -472,9 +453,9 @@ pub async fn init_l1(
     .expect("P2P context could not be created");
 
     init_rpc_api(
-        &opts,
+        &opts.clone(),
         peer_handler.clone(),
-        local_p2p_node.clone(),
+        local_p2p_node,
         local_node_record.lock().await.clone(),
         store.clone(),
         blockchain.clone(),
@@ -483,7 +464,7 @@ pub async fn init_l1(
         log_filter_handler,
         // TODO (#4482): Make this configurable.
         None,
-        opts.extra_data.clone(),
+        opts.clone().extra_data,
         p2p_context.clone(),
     )
     .await;
@@ -500,15 +481,12 @@ pub async fn init_l1(
             &opts,
             &network,
             datadir,
-            local_p2p_node,
-            local_node_record.clone(),
-            signer,
             peer_handler.clone(),
-            store.clone(),
             tracker.clone(),
             blockchain.clone(),
             #[cfg(feature = "l2")]
             None,
+            p2p_context,
         )
         .await;
     } else {
