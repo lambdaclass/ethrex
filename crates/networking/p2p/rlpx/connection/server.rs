@@ -352,6 +352,8 @@ impl GenServer for PeerConnectionServer {
                 Self::CastMsg::RequestTimeout { id } => {
                     // Discard the request from current requests
                     if let Some((msg_type, _)) = established_state.current_requests.remove(&id) {
+                        // This log should be debug, because we should see if the timeout is something
+                        // we don't expect to constantly happen, so in dev mode we should see it
                         log_peer_debug!(
                             &established_state.node,
                             &format!("{msg_type}({id}) timeouted."),
