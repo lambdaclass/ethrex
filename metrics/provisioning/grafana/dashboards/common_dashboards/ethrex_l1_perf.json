@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 47,
+  "id": 3,
   "links": [],
   "panels": [
     {
@@ -2185,6 +2185,318 @@
         "x": 0,
         "y": 58
       },
+      "id": 55,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 400
+                  }
+                ]
+              },
+              "unit": "Gwei"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 0,
+            "y": 95
+          },
+          "id": 56,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "last"
+              ],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.0",
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "block_building_base_fee{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} / 1000000000",
+              "legendFormat": "__auto",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Block building base_fee",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "si:Ggas/s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 9,
+            "x": 6,
+            "y": 95
+          },
+          "id": 57,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "last"
+              ],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.0",
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "gigagas_block_building{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} - 0",
+              "legendFormat": "__auto",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Blockbuilding Ggas/s",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 400
+                  }
+                ]
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 9,
+            "x": 15,
+            "y": 95
+          },
+          "id": 58,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "last"
+              ],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.0",
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "block_building_ms{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+              "legendFormat": "__auto",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Block building time taken in ms",
+          "type": "timeseries"
+        }
+      ],
+      "title": "Block Building (WIP)",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 59
+      },
       "id": 51,
       "panels": [
         {
@@ -2275,7 +2587,7 @@
             "h": 12,
             "w": 12,
             "x": 0,
-            "y": 59
+            "y": 160
           },
           "id": 52,
           "interval": "5s",
@@ -3251,7 +3563,7 @@
             "h": 12,
             "w": 12,
             "x": 12,
-            "y": 59
+            "y": 160
           },
           "id": 54,
           "interval": "5s",
@@ -3428,7 +3740,7 @@
           "type": "xychart"
         }
       ],
-      "title": "Draft",
+      "title": "Draft (WIP)",
       "type": "row"
     }
   ],
@@ -3514,5 +3826,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 25
+  "version": 26
 }
