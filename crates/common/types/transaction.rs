@@ -311,10 +311,10 @@ pub enum TxType {
     EIP1559 = 0x02,
     EIP4844 = 0x03,
     EIP7702 = 0x04,
+    CustomFee = 0x7d,
     // We take the same approach as Optimism to define the privileged tx prefix
     // https://github.com/ethereum-optimism/specs/blob/c6903a3b2cad575653e1f5ef472debb573d83805/specs/protocol/deposits.md#the-deposited-transaction-type
     Privileged = 0x7e,
-    CustomFee = 0x7f,
 }
 
 impl From<TxType> for u8 {
@@ -325,8 +325,8 @@ impl From<TxType> for u8 {
             TxType::EIP1559 => 0x02,
             TxType::EIP4844 => 0x03,
             TxType::EIP7702 => 0x04,
+            TxType::CustomFee => 0x7d,
             TxType::Privileged => 0x7e,
-            TxType::CustomFee => 0x7f,
         }
     }
 }
@@ -1537,6 +1537,10 @@ mod canonic_encoding {
                         // EIP7702
                         0x4 => EIP7702Transaction::decode(tx_bytes)
                             .map(Transaction::EIP7702Transaction),
+                        // CustomFeeTransaction
+                        0x7d => CustomFeeTransaction::decode(tx_bytes)
+                            .map(Transaction::CustomFeeTransaction),
+                        // PrivilegedL2Transaction
                         0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                             .map(Transaction::PrivilegedL2Transaction),
                         ty => Err(RLPDecodeError::Custom(format!(
@@ -1566,8 +1570,8 @@ mod canonic_encoding {
                 Transaction::EIP1559Transaction(t) => t.encode(buf),
                 Transaction::EIP4844Transaction(t) => t.encode(buf),
                 Transaction::EIP7702Transaction(t) => t.encode(buf),
-                Transaction::PrivilegedL2Transaction(t) => t.encode(buf),
                 Transaction::CustomFeeTransaction(t) => t.encode(buf),
+                Transaction::PrivilegedL2Transaction(t) => t.encode(buf),
             };
         }
 
@@ -2194,7 +2198,6 @@ mod serde_impl {
             D: serde::Deserializer<'de>,
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
-
             Ok(EIP1559Transaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
                 nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),

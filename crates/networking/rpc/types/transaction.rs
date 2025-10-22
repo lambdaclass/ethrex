@@ -100,10 +100,12 @@ impl SendRawTransactionRequest {
                     0x4 => {
                         EIP7702Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP7702)
                     }
+                    // CustomFeeTransaction
+                    0x7d => CustomFeeTransaction::decode(tx_bytes)
+                        .map(SendRawTransactionRequest::CustomFee),
+                    // PrivilegedL2Transaction
                     0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::PrivilegedL2),
-                    0x7f => CustomFeeTransaction::decode(tx_bytes)
-                        .map(SendRawTransactionRequest::CustomFee),
                     ty => Err(RLPDecodeError::Custom(format!(
                         "Invalid transaction type: {ty}"
                     ))),

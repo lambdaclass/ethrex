@@ -693,6 +693,7 @@ pub async fn send_generic_transaction(
             ));
         }
     };
+
     client.send_raw_transaction(encoded_tx.as_slice()).await
 }
 
