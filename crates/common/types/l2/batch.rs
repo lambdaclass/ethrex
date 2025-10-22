@@ -11,7 +11,7 @@ pub struct Batch {
     pub last_block: u64,
     pub state_root: H256,
     pub privileged_transactions_hash: H256,
-    pub message_hashes: Vec<H256>,
+    pub l1_message_hashes: Vec<H256>,
     pub l2_to_l2_messages: Vec<L2toL2Message>,
     pub blobs_bundle: BlobsBundle,
     pub commit_tx: Option<H256>,

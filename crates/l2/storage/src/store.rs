@@ -59,7 +59,7 @@ impl Store {
             last_block: 0,
             state_root: H256::zero(),
             privileged_transactions_hash: H256::zero(),
-            message_hashes: Vec::new(),
+            l1_message_hashes: Vec::new(),
             l2_to_l2_messages: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
             commit_tx: None,
@@ -190,7 +190,7 @@ impl Store {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;
 
-        let message_hashes = self
+        let l1_message_hashes = self
             .get_message_hashes_by_batch(batch_number)
             .await?
             .unwrap_or_default();
@@ -220,7 +220,7 @@ impl Store {
             last_block,
             state_root,
             blobs_bundle,
-            message_hashes,
+            l1_message_hashes,
             l2_to_l2_messages,
             privileged_transactions_hash,
             commit_tx,

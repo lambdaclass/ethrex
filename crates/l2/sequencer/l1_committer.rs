@@ -231,7 +231,7 @@ impl L1Committer {
                 let (
                     blobs_bundle,
                     new_state_root,
-                    message_hashes,
+                    l1_message_hashes,
                     l2_to_l2_messages,
                     privileged_transactions_hash,
                     last_block_of_batch,
@@ -250,7 +250,7 @@ impl L1Committer {
                     last_block: last_block_of_batch,
                     state_root: new_state_root,
                     privileged_transactions_hash,
-                    message_hashes,
+                    l1_message_hashes,
                     l2_to_l2_messages,
                     blobs_bundle,
                     commit_tx: None,
@@ -557,7 +557,7 @@ impl L1Committer {
     }
 
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
-        let messages_merkle_root = compute_merkle_root(&batch.message_hashes);
+        let messages_merkle_root = compute_merkle_root(&batch.l1_message_hashes);
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
 
         let mut calldata_values = vec![

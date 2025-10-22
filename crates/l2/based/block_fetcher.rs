@@ -393,7 +393,7 @@ impl BlockFetcher {
         let (blobs_bundle, _) =
             generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
 
-        let (message_hashes, l2_to_l2_messages) = self.get_batch_messages(batch).await?;
+        let (l1_message_hashes, l2_to_l2_messages) = self.get_batch_messages(batch).await?;
 
         Ok(Batch {
             number: batch_number.as_u64(),
@@ -401,7 +401,7 @@ impl BlockFetcher {
             last_block: last_block.header.number,
             state_root: new_state_root,
             privileged_transactions_hash,
-            message_hashes,
+            l1_message_hashes,
             l2_to_l2_messages,
             blobs_bundle,
             commit_tx: Some(commit_tx),

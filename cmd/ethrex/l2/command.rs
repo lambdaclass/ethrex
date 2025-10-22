@@ -452,7 +452,7 @@ impl Command {
                         .await?;
 
                     // Get withdrawal hashes
-                    let message_hashes = state_diff
+                    let l1_message_hashes = state_diff
                         .l1_messages
                         .iter()
                         .map(get_l1_message_hash)
@@ -491,7 +491,7 @@ impl Command {
                         last_block: new_block.number,
                         state_root: new_block.state_root,
                         privileged_transactions_hash: H256::zero(),
-                        message_hashes,
+                        l1_message_hashes,
                         // TODO: Check if this is restorable
                         l2_to_l2_messages: vec![],
                         blobs_bundle: BlobsBundle::empty(),
