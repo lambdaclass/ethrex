@@ -2045,8 +2045,6 @@ pub enum PeerHandlerError {
     ReceiveMessageFromPeer(H256),
     #[error("Timeout while waiting for message from peer {0}")]
     ReceiveMessageFromPeerTimeout(H256),
-    #[error("No peers available")]
-    NoPeers,
     #[error("Received invalid headers")]
     InvalidHeaders,
     #[error("Storage Full")]
