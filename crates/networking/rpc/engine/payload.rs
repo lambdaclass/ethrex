@@ -784,7 +784,7 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
 
 async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
     info!(
-        id = format!("{:#018x}", payload_id),
+        id = %format!("{:#018x}", payload_id),
         "Requested payload with"
     );
     let (blobs_bundle, requests, block_value, block) = {
