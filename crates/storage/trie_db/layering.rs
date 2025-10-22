@@ -124,7 +124,7 @@ impl TrieLayerCache {
             parent_nodes
                 .unwrap_or_default()
                 .into_iter()
-                .chain((&*layer).nodes.clone().into_iter())
+                .chain(layer.nodes.clone())
                 .collect(),
         )
     }
