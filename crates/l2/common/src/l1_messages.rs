@@ -1,5 +1,3 @@
-use std::sync::LazyLock;
-
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
 use ethrex_common::types::l2_to_l2_message::L2toL2Message;
@@ -13,6 +11,17 @@ use crate::calldata::Value;
 pub const L1MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfe,
+]);
+
+// keccak256("L1Message(address,bytes32,uint256)")
+static L1MESSAGE_EVENT_SELECTOR: H256 = H256([
+    0x18, 0xd7, 0xb7, 0x05, 0x34, 0x4d, 0x61, 0x6d, 0x1b, 0x61, 0xda, 0xa6, 0xa8, 0xcc, 0xfc, 0xf9,
+    0xf1, 0x0c, 0x27, 0xad, 0xe0, 0x07, 0xcc, 0x45, 0xcf, 0x87, 0x0d, 0x1e, 0x12, 0x1f, 0x1a, 0x9d,
+]);
+// keccak256("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)")
+static L2_MESSAGE_SELECTOR: H256 = H256([
+    0x09, 0xdb, 0x04, 0xf0, 0x10, 0xf1, 0x0e, 0xf2, 0x0f, 0xce, 0xf9, 0xca, 0xe9, 0xf6, 0x4a, 0xbb,
+    0xde, 0x92, 0xfe, 0xe1, 0x2c, 0x68, 0xf6, 0x92, 0xc2, 0x3a, 0x72, 0xcc, 0x54, 0xb2, 0x96, 0x9e,
 ]);
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -56,9 +65,6 @@ pub fn get_block_l1_message_hashes(receipts: &[Receipt]) -> Vec<H256> {
 }
 
 pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
-    static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
-        LazyLock::new(|| keccak("L1Message(address,bytes32,uint256)".as_bytes()));
-
     receipts
         .iter()
         .flat_map(|receipt| {
@@ -81,10 +87,6 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
 }
 
 pub fn get_l2_to_l2_messages(receipts: &[Receipt]) -> Vec<L2toL2Message> {
-    static L2_MESSAGE_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
-        keccak("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)".as_bytes())
-    });
-
     receipts
         .iter()
         .flat_map(|receipt| {
