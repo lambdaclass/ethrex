@@ -1,4 +1,5 @@
 import "./deps.sol";
+import "./Print.sol";
 
 pragma solidity ^0.8.0;
 
@@ -15,12 +16,13 @@ contract FeeToken is ERC20 {
         _mint(msg.sender, defaultMint);
     }
 
-    function lockFee(address payer, uint256 amount) internal {
+    function lockFee(address payer, uint256 amount) public {
+        print(string("locking fee"));
         // onlyFeeCollector
-        IERC20(address(this)).transferFrom(payer, address(this), amount);
+        _transfer(payer, address(this), amount);
     }
 
     function payFee(address receiver, uint256 amount) public {
-        IERC20(address(this)).transferFrom(address(this), receiver, amount);
+        _transfer(address(this), receiver, amount);
     }
 }

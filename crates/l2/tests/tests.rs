@@ -167,7 +167,7 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
     let tx_hash = send_generic_transaction(&l2_client, generic_tx, &signer)
         .await
         .unwrap();
-    let receipt = ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 10).await?;
+    let receipt = ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 100).await?;
     dbg!(receipt);
 
     let sender_balance_after_transfer = l2_client

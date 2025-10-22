@@ -353,8 +353,8 @@ impl Transaction {
             Transaction::EIP1559Transaction(_) => TxType::EIP1559,
             Transaction::EIP4844Transaction(_) => TxType::EIP4844,
             Transaction::EIP7702Transaction(_) => TxType::EIP7702,
-            Transaction::PrivilegedL2Transaction(_) => TxType::Privileged,
             Transaction::CustomFeeTransaction(_) => TxType::CustomFee,
+            Transaction::PrivilegedL2Transaction(_) => TxType::Privileged,
         }
     }
 
@@ -377,8 +377,8 @@ impl Transaction {
             TxType::EIP1559 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP4844 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP7702 => self.calc_effective_gas_price(base_fee_per_gas),
-            TxType::Privileged => Some(self.gas_price()),
             TxType::CustomFee => self.calc_effective_gas_price(base_fee_per_gas),
+            TxType::Privileged => Some(self.gas_price()),
         }
     }
 
@@ -389,8 +389,8 @@ impl Transaction {
             TxType::EIP1559 => U256::from(self.max_fee_per_gas()?),
             TxType::EIP4844 => U256::from(self.max_fee_per_gas()?),
             TxType::EIP7702 => U256::from(self.max_fee_per_gas()?),
-            TxType::Privileged => self.gas_price(),
             TxType::CustomFee => U256::from(self.max_fee_per_gas()?),
+            TxType::Privileged => self.gas_price(),
         };
 
         Some(U256::saturating_add(
@@ -449,6 +449,9 @@ impl RLPDecode for Transaction {
                 // EIP7702
                 0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (Transaction::EIP7702Transaction(tx), rem)),
+                // CustomFee
+                0x7d => CustomFeeTransaction::decode_unfinished(tx_encoding)
+                    .map(|(tx, rem)| (Transaction::CustomFeeTransaction(tx), rem)),
                 // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (Transaction::PrivilegedL2Transaction(tx), rem)),

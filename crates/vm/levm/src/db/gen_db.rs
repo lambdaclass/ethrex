@@ -218,7 +218,7 @@ impl GeneralizedDatabase {
             let mut added_storage = BTreeMap::new();
 
             for (key, new_value) in &new_state_account.storage {
-                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?;
+                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}")))})?;
 
                 if new_value != old_value {
                     added_storage.insert(*key, *new_value);

@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     constants::POST_OSAKA_GAS_LIMIT_CAP,
     errors::{ContextResult, InternalError, TxValidationError, VMError},
@@ -9,6 +11,7 @@ use crate::{
             validate_gas_allowance, validate_init_code_size, validate_min_gas_limit,
             validate_sender, validate_sufficient_max_fee_per_gas,
         },
+        empty_hook::EmptyHook,
         hook::Hook,
     },
     opcodes::Opcode,
@@ -34,10 +37,13 @@ pub struct L2Hook {
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
+            dbg!("PRIVILEGED - PREPARE");
             prepare_execution_privileged(vm)
         } else if vm.env.custom_fee_token.is_some() {
+            dbg!("CUSTOM_FEE - PREPARE");
             prepare_execution_custom_fee(vm)
         } else {
+            dbg!("DEFAULT - PREPARE");
             DefaultHook.prepare_execution(vm)
         }
     }
@@ -48,6 +54,7 @@ impl Hook for L2Hook {
         ctx_result: &mut ContextResult,
     ) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
+            dbg!("PRIVILEGED - FINALIZE");
             if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
                 default_hook::undo_value_transfer(vm)?;
             }
@@ -55,8 +62,10 @@ impl Hook for L2Hook {
             // They can call contracts that use CREATE/CREATE2
             default_hook::delete_self_destruct_accounts(vm)?;
         } else if vm.env.custom_fee_token.is_some() {
+            dbg!("CUSTOM_FEE - FINALIZE");
             finalize_execution_custom_fee(vm, ctx_result, self.fee_config.fee_vault)?;
         } else {
+            dbg!("DEFAULT - FINALIZE");
             DefaultHook.finalize_execution(vm, ctx_result)?;
             // Different from L1, the base fee is not burned
             return pay_to_fee_vault(vm, ctx_result.gas_used, self.fee_config.fee_vault);
@@ -287,29 +296,40 @@ pub fn deduct_caller_custom_token(
 
 #[allow(clippy::unwrap_used)]
 fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
+    dbg!("a");
     let fee_token = vm.env.custom_fee_token.unwrap();
 
+    dbg!("b");
     let mut db_clone = vm.db.clone(); // expensive
+    dbg!("c");
+    let sequencer =
+        Address::from_slice(&hex::decode("0002bf507275217c9e5ee250bc1b5ca177bb4f74").unwrap());
+    dbg!("d");
+    let nonce = db_clone.get_account(sequencer)?.info.nonce;
+    dbg!("e", sequencer, nonce);
     let tx_check_balance = EIP1559Transaction {
         chain_id: vm.env.chain_id.as_u64(),
-        nonce: 0, // TODO: set properly
+        nonce,
         max_priority_fee_per_gas: 9999999,
         max_fee_per_gas: 9999999,
-        gas_limit: 9999999,
+        gas_limit: 999999999,
         to: TxKind::Call(fee_token),
         value: U256::zero(),
         data,
         ..Default::default()
     };
+    dbg!("f", &tx_check_balance);
     let tx_check_balance = Transaction::EIP1559Transaction(tx_check_balance);
+    dbg!("g", &tx_check_balance);
     let mut env_clone = vm.env.clone();
+    dbg!("h");
     // Disable fee checks and update fields
     env_clone.base_fee_per_gas = U256::zero();
     env_clone.block_excess_blob_gas = None;
     env_clone.gas_price = U256::zero();
-    env_clone.origin = // l2 sequencer address
-        Address::from_slice(&hex::decode("3d1e15a1a55578f7c920884a9943b3b35d0d885b").unwrap());
+    env_clone.origin = sequencer;
     env_clone.custom_fee_token = None; // prevent recursion
+    env_clone.gas_limit = 999999999;
 
     let mut new_vm = VM::new(
         env_clone,
@@ -318,15 +338,34 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
     )?;
+    new_vm.hooks = vec![Rc::new(RefCell::new(EmptyHook))];
+    dbg!("i");
     set_bytecode_and_code_address(&mut new_vm)?;
+    dbg!("j");
     let b = new_vm.execute()?;
+    dbg!("k", &b);
     if !b.is_success() {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientAccountFunds,
         ));
     }
     let fee_storage = db_clone.get_account(fee_token)?.storage.clone();
+    dbg!("l");
+    dbg!(&vm.db.get_account(fee_token)?.storage, &fee_storage);
     vm.db.get_account_mut(fee_token)?.storage = fee_storage;
+
+    // update the initial state account
+    let initial_state_fee_token = db_clone
+        .initial_accounts_state
+        .get(&fee_token)
+        .cloned()
+        .unwrap();
+    // We have to merge, not insert
+    vm.db
+        .initial_accounts_state
+        .entry(fee_token)
+        .or_insert_with(|| initial_state_fee_token);
+    dbg!("m");
 
     Ok(())
 }
