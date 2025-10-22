@@ -335,44 +335,20 @@ async fn create_checkpoint(
         },
     ));
 
-    // let checkpoint_head_block_number = checkpoint_store
-    //     .get_latest_block_number()
-    //     .await
-    //     .expect("failed to get latest block number from checkpoint store");
+    let checkpoint_head_block_number = checkpoint_store
+        .get_latest_block_number()
+        .await
+        .expect("failed to get latest block number from checkpoint store");
 
-    // let db_head_block_number = store
-    //     .get_latest_block_number()
-    //     .await
-    //     .expect("failed to get latest block number from main store");
+    let db_head_block_number = store
+        .get_latest_block_number()
+        .await
+        .expect("failed to get latest block number from main store");
 
-    // // The checkpoint store must be equal to the store at the time of creation.
-    // // Que el checkpoint no tenga el mismo head block al momento de su creacion
-    // // significa que el store tiene bloques guardados en diff layers que aun
-    // // no se han bajado a disco.
-    // // En este caso, debemos popular el checkpoint hasta el head del store.
-    // if dbg!(checkpoint_head_block_number) < dbg!(db_head_block_number) {
-    //     println!(
-    //         "Populating checkpoint store from block {} to {}",
-    //         checkpoint_head_block_number + 1,
-    //         db_head_block_number
-    //     );
-
-    //     // Construimos el estado hasta el head del store en el checkpoint store.
-    //     for block_number in (checkpoint_head_block_number + 1)..=db_head_block_number {
-    //         // Get the block from the main store
-    //         let block = store
-    //             .get_block_by_number(block_number)
-    //             .await
-    //             .expect("failed to get block from main store")
-    //             .expect("block not found in main store");
-
-    //         // Apply the block to the checkpoint store
-    //         checkpoint_blockchain
-    //             .add_block(block)
-    //             .await
-    //             .expect("failed to apply block to checkpoint store");
-    //     }
-    // }
+    assert_eq!(
+        checkpoint_head_block_number, db_head_block_number,
+        "checkpoint store head block number does not match main store head block number before regeneration"
+    );
 
     regenerate_head_state(&checkpoint_store, &checkpoint_blockchain)
         .await
