@@ -74,10 +74,11 @@ impl TrieLayerCache {
                 .into_iter()
                 .map(|(path, node)| (path.into_vec(), node)),
         );
+        self.last_id += 1;
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
             parent,
-            id: self.last_id + 1,
+            id: self.last_id,
         };
         self.layers.insert(state_root, Arc::new(entry));
     }
