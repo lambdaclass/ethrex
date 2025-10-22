@@ -2931,6 +2931,7 @@ version = "4.0.0"
 dependencies = [
  "alloy-rlp",
  "bytes",
+ "chrono",
  "clap 4.5.48",
  "clap_complete",
  "colored",
@@ -2942,6 +2943,7 @@ dependencies = [
  "ethrex-storage 4.0.0",
  "ethrex-vm",
  "hex",
+ "prettytable-rs",
  "secp256k1",
  "serde",
  "serde_json",
@@ -8023,6 +8025,20 @@ name = "prettytable"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46480520d1b77c9a3482d39939fcf96831537a250ec62d4fd8fbdf8e0302e781"
+dependencies = [
+ "csv",
+ "encode_unicode",
+ "is-terminal",
+ "lazy_static",
+ "term",
+ "unicode-width 0.1.14",
+]
+
+[[package]]
+name = "prettytable-rs"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eea25e07510aa6ab6547308ebe3c036016d162b8da920dbb079e3ba8acf3d95a"
 dependencies = [
  "csv",
  "encode_unicode",
