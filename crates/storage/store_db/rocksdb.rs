@@ -783,26 +783,21 @@ impl StoreEngine for Store {
                 take(&mut update_batch.account_updates),
                 take(&mut update_batch.storage_updates),
             );
-            let mut wait_for_new_layer = None;
-            let need_new_layer = !account_updates.is_empty() || !storage_updates.is_empty();
-            if need_new_layer {
-                // Capacity one ensures sender just notifies and goes on
-                let (notify_tx, notify_rx) = sync_channel(1);
-                wait_for_new_layer = Some(notify_rx);
-                trie_upd_worker_tx
-                    .send((
-                        notify_tx,
-                        parent_state_root,
-                        last_state_root,
-                        account_updates,
-                        storage_updates,
-                    ))
-                    .map_err(|e| {
-                        StoreError::Custom(format!(
-                            "failed to read new trie layer notification: {e}"
-                        ))
-                    })?;
-            }
+
+            // Capacity one ensures sender just notifies and goes on
+            let (notify_tx, notify_rx) = sync_channel(1);
+            let wait_for_new_layer = notify_rx;
+            trie_upd_worker_tx
+                .send((
+                    notify_tx,
+                    parent_state_root,
+                    last_state_root,
+                    account_updates,
+                    storage_updates,
+                ))
+                .map_err(|e| {
+                    StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+                })?;
 
             for block in update_batch.blocks {
                 let block_number = block.header.number;
@@ -844,12 +839,11 @@ impl StoreEngine for Store {
                 batch.put_cf(&cf_codes, code_key, code_value);
             }
 
-            if let Some(rx) = wait_for_new_layer {
-                // Wait for an updated top layer so every caller afterwards sees a consistent view.
-                // Specifically, the next block produced MUST see this upper layer.
-                rx.recv()
-                    .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
-            }
+            // Wait for an updated top layer so every caller afterwards sees a consistent view.
+            // Specifically, the next block produced MUST see this upper layer.
+            wait_for_new_layer
+                .recv()
+                .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
             // After top-level is addded, we can make the rest of the changes visible.
             db.write(batch)
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
