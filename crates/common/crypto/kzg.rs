@@ -123,7 +123,7 @@ pub fn verify_kzg_proof_batch(
     cell_proof: &[Proof],
 ) -> Result<bool, KzgError> {
     {
-        // perf note: c_kzg::Blob is repr C maybe a unsafe transmute improves perf if needed here
+        // perf note: c_kzg::Blob is repr C maybe a unsafe transmute improves perf if the collect were deemed costly
         let blobs: Vec<_> = blobs.iter().map(|x| c_kzg::Blob::new(*x)).collect();
         KZG_TRUSTED_SETUP
             .verify_blob_kzg_proof_batch(
