@@ -1,24 +1,16 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, RwLock},
-};
-
 use super::{
     codec::RLPxCodec,
     server::{Initiator, Receiver},
 };
 #[cfg(feature = "l2")]
 use crate::rlpx::l2::l2_connection::L2ConnState;
+use crate::{log_peer_debug, log_peer_trace};
 use crate::{
     rlpx::{
         connection::server::{ConnectionState, Established},
         error::PeerConnectionError,
         message::EthCapVersion,
-        utils::{
-            compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
-            sha256_hmac,
-        },
+        utils::{compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, sha256, sha256_hmac},
     },
     types::Node,
 };
@@ -37,6 +29,11 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -71,7 +68,7 @@ pub(crate) async fn perform(
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
-                    log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
+                    log_peer_debug!(&node, &format!("Error creating tcp connection {error}"));
                     // context.table.lock().await.replace_peer(node.node_id());
                     return Err(error)?;
                 }
@@ -83,7 +80,7 @@ pub(crate) async fn perform(
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
-            log_peer_debug(&node, "Completed handshake as initiator");
+            log_peer_trace!(&node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec))
         }
         ConnectionState::Receiver(Receiver {
@@ -109,7 +106,7 @@ pub(crate) async fn perform(
                 peer_addr.port(),
                 remote_state.public_key,
             );
-            log_peer_debug(&node, "Completed handshake as receiver");
+            log_peer_trace!(&node, "Completed handshake as receiver");
             (context, node, Framed::new(stream, codec))
         }
         ConnectionState::Established(_) => {

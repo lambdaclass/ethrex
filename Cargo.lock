@@ -2925,6 +2925,7 @@ version = "4.0.0"
 dependencies = [
  "alloy-rlp",
  "bytes",
+ "chrono",
  "clap 4.5.48",
  "clap_complete",
  "colored",
@@ -2936,6 +2937,7 @@ dependencies = [
  "ethrex-storage 4.0.0",
  "ethrex-vm",
  "hex",
+ "prettytable-rs",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3798,6 +3800,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
+ "bitvec",
  "bls12_381 0.8.0",
  "bytes",
  "colored",
@@ -8025,6 +8028,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "prettytable-rs"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eea25e07510aa6ab6547308ebe3c036016d162b8da920dbb079e3ba8acf3d95a"
+dependencies = [
+ "csv",
+ "encode_unicode",
+ "is-terminal",
+ "lazy_static",
+ "term",
+ "unicode-width 0.1.14",
+]
+
+[[package]]
 name = "primeorder"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10762,9 +10779,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa00b753ef7c942c13ee953f13609746a41c0fb8cf221849bbf3f654811a6669"
+checksum = "c34171afa9ef68114f07b4be6cf294f49a388380b62a036010b31534ecc0f927"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -10775,9 +10792,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42396ff1bc8bfdcad31f099a3af74b4830fb7bdc09a70d843dcfa8bab74ecea4"
+checksum = "b83e35512b851b51d27a6dcee6025da1c61e7d842e2ec79971124eab2be3e974"
 dependencies = [
  "crossbeam 0.7.3",
  "tokio",
