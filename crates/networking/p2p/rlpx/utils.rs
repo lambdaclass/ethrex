@@ -83,28 +83,28 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
 #[macro_export]
 macro_rules! log_peer_trace {
     ( $node:expr, $($text:tt)+ ) => {
-        tracing::trace!("{0}/[{1}]: {2}", $node.client_name(), $node, $($text)+)
+        tracing::trace!(client_name=%$node.client_name(), client_id=%$node.node_id(), client_ip=%$node.ip, "{}", $($text)+)
     }
 }
 
 #[macro_export]
 macro_rules! log_peer_debug {
     ( $node:expr, $($text:tt)+ ) => {
-        tracing::debug!("{0}/[{1}]: {2}", $node.client_name(), $node, $($text)+)
+        tracing::debug!(client_name=%$node.client_name(), client_id=%$node.node_id(), client_ip=%$node.ip, "{}", $($text)+)
     }
 }
 
 #[macro_export]
 macro_rules! log_peer_warn {
     ( $node:expr, $($text:tt)+ ) => {
-        tracing::warn!("{0}/[{1}]: {2}", $node.client_name(), $node, $($text)+)
+        tracing::warn!(client_name=%$node.client_name(), client_id=%$node.node_id(), client_ip=%$node.ip, "{}", $($text)+)
     }
 }
 
 #[macro_export]
 macro_rules! log_peer_error {
     ( $node:expr, $($text:tt)+ ) => {
-        tracing::error!("{0}/[{1}]: {2}", $node.client_name(), $node, $($text)+)
+        tracing::error!(client_name=%$node.client_name(), client_id=%$node.node_id(), client_ip=%$node.ip, "{}", $($text)+)
     }
 }
 

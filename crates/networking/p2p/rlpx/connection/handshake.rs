@@ -68,8 +68,8 @@ pub(crate) async fn perform(
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
+                    // If we can't find a TCP connection it's an issue we should track in debug
                     log_peer_debug!(&node, &format!("Error creating tcp connection {error}"));
-                    // context.table.lock().await.replace_peer(node.node_id());
                     return Err(error)?;
                 }
             };

@@ -325,7 +325,7 @@ impl GenServer for PeerConnectionServer {
                 Self::CastMsg::IncomingMessage(message) => {
                     log_peer_trace!(
                         &established_state.node,
-                        &format!("Received incomming message: {message}"),
+                        format!("Received incomming message {message}"),
                     );
                     handle_incoming_message(established_state, message).await
                 }
@@ -410,7 +410,9 @@ impl GenServer for PeerConnectionServer {
                     PeerConnectionError::IoError(e)
                         if e.kind() == std::io::ErrorKind::BrokenPipe =>
                     {
-                        log_peer_error!(
+                        // TODO: we need to check if this message is ocurring commonly due to a problem
+                        // with our concurrency model
+                        log_peer_debug!(
                             &established_state.node,
                             "Broken pipe with peer, disconnected",
                         );
@@ -420,12 +422,15 @@ impl GenServer for PeerConnectionServer {
                         TrieError::InconsistentTree(_),
                     )) => {
                         if established_state.blockchain.is_synced() {
+                            // If we're responding with inconsistent trie while synced, our trie may be broken
+                            // If this error is non sporadic we should investigate
                             log_peer_error!(
                                 &established_state.node,
                                 &format!("Error handling cast message: {e}"),
                             );
                         } else {
-                            log_peer_debug!(
+                            // If we're not synced, we expect to have inconsistent trie errors
+                            log_peer_trace!(
                                 &established_state.node,
                                 &format!("Error handling cast message: {e}"),
                             );
@@ -437,6 +442,7 @@ impl GenServer for PeerConnectionServer {
                             .version
                             .clone()
                             .unwrap_or("-".to_string());
+                        // We should check why we're failling to handle the cast message
                         log_peer_debug!(
                             &established_state.node,
                             &format!(
