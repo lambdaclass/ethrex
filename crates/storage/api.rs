@@ -1,15 +1,14 @@
 use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
-    AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction
+    AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt, Transaction,
 };
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_rlp::encode::RLPEncode;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
-use crate::{hash_address, hash_key, AccountUpdatesList, UpdateBatch};
+use crate::{AccountUpdatesList, UpdateBatch};
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, Trie, EMPTY_TRIE_HASH};
+use ethrex_trie::{Nibbles, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)

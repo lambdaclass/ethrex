@@ -96,7 +96,7 @@ impl RocksDBPreRead {
                 } else {
                     PREFETCH_DEPTH_STORAGE
                 };
-                for (storage_key, _) in &update.added_storage {
+                for storage_key in update.added_storage.keys() {
                     let key_hash = hash_key(storage_key);
                     let key_nib = Nibbles::from_bytes(&key_hash);
                     insert_prefixes(
@@ -154,7 +154,7 @@ impl RocksDBPreRead {
             cache,
             last_computed_flatkeyvalue,
             tlc,
-            state_root
+            state_root,
         })
     }
 
@@ -199,8 +199,7 @@ impl TrieDB for RocksDBPreReadTrieDB {
                 CF_TRIE_NODES
             })
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
-        self
-            .inner
+        self.inner
             .db
             .get_cf(&cf, key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))

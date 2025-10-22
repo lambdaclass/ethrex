@@ -381,7 +381,8 @@ impl Store {
         state_root: H256,
         account_updates: &[AccountUpdate],
     ) -> Result<AccountUpdatesList, StoreError> {
-        self.engine.apply_account_updates_from_trie_batch(state_root, account_updates)
+        self.engine
+            .apply_account_updates_from_trie_batch(state_root, account_updates)
     }
 
     /// Performs the same actions as apply_account_updates_from_trie

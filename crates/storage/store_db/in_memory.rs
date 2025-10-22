@@ -1,13 +1,20 @@
 use crate::{
-    api::StoreEngine, apply_prefix, error::StoreError, hash_address, hash_key, store::STATE_TRIE_SEGMENTS, trie_db::layering::{TrieLayerCache, TrieWrapper}, AccountUpdatesList, UpdateBatch
+    AccountUpdatesList, UpdateBatch,
+    api::StoreEngine,
+    apply_prefix,
+    error::StoreError,
+    hash_address, hash_key,
+    store::STATE_TRIE_SEGMENTS,
+    trie_db::layering::{TrieLayerCache, TrieWrapper},
 };
 use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
-    AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt
+    AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Index, Receipt,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{db::NodeMap, InMemoryTrieDB, Nibbles, Trie, EMPTY_TRIE_HASH};
+use ethrex_trie::{EMPTY_TRIE_HASH, InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
     collections::HashMap,
     fmt::Debug,
