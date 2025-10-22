@@ -71,6 +71,24 @@ impl NodeHash {
         }
     }
 
+    /// Returns the finalized hash, hashing `self` if it's `NodeHash::Inline`, and storing the result by
+    /// changing it to the `NodeHash::Hashed` variant.
+    pub fn finalize_mut(&mut self) -> &H256 {
+        if let NodeHash::Inline(_) = self {
+            let hash = H256::from_slice(
+                Keccak256::new()
+                    .chain_update(self.as_ref())
+                    .finalize()
+                    .as_slice(),
+            );
+            *self = NodeHash::Hashed(hash);
+        }
+        let NodeHash::Hashed(hash_ref) = self else {
+            unreachable!();
+        };
+        hash_ref
+    }
+
     /// Returns true if the hash is valid
     /// The hash will only be considered invalid if it is empty
     /// Aka if it has a default value instead of being a product of hash computation

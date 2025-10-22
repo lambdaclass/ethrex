@@ -276,48 +276,8 @@ impl Trie {
             return Ok(NodeRef::default());
         }
 
-        fn get_embedded_node(
-            all_nodes: &mut BTreeMap<H256, Vec<u8>>,
-            cur_node_hash: H256,
-            decoded_nodes: &mut BTreeMap<H256, NodeRef>,
-        ) -> Result<NodeRef, TrieError> {
-            if let Some(node_ref) = decoded_nodes.get(&cur_node_hash) {
-                return Ok(node_ref.clone());
-            }
-
-            let mut cur_node = match all_nodes.remove(&cur_node_hash) {
-                Some(rlp) => Node::decode_raw_owned(rlp)?,
-                None => return Ok(NodeRef::Hash(cur_node_hash.into())),
-            };
-
-            match &mut cur_node {
-                Node::Branch(node) => {
-                    for choice in &mut node.choices {
-                        let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
-                        };
-
-                        if hash.is_valid() {
-                            *choice = get_embedded_node(all_nodes, hash.finalize(), decoded_nodes)?;
-                        }
-                    }
-                }
-                Node::Extension(node) => {
-                    let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
-                    };
-
-                    node.child = get_embedded_node(all_nodes, hash.finalize(), decoded_nodes)?;
-                }
-                Node::Leaf(_) => {}
-            };
-
-            let cur_node_ref: NodeRef = cur_node.into();
-            decoded_nodes.insert(cur_node_hash, cur_node_ref.clone());
-            Ok(cur_node_ref)
-        }
-
-        let root = get_embedded_node(all_nodes, root_hash, decoded_nodes)?;
+        let mut root = NodeRef::Hash(root_hash.into());
+        root.resolve_embedded_node(all_nodes, decoded_nodes)?;
         Ok(root)
     }
 

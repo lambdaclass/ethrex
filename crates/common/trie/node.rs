@@ -4,10 +4,12 @@ mod leaf;
 
 use std::{
     array,
+    collections::BTreeMap,
     sync::{Arc, OnceLock},
 };
 
 pub use branch::BranchNode;
+use ethereum_types::H256;
 use ethrex_rlp::{
     decode::{decode_bytes, decode_rlp_item},
     encode::RLPEncode,
@@ -87,6 +89,71 @@ impl NodeRef {
             NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
             NodeRef::Hash(hash) => *hash,
         }
+    }
+
+    pub fn compute_hash_ref(&self) -> &NodeHash {
+        match self {
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash()),
+            NodeRef::Hash(hash) => hash,
+        }
+    }
+
+    pub fn compute_hash_finalized(&mut self) -> &H256 {
+        let node_hash = match self {
+            NodeRef::Node(node, hash) => {
+                hash.get_or_init(|| node.compute_hash());
+                hash.get_mut().unwrap()
+            }
+            NodeRef::Hash(hash) => hash,
+        };
+        node_hash.finalize_mut()
+    }
+
+    pub fn resolve_embedded_node(
+        &mut self,
+        all_nodes: &mut BTreeMap<H256, Vec<u8>>,
+        decoded_nodes: &mut BTreeMap<H256, NodeRef>,
+    ) -> Result<(), TrieError> {
+        let finalized_hash = self.compute_hash_finalized();
+
+        if let Some(node_ref) = decoded_nodes.get(finalized_hash) {
+            *self = node_ref.clone();
+            return Ok(());
+        }
+
+        let mut decoded_node = match all_nodes.remove(finalized_hash) {
+            Some(rlp) => Node::decode_raw_owned(rlp)?,
+            None => return Ok(()),
+        };
+
+        match &mut decoded_node {
+            Node::Branch(node) => {
+                for choice in &mut node.choices {
+                    let NodeRef::Hash(hash) = choice else {
+                        unreachable!()
+                    };
+
+                    if hash.is_valid() {
+                        choice.resolve_embedded_node(all_nodes, decoded_nodes)?;
+                    }
+                }
+            }
+            Node::Extension(node) => {
+                let NodeRef::Hash(_) = node.child else {
+                    unreachable!()
+                };
+
+                node.child.resolve_embedded_node(all_nodes, decoded_nodes)?;
+            }
+            Node::Leaf(_) => {}
+        };
+
+        // TODO: maybe the decoded node cache doesnt make sense anymore if owned decoder
+        // is slower
+        let finalized_hash = finalized_hash.clone();
+        *self = decoded_node.into();
+        decoded_nodes.insert(finalized_hash, self.clone());
+        Ok(())
     }
 }
 
