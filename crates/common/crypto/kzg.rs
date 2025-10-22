@@ -1,4 +1,4 @@
-use std::iter::repeat_n;
+use std::{iter::repeat_n, sync::LazyLock};
 
 // TODO: Currently, we cannot include the types crate independently of common because the crates are not yet split.
 // After issue #4596 ("Split types crate from common") is resolved, update this to import the types crate directly,
@@ -15,11 +15,15 @@ type Blob = [u8; BYTES_PER_BLOB];
 type Commitment = Bytes48;
 type Proof = Bytes48;
 
+#[cfg(feature = "c-kzg")]
+static KZG_TRUSTED_SETUP: LazyLock<&'static c_kzg::KzgSettings> =
+    LazyLock::new(|| c_kzg::ethereum_kzg_settings(8));
+
 /// Ensures the Ethereum trusted setup is loaded so later KZG operations avoid the first-call cost.
 pub fn warm_up_trusted_setup() {
     #[cfg(feature = "c-kzg")]
     {
-        let _ = c_kzg::ethereum_kzg_settings(8);
+        std::hint::black_box(&KZG_TRUSTED_SETUP);
     }
 }
 
@@ -97,13 +101,34 @@ pub fn verify_blob_kzg_proof(
     }
     #[cfg(feature = "c-kzg")]
     {
-        c_kzg::KzgSettings::verify_blob_kzg_proof(
-            c_kzg::ethereum_kzg_settings(8),
-            &blob.into(),
-            &commitment.into(),
-            &proof.into(),
-        )
-        .map_err(KzgError::from)
+        KZG_TRUSTED_SETUP
+            .verify_blob_kzg_proof(&blob.into(), &commitment.into(), &proof.into())
+            .map_err(KzgError::from)
+    }
+}
+
+#[cfg(feature = "c-kzg")]
+pub fn verify_kzg_proof_batch(
+    blobs: &[Blob],
+    commitments: &[Commitment],
+    cell_proof: &[Proof],
+) -> Result<bool, KzgError> {
+    {
+        // perf note: c_kzg::Blob is repr C maybe a unsafe transmute improves perf if needed here
+        let blobs: Vec<_> = blobs.iter().map(|x| c_kzg::Blob::new(*x)).collect();
+        KZG_TRUSTED_SETUP
+            .verify_blob_kzg_proof_batch(
+                &blobs,
+                &commitments
+                    .iter()
+                    .map(|x| c_kzg::Bytes48::new(*x))
+                    .collect::<Vec<_>>(),
+                &cell_proof
+                    .iter()
+                    .map(|proof| (*proof).into())
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(KzgError::from)
     }
 }
 
@@ -127,14 +152,14 @@ pub fn verify_kzg_proof(
     }
     #[cfg(feature = "c-kzg")]
     {
-        c_kzg::KzgSettings::verify_kzg_proof(
-            c_kzg::ethereum_kzg_settings(8),
-            &commitment_bytes.into(),
-            &z.into(),
-            &y.into(),
-            &proof_bytes.into(),
-        )
-        .map_err(KzgError::from)
+        KZG_TRUSTED_SETUP
+            .verify_kzg_proof(
+                &commitment_bytes.into(),
+                &z.into(),
+                &y.into(),
+                &proof_bytes.into(),
+            )
+            .map_err(KzgError::from)
     }
 }
 
@@ -142,15 +167,10 @@ pub fn verify_kzg_proof(
 pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), KzgError> {
     let blob: c_kzg::Blob = (*blob).into();
 
-    let commitment =
-        c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg::ethereum_kzg_settings(8), &blob)?;
+    let commitment = KZG_TRUSTED_SETUP.blob_to_kzg_commitment(&blob)?;
     let commitment_bytes = commitment.to_bytes();
 
-    let proof = c_kzg::KzgSettings::compute_blob_kzg_proof(
-        c_kzg::ethereum_kzg_settings(8),
-        &blob,
-        &commitment_bytes,
-    )?;
+    let proof = KZG_TRUSTED_SETUP.compute_blob_kzg_proof(&blob, &commitment_bytes)?;
 
     let proof_bytes = proof.to_bytes();
 
