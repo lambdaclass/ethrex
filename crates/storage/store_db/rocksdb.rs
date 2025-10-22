@@ -339,7 +339,7 @@ impl Store {
             }
         }
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
-        let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(1);
+        let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
 
         let store = Self {
             db: Arc::new(db),
