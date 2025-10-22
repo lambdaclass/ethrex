@@ -9,8 +9,8 @@ use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
-    current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
-    get_code_hashes_snapshots_dir, validate_folders,
+    current_unix_time, deletes_leaves_folder, get_account_state_snapshots_dir,
+    get_account_storages_snapshots_dir, get_code_hashes_snapshots_dir,
 };
 use crate::{
     metrics::METRICS,
@@ -147,15 +147,49 @@ impl Syncer {
         match self.sync_cycle(sync_head, store).await {
             Ok(()) => {
                 info!(
-                    "Sync cycle finished, time elapsed: {} secs",
-                    start_time.elapsed().as_secs()
+                    time_elapsed_s = start_time.elapsed().as_secs(),
+                    "Sync cycle finished succesfully",
                 );
             }
+
             // TODO #2767: If the error is irrecoverable, we should exit ethrex
-            Err(error) => error!(
-                "Sync cycle failed due to {error}, time elapsed: {} secs ",
-                start_time.elapsed().as_secs()
-            ),
+            Err(error) => {
+                match error {
+                    SyncError::SnapshotReadError(_, _)
+                    | SyncError::SnapshotDecodeError(_)
+                    | SyncError::CodeHashesSnapshotDecodeError(_)
+                    | SyncError::AccountState(_, _)
+                    | SyncError::BytecodesNotFound
+                    | SyncError::AccountStateSnapshotsDirNotFound
+                    | SyncError::AccountStoragesSnapshotsDirNotFound
+                    | SyncError::CodeHashesSnapshotsDirNotFound
+                    | SyncError::DifferentStateRoots(_, _, _)
+                    | SyncError::NoPeers
+                    | SyncError::NoBlockHeaders
+                    | SyncError::PeerHandler(_)
+                    | SyncError::CorruptPath
+                    | SyncError::TrieGenerationError(_)
+                    | SyncError::AccountTempDBDirNotFound
+                    | SyncError::StorageTempDBDirNotFound
+                    | SyncError::RocksDBError(_)
+                    | SyncError::BytecodeFileError
+                    | SyncError::PeerTableError(_) => {
+                        // We do nothing, as the error is recoverable
+                        error!(
+                            time_elapsed_s = start_time.elapsed().as_secs(),
+                            %error, "Sync cycle failed, exiting as the error is irrecoverable",
+                        );
+                        std::process::exit(-1);
+                    }
+                    _ => {
+                        // We do nothing, as the error is recoverable
+                        error!(
+                            time_elapsed_s = start_time.elapsed().as_secs(),
+                            %error, "Sync cycle failed, retrying",
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -196,18 +230,8 @@ impl Syncer {
         };
 
         // We validate that we have the folders that are being used empty, as we currently assume
-        // they are.
-        if !validate_folders(&self.datadir) {
-            // Temp std::process::exit until #2767 is done
-            error!(
-                "One of the folders used for temporary leaves during snap is still used. Delete them in {}",
-                &self.datadir.to_str().unwrap_or_default()
-            );
-            std::process::exit(1);
-            // Cloning a single string, the node should stop after this
-            // return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
-        }
-
+        // they are. If they are not empty we empty them folder
+        deletes_leaves_folder(&self.datadir)?;
         loop {
             debug!("Sync Log 1: In snap sync");
             debug!(
@@ -1154,8 +1178,6 @@ pub enum SyncError {
     CodeHashesSnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
     AccountState(H256, H256),
-    #[error("Failed to acquire lock on maybe_big_account_storage")]
-    MaybeBigAccount,
     #[error("Failed to fetch bytecodes from peers")]
     BytecodesNotFound,
     #[error("Failed to get account state snapshots directory")]
@@ -1172,10 +1194,6 @@ pub enum SyncError {
     NoBlockHeaders,
     #[error("The download datadir folders at {0} are not empty, delete them first")]
     NotEmptyDatadirFolders(PathBuf),
-    #[error("Couldn't create a thread")]
-    ThreadCreationError,
-    #[error("Called update_pivot outside snapsync mode")]
-    NotInSnapSync,
     #[error("Peer handler error: {0}")]
     PeerHandler(#[from] PeerHandlerError),
     #[error("Corrupt Path")]

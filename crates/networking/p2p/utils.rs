@@ -1,4 +1,4 @@
-use crate::peer_handler::DumpError;
+use crate::{peer_handler::DumpError, sync::SyncError};
 use ethrex_common::{H256, H512, U256, types::AccountState, utils::keccak};
 use ethrex_rlp::encode::RLPEncode;
 use secp256k1::{PublicKey, SecretKey};
@@ -39,20 +39,23 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
     H512::from_slice(&encoded[1..])
 }
 
-/// Returns true if the folders used for the partial download of the leaves exists. if they do exist, it
-/// should be deleted. We don't auto delete them on the off chance we want to backup the files
-pub fn validate_folders(datadir: &Path) -> bool {
-    let folder_doesnt_exist = !std::fs::exists(get_account_state_snapshots_dir(datadir))
-        .is_ok_and(|exists| exists)
-        && !std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|exists| exists)
-        && !std::fs::exists(get_code_hashes_snapshots_dir(datadir)).is_ok_and(|exists| exists);
+/// Deletes the snap folders needed for downloading the leaves during the initial
+/// step of snap sync
+pub fn deletes_leaves_folder(datadir: &Path) -> Result<(), SyncError> {
+    std::fs::remove_dir_all(get_account_state_snapshots_dir(datadir))
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
+    std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir))
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    std::fs::remove_dir_all(get_code_hashes_snapshots_dir(datadir))
+        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
     #[cfg(feature = "rocksdb")]
-    let folder_doesnt_exist = {
-        folder_doesnt_exist
-            && !std::fs::exists(get_rocksdb_temp_accounts_dir(datadir)).is_ok_and(|exists| exists)
-            && !std::fs::exists(get_rocksdb_temp_storage_dir(datadir)).is_ok_and(|exists| exists)
+    {
+        std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
+            .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
+        std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
+            .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
     };
-    folder_doesnt_exist
+    Ok(())
 }
 
 pub fn get_account_storages_snapshots_dir(datadir: &Path) -> PathBuf {
