@@ -73,7 +73,7 @@ async fn main() {
 
     let mut head_block_timestamp = genesis.timestamp;
 
-    for n_blocks in 1..7200 {
+    for n_blocks in 1..=7200 {
         println!("Testing {n_blocks} blocks batch");
 
         let checkpoint_datadir = datadir.join(format!("checkpoint_{n_blocks}"));
