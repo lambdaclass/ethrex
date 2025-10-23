@@ -156,7 +156,7 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(tx, env, db, vm_type)?;
 
         vm.execute()
             .map(|value| value.into())
