@@ -260,7 +260,9 @@ jobs:
             export ETHREX_BASED=true
             cd ..
           else
-           export ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+            export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+            export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
+            export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
           fi
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
@@ -273,7 +275,7 @@ jobs:
       - name: Run test
         run: |
           if  [ "${{ matrix.based }}" = true ]; then
-            export INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true
+            export INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true
           fi
           sudo chmod -R a+rw crates/l2
           cd crates/l2
@@ -367,7 +369,9 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
-          ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+          ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+          ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+          ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000 \
           ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
           docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
 
@@ -500,7 +504,7 @@ jobs:
       - name: Run test
         run: |
           cd crates/l2
-          INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true \
+          INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true \
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           cargo test l2 --release -- --nocapture --test-threads=1
 

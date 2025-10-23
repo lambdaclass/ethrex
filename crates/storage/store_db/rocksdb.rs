@@ -9,11 +9,11 @@ use bytes::Bytes;
 use ethrex_common::{
     H256,
     types::{
-        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-        Transaction,
+        AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+        Receipt, Transaction,
     },
 };
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch,
@@ -23,7 +23,7 @@ use std::{
     path::Path,
     sync::{Arc, RwLock},
 };
-use tracing::info;
+use tracing::{debug, error, info};
 
 use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
@@ -109,10 +109,22 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
 const CF_FULLSYNC_HEADERS: &str = "fullsync_headers";
 
-#[derive(Debug)]
+pub const CF_FLATKEYVALUE: &str = "flatkeyvalue";
+
+pub const CF_MISC_VALUES: &str = "misc_values";
+
+/// Control messages for the FlatKeyValue generator
+#[derive(Debug, PartialEq)]
+enum FKVGeneratorControlMessage {
+    Stop,
+    Continue,
+}
+
+#[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     trie_cache: Arc<RwLock<TrieLayerCache>>,
+    flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
 }
 
 impl Store {
@@ -141,7 +153,6 @@ impl Store {
 
         db_options.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
         db_options.set_max_total_wal_size(2 * 1024 * 1024 * 1024); // 2GB
-        db_options.set_wal_ttl_seconds(3600);
         db_options.set_wal_bytes_per_sync(32 * 1024 * 1024); // 32MB
         db_options.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
         db_options.set_use_fsync(false); // fdatasync
@@ -170,6 +181,8 @@ impl Store {
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
             CF_FULLSYNC_HEADERS,
+            CF_FLATKEYVALUE,
+            CF_MISC_VALUES,
         ];
 
         // Get existing column families to know which ones to drop later
@@ -309,11 +322,34 @@ impl Store {
                 }
             }
         }
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
 
-        Ok(Self {
+        let store = Self {
             db: Arc::new(db),
             trie_cache: Default::default(),
-        })
+            flatkeyvalue_control_tx: tx,
+        };
+        let store_clone = store.clone();
+        std::thread::spawn(move || {
+            let mut rx = rx;
+            loop {
+                match rx.recv() {
+                    Ok(FKVGeneratorControlMessage::Continue) => break,
+                    Ok(FKVGeneratorControlMessage::Stop) => {}
+                    Err(_) => {
+                        debug!("Closing FlatKeyValue generator.");
+                        return;
+                    }
+                }
+            }
+            info!("Generation of FlatKeyValue started.");
+            match store_clone.flatkeyvalue_generator(&mut rx) {
+                Ok(_) => info!("FlatKeyValue generation finished."),
+                Err(err) => error!("Error while generating FlatKeyValue: {err}"),
+            }
+            // rx channel is dropped, closing it
+        });
+        Ok(store)
     }
 
     // Helper method to get column family handle
@@ -448,6 +484,126 @@ impl Store {
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
+
+    fn flatkeyvalue_generator(
+        &self,
+        control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+    ) -> Result<(), StoreError> {
+        let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
+        let cf_flatkeyvalue = self.cf_handle(CF_FLATKEYVALUE)?;
+
+        let last_written = self
+            .db
+            .get_cf(&cf_misc, "last_written")?
+            .unwrap_or_default();
+        if last_written == vec![0xff] {
+            return Ok(());
+        }
+
+        self.db
+            .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff])?;
+
+        loop {
+            let root = self
+                .read_sync(CF_TRIE_NODES, [])?
+                .ok_or(StoreError::MissingLatestBlockNumber)?;
+            let root: Node = ethrex_trie::Node::decode(&root)?;
+            let state_root = root.compute_hash().finalize();
+
+            let last_written = self
+                .db
+                .get_cf(&cf_misc, "last_written")?
+                .unwrap_or_default();
+            let last_written_account = last_written
+                .get(0..64)
+                .map(|v| Nibbles::from_hex(v.to_vec()))
+                .unwrap_or_default();
+            let mut last_written_storage = last_written
+                .get(66..130)
+                .map(|v| Nibbles::from_hex(v.to_vec()))
+                .unwrap_or_default();
+
+            debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
+
+            let mut ctr = 0;
+            let mut batch = WriteBatch::default();
+            let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
+            if last_written_account > Nibbles::default() {
+                iter.advance(last_written_account.to_bytes())?;
+            }
+            let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
+                let Node::Leaf(node) = node else {
+                    return Ok(());
+                };
+                let account_state = AccountState::decode(&node.value)?;
+                let account_hash = H256::from_slice(&path.to_bytes());
+                batch.put_cf(&cf_misc, "last_written", path.as_ref());
+                batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
+                ctr += 1;
+                if ctr > 10_000 {
+                    self.db.write(std::mem::take(&mut batch))?;
+                }
+
+                let mut iter_inner = self
+                    .open_direct_storage_trie(account_hash, account_state.storage_root)?
+                    .into_iter();
+                if last_written_storage > Nibbles::default() {
+                    iter_inner.advance(last_written_storage.to_bytes())?;
+                    last_written_storage = Nibbles::default();
+                }
+                iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
+                    let Node::Leaf(node) = node else {
+                        return Ok(());
+                    };
+                    let key = apply_prefix(Some(account_hash), path);
+                    batch.put_cf(&cf_misc, "last_written", key.as_ref());
+                    batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
+                    ctr += 1;
+                    if ctr > 10_000 {
+                        self.db.write(std::mem::take(&mut batch))?;
+                    }
+                    if let Ok(value) = control_rx.try_recv() {
+                        match value {
+                            FKVGeneratorControlMessage::Stop => {
+                                return Err(StoreError::PivotChanged);
+                            }
+                            _ => {
+                                return Err(StoreError::Custom("Unexpected message".to_string()));
+                            }
+                        }
+                    }
+                    Ok(())
+                })?;
+                if let Ok(value) = control_rx.try_recv() {
+                    match value {
+                        FKVGeneratorControlMessage::Stop => return Err(StoreError::PivotChanged),
+                        _ => {
+                            return Err(StoreError::Custom("Unexpected message".to_string()));
+                        }
+                    }
+                }
+                Ok(())
+            });
+            match res {
+                Err(StoreError::PivotChanged) => {
+                    if let Ok(value) = control_rx.recv() {
+                        match value {
+                            FKVGeneratorControlMessage::Continue => {}
+                            _ => {
+                                return Err(StoreError::Custom("Unexpected messafe".to_string()));
+                            }
+                        }
+                    }
+                }
+                Err(err) => return Err(err),
+                Ok(()) => {
+                    batch.put_cf(&cf_misc, "last_written", [0xff]);
+                    self.db.write(batch)?;
+                    return Ok(());
+                }
+            };
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -455,7 +611,6 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         let trie_cache = self.trie_cache.clone();
-
         let parent_state_root = self
             .get_block_header_by_hash(
                 update_batch
@@ -467,49 +622,69 @@ impl StoreEngine for Store {
             )?
             .map(|header| header.state_root)
             .unwrap_or_default();
-
         let last_state_root = update_batch
             .blocks
             .last()
             .ok_or(StoreError::UpdateBatchNoBlocks)?
             .header
             .state_root;
+        let flatkeyvalue_control_tx = self.flatkeyvalue_control_tx.clone();
 
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
 
             let [
                 cf_trie_nodes,
+                cf_flatkeyvalue,
                 cf_receipts,
                 cf_codes,
                 cf_block_numbers,
                 cf_tx_locations,
                 cf_headers,
                 cf_bodies,
+                cf_misc,
             ] = open_cfs(
                 &db,
                 [
                     CF_TRIE_NODES,
+                    CF_FLATKEYVALUE,
                     CF_RECEIPTS,
                     CF_ACCOUNT_CODES,
                     CF_BLOCK_NUMBERS,
                     CF_TRANSACTION_LOCATIONS,
                     CF_HEADERS,
                     CF_BODIES,
+                    CF_MISC_VALUES,
                 ],
             )?;
 
-            let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatch::default();
+
+            let mut updated_trie = false;
 
             let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
             if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
+                updated_trie = true;
+                // If the channel is closed, there's nobody to notify
+                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Stop);
+
+                let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
-                    if value.is_empty() {
-                        batch.delete_cf(&cf_trie_nodes, key);
+                    let is_leaf = key.len() == 65 || key.len() == 131;
+
+                    if is_leaf && key > last_written {
+                        continue;
+                    }
+                    let cf = if is_leaf {
+                        &cf_flatkeyvalue
                     } else {
-                        batch.put_cf(&cf_trie_nodes, key, value);
+                        &cf_trie_nodes
+                    };
+                    if value.is_empty() {
+                        batch.delete_cf(cf, key);
+                    } else {
+                        batch.put_cf(cf, key, value);
                     }
                 }
             }
@@ -569,8 +744,14 @@ impl StoreEngine for Store {
             }
 
             // Single write operation
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            let ret = db
+                .write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)));
+            if updated_trie {
+                // If the channel is closed, there's nobody to notify
+                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Continue);
+            }
+            ret
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1538,6 +1719,12 @@ impl StoreEngine for Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        self.flatkeyvalue_control_tx
+            .send(FKVGeneratorControlMessage::Continue)
+            .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
     }
 }
 
