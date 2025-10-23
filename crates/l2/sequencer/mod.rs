@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerState;
@@ -48,6 +49,7 @@ pub async fn start_l2(
     initial_checkpoint_store: Store,
     initial_checkpoint_blockchain: Arc<Blockchain>,
     genesis: Genesis,
+    checkpoints_dir: PathBuf,
 ) -> Result<(), errors::SequencerError> {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
@@ -112,6 +114,7 @@ pub async fn start_l2(
         initial_checkpoint_store,
         initial_checkpoint_blockchain,
         genesis,
+        checkpoints_dir,
     )
     .await
     .inspect_err(|err| {

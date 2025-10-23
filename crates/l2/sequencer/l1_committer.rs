@@ -3,14 +3,12 @@ use crate::{
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{
         errors::CommitterError,
-        utils::{self, default_datadir, fetch_batch_blocks, get_git_commit_hash, system_now_ms},
+        utils::{self, fetch_batch_blocks, get_git_commit_hash, system_now_ms},
     },
 };
 
 use bytes::Bytes;
-use ethrex_blockchain::{
-    Blockchain, BlockchainType, fork_choice::apply_fork_choice, vm::StoreVmDatabase,
-};
+use ethrex_blockchain::{Blockchain, BlockchainType, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -50,7 +48,7 @@ use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap},
     fs::remove_dir_all,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio_util::sync::CancellationToken;
@@ -114,9 +112,21 @@ pub struct L1Committer {
     elasticity_multiplier: u64,
     /// Git commit hash of the build
     git_commit_hash: String,
+    /// Store containing the state checkpoint at the last committed batch.
+    ///
+    /// It is used to ensure state availability for batch preparation and
+    /// witness generation.
     current_checkpoint_store: Store,
+    /// Blockchain instance using the current checkpoint store.
+    ///
+    /// It is used for witness generation.
     current_checkpoint_blockchain: Arc<Blockchain>,
+    /// Network genesis.
+    ///
+    /// It is used for creating checkpoints.
     genesis: Genesis,
+    /// Directory where checkpoints are stored.
+    checkpoints_dir: PathBuf,
 }
 
 #[derive(Clone, Serialize)]
@@ -136,7 +146,7 @@ pub struct L1CommitterHealth {
 }
 
 impl L1Committer {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn new(
         committer_config: &CommitterConfig,
         proposer_config: &BlockProducerConfig,
@@ -149,6 +159,7 @@ impl L1Committer {
         initial_checkpoint_store: Store,
         initial_checkpoint_blockchain: Arc<Blockchain>,
         genesis: Genesis,
+        checkpoints_dir: PathBuf,
     ) -> Result<Self, CommitterError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -186,6 +197,7 @@ impl L1Committer {
             current_checkpoint_store: initial_checkpoint_store,
             current_checkpoint_blockchain: initial_checkpoint_blockchain,
             genesis,
+            checkpoints_dir,
         })
     }
 
@@ -199,6 +211,7 @@ impl L1Committer {
         initial_checkpoint_store: Store,
         initial_checkpoint_blockchain: Arc<Blockchain>,
         genesis: Genesis,
+        checkpoints_dir: PathBuf,
     ) -> Result<GenServerHandle<L1Committer>, CommitterError> {
         let state = Self::new(
             &cfg.l1_committer,
@@ -212,6 +225,7 @@ impl L1Committer {
             initial_checkpoint_store,
             initial_checkpoint_blockchain,
             genesis,
+            checkpoints_dir,
         )
         .await?;
         // NOTE: we spawn as blocking due to `generate_blobs_bundle` and
@@ -375,8 +389,9 @@ impl L1Committer {
 
         info!("Preparing state diff from block {first_block_of_batch}, {batch_number}");
 
-        let one_time_checkpoint_path =
-            default_datadir().join(format!("temp_checkpoint_batch_{batch_number}_"));
+        let one_time_checkpoint_path = self
+            .checkpoints_dir
+            .join(format!("temp_checkpoint_batch_{batch_number}"));
 
         // For re-execution we need to use a checkpoint to the previous state
         // (i.e. checkpoint of the state to the latest block from the previous
@@ -720,12 +735,19 @@ impl L1Committer {
         Ok(())
     }
 
+    /// Updates the current checkpoint store and blockchain to the state at the
+    /// given latest batch.
+    ///
+    /// The reference to the previous checkpoint is lost after this operation,
+    /// but the directory is not deleted until the batch it serves in is verified
+    /// on L1.
     async fn update_current_checkpoint(
         &mut self,
         latest_batch: &Batch,
     ) -> Result<(), CommitterError> {
-        let new_checkpoint_path =
-            default_datadir().join(format!("checkpoint_batch_{}", latest_batch.number));
+        let new_checkpoint_path = self
+            .checkpoints_dir
+            .join(format!("checkpoint_batch_{}", latest_batch.number));
 
         if new_checkpoint_path.exists() {
             remove_dir_all(&new_checkpoint_path).map_err(|e| {
@@ -746,6 +768,13 @@ impl L1Committer {
         Ok(())
     }
 
+    /// Creates a checkpoint of the given store at the specified path.
+    ///
+    /// This function performs the following steps:
+    /// 1. Creates a checkpoint of the provided store at the specified path.
+    /// 2. Initializes a new store and blockchain for the checkpoint.
+    /// 3. Regenerates the head state in the checkpoint store.
+    /// 4. Validates that the checkpoint store's head block number and latest block match those of the original store.
     async fn create_checkpoint(
         &self,
         checkpointee: &Store,

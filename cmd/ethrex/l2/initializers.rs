@@ -153,6 +153,9 @@ pub async fn init_l2(
     init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = datadir.join("rollup_store");
 
+    // Checkpoints are stored in the main datadir
+    let checkpoints_dir = datadir.clone();
+
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
@@ -176,7 +179,7 @@ pub async fn init_l2(
 
     let (initial_checkpoint_store, initial_checkpoint_blockchain) = initialize_checkpoint(
         &store,
-        &datadir.join("initial_checkpoint"),
+        &checkpoints_dir.join("initial_checkpoint"),
         genesis.clone(),
         blockchain_opts,
     )
@@ -278,6 +281,7 @@ pub async fn init_l2(
         initial_checkpoint_store,
         initial_checkpoint_blockchain,
         genesis,
+        checkpoints_dir,
     )
     .into_future();
 
