@@ -46,7 +46,7 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
-    /// Map of (batch_number, prover_version) to prover input data
+    /// Map of (batch_number, prover_version) to serialized prover input data
     batch_prover_input: HashMap<(u64, String), Vec<u8>>,
 }
 
