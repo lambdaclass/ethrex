@@ -1,6 +1,12 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
@@ -17,26 +23,40 @@ pub struct TrieLayerCache {
     /// TODO: this implementation panics on overflow
     last_id: usize,
     layers: HashMap<H256, TrieLayer>,
+
+    // Layer cache stats: `(hit_count, miss_count)`.
+    stats: (AtomicUsize, AtomicUsize),
+}
+
+impl Drop for TrieLayerCache {
+    fn drop(&mut self) {
+        println!("#### Dropping `TrieLayerCache`. Final stats:");
+        println!(
+            "####   Hit  count: {}",
+            self.stats.0.load(Ordering::Relaxed),
+        );
+        println!(
+            "####   Miss count: {}",
+            self.stats.0.load(Ordering::Relaxed),
+        );
+    }
 }
 
 impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         let mut current_state_root = state_root;
+        // TODO: Why a `HashMap` and not a vec with a relative depth direct index?
         while let Some(layer) = self.layers.get(&current_state_root) {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
+                self.stats.0.fetch_add(1, Ordering::Relaxed);
                 return Some(value.clone());
             }
+
             current_state_root = layer.parent;
-            if current_state_root == state_root {
-                // TODO: check if this is possible in practice
-                // This can't happen in L1, due to system contracts irreversibly modifying state
-                // at each block.
-                // On L2, if no transactions are included in a block, the state root remains the same,
-                // but we handle that case in put_batch. It may happen, however, if someone modifies
-                // state with a privileged tx and later reverts it (since it doesn't update nonce).
-                panic!("State cycle found");
-            }
+            assert_ne!(current_state_root, state_root, "state cycle found");
         }
+
+        self.stats.1.fetch_add(1, Ordering::Relaxed);
         None
     }
 
@@ -54,6 +74,7 @@ impl TrieLayerCache {
                 return Some(state_root);
             }
         }
+
         None
     }
 
@@ -126,6 +147,7 @@ impl TrieDB for TrieWrapper {
         let key = apply_prefix(self.prefix, key);
         self.db.flatkeyvalue_computed(key)
     }
+
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
         if let Some(value) = self
