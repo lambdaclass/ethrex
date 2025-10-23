@@ -491,7 +491,7 @@ impl Store {
     fn inner_update_storage(
         added_storage: &BTreeMap<H256, U256>,
         state_root: H256,
-        hashed_address_h256: H256,
+        hashed_address: H256,
         storage_root: H256,
         engine: Arc<dyn StoreEngine>,
     ) -> Result<
@@ -502,7 +502,7 @@ impl Store {
         StoreError,
     > {
         let mut storage_trie =
-            engine.open_storage_trie(hashed_address_h256, storage_root, state_root)?;
+            engine.open_storage_trie(hashed_address, storage_root, state_root)?;
         for (storage_key, storage_value) in added_storage {
             let hashed_key = hash_key(storage_key);
             if storage_value.is_zero() {
