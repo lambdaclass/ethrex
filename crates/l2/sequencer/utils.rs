@@ -201,3 +201,8 @@ where
 
     Ok(blocks)
 }
+
+/// Returns the git commit hash of the current build.
+pub fn get_git_commit_hash() -> String {
+    env!("VERGEN_GIT_SHA").to_string()
+}

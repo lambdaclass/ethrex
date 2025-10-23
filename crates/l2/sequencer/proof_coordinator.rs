@@ -1,6 +1,6 @@
 use crate::sequencer::errors::{ConnectionHandlerError, ProofCoordinatorError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
-use crate::sequencer::utils::get_latest_sent_batch;
+use crate::sequencer::utils::{get_git_commit_hash, get_latest_sent_batch};
 use crate::{CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig};
 use bytes::Bytes;
 use ethrex_common::Address;
@@ -47,10 +47,7 @@ pub enum ProofData {
     /// The Client initiates the connection with a BatchRequest.
     /// Asking for the ProverInputData the prover_server considers/needs.
     /// The commit hash is used to ensure the client and server are compatible.
-    BatchRequest {
-        commit_hash: String,
-        version: String,
-    },
+    BatchRequest { commit_hash: String },
 
     /// 4.
     /// The Server responds with an InvalidCodeVersion if the code version is not compatible.
@@ -93,11 +90,8 @@ impl ProofData {
     }
 
     /// Builder function for creating a BatchRequest
-    pub fn batch_request(commit_hash: String, version: String) -> Self {
-        ProofData::BatchRequest {
-            commit_hash,
-            version,
-        }
+    pub fn batch_request(commit_hash: String) -> Self {
+        ProofData::BatchRequest { commit_hash }
     }
 
     /// Builder function for creating a InvalidCodeVersion
@@ -134,10 +128,6 @@ impl ProofData {
     }
 }
 
-pub fn get_commit_hash() -> String {
-    env!("VERGEN_GIT_SHA").to_string()
-}
-
 #[derive(Clone)]
 pub enum ProofCordInMessage {
     Listen { listener: Arc<TcpListener> },
@@ -158,7 +148,7 @@ pub struct ProofCoordinator {
     rpc_url: String,
     tdx_private_key: Option<SecretKey>,
     needed_proof_types: Vec<ProverType>,
-    commit_hash: String,
+    git_commit_hash: String,
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
     qpl_tool_path: Option<String>,
@@ -200,7 +190,7 @@ impl ProofCoordinator {
             rpc_url,
             tdx_private_key: config.tdx_private_key,
             needed_proof_types,
-            commit_hash: get_commit_hash(),
+            git_commit_hash: get_git_commit_hash(),
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
             qpl_tool_path: config.qpl_tool_path.clone(),
@@ -259,17 +249,16 @@ impl ProofCoordinator {
         &mut self,
         stream: &mut TcpStream,
         commit_hash: String,
-        version: String,
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received");
 
-        if commit_hash != self.commit_hash {
+        if commit_hash != self.git_commit_hash {
             error!(
                 "Code version mismatch: expected {}, got {}",
-                self.commit_hash, commit_hash
+                self.git_commit_hash, commit_hash
             );
 
-            let response = ProofData::invalid_code_version(self.commit_hash.clone());
+            let response = ProofData::invalid_code_version(self.git_commit_hash.clone());
             send_response(stream, &response).await?;
             info!("InvalidCodeVersion sent");
             return Ok(());
@@ -297,34 +286,35 @@ impl ProofCoordinator {
             }
         }
 
-        let response =
-            if all_proofs_exist || !self.rollup_store.contains_batch(&batch_to_verify).await? {
-                debug!("Sending empty BatchResponse");
-                ProofData::empty_batch_response()
-            } else {
-                let Some(input) = self
-                    .rollup_store
-                    .get_prover_input_by_batch_and_version(batch_to_verify, version.clone())
-                    .await?
-                else {
-                    return Err(ProofCoordinatorError::MissingBatchProverInput(
-                        batch_to_verify,
-                        version,
-                    ));
-                };
-                debug!("Sending BatchResponse for block_number: {batch_to_verify}");
-                metrics!(
-                    // First request starts a timer until a proof is received. The elapsed time will be
-                    // the estimated proving time.
-                    // This should be used for development only and runs on the assumption that:
-                    //   1. There's a single prover
-                    //   2. Communication does not fail
-                    //   3. Communication adds negligible overhead in comparison with proving time
-                    let mut lock = self.request_timestamp.lock().await;
-                    lock.entry(batch_to_verify).or_insert(SystemTime::now());
-                );
-                ProofData::batch_response(batch_to_verify, input)
+        let response = if all_proofs_exist
+            || !self.rollup_store.contains_batch(&batch_to_verify).await?
+        {
+            debug!("Sending empty BatchResponse");
+            ProofData::empty_batch_response()
+        } else {
+            let Some(input) = self
+                .rollup_store
+                .get_prover_input_by_batch_and_version(batch_to_verify, self.git_commit_hash.clone())
+                .await?
+            else {
+                return Err(ProofCoordinatorError::MissingBatchProverInput(
+                    batch_to_verify,
+                    self.git_commit_hash.clone(),
+                ));
             };
+            debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+            metrics!(
+                // First request starts a timer until a proof is received. The elapsed time will be
+                // the estimated proving time.
+                // This should be used for development only and runs on the assumption that:
+                //   1. There's a single prover
+                //   2. Communication does not fail
+                //   3. Communication adds negligible overhead in comparison with proving time
+                let mut lock = self.request_timestamp.lock().await;
+                lock.entry(batch_to_verify).or_insert(SystemTime::now());
+            );
+            ProofData::batch_response(batch_to_verify, input)
+        };
 
         send_response(stream, &response).await?;
         info!("BatchResponse sent for batch number: {batch_to_verify}");
@@ -489,13 +479,10 @@ impl ConnectionHandler {
 
             let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
             match data {
-                Ok(ProofData::BatchRequest {
-                    commit_hash,
-                    version,
-                }) => {
+                Ok(ProofData::BatchRequest { commit_hash }) => {
                     if let Err(e) = self
                         .proof_coordinator
-                        .handle_request(&mut stream, commit_hash, version)
+                        .handle_request(&mut stream, commit_hash)
                         .await
                     {
                         error!("Failed to handle BatchRequest: {e}");

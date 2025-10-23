@@ -1,10 +1,9 @@
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    constants::BIN_VERSION,
     sequencer::{
         errors::CommitterError,
-        utils::{self, fetch_batch_blocks, system_now_ms},
+        utils::{self, fetch_batch_blocks, get_git_commit_hash, system_now_ms},
     },
 };
 
@@ -105,7 +104,10 @@ pub struct L1Committer {
     last_committed_batch: u64,
     /// Cancellation token for the next inbound InMessage::Commit
     cancellation_token: Option<CancellationToken>,
+    /// Elasticity multiplier for prover input generation
     elasticity_multiplier: u64,
+    /// Git commit hash of the build
+    git_commit_hash: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -168,6 +170,7 @@ impl L1Committer {
             last_committed_batch,
             cancellation_token: None,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
+            git_commit_hash: get_git_commit_hash(),
         })
     }
 
@@ -606,7 +609,7 @@ impl L1Committer {
         self.rollup_store
             .store_prover_input_by_batch_and_version(
                 batch.number,
-                BIN_VERSION.to_string(),
+                self.git_commit_hash.clone(),
                 prover_input,
             )
             .await?;

@@ -1,8 +1,5 @@
 use crate::{backend::Backend, config::ProverConfig, prove, to_batch_proof};
-use ethrex_l2::{
-    constants::BIN_VERSION,
-    sequencer::proof_coordinator::{ProofData, get_commit_hash},
-};
+use ethrex_l2::sequencer::{proof_coordinator::ProofData, utils::get_git_commit_hash};
 use ethrex_l2_common::prover::BatchProof;
 use guest_program::input::ProgramInput;
 use std::time::Duration;
@@ -41,7 +38,7 @@ impl Prover {
             proof_coordinator_endpoints: cfg.proof_coordinators,
             proving_time_ms: cfg.proving_time_ms,
             aligned_mode: cfg.aligned_mode,
-            commit_hash: get_commit_hash(),
+            commit_hash: get_git_commit_hash(),
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: cfg.sp1_server,
         }
@@ -95,7 +92,7 @@ impl Prover {
 
     async fn request_new_input(&self, endpoint: &Url) -> Result<Option<ProverData>, String> {
         // Request the input with the correct batch_number
-        let request = ProofData::batch_request(self.commit_hash.clone(), BIN_VERSION.to_string());
+        let request = ProofData::batch_request(self.commit_hash.clone());
         let response = connect_to_prover_server_wr(endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
