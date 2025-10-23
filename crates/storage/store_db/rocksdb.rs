@@ -370,6 +370,26 @@ impl Store {
             // rx channel is dropped, closing it
         });
         let store_clone = store.clone();
+        /*
+            When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
+            This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
+
+            This background thread receives messages through a channel to apply new trie updates and does three things:
+
+            - First, it updates the top-most in-memory diff layer and notifies the process that sent the message (i.e. the
+            block production thread) so it can continue with block execution (block execution cannot proceed without the
+            diff layers updated, otherwise it would see wrong state when reading from the trie). This section is done in an RCU manner:
+            a shared pointer with the trie is kept behind a lock. This thread first acquires the lock, then copies the pointer and drops the lock;
+            afterwards it makes a deep copy of the trie layer and mutates it, then takes the lock again, replaces the pointer with the updated copy,
+            then drops the lock again.
+
+            - Second, it performs the logic of persisting the bottom-most diff layer to disk. This is the part of the logic that block execution does not
+            need to proceed. What does need to be aware of this section is the process in charge of generating the snapshot (a.k.a. FlatKeyValue). 
+            Because of this, this section first sends a message to pause the FlatKeyValue generation, then persists the diff layer to disk, then notifies
+            again for FlatKeyValue generation to continue.
+
+            - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
+        */
         std::thread::spawn(move || {
             let rx = trie_upd_rx;
             loop {
