@@ -4064,7 +4064,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
- "spawned-concurrency",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
