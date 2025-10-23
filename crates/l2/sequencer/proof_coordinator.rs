@@ -1,6 +1,7 @@
+use crate::constants::BIN_VERSION;
 use crate::sequencer::errors::{ConnectionHandlerError, ProofCoordinatorError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
-use crate::sequencer::utils::get_latest_sent_batch;
+use crate::sequencer::utils::{fetch_batch_blocks, get_latest_sent_batch};
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
@@ -462,24 +463,15 @@ impl ProofCoordinator {
         &mut self,
         batch_number: u64,
     ) -> Result<ProverInputData, ProofCoordinatorError> {
-        // Get blocks in batch
-        let Some(block_numbers) = self
+        let blocks = self.fetch_batch_blocks(batch_number).await?;
+
+        let Some(witness) = self
             .rollup_store
-            .get_block_numbers_by_batch(batch_number)
+            .get_witness_by_batch_and_version(batch_number, BIN_VERSION.to_string())
             .await?
         else {
-            return Err(ProofCoordinatorError::ItemNotFoundInStore(format!(
-                "Batch number {batch_number} not found in store"
-            )));
+            return Err(ProofCoordinatorError::MissingBatchWitness(batch_number));
         };
-
-        let blocks = self.fetch_blocks(block_numbers).await?;
-
-        let witness = self
-            .blockchain
-            .generate_witness_for_blocks(&blocks)
-            .await
-            .map_err(ProofCoordinatorError::from)?;
 
         // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
         let (blob_commitment, blob_proof) = if self.validium {
@@ -521,24 +513,11 @@ impl ProofCoordinator {
         })
     }
 
-    async fn fetch_blocks(
-        &mut self,
-        block_numbers: Vec<u64>,
+    async fn fetch_batch_blocks(
+        &self,
+        batch_number: u64,
     ) -> Result<Vec<Block>, ProofCoordinatorError> {
-        let mut blocks = vec![];
-        for block_number in block_numbers {
-            let header = self
-                .store
-                .get_block_header(block_number)?
-                .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
-            let body = self
-                .store
-                .get_block_body(block_number)
-                .await?
-                .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
-            blocks.push(Block::new(header, body));
-        }
-        Ok(blocks)
+        fetch_batch_blocks(batch_number, &self.store, &self.rollup_store).await
     }
 }
 
