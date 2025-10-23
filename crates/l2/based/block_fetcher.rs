@@ -257,7 +257,7 @@ impl BlockFetcher {
                 )))?
                 .tx;
 
-            let batch = decode_batch_from_calldata(&tx.data())?;
+            let batch = decode_batch_from_calldata(tx.data())?;
 
             self.store_batch(&batch).await?;
 
