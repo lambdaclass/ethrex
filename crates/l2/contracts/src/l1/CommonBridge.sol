@@ -511,17 +511,19 @@ contract CommonBridge is
             "CommonBridge: caller is not the shared bridge router"
         );
 
-        if (message.value != 0) {
+        if (message.data.length == 0) {
             require(
                 message.value == msg.value,
                 "CommonBridge: message.value does not match msg.value"
             );
-            _deposit(0, _getSenderAlias());
-        }
-
-        if (message.data.length != 0) {
+            _deposit(0, message.to);
+        } else {
+            if (message.value != 0) {
+                _deposit(0, _getSenderAlias());
+            }
             _sendToL2(_getSenderAlias(), message);
         }
+
     }
 
     function upgradeL2Contract(
