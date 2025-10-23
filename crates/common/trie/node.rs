@@ -64,10 +64,10 @@ impl NodeRef {
                 let mut buf = Vec::new();
                 node.encode(&mut buf);
                 let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
-                acc.push((path.clone(), buf));
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }
+                acc.push((path.clone(), buf));
 
                 *self = hash.into();
 
