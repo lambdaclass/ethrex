@@ -23,6 +23,14 @@ contract FeeToken is ERC20 {
     }
 
     function payFee(address receiver, uint256 amount) public {
-        _transfer(address(this), receiver, amount);
+        // this does not check for the receiver to be the address zero as it is burning the fees
+        print(address(receiver));
+        if (receiver == address(0)) {
+            print(string("adentro if"));
+            _burn(address(this), amount);
+        } else {
+            print(string("afuera if"));
+            _transfer(address(this), receiver, amount);
+        }
     }
 }

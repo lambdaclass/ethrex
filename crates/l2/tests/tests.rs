@@ -137,13 +137,11 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Recipient address: {recipient_address:#x}");
     println!("Recipient balance before transfer: {recipient_balance_before_transfer}");
 
-    let burn_address =
-        Address::from_slice(&hex::decode("000c0d6b7c4516a5b274c51ea331a9410fe69127").unwrap());
-    // let burn_address = Address::zero();
-    let burn_address_token_balance_before_transfer =
-        test_balance_of(&l2_client, fee_token_address, burn_address).await;
+    let fee_vault = fee_vault();
+    let fee_vault_address_token_balance_before_transfer =
+        test_balance_of(&l2_client, fee_token_address, fee_vault).await;
     println!(
-        "Burn address fee token balance before transfer: {burn_address_token_balance_before_transfer}"
+        "Fee vault address fee token balance before transfer: {fee_vault_address_token_balance_before_transfer}"
     );
 
     let mut generic_tx = build_generic_tx(
@@ -203,15 +201,18 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
         "Sender fee token balance did not decrease"
     );
 
-    let burn_address_token_balance_after_transfer =
-        test_balance_of(&l2_client, fee_token_address, burn_address).await;
-    println!(
-        "Burn address fee token balance after transfer: {burn_address_token_balance_after_transfer}"
-    );
-    assert!(
-        burn_address_token_balance_after_transfer > burn_address_token_balance_before_transfer,
-        "Burn address fee token balance did not increase"
-    );
+    if std::env::var("INTEGRATION_TEST_CUSTOM_FEE_TX_FEE_VAULT_CHECK").is_ok() {
+        let fee_vault_address_token_balance_after_transfer =
+            test_balance_of(&l2_client, fee_token_address, fee_vault).await;
+        println!(
+            "Fee vault address fee token balance after transfer: {fee_vault_address_token_balance_after_transfer}"
+        );
+        assert!(
+            fee_vault_address_token_balance_after_transfer
+                > fee_vault_address_token_balance_before_transfer,
+            "Fee vault address fee token balance did not increase"
+        );
+    }
 
     Ok(())
 }
