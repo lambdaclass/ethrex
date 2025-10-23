@@ -569,7 +569,7 @@ impl L1Committer {
 
         let batch_witness = self
             .blockchain
-            .generate_witness_for_blocks(&blocks)
+            .generate_witness_for_blocks_with_fee_configs(&blocks, Some(&fee_configs))
             .await
             .map_err(CommitterError::FailedToGenerateBatchWitness)?;
 

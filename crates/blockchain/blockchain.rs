@@ -192,6 +192,15 @@ impl Blockchain {
         &self,
         blocks: &[Block],
     ) -> Result<ExecutionWitness, ChainError> {
+        self.generate_witness_for_blocks_with_fee_configs(blocks, None)
+            .await
+    }
+
+    pub async fn generate_witness_for_blocks_with_fee_configs(
+        &self,
+        blocks: &[Block],
+        fee_configs: Option<&[FeeConfig]>,
+    ) -> Result<ExecutionWitness, ChainError> {
         let first_block_header = blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
@@ -221,15 +230,25 @@ impl Blockchain {
         let mut block_hashes = HashMap::new();
         let mut codes = Vec::new();
 
-        for block in blocks {
+        for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match &self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
-                BlockchainType::L2(l2_config) => {
-                    Evm::new_from_db_for_l2(logger.clone(), *l2_config.fee_config.read().await)
+                BlockchainType::L2(_) => {
+                    let l2_config = match fee_configs {
+                        Some(fee_configs) => {
+                            fee_configs.get(i).ok_or(ChainError::WitnessGeneration(
+                                "FeeConfig not found for witness generation".to_string(),
+                            ))?
+                        }
+                        None => Err(ChainError::WitnessGeneration(
+                            "L2Config not found for witness generation".to_string(),
+                        ))?,
+                    };
+                    Evm::new_from_db_for_l2(logger.clone(), *l2_config)
                 }
             };
 
