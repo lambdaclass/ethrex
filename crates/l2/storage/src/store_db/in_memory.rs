@@ -343,7 +343,7 @@ impl StoreEngineRollup for Store {
     async fn store_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
-        prover_version: String,
+        prover_version: &str,
         prover_input: ProverInputData,
     ) -> Result<(), RollupStoreError> {
         let witness_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&prover_input)
@@ -352,7 +352,7 @@ impl StoreEngineRollup for Store {
 
         self.inner()?
             .batch_prover_input
-            .insert((batch_number, prover_version), witness_bytes);
+            .insert((batch_number, prover_version.to_string()), witness_bytes);
 
         Ok(())
     }
@@ -360,12 +360,12 @@ impl StoreEngineRollup for Store {
     async fn get_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
-        prover_version: String,
+        prover_version: &str,
     ) -> Result<Option<ProverInputData>, RollupStoreError> {
         let Some(witness_bytes) = self
             .inner()?
             .batch_prover_input
-            .get(&(batch_number, prover_version.clone()))
+            .get(&(batch_number, prover_version.to_string()))
             .cloned()
         else {
             return Ok(None);

@@ -286,35 +286,34 @@ impl ProofCoordinator {
             }
         }
 
-        let response = if all_proofs_exist
-            || !self.rollup_store.contains_batch(&batch_to_verify).await?
-        {
-            debug!("Sending empty BatchResponse");
-            ProofData::empty_batch_response()
-        } else {
-            let Some(input) = self
-                .rollup_store
-                .get_prover_input_by_batch_and_version(batch_to_verify, self.git_commit_hash.clone())
-                .await?
-            else {
-                return Err(ProofCoordinatorError::MissingBatchProverInput(
-                    batch_to_verify,
-                    self.git_commit_hash.clone(),
-                ));
+        let response =
+            if all_proofs_exist || !self.rollup_store.contains_batch(&batch_to_verify).await? {
+                debug!("Sending empty BatchResponse");
+                ProofData::empty_batch_response()
+            } else {
+                let Some(input) = self
+                    .rollup_store
+                    .get_prover_input_by_batch_and_version(batch_to_verify, &self.git_commit_hash)
+                    .await?
+                else {
+                    return Err(ProofCoordinatorError::MissingBatchProverInput(
+                        batch_to_verify,
+                        self.git_commit_hash.clone(),
+                    ));
+                };
+                debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+                metrics!(
+                    // First request starts a timer until a proof is received. The elapsed time will be
+                    // the estimated proving time.
+                    // This should be used for development only and runs on the assumption that:
+                    //   1. There's a single prover
+                    //   2. Communication does not fail
+                    //   3. Communication adds negligible overhead in comparison with proving time
+                    let mut lock = self.request_timestamp.lock().await;
+                    lock.entry(batch_to_verify).or_insert(SystemTime::now());
+                );
+                ProofData::batch_response(batch_to_verify, input)
             };
-            debug!("Sending BatchResponse for block_number: {batch_to_verify}");
-            metrics!(
-                // First request starts a timer until a proof is received. The elapsed time will be
-                // the estimated proving time.
-                // This should be used for development only and runs on the assumption that:
-                //   1. There's a single prover
-                //   2. Communication does not fail
-                //   3. Communication adds negligible overhead in comparison with proving time
-                let mut lock = self.request_timestamp.lock().await;
-                lock.entry(batch_to_verify).or_insert(SystemTime::now());
-            );
-            ProofData::batch_response(batch_to_verify, input)
-        };
 
         send_response(stream, &response).await?;
         info!("BatchResponse sent for batch number: {batch_to_verify}");

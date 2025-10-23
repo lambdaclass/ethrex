@@ -609,7 +609,7 @@ impl L1Committer {
         self.rollup_store
             .store_prover_input_by_batch_and_version(
                 batch.number,
-                self.git_commit_hash.clone(),
+                &self.git_commit_hash,
                 prover_input,
             )
             .await?;

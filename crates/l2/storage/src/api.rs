@@ -151,13 +151,13 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     async fn store_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
-        prover_version: String,
+        prover_version: &str,
         prover_input: ProverInputData,
     ) -> Result<(), RollupStoreError>;
 
     async fn get_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
-        prover_version: String,
+        prover_version: &str,
     ) -> Result<Option<ProverInputData>, RollupStoreError>;
 }

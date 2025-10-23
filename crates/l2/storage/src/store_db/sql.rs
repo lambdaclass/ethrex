@@ -286,7 +286,7 @@ impl SQLStore {
     async fn store_prover_input_by_batch_and_version_in_tx(
         &self,
         batch_number: u64,
-        prover_version: String,
+        prover_version: &str,
         prover_input: ProverInputData,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
@@ -811,7 +811,7 @@ impl StoreEngineRollup for SQLStore {
     async fn store_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
-        prover_version: String,
+        prover_version: &str,
         prover_input: ProverInputData,
     ) -> Result<(), RollupStoreError> {
         self.store_prover_input_by_batch_and_version_in_tx(
@@ -826,12 +826,12 @@ impl StoreEngineRollup for SQLStore {
     async fn get_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
-        prover_version: String,
+        prover_version: &str,
     ) -> Result<Option<ProverInputData>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT prover_input FROM batch_prover_input WHERE batch = ?1 AND prover_version = ?2",
-                (batch_number, prover_version.clone()),
+                (batch_number, prover_version),
             )
             .await?;
         if let Some(row) = rows.next().await? {
