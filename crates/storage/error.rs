@@ -38,4 +38,6 @@ pub enum StoreError {
     TryInto(#[from] std::num::TryFromIntError),
     #[error("Update batch contains no blocks")]
     UpdateBatchNoBlocks,
+    #[error("Pivot changed")]
+    PivotChanged,
 }
