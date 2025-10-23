@@ -4,7 +4,9 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{
+        AccountUpdate, Blob, BlockNumber, batch::Batch, block_execution_witness::ExecutionWitness,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -287,13 +289,18 @@ impl SQLStore {
         &self,
         batch_number: u64,
         prover_version: String,
-        witness: Vec<u8>,
+        witness: ExecutionWitness,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
+        let witness_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&witness)
+            .map_err(|e| RollupStoreError::Custom(format!("Failed to serialize witness: {e}")))?
+            .to_vec();
+
         let queries = vec![(
             "INSERT OR REPLACE INTO batch_witness VALUES (?1, ?2, ?3)",
-            (batch_number, prover_version, witness).into_params()?,
+            (batch_number, prover_version, witness_bytes).into_params()?,
         )];
+
         self.execute_in_tx(queries, db_tx).await
     }
 }
@@ -805,7 +812,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         prover_version: String,
-        witness: Vec<u8>,
+        witness: ExecutionWitness,
     ) -> Result<(), RollupStoreError> {
         self.store_witness_by_batch_and_version_in_tx(batch_number, prover_version, witness, None)
             .await
@@ -815,16 +822,24 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         prover_version: String,
-    ) -> Result<Option<Vec<u8>>, RollupStoreError> {
+    ) -> Result<Option<ExecutionWitness>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT witness FROM batch_witness WHERE batch = ?1 AND prover_version = ?2",
-                (batch_number, prover_version),
+                (batch_number, prover_version.clone()),
             )
             .await?;
         if let Some(row) = rows.next().await? {
             let vec = read_from_row_blob(&row, 0)?;
-            return Ok(Some(vec));
+
+            let witness = rkyv::from_bytes::<ExecutionWitness, rkyv::rancor::Error>(&vec)
+                .map_err(|e| {
+                    RollupStoreError::Custom(format!(
+                        "Failed to deserialize witness for batch {batch_number} and version {prover_version}: {e}",
+                    ))
+                })?;
+
+            return Ok(Some(witness));
         }
         Ok(None)
     }
