@@ -377,7 +377,7 @@ Block building options:
       --builder.extra-data &lt;EXTRA_DATA&gt;
           Block extra data message.
 
-          [default: "ethrex 4.0.0"]
+          [default: "ethrex 5.0.0"]
 
       --builder.gas-limit &lt;GAS_LIMIT&gt;
           Target block gas limit.
@@ -403,11 +403,11 @@ Commands:
 Options:
   -t, --tick-rate &lt;TICK_RATE&gt;
           time in ms between two ticks
-          
+
           [default: 1000]
 
       --batch-widget-height &lt;BATCH_WIDGET_HEIGHT&gt;
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -415,12 +415,12 @@ Options:
 Node options:
       --network &lt;GENESIS_FILE_PATH&gt;
           Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
-          
+
           [env: ETHREX_NETWORK=]
 
       --datadir &lt;DATABASE_DIRECTORY&gt;
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
-          
+
           [env: ETHREX_DATADIR=]
           [default: "/home/runner/.local/share/ethrex"]
 
@@ -442,63 +442,106 @@ Node options:
 
       --log.level &lt;LOG_LEVEL&gt;
           Possible values: info, debug, trace, warn, error
-          
+
           [default: INFO]
+
+      --mempool.maxsize &lt;MEMPOOL_MAX_SIZE&gt;
+          Maximum size of the mempool in number of transactions
+
+          [default: 10000]
 
 P2P options:
       --bootnodes &lt;BOOTNODE_LIST&gt;...
           Comma separated enode URLs for P2P discovery bootstrap.
 
       --syncmode &lt;SYNC_MODE&gt;
-          Can be either "full" or "snap" with "full" as default value.
-          
-          [default: full]
+          Can be either "full" or "snap" with "snap" as default value.
+
+          [default: snap]
 
       --p2p.enabled
-          
+
 
       --p2p.port &lt;PORT&gt;
           TCP port for P2P protocol.
-          
+
           [default: 30303]
 
       --discovery.port &lt;PORT&gt;
           UDP port for P2P discovery.
-          
+
           [default: 30303]
+
+      --p2p.tx-broadcasting-interval &lt;INTERVAL_MS&gt;
+          Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
+
+          [default: 1000]
+
+      --target.peers &lt;MAX_PEERS&gt;
+          Max amount of connected peers.
+
+          [default: 100]
 
 RPC options:
       --http.addr &lt;ADDRESS&gt;
           Listening address for the http rpc server.
-          
+
           [env: ETHREX_HTTP_ADDR=]
           [default: 0.0.0.0]
 
       --http.port &lt;PORT&gt;
           Listening port for the http rpc server.
-          
+
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
 
+      --ws.enabled
+          Enable websocket rpc server. Disabled by default.
+
+          [env: ETHREX_ENABLE_WS=]
+
+      --ws.addr &lt;ADDRESS&gt;
+          Listening address for the websocket rpc server.
+
+          [env: ETHREX_WS_ADDR=]
+          [default: 0.0.0.0]
+
+      --ws.port &lt;PORT&gt;
+          Listening port for the websocket rpc server.
+
+          [env: ETHREX_WS_PORT=]
+          [default: 8546]
+
       --authrpc.addr &lt;ADDRESS&gt;
           Listening address for the authenticated rpc server.
-          
+
           [default: 127.0.0.1]
 
       --authrpc.port &lt;PORT&gt;
           Listening port for the authenticated rpc server.
-          
+
           [default: 8551]
 
       --authrpc.jwtsecret &lt;JWTSECRET_PATH&gt;
           Receives the jwt secret used for authenticated rpc requests.
-          
+
           [default: jwt.hex]
+
+Block building options:
+      --builder.extra-data &lt;EXTRA_DATA&gt;
+          Block extra data message.
+
+          [default: "ethrex 5.0.0"]
+
+      --builder.gas-limit &lt;GAS_LIMIT&gt;
+          Target block gas limit.
+
+          [default: 30000000]
 
 Eth options:
       --eth.rpc-url &lt;RPC_URL&gt;...
           List of rpc urls to use.
-          
+
           [env: ETHREX_ETH_RPC_URL=]
 
       --eth.maximum-allowed-max-fee-per-gas &lt;UINT64&gt;
@@ -531,7 +574,7 @@ L1 Watcher options:
 
       --watcher.watch-interval &lt;UINT64&gt;
           How often the L1 watcher checks for new blocks in milliseconds.
-          
+
           [env: ETHREX_WATCHER_WATCH_INTERVAL=]
           [default: 12000]
 
@@ -541,26 +584,34 @@ L1 Watcher options:
 
       --watcher.block-delay &lt;UINT64&gt;
           Number of blocks the L1 watcher waits before trusting an L1 block.
-          
+
           [env: ETHREX_WATCHER_BLOCK_DELAY=]
           [default: 10]
 
 Block producer options:
       --block-producer.block-time &lt;UINT64&gt;
           How often does the sequencer produce new blocks to the L1 in milliseconds.
-          
+
           [env: ETHREX_BLOCK_PRODUCER_BLOCK_TIME=]
           [default: 5000]
 
       --block-producer.coinbase-address &lt;ADDRESS&gt;
           [env: ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS=]
 
-      --block-producer.fee-vault-address &lt;ADDRESS&gt;
-          [env: ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=]
+      --block-producer.base-fee-vault-address &lt;ADDRESS&gt;
+          [env: ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=]
+
+      --block-producer.operator-fee-vault-address &lt;ADDRESS&gt;
+          [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=]
+
+      --operator-fee-per-gas &lt;UINT64&gt;
+          Fee that the operator will receive for each unit of gas consumed in a block.
+
+          [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=]
 
       --block-producer.block-gas-limit &lt;UINT64&gt;
           Maximum gas limit for the L2 blocks.
-          
+
           [env: ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT=]
           [default: 30000000]
 
@@ -572,17 +623,17 @@ Proposer options:
 L1 Committer options:
       --committer.l1-private-key &lt;PRIVATE_KEY&gt;
           Private key of a funded account that the sequencer will use to send commit txs to the L1.
-          
+
           [env: ETHREX_COMMITTER_L1_PRIVATE_KEY=]
 
       --committer.remote-signer-url &lt;URL&gt;
           URL of a Web3Signer-compatible server to remote sign instead of a local private key.
-          
+
           [env: ETHREX_COMMITTER_REMOTE_SIGNER_URL=]
 
       --committer.remote-signer-public-key &lt;PUBLIC_KEY&gt;
           Public key to request the remote signature from.
-          
+
           [env: ETHREX_COMMITTER_REMOTE_SIGNER_PUBLIC_KEY=]
 
       --l1.on-chain-proposer-address &lt;ADDRESS&gt;
@@ -590,18 +641,18 @@ L1 Committer options:
 
       --committer.commit-time &lt;UINT64&gt;
           How often does the sequencer commit new blocks to the L1 in milliseconds.
-          
+
           [env: ETHREX_COMMITTER_COMMIT_TIME=]
           [default: 60000]
 
       --committer.batch-gas-limit &lt;UINT64&gt;
           Maximum gas limit for the batch
-          
+
           [env: ETHREX_COMMITTER_BATCH_GAS_LIMIT=]
 
       --committer.first-wake-up-time &lt;UINT64&gt;
           Time to wait before the sequencer seals a batch when started. After committing the first batch, `committer.commit-time` will be used.
-          
+
           [env: ETHREX_COMMITTER_FIRST_WAKE_UP_TIME=]
 
       --committer.arbitrary-base-blob-gas-price &lt;UINT64&gt;
@@ -611,27 +662,33 @@ L1 Committer options:
 Proof coordinator options:
       --proof-coordinator.l1-private-key &lt;PRIVATE_KEY&gt;
           Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=]
 
       --proof-coordinator.tdx-private-key &lt;PRIVATE_KEY&gt;
           Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=]
+
+      --proof-coordinator.qpl-tool-path &lt;QPL_TOOL_PATH&gt;
+          Path to the QPL tool that will be used to generate TDX quotes.
+
+          [env: ETHREX_PROOF_COORDINATOR_QPL_TOOL_PATH=]
+          [default: ./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool]
 
       --proof-coordinator.remote-signer-url &lt;URL&gt;
           URL of a Web3Signer-compatible server to remote sign instead of a local private key.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_URL=]
 
       --proof-coordinator.remote-signer-public-key &lt;PUBLIC_KEY&gt;
           Public key to request the remote signature from.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_PUBLIC_KEY=]
 
       --proof-coordinator.addr &lt;IP_ADDRESS&gt;
           Set it to 0.0.0.0 to allow connections from other machines.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=]
           [default: 127.0.0.1]
 
@@ -641,7 +698,7 @@ Proof coordinator options:
 
       --proof-coordinator.send-interval &lt;UINT64&gt;
           How often does the proof coordinator send proofs to the L1 in milliseconds.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_SEND_INTERVAL=]
           [default: 5000]
 
@@ -674,24 +731,24 @@ Aligned options:
 
       --aligned.beacon-url &lt;BEACON_URL&gt;...
           List of beacon urls to use.
-          
+
           [env: ETHREX_ALIGNED_BEACON_URL=]
 
       --aligned-network &lt;ETHREX_ALIGNED_NETWORK&gt;
           L1 network name for Aligned sdk
-          
+
           [env: ETHREX_ALIGNED_NETWORK=]
           [default: devnet]
 
       --aligned.fee-estimate &lt;FEE_ESTIMATE&gt;
           Fee estimate for Aligned sdk
-          
+
           [env: ETHREX_ALIGNED_FEE_ESTIMATE=]
           [default: instant]
 
       --aligned-sp1-elf-path &lt;ETHREX_ALIGNED_SP1_ELF_PATH&gt;
           Path to the SP1 elf. This is used for proof verification.
-          
+
           [env: ETHREX_ALIGNED_SP1_ELF_PATH=]
 
 Admin server options:
@@ -706,7 +763,7 @@ Admin server options:
 L2 options:
       --validium
           If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.
-          
+
           [env: ETHREX_L2_VALIDIUM=]
 
       --sponsorable-addresses &lt;SPONSORABLE_ADDRESSES_PATH&gt;
@@ -714,14 +771,14 @@ L2 options:
 
       --sponsor-private-key &lt;SPONSOR_PRIVATE_KEY&gt;
           The private key of ethrex L2 transactions sponsor.
-          
+
           [env: SPONSOR_PRIVATE_KEY=]
           [default: 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192]
 
 Monitor options:
       --no-monitor
           [env: ETHREX_NO_MONITOR=]
-
+          
 </code></pre>
 <h2 id="ethrex-l2-prover"><a class="header" href="#ethrex-l2-prover">ethrex l2 prover</a></h2>
 <pre><code>Initialize an ethrex prover

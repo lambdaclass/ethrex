@@ -3182,7 +3182,7 @@ cargo run deposit-to-batcher \
 <li>Start our l2 node:</li>
 </ol>
 <pre><code>cd ethrex/crates/l2
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --block-producer.fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
@@ -5577,24 +5577,79 @@ TODO: add updated graph with L1 block time distribution
 </p>
 <p>Privileged transactions are exempt from all fees.</p>
 </div>
-<h2 id="execution-fees"><a class="header" href="#execution-fees">Execution Fees</a></h2>
-<p>Execution fees are divided into two components: <strong>base fee</strong> and <strong>priority fee</strong>.</p>
-<h3 id="base-fee"><a class="header" href="#base-fee">Base Fee</a></h3>
+<h2 id="priority-fee"><a class="header" href="#priority-fee">Priority Fee</a></h2>
+<p>The priority fee works exactly the same way as on Ethereum L1.<br />
+It is an additional tip paid by the transaction sender to incentivize the sequencer to prioritize the inclusion of their transaction.<br />
+The priority fee is always forwarded directly to the sequencer’s coinbase address.</p>
+<h2 id="base-fee"><a class="header" href="#base-fee">Base Fee</a></h2>
 <p>The base fee follows the same rules as the Ethereum L1 base fee. It adjusts dynamically depending on network congestion to ensure stable transaction pricing.<br />
-By default, base fees are burned. However a sequencer can configure a <code>fee vault</code> address to receive the collected base fees instead of burning them.</p>
-<pre><code class="language-sh">ethrex l2 --block-producer.fee-vault-address &lt;l2-fee-vault-address&gt;
+By default, base fees are burned. However, a sequencer can configure a <code>base fee vault</code> address to receive the collected base fees instead of burning them.</p>
+<pre><code class="language-sh">ethrex l2 --block-producer.base-fee-vault-address &lt;l2-fee-vault-address&gt;
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-caution">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
   caution
 </p>
-<p>If the fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.</p>
+<p>If the base fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.</p>
 </div>
-<h3 id="priority-fee"><a class="header" href="#priority-fee">Priority Fee</a></h3>
-<p>The priority fee works exactly the same way as on Ethereum L1.<br />
-It is an additional tip paid by the transaction sender to incentivize the sequencer to prioritize the inclusion of their transaction. The priority fee is always forwarded directly to the sequencer’s coinbase address.</p>
-<h2 id="operator-fees"><a class="header" href="#operator-fees">Operator Fees</a></h2>
+<h2 id="operator-fee"><a class="header" href="#operator-fee">Operator Fee</a></h2>
+<p>The operator fee represents an additional per-gas cost charged by the sequencer to cover the operational costs of maintaining the L2 infrastructure.</p>
+<p>This fee works similarly to the base fee — it is <strong>multiplied by the gas used</strong> for each transaction.<br />
+All collected operator fees are deposited into a dedicated <code>operator fee vault</code> address.</p>
+<p>To set the operator fee amount:</p>
+<pre><code class="language-sh">ethrex l2 --block-producer.operator-fee &lt;amount-in-wei&gt;
+</code></pre>
+<p>To set the operator fee vault address:</p>
+<pre><code class="language-sh">ethrex l2 --block-producer.operator-fee-vault-address &lt;operator-fee-vault-address&gt;
+</code></pre>
+<div class="mdbook-alerts mdbook-alerts-caution">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  caution
+</p>
+<p>If the operator fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.</p>
+</div>
+<hr />
+<h2 id="fee-calculation"><a class="header" href="#fee-calculation">Fee Calculation</a></h2>
+<p>When executing a transaction, all gas-related fees are subject to the <strong><code>max_fee_per_gas</code></strong> value defined in the transaction.<br />
+This value acts as an absolute cap over the <strong>sum of all fee components</strong>.</p>
+<p>This means that the <strong>effective priority fee</strong> is capped to ensure the total does not exceed <code>max_fee_per_gas</code>.<br />
+Specifically:</p>
+<pre><code>effective_priority_fee_per_gas = min(
+    max_priority_fee_per_gas,
+    max_fee_per_gas - base_fee_per_gas - operator_fee_per_gas
+)
+</code></pre>
+<p>Then, the total fees are calculated as:</p>
+<pre><code class="language-sh">total_fees = (base_fee_per_gas + operator_fee_per_gas + priority_fee_per_gas) * gas_used
+</code></pre>
+<p>This behavior ensures that transaction senders <strong>never pay more than <code>max_fee_per_gas * gas_used</code></strong>, even when the operator fee is enabled.</p>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>The current <code>effective_gas_price</code> field in the transaction receipt <strong>does not include</strong> the operator fee component.<br />
+Therefore, <code>effective_gas_price * gas_used</code> will only reflect the <strong>base + priority</strong> portions of the total cost.</p>
+</div>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>The <code>eth_gasPrice</code> RPC endpoint has been <strong>modified</strong> to include the <code>operator_fee_per_gas</code> value when the operator fee mechanism is active.<br />
+This means that the value returned by <code>eth_gasPrice</code> corresponds to <code>base_fee_per_gas + operator_fee_per_gas + estimated_gas_tip</code>.</p>
+</div>
+<h2 id="useful-rpc-methods"><a class="header" href="#useful-rpc-methods">Useful RPC Methods</a></h2>
+<p>The following custom RPC methods are available to query fee-related parameters directly from the L2 node.<br />
+Each method accepts a single argument: the <strong><code>block_number</code></strong> to query historical or current values.</p>
+<div class="table-wrapper"><table><thead><tr><th>Method Name</th><th>Description</th><th>Example</th></tr></thead><tbody>
+<tr><td><code>ethrex_getBaseFeeVaultAddress</code></td><td>Returns the address configured to receive the <strong>base fees</strong> collected in the specified block.</td><td><code>ethrex_getBaseFeeVaultAddress {"block_number": 12345}</code></td></tr>
+<tr><td><code>ethrex_getOperatorFeeVaultAddress</code></td><td>Returns the address configured as the <strong>operator fee vault</strong> in the specified block.</td><td><code>ethrex_getOperatorFeeVaultAddress {"block_number": 12345}</code></td></tr>
+<tr><td><code>ethrex_getOperatorFee</code></td><td>Returns the <strong>operator fee per gas</strong> value active at the specified block.</td><td><code>ethrex_getOperatorFee {"block_number": 12345}</code></td></tr>
+</tbody></table>
+</div>
 <h2 id="l1-fees"><a class="header" href="#l1-fees">L1 Fees</a></h2>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
@@ -7753,7 +7808,7 @@ Block building options:
       --builder.extra-data &lt;EXTRA_DATA&gt;
           Block extra data message.
 
-          [default: "ethrex 4.0.0"]
+          [default: "ethrex 5.0.0"]
 
       --builder.gas-limit &lt;GAS_LIMIT&gt;
           Target block gas limit.
@@ -7779,11 +7834,11 @@ Commands:
 Options:
   -t, --tick-rate &lt;TICK_RATE&gt;
           time in ms between two ticks
-          
+
           [default: 1000]
 
       --batch-widget-height &lt;BATCH_WIDGET_HEIGHT&gt;
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -7791,12 +7846,12 @@ Options:
 Node options:
       --network &lt;GENESIS_FILE_PATH&gt;
           Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
-          
+
           [env: ETHREX_NETWORK=]
 
       --datadir &lt;DATABASE_DIRECTORY&gt;
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
-          
+
           [env: ETHREX_DATADIR=]
           [default: "/home/runner/.local/share/ethrex"]
 
@@ -7818,63 +7873,106 @@ Node options:
 
       --log.level &lt;LOG_LEVEL&gt;
           Possible values: info, debug, trace, warn, error
-          
+
           [default: INFO]
+
+      --mempool.maxsize &lt;MEMPOOL_MAX_SIZE&gt;
+          Maximum size of the mempool in number of transactions
+
+          [default: 10000]
 
 P2P options:
       --bootnodes &lt;BOOTNODE_LIST&gt;...
           Comma separated enode URLs for P2P discovery bootstrap.
 
       --syncmode &lt;SYNC_MODE&gt;
-          Can be either "full" or "snap" with "full" as default value.
-          
-          [default: full]
+          Can be either "full" or "snap" with "snap" as default value.
+
+          [default: snap]
 
       --p2p.enabled
-          
+
 
       --p2p.port &lt;PORT&gt;
           TCP port for P2P protocol.
-          
+
           [default: 30303]
 
       --discovery.port &lt;PORT&gt;
           UDP port for P2P discovery.
-          
+
           [default: 30303]
+
+      --p2p.tx-broadcasting-interval &lt;INTERVAL_MS&gt;
+          Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
+
+          [default: 1000]
+
+      --target.peers &lt;MAX_PEERS&gt;
+          Max amount of connected peers.
+
+          [default: 100]
 
 RPC options:
       --http.addr &lt;ADDRESS&gt;
           Listening address for the http rpc server.
-          
+
           [env: ETHREX_HTTP_ADDR=]
           [default: 0.0.0.0]
 
       --http.port &lt;PORT&gt;
           Listening port for the http rpc server.
-          
+
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
 
+      --ws.enabled
+          Enable websocket rpc server. Disabled by default.
+
+          [env: ETHREX_ENABLE_WS=]
+
+      --ws.addr &lt;ADDRESS&gt;
+          Listening address for the websocket rpc server.
+
+          [env: ETHREX_WS_ADDR=]
+          [default: 0.0.0.0]
+
+      --ws.port &lt;PORT&gt;
+          Listening port for the websocket rpc server.
+
+          [env: ETHREX_WS_PORT=]
+          [default: 8546]
+
       --authrpc.addr &lt;ADDRESS&gt;
           Listening address for the authenticated rpc server.
-          
+
           [default: 127.0.0.1]
 
       --authrpc.port &lt;PORT&gt;
           Listening port for the authenticated rpc server.
-          
+
           [default: 8551]
 
       --authrpc.jwtsecret &lt;JWTSECRET_PATH&gt;
           Receives the jwt secret used for authenticated rpc requests.
-          
+
           [default: jwt.hex]
+
+Block building options:
+      --builder.extra-data &lt;EXTRA_DATA&gt;
+          Block extra data message.
+
+          [default: "ethrex 5.0.0"]
+
+      --builder.gas-limit &lt;GAS_LIMIT&gt;
+          Target block gas limit.
+
+          [default: 30000000]
 
 Eth options:
       --eth.rpc-url &lt;RPC_URL&gt;...
           List of rpc urls to use.
-          
+
           [env: ETHREX_ETH_RPC_URL=]
 
       --eth.maximum-allowed-max-fee-per-gas &lt;UINT64&gt;
@@ -7907,7 +8005,7 @@ L1 Watcher options:
 
       --watcher.watch-interval &lt;UINT64&gt;
           How often the L1 watcher checks for new blocks in milliseconds.
-          
+
           [env: ETHREX_WATCHER_WATCH_INTERVAL=]
           [default: 12000]
 
@@ -7917,26 +8015,34 @@ L1 Watcher options:
 
       --watcher.block-delay &lt;UINT64&gt;
           Number of blocks the L1 watcher waits before trusting an L1 block.
-          
+
           [env: ETHREX_WATCHER_BLOCK_DELAY=]
           [default: 10]
 
 Block producer options:
       --block-producer.block-time &lt;UINT64&gt;
           How often does the sequencer produce new blocks to the L1 in milliseconds.
-          
+
           [env: ETHREX_BLOCK_PRODUCER_BLOCK_TIME=]
           [default: 5000]
 
       --block-producer.coinbase-address &lt;ADDRESS&gt;
           [env: ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS=]
 
-      --block-producer.fee-vault-address &lt;ADDRESS&gt;
-          [env: ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=]
+      --block-producer.base-fee-vault-address &lt;ADDRESS&gt;
+          [env: ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=]
+
+      --block-producer.operator-fee-vault-address &lt;ADDRESS&gt;
+          [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=]
+
+      --operator-fee-per-gas &lt;UINT64&gt;
+          Fee that the operator will receive for each unit of gas consumed in a block.
+
+          [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=]
 
       --block-producer.block-gas-limit &lt;UINT64&gt;
           Maximum gas limit for the L2 blocks.
-          
+
           [env: ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT=]
           [default: 30000000]
 
@@ -7948,17 +8054,17 @@ Proposer options:
 L1 Committer options:
       --committer.l1-private-key &lt;PRIVATE_KEY&gt;
           Private key of a funded account that the sequencer will use to send commit txs to the L1.
-          
+
           [env: ETHREX_COMMITTER_L1_PRIVATE_KEY=]
 
       --committer.remote-signer-url &lt;URL&gt;
           URL of a Web3Signer-compatible server to remote sign instead of a local private key.
-          
+
           [env: ETHREX_COMMITTER_REMOTE_SIGNER_URL=]
 
       --committer.remote-signer-public-key &lt;PUBLIC_KEY&gt;
           Public key to request the remote signature from.
-          
+
           [env: ETHREX_COMMITTER_REMOTE_SIGNER_PUBLIC_KEY=]
 
       --l1.on-chain-proposer-address &lt;ADDRESS&gt;
@@ -7966,18 +8072,18 @@ L1 Committer options:
 
       --committer.commit-time &lt;UINT64&gt;
           How often does the sequencer commit new blocks to the L1 in milliseconds.
-          
+
           [env: ETHREX_COMMITTER_COMMIT_TIME=]
           [default: 60000]
 
       --committer.batch-gas-limit &lt;UINT64&gt;
           Maximum gas limit for the batch
-          
+
           [env: ETHREX_COMMITTER_BATCH_GAS_LIMIT=]
 
       --committer.first-wake-up-time &lt;UINT64&gt;
           Time to wait before the sequencer seals a batch when started. After committing the first batch, `committer.commit-time` will be used.
-          
+
           [env: ETHREX_COMMITTER_FIRST_WAKE_UP_TIME=]
 
       --committer.arbitrary-base-blob-gas-price &lt;UINT64&gt;
@@ -7987,27 +8093,33 @@ L1 Committer options:
 Proof coordinator options:
       --proof-coordinator.l1-private-key &lt;PRIVATE_KEY&gt;
           Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=]
 
       --proof-coordinator.tdx-private-key &lt;PRIVATE_KEY&gt;
           Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=]
+
+      --proof-coordinator.qpl-tool-path &lt;QPL_TOOL_PATH&gt;
+          Path to the QPL tool that will be used to generate TDX quotes.
+
+          [env: ETHREX_PROOF_COORDINATOR_QPL_TOOL_PATH=]
+          [default: ./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool]
 
       --proof-coordinator.remote-signer-url &lt;URL&gt;
           URL of a Web3Signer-compatible server to remote sign instead of a local private key.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_URL=]
 
       --proof-coordinator.remote-signer-public-key &lt;PUBLIC_KEY&gt;
           Public key to request the remote signature from.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_PUBLIC_KEY=]
 
       --proof-coordinator.addr &lt;IP_ADDRESS&gt;
           Set it to 0.0.0.0 to allow connections from other machines.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=]
           [default: 127.0.0.1]
 
@@ -8017,7 +8129,7 @@ Proof coordinator options:
 
       --proof-coordinator.send-interval &lt;UINT64&gt;
           How often does the proof coordinator send proofs to the L1 in milliseconds.
-          
+
           [env: ETHREX_PROOF_COORDINATOR_SEND_INTERVAL=]
           [default: 5000]
 
@@ -8050,24 +8162,24 @@ Aligned options:
 
       --aligned.beacon-url &lt;BEACON_URL&gt;...
           List of beacon urls to use.
-          
+
           [env: ETHREX_ALIGNED_BEACON_URL=]
 
       --aligned-network &lt;ETHREX_ALIGNED_NETWORK&gt;
           L1 network name for Aligned sdk
-          
+
           [env: ETHREX_ALIGNED_NETWORK=]
           [default: devnet]
 
       --aligned.fee-estimate &lt;FEE_ESTIMATE&gt;
           Fee estimate for Aligned sdk
-          
+
           [env: ETHREX_ALIGNED_FEE_ESTIMATE=]
           [default: instant]
 
       --aligned-sp1-elf-path &lt;ETHREX_ALIGNED_SP1_ELF_PATH&gt;
           Path to the SP1 elf. This is used for proof verification.
-          
+
           [env: ETHREX_ALIGNED_SP1_ELF_PATH=]
 
 Admin server options:
@@ -8082,7 +8194,7 @@ Admin server options:
 L2 options:
       --validium
           If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.
-          
+
           [env: ETHREX_L2_VALIDIUM=]
 
       --sponsorable-addresses &lt;SPONSORABLE_ADDRESSES_PATH&gt;
@@ -8090,14 +8202,14 @@ L2 options:
 
       --sponsor-private-key &lt;SPONSOR_PRIVATE_KEY&gt;
           The private key of ethrex L2 transactions sponsor.
-          
+
           [env: SPONSOR_PRIVATE_KEY=]
           [default: 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192]
 
 Monitor options:
       --no-monitor
           [env: ETHREX_NO_MONITOR=]
-
+          
 </code></pre>
 <h2 id="ethrex-l2-prover-1"><a class="header" href="#ethrex-l2-prover-1">ethrex l2 prover</a></h2>
 <pre><code>Initialize an ethrex prover

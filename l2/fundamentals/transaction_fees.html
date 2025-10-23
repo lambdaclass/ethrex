@@ -246,24 +246,79 @@
 </p>
 <p>Privileged transactions are exempt from all fees.</p>
 </div>
-<h2 id="execution-fees"><a class="header" href="#execution-fees">Execution Fees</a></h2>
-<p>Execution fees are divided into two components: <strong>base fee</strong> and <strong>priority fee</strong>.</p>
-<h3 id="base-fee"><a class="header" href="#base-fee">Base Fee</a></h3>
+<h2 id="priority-fee"><a class="header" href="#priority-fee">Priority Fee</a></h2>
+<p>The priority fee works exactly the same way as on Ethereum L1.<br />
+It is an additional tip paid by the transaction sender to incentivize the sequencer to prioritize the inclusion of their transaction.<br />
+The priority fee is always forwarded directly to the sequencer’s coinbase address.</p>
+<h2 id="base-fee"><a class="header" href="#base-fee">Base Fee</a></h2>
 <p>The base fee follows the same rules as the Ethereum L1 base fee. It adjusts dynamically depending on network congestion to ensure stable transaction pricing.<br />
-By default, base fees are burned. However a sequencer can configure a <code>fee vault</code> address to receive the collected base fees instead of burning them.</p>
-<pre><code class="language-sh">ethrex l2 --block-producer.fee-vault-address &lt;l2-fee-vault-address&gt;
+By default, base fees are burned. However, a sequencer can configure a <code>base fee vault</code> address to receive the collected base fees instead of burning them.</p>
+<pre><code class="language-sh">ethrex l2 --block-producer.base-fee-vault-address &lt;l2-fee-vault-address&gt;
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-caution">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
   caution
 </p>
-<p>If the fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.</p>
+<p>If the base fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.</p>
 </div>
-<h3 id="priority-fee"><a class="header" href="#priority-fee">Priority Fee</a></h3>
-<p>The priority fee works exactly the same way as on Ethereum L1.<br />
-It is an additional tip paid by the transaction sender to incentivize the sequencer to prioritize the inclusion of their transaction. The priority fee is always forwarded directly to the sequencer’s coinbase address.</p>
-<h2 id="operator-fees"><a class="header" href="#operator-fees">Operator Fees</a></h2>
+<h2 id="operator-fee"><a class="header" href="#operator-fee">Operator Fee</a></h2>
+<p>The operator fee represents an additional per-gas cost charged by the sequencer to cover the operational costs of maintaining the L2 infrastructure.</p>
+<p>This fee works similarly to the base fee — it is <strong>multiplied by the gas used</strong> for each transaction.<br />
+All collected operator fees are deposited into a dedicated <code>operator fee vault</code> address.</p>
+<p>To set the operator fee amount:</p>
+<pre><code class="language-sh">ethrex l2 --block-producer.operator-fee &lt;amount-in-wei&gt;
+</code></pre>
+<p>To set the operator fee vault address:</p>
+<pre><code class="language-sh">ethrex l2 --block-producer.operator-fee-vault-address &lt;operator-fee-vault-address&gt;
+</code></pre>
+<div class="mdbook-alerts mdbook-alerts-caution">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  caution
+</p>
+<p>If the operator fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.</p>
+</div>
+<hr />
+<h2 id="fee-calculation"><a class="header" href="#fee-calculation">Fee Calculation</a></h2>
+<p>When executing a transaction, all gas-related fees are subject to the <strong><code>max_fee_per_gas</code></strong> value defined in the transaction.<br />
+This value acts as an absolute cap over the <strong>sum of all fee components</strong>.</p>
+<p>This means that the <strong>effective priority fee</strong> is capped to ensure the total does not exceed <code>max_fee_per_gas</code>.<br />
+Specifically:</p>
+<pre><code>effective_priority_fee_per_gas = min(
+    max_priority_fee_per_gas,
+    max_fee_per_gas - base_fee_per_gas - operator_fee_per_gas
+)
+</code></pre>
+<p>Then, the total fees are calculated as:</p>
+<pre><code class="language-sh">total_fees = (base_fee_per_gas + operator_fee_per_gas + priority_fee_per_gas) * gas_used
+</code></pre>
+<p>This behavior ensures that transaction senders <strong>never pay more than <code>max_fee_per_gas * gas_used</code></strong>, even when the operator fee is enabled.</p>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>The current <code>effective_gas_price</code> field in the transaction receipt <strong>does not include</strong> the operator fee component.<br />
+Therefore, <code>effective_gas_price * gas_used</code> will only reflect the <strong>base + priority</strong> portions of the total cost.</p>
+</div>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>The <code>eth_gasPrice</code> RPC endpoint has been <strong>modified</strong> to include the <code>operator_fee_per_gas</code> value when the operator fee mechanism is active.<br />
+This means that the value returned by <code>eth_gasPrice</code> corresponds to <code>base_fee_per_gas + operator_fee_per_gas + estimated_gas_tip</code>.</p>
+</div>
+<h2 id="useful-rpc-methods"><a class="header" href="#useful-rpc-methods">Useful RPC Methods</a></h2>
+<p>The following custom RPC methods are available to query fee-related parameters directly from the L2 node.<br />
+Each method accepts a single argument: the <strong><code>block_number</code></strong> to query historical or current values.</p>
+<div class="table-wrapper"><table><thead><tr><th>Method Name</th><th>Description</th><th>Example</th></tr></thead><tbody>
+<tr><td><code>ethrex_getBaseFeeVaultAddress</code></td><td>Returns the address configured to receive the <strong>base fees</strong> collected in the specified block.</td><td><code>ethrex_getBaseFeeVaultAddress {"block_number": 12345}</code></td></tr>
+<tr><td><code>ethrex_getOperatorFeeVaultAddress</code></td><td>Returns the address configured as the <strong>operator fee vault</strong> in the specified block.</td><td><code>ethrex_getOperatorFeeVaultAddress {"block_number": 12345}</code></td></tr>
+<tr><td><code>ethrex_getOperatorFee</code></td><td>Returns the <strong>operator fee per gas</strong> value active at the specified block.</td><td><code>ethrex_getOperatorFee {"block_number": 12345}</code></td></tr>
+</tbody></table>
+</div>
 <h2 id="l1-fees"><a class="header" href="#l1-fees">L1 Fees</a></h2>
 
                     </main>
