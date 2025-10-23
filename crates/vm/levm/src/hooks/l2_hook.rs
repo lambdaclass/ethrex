@@ -179,6 +179,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     if vm.env.config.fork >= Fork::Prague {
         validate_min_gas_limit(vm)?;
@@ -192,12 +193,14 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         }
     }
 
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
     // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
     let gaslimit_price_product = vm
         .env
         .gas_price // TODO: here we should ensure that the gas price is the correct ratio from the token erc20 to ETH
         .checked_mul(vm.env.gas_limit.into())
         .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // TODO: validate sender balance for custom fee token
 
@@ -206,21 +209,26 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 
     // (3) INSUFFICIENT_ACCOUNT_FUNDS
     deduct_caller_custom_token(vm, gaslimit_price_product, sender_address)?;
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
     validate_sufficient_max_fee_per_gas(vm)?;
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (5) INITCODE_SIZE_EXCEEDED
     if vm.is_create()? {
         validate_init_code_size(vm)?;
     }
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (6) INTRINSIC_GAS_TOO_LOW
     vm.add_intrinsic_gas()?;
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (7) NONCE_IS_MAX
     vm.increment_account_nonce(sender_address)
         .map_err(|_| TxValidationError::NonceIsMax)?;
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // check for nonce mismatch
     if sender_info.nonce != vm.env.tx_nonce {
@@ -230,6 +238,7 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         }
         .into());
     }
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
     if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
@@ -243,13 +252,16 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         }
         .into());
     }
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (9) SENDER_NOT_EOA
     let code = vm.db.get_code(sender_info.code_hash)?;
     validate_sender(sender_address, code)?;
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (10) GAS_ALLOWANCE_EXCEEDED
     validate_gas_allowance(vm)?;
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
     // NOT CHECKED: custom fee transactions are not type 3
@@ -257,9 +269,13 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     // Transaction is type 4 if authorization_list is Some
     // NOT CHECKED: custom fee transactions are not type 4
 
+    dbg!(sender_address);
     transfer_value(vm)?;
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
-    set_bytecode_and_code_address(vm)
+    set_bytecode_and_code_address(vm)?;
+    dbg!(vm.db.get_account(sender_address)?.info.balance);
+    Ok(())
 }
 
 pub fn deduct_caller_custom_token(
@@ -465,9 +481,21 @@ fn pay_to_fee_vault_custom_fee(
     fee_vault: Option<Address>,
 ) -> Result<(), crate::errors::VMError> {
     let Some(fee_vault) = fee_vault else {
-        // No fee vault configured, base fee is effectively burned
+        dbg!("=========== BURN ADDRESS ===========");
+        let base_fee = U256::from(gas_to_pay)
+            .checked_mul(vm.env.base_fee_per_gas)
+            .ok_or(InternalError::Overflow)?;
+        // 0x72746eaf
+        let pay_fee_selector = vec![0x72, 0x74, 0x6e, 0xaf];
+        let mut data = vec![];
+        data.extend_from_slice(&pay_fee_selector);
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&[0u8; 20]); // address(0) - burn address
+        data.extend_from_slice(&base_fee.to_big_endian());
+        transfer_fee_token(vm, data.into())?;
         return Ok(());
     };
+    dbg!("=========== FEE VAULT ===========");
 
     let base_fee = U256::from(gas_to_pay)
         .checked_mul(vm.env.base_fee_per_gas)

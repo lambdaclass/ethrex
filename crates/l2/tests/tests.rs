@@ -137,8 +137,11 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Recipient address: {recipient_address:#x}");
     println!("Recipient balance before transfer: {recipient_balance_before_transfer}");
 
+    let burn_address =
+        Address::from_slice(&hex::decode("000c0d6b7c4516a5b274c51ea331a9410fe69127").unwrap());
+    // let burn_address = Address::zero();
     let burn_address_token_balance_before_transfer =
-        test_balance_of(&l2_client, fee_token_address, ethrex_common::H160::zero()).await;
+        test_balance_of(&l2_client, fee_token_address, burn_address).await;
     println!(
         "Burn address fee token balance before transfer: {burn_address_token_balance_before_transfer}"
     );
@@ -189,6 +192,7 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
         recipient_balance_before_transfer + 1,
         "Recipient balance did not increase"
     );
+    println!("Recipient balance increased correctly");
 
     let sender_token_balance_after_transfer =
         test_balance_of(&l2_client, fee_token_address, rich_wallet_address).await;
@@ -200,7 +204,7 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let burn_address_token_balance_after_transfer =
-        test_balance_of(&l2_client, fee_token_address, ethrex_common::H160::zero()).await;
+        test_balance_of(&l2_client, fee_token_address, burn_address).await;
     println!(
         "Burn address fee token balance after transfer: {burn_address_token_balance_after_transfer}"
     );
