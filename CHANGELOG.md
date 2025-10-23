@@ -6,6 +6,10 @@
 
 - Fetch nodes in batches during merkelization [#4990](https://github.com/lambdaclass/ethrex/pull/4990)
 
+### 2025-10-21
+
+- Instead of lazy computation of blocklist, do greedy computation of allowlist and store the result, fetch it with the DB. [#4961](https://github.com/lambdaclass/ethrex/pull/4961)
+
 ### 2025-10-17
 
 - Replaces incremental iteration with a one-time precompute method that scans the entire bytecode, building a `BitVec<u8, Msb0>` where bits mark valid `JUMPDEST` positions, skipping `PUSH1..PUSH32` data bytes.

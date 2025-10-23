@@ -326,7 +326,7 @@ fn get_account_diffs_in_tx(
             new_balance,
             nonce_diff,
             storage: BTreeMap::new(), // We add the storage later
-            bytecode,
+            bytecode: bytecode.map(|c| c.bytecode),
             bytecode_hash: None,
         };
 

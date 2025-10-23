@@ -3,15 +3,14 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, apply_prefix};
-use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
-        code_hash,
+        BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
+        Transaction,
     },
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -57,7 +56,7 @@ pub struct UpdateBatch {
     /// Receipts added per block
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Code updates
-    pub code_updates: Vec<(H256, Bytes)>,
+    pub code_updates: Vec<(H256, Code)>,
 }
 
 type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -66,7 +65,7 @@ pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(Nibbles, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
-    pub code_updates: Vec<(H256, Bytes)>,
+    pub code_updates: Vec<(H256, Code)>,
 }
 
 impl Store {
@@ -312,11 +311,11 @@ impl Store {
         self.engine.get_transaction_location(transaction_hash).await
     }
 
-    pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        self.engine.add_account_code(code_hash, code).await
+    pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
+        self.engine.add_account_code(code).await
     }
 
-    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         self.engine.get_account_code(code_hash)
     }
 
@@ -324,7 +323,7 @@ impl Store {
         &self,
         block_number: BlockNumber,
         address: Address,
-    ) -> Result<Option<Bytes>, StoreError> {
+    ) -> Result<Option<Code>, StoreError> {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -412,7 +411,7 @@ impl Store {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.add_account_code(info.code_hash, code.clone()).await?;
+                        self.add_account_code(code.clone()).await?;
                     }
                 }
                 if update.removed_storage {
@@ -459,8 +458,9 @@ impl Store {
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
-            let code_hash = code_hash(&account.code);
-            self.add_account_code(code_hash, account.code).await?;
+            let code = Code::from_bytecode(account.code);
+            let code_hash = code.hash;
+            self.add_account_code(code).await?;
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
@@ -1279,7 +1279,7 @@ impl Store {
 
     pub async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
         self.engine.write_account_code_batch(account_codes).await
     }
@@ -1663,13 +1663,10 @@ mod tests {
     }
 
     async fn test_store_account_code(store: Store) {
-        let code_hash = H256::random();
-        let code = Bytes::from("kiwi");
+        let code = Code::from_bytecode(Bytes::from("kiwi"));
+        let code_hash = code.hash;
 
-        store
-            .add_account_code(code_hash, code.clone())
-            .await
-            .unwrap();
+        store.add_account_code(code.clone()).await.unwrap();
 
         let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
 

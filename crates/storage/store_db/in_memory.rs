@@ -7,11 +7,10 @@ use crate::{
     store::STATE_TRIE_SEGMENTS,
     trie_db::layering::{TrieLayerCache, TrieWrapper},
 };
-use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
     AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt,
+    ChainConfig, Code, Index, Receipt,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
@@ -38,7 +37,7 @@ pub struct StoreInner {
     bodies: HashMap<BlockHash, BlockBody>,
     headers: HashMap<BlockHash, BlockHeader>,
     // Maps code hashes to code
-    account_codes: HashMap<H256, Bytes>,
+    account_codes: HashMap<H256, Code>,
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
@@ -376,12 +375,12 @@ impl StoreEngine for Store {
             .cloned())
     }
 
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        self.inner()?.account_codes.insert(code_hash, code);
+    async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
+        self.inner()?.account_codes.insert(code.hash, code);
         Ok(())
     }
 
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         Ok(self.inner()?.account_codes.get(&code_hash).cloned())
     }
 
@@ -690,7 +689,7 @@ impl StoreEngine for Store {
 
     async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
