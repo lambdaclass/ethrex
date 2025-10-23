@@ -458,7 +458,7 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = get_blob_gas_price(
+    let blob_gas_cost = calculate_blob_gas_cost(
         &vm.env.tx_blob_hashes,
         vm.env.block_excess_blob_gas,
         &vm.env.config,
