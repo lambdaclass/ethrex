@@ -374,7 +374,7 @@ impl StoreEngineRollup for Store {
         let prover_input = rkyv::from_bytes::<ProverInputData, rkyv::rancor::Error>(&witness_bytes)
             .map_err(|e| {
                 RollupStoreError::Custom(format!(
-                    "Failed to deserialize witness for batch {batch_number} and version {prover_version}: {e}",
+                    "Failed to deserialize prover input for batch {batch_number} and version {prover_version}: {e}",
                 ))
             })?;
 
