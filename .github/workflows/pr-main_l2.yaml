@@ -123,16 +123,24 @@ jobs:
           - name: "Validium"
             validium: true
             web3signer: false
+            based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla"
             validium: false
             web3signer: false
+            based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla with Web3signer"
             validium: false
             web3signer: true
+            based: false
             compose_targets:
               [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
+          - name: "Based"
+            validium: false
+            web3signer: false
+            based: true
+            compose_targets: [docker-compose.yaml]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -172,7 +180,33 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      - name: Start L1 & Deploy contracts
+
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
+
+      - name: Start L1
+        run: |
+          cd crates/l2
+          docker compose up --detach ethrex_l1
+
+      - name: Install rex
+        if: ${{ matrix.based }}
+        run: |
+          cd ..
+          git clone https://github.com/lambdaclass/rex.git
+          cd rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
+          make cli
+          echo "rex install successfully at $(which rex)"
+
+      - name: Deploy contracts
         run: |
           #
           # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries 
