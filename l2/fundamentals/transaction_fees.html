@@ -267,7 +267,7 @@ By default, base fees are burned. However, a sequencer can configure a <code>bas
 <p>This fee works similarly to the base fee — it is <strong>multiplied by the gas used</strong> for each transaction.<br />
 All collected operator fees are deposited into a dedicated <code>operator fee vault</code> address.</p>
 <p>To set the operator fee amount:</p>
-<pre><code class="language-sh">ethrex l2 --block-producer.operator-fee &lt;amount-in-wei&gt;
+<pre><code class="language-sh">ethrex l2 --block-producer.operator-fee-per-gas &lt;amount-in-wei&gt;
 </code></pre>
 <p>To set the operator fee vault address:</p>
 <pre><code class="language-sh">ethrex l2 --block-producer.operator-fee-vault-address &lt;operator-fee-vault-address&gt;
