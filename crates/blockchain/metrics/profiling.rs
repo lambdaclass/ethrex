@@ -37,6 +37,7 @@ where
             let timer = METRICS_BLOCK_PROCESSING_PROFILE
                 .with_label_values(&[name])
                 .start_timer();
+            // PERF: `extensions_mut` uses a Mutex internally (per span)
             span.extensions_mut().insert(ProfileTimer(timer));
         }
     }
@@ -44,6 +45,7 @@ where
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
         let timer = ctx
             .span(id)
+            // PERF: `extensions_mut` uses a Mutex internally (per span)
             .and_then(|span| span.extensions_mut().remove::<ProfileTimer>());
         if let Some(ProfileTimer(timer)) = timer {
             timer.observe_duration();
