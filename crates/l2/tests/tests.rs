@@ -144,7 +144,7 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Recipient address: {recipient_address:#x}");
     println!("Recipient balance before transfer: {recipient_balance_before_transfer}");
 
-    let fee_vault = fee_vault();
+    let fee_vault = base_fee_vault();
     let fee_vault_address_token_balance_before_transfer =
         test_balance_of(&l2_client, fee_token_address, fee_vault).await;
     println!(
