@@ -338,7 +338,7 @@ impl Blockchain {
                     .ok_or(ChainError::WitnessGeneration(
                         "Failed to get account code".to_string(),
                     ))?;
-                codes.push(code.to_vec());
+                codes.push(code.bytecode.to_vec());
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
@@ -372,7 +372,7 @@ impl Blockchain {
         if used_trie_nodes.is_empty()
             && let Some(root) = root_node
         {
-            used_trie_nodes.push(root.encode_raw());
+            used_trie_nodes.push(root.encode_to_vec());
         }
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();

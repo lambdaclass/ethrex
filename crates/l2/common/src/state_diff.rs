@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_common::types::{
-    AccountInfo, AccountState, AccountUpdate, BlockHeader, PrivilegedL2Transaction, TxKind,
+    AccountInfo, AccountState, AccountUpdate, BlockHeader, Code, PrivilegedL2Transaction, TxKind,
     account_diff::{AccountDiffError, AccountStateDiff, Decoder, DecoderError},
     code_hash,
 };
@@ -244,7 +244,7 @@ impl StateDiff {
                     address: *address,
                     removed: false,
                     info: account_info,
-                    code: diff.bytecode.clone(),
+                    code: diff.bytecode.clone().map(Code::from_bytecode),
                     added_storage: diff.storage.clone().into_iter().collect(),
                     removed_storage: false,
                 },
@@ -304,7 +304,7 @@ pub fn prepare_state_diff(
                 new_balance: account_update.info.clone().map(|info| info.balance),
                 nonce_diff,
                 storage: account_update.added_storage.clone().into_iter().collect(),
-                bytecode: account_update.code.clone(),
+                bytecode: account_update.code.map(|b| b.bytecode).clone(),
                 bytecode_hash: None,
             },
         );

@@ -16,12 +16,15 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, U256,
+    Address, H160, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
-        SAFE_BYTES_PER_BLOB,
-        account_diff::get_accounts_diff_size,
-        fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig},
+        Code,
+        {
+            SAFE_BYTES_PER_BLOB,
+            account_diff::get_accounts_diff_size,
+            fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig},
+        },
     },
 };
 
@@ -119,8 +122,11 @@ impl Hook for L2Hook {
             // If the transaction failed some validation, but it must still be included
             // To prevent it from taking effect, we force it to revert
             vm.current_call_frame.msg_value = U256::zero();
-            vm.current_call_frame
-                .set_code(vec![Opcode::INVALID.into()].into())?;
+            vm.current_call_frame.set_code(Code {
+                hash: H256::zero(),
+                bytecode: vec![Opcode::INVALID.into()].into(),
+                jump_targets: Vec::new(),
+            })?;
             return Ok(());
         }
 
