@@ -8,7 +8,7 @@ Hardware requirements depend primarily on the **network** you’re running — f
 
 Across all networks, the following apply:
 
-- **Disk Type:** Use **high-performance NVMe SSDs**. For multi-disk setups, **RAID 0** improves both speed and space utilization.
+- **Disk Type:** Use **high-performance NVMe SSDs**. For multi-disk setups, **software RAID 0** is recommended to maximize speed and capacity. **Avoid hardware RAID**, which can limit NVMe performance.
 - **RAM:** Sufficient memory minimizes sync bottlenecks and improves stability under load.
 - **CPU:**
   - 4–8 cores for standard nodes
