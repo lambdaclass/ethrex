@@ -24,8 +24,8 @@ pub struct TrieLayerCache {
     last_id: usize,
     layers: HashMap<H256, TrieLayer>,
 
-    // Layer cache stats: `(hit_count, miss_count)`.
-    stats: (AtomicUsize, AtomicUsize, AtomicUsize, bool),
+    // Layer cache stats: `(hit_count, miss_count, depth_acc, read_count, ...)`.
+    stats: (AtomicUsize, AtomicUsize, AtomicUsize, AtomicUsize, bool),
 }
 
 impl TrieLayerCache {
@@ -99,8 +99,8 @@ impl TrieLayerCache {
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        if !self.stats.3 {
-            self.stats.3 = true;
+        if !self.stats.4 {
+            self.stats.4 = true;
 
             println!("#### Final stats:");
             let n_hits = self.stats.0.swap(0, Ordering::Relaxed);
@@ -120,7 +120,7 @@ impl TrieLayerCache {
         // older layers are useless
         self.layers.retain(|_, item| item.id > layer.id);
 
-        self.stats.3 = false;
+        self.stats.4 = false;
         Some(
             parent_nodes
                 .unwrap_or_default()
@@ -170,7 +170,16 @@ impl TrieDB for TrieWrapper {
 
         let mut read_layer = self.read_layer.lock().expect("");
         Ok(match read_layer.entry(key.clone()) {
-            Entry::Occupied(entry) => Some(entry.into_mut().clone()),
+            Entry::Occupied(entry) => {
+                self.inner
+                    .read()
+                    .expect("")
+                    .stats
+                    .3
+                    .fetch_sub(1, Ordering::Relaxed);
+
+                Some(entry.into_mut().clone())
+            }
             Entry::Vacant(entry) => self
                 .db
                 .get(key)?
