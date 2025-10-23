@@ -101,9 +101,8 @@ const DEFAULT_TEST_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_test
 #[tokio::test]
 async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
     let l2_client = l2_client();
-    let rich_wallet_private_key = get_tests_private_keys()
-        .pop()
-        .expect("No private keys found for tests");
+    let mut private_keys = get_tests_private_keys();
+    let rich_wallet_private_key = private_keys.pop().expect("No private keys found for tests");
     let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key)?;
     println!("Rich wallet address: {rich_wallet_address:#x}");
 
@@ -129,9 +128,7 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Sender balance before transfer: {sender_balance_before_transfer}");
     println!("Sender fee balance before transfer: {sender_token_balance_before_transfer}");
 
-    let recipient_sk = get_tests_private_keys()
-        .pop()
-        .expect("No private keys found for tests");
+    let recipient_sk = private_keys.pop().expect("No private keys found for tests");
     let recipient_address = get_address_from_secret_key(&recipient_sk)?;
     let recipient_balance_before_transfer = l2_client
         .get_balance(recipient_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -184,6 +181,8 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
         sender_balance_before_transfer - 1,
         "Sender balance did not decrease"
     );
+
+    println!("Sender balance decrease correctly");
 
     assert_eq!(
         recipient_balance_after_transfer,
