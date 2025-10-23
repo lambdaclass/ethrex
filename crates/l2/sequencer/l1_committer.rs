@@ -3,7 +3,7 @@ use crate::{
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{
         errors::CommitterError,
-        utils::{self, system_now_ms},
+        utils::{self, fetch_batch_blocks, system_now_ms},
     },
 };
 
@@ -551,22 +551,9 @@ impl L1Committer {
         let (commit_function_signature, values) = if self.based {
             let mut encoded_blocks: Vec<Bytes> = Vec::new();
 
-            for i in batch.first_block..=batch.last_block {
-                let block_header = self
-                    .store
-                    .get_block_header(i)
-                    .map_err(CommitterError::from)?
-                    .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+            let blocks = self.fetch_batch_blocks(batch).await?;
 
-                let block_body = self
-                    .store
-                    .get_block_body(i)
-                    .await
-                    .map_err(CommitterError::from)?
-                    .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
-
-                let block = Block::new(block_header, block_body);
-
+            for block in blocks {
                 encoded_blocks.push(block.encode_to_vec().into());
             }
 
@@ -662,6 +649,10 @@ impl L1Committer {
         info!("Commitment sent: {commit_tx_hash:#x}");
 
         Ok(commit_tx_hash)
+    }
+
+    async fn fetch_batch_blocks(&self, batch: &Batch) -> Result<Vec<Block>, CommitterError> {
+        fetch_batch_blocks(batch.number, &self.store, &self.rollup_store).await
     }
 
     fn stop_committer(&mut self) -> CallResponse<Self> {
