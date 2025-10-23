@@ -456,18 +456,6 @@ impl Blockchain {
                 stored,
             );
         }
-
-        println!("#### Dropping `TrieLayerCache`. Final stats:");
-        println!(
-            "####   Hit  count: {}",
-            self.storage.cache
-            self.stats.0.load(Ordering::Relaxed),
-        );
-        println!(
-            "####   Miss count: {}",
-            self.stats.0.load(Ordering::Relaxed),
-        );
-
         result
     }
 
