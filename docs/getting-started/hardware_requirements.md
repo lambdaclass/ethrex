@@ -1,5 +1,7 @@
 # Hardware Requirements
 
+> NOTE: The guidance in this document applies to running an L1 (Ethereum) node. L2 deployments (sequencers, provers and related infra) have different hardware profiles and operational requirements — see the "L2" section below for details.
+
 Hardware requirements depend primarily on the **network** you’re running — for example, **Hoodi**, **Sepolia**, or **Mainnet**.
 
 ## General Recommendations
@@ -26,4 +28,8 @@ Across all networks, the following apply:
 | **Ethereum Hoodi** | 200 GB | 400 GB | 16 GB | 32 GB |
 
 ---
+
+## L2
+
+TBD
 
