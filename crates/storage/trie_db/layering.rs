@@ -1,8 +1,7 @@
 use ethrex_common::H256;
-use ethrex_rlp::decode::RLPDecode;
 use std::{collections::HashMap, sync::Arc};
 
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
