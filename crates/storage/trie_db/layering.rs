@@ -105,7 +105,7 @@ impl TrieLayerCache {
             );
             println!(
                 "####   Miss count: {}",
-                self.stats.0.load(Ordering::Relaxed),
+                self.stats.1.load(Ordering::Relaxed),
             );
         }
 
