@@ -17,6 +17,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
+use ethrex_vm::{DynVmDatabase, VmDatabase};
 use sha3::{Digest as _, Keccak256};
 use std::sync::Arc;
 use std::{
@@ -1362,6 +1363,11 @@ impl Store {
     pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
         self.engine.generate_flatkeyvalue()
     }
+
+    pub fn vm_db(&self, parent_header: BlockHeader, block: &Block) -> Result<DynVmDatabase, StoreError> {
+        self.engine.vm_db(parent_header, block)
+    }
+
 }
 
 pub struct AccountProof {

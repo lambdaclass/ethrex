@@ -149,8 +149,10 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = self.new_evm(vm_db)?;
+        let mut vm = self.new_evm_from_db(self.storage.vm_db(parent_header, &block)?)?;
+
+        //let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        //let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
@@ -921,6 +923,14 @@ impl Blockchain {
         let evm = match self.options.r#type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
             BlockchainType::L2(fee_config) => Evm::new_for_l2(vm_db, fee_config)?,
+        };
+        Ok(evm)
+    }
+
+    pub fn new_evm_from_db(&self, vm_db: DynVmDatabase) -> Result<Evm, EvmError> {
+        let evm = match self.options.r#type {
+            BlockchainType::L1 => Evm::new_for_l1_boxed(vm_db),
+            BlockchainType::L2(fee_config) => Evm::new_for_l2_boxed(vm_db, fee_config)?,
         };
         Ok(evm)
     }

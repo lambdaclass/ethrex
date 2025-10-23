@@ -53,6 +53,22 @@ impl Evm {
         Ok(evm)
     }
 
+    pub fn new_for_l1_boxed(db: DynVmDatabase) -> Self {
+        Evm {
+            db: GeneralizedDatabase::new(Arc::new(db)),
+            vm_type: VMType::L1,
+        }
+    }
+
+    pub fn new_for_l2_boxed(db: DynVmDatabase, fee_config: FeeConfig) -> Result<Self, EvmError> {
+        let evm = Evm {
+            db: GeneralizedDatabase::new(Arc::new(db)),
+            vm_type: VMType::L2(fee_config),
+        };
+
+        Ok(evm)
+    }
+
     pub fn new_from_db_for_l1(store: Arc<impl LevmDatabase + 'static>) -> Self {
         Self::_new_from_db(store, VMType::L1)
     }
