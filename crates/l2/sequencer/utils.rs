@@ -1,4 +1,5 @@
 use aligned_sdk::common::types::Network;
+use directories::ProjectDirs;
 use ethrex_common::types::Block;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, types::TxType};
@@ -16,6 +17,7 @@ use ethrex_storage::Store;
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use rand::Rng;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use std::{str::FromStr, time::UNIX_EPOCH};
 use tokio::time::sleep;
@@ -205,4 +207,11 @@ where
 /// Returns the git commit hash of the current build.
 pub fn get_git_commit_hash() -> String {
     env!("VERGEN_GIT_SHA").to_string()
+}
+
+/// This method is an exact copy of the one in cmd/ethrex/utils.rs.
+pub fn default_datadir() -> PathBuf {
+    let app_name: &'static str = "ethrex";
+    let project_dir = ProjectDirs::from("", "", app_name).expect("Couldn't find home directory");
+    project_dir.data_local_dir().to_path_buf()
 }
