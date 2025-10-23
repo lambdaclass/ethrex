@@ -261,6 +261,8 @@ pub enum CommitterError {
     UnexpectedError(String),
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
+    #[error("Failed to generate batch witness: {0}")]
+    FailedToGenerateBatchWitness(#[source] ChainError),
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -1,6 +1,7 @@
 use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
+    constants::BIN_VERSION,
     sequencer::{
         errors::CommitterError,
         utils::{self, fetch_batch_blocks, system_now_ms},
@@ -263,6 +264,15 @@ impl L1Committer {
                 batch
             }
         };
+
+        info!(
+            first_block = batch.first_block,
+            last_block = batch.last_block,
+            "Generating and storing witness for batch {}",
+            batch.number,
+        );
+
+        self.generate_and_store_batch_witness(&batch).await?;
 
         info!(
             first_block = batch.first_block,
@@ -534,6 +544,26 @@ impl L1Committer {
             privileged_transactions_hash,
             last_added_block_number,
         ))
+    }
+
+    async fn generate_and_store_batch_witness(&self, batch: &Batch) -> Result<(), CommitterError> {
+        let blocks = self.fetch_batch_blocks(batch).await?;
+
+        let batch_witness = self
+            .blockchain
+            .generate_witness_for_blocks(&blocks)
+            .await
+            .map_err(CommitterError::FailedToGenerateBatchWitness)?;
+
+        self.rollup_store
+            .store_witness_by_batch_and_version(
+                batch.number,
+                BIN_VERSION.to_string(),
+                batch_witness,
+            )
+            .await?;
+
+        Ok(())
     }
 
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
