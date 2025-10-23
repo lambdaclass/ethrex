@@ -10,17 +10,17 @@ build: ## 🔨 Build the client
 
 lint-l1:
 	cargo clippy --lib --bins -F debug,sync-test \
-		--release -- -D warnings
+		--release -- -D warnings -D clippy::unused_async
 
 lint-l2:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
 		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
-		--release -- -D warnings
+		--release -- -D warnings -D clippy::unused_async
 
 lint-gpu:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
 		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
-		--release -- -D warnings
+		--release -- -D warnings -D clippy::unused_async
 
 lint: lint-l1 lint-l2 ## 🧹 Linter check
 
