@@ -24,7 +24,7 @@ impl AsRef<[u8]> for NodeHash {
 
 impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
-    pub fn from_encoded_raw(encoded: &[u8]) -> NodeHash {
+    pub fn from_encoded(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
             let hash = Keccak256::new_with_prefix(encoded).finalize();
             NodeHash::Hashed(H256::from_slice(hash.as_slice()))
@@ -35,7 +35,7 @@ impl NodeHash {
 
     /// Converts a slice of an already hashed data (in case it's not inlineable) to a NodeHash.
     /// Panics if the slice is over 32 bytes
-    /// If you need to hash it in case its len >= 32 see `from_encoded_raw`
+    /// If you need to hash it in case its len >= 32 see `from_encoded`
     pub(crate) fn from_slice(slice: &[u8]) -> NodeHash {
         match slice.len() {
             0..32 => {

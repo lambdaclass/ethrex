@@ -62,13 +62,11 @@ impl RLPDecode for Node {
         let mut decoder = Decoder::new(rlp)?;
         let mut item;
         // Get encoded fields
-        loop {
+
+        // Check if we reached the end or if we decoded more items than the ones we need
+        while !decoder.is_done() && rlp_items.len() <= 17 {
             (item, decoder) = decoder.get_encoded_item()?;
             rlp_items.push(item);
-            // Check if we reached the end or if we decoded more items than the ones we need
-            if decoder.is_done() || rlp_items.len() > 17 {
-                break;
-            }
         }
         // Deserialize into node depending on the available fields
         Ok((

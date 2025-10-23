@@ -115,7 +115,7 @@ impl LeafNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(&self.encode_to_vec())
+        NodeHash::from_encoded(&self.encode_to_vec())
     }
 
     /// Encodes the node and appends it to `node_path` if the encoded node is 32 or more bytes long

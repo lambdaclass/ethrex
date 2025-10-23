@@ -190,7 +190,7 @@ impl ExtensionNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(&self.encode_to_vec())
+        NodeHash::from_encoded(&self.encode_to_vec())
     }
 
     /// Traverses own subtrie until reaching the node containing `path`
