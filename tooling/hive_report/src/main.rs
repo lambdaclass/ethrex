@@ -45,8 +45,8 @@ impl HiveResult {
             "snap" => ("P2P", "Snap capability"),
             "rpc-compat" => ("RPC", "RPC API Compatibility"),
             "sync" => ("Sync", "Node Syncing"),
-            "eest/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
-            "eest/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
+            "eels/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
+            "eels/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
             other => {
                 eprintln!("Warn: Unknown suite: {other}. Skipping");
                 ("", "")
