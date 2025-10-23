@@ -202,9 +202,17 @@ impl Blockchain {
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
-        let (mut state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
+        let (mut current_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
-        let mut global_state_trie_witness = state_trie_witness.lock().unwrap().clone();
+        // For each block, a new TrieLogger will be opened, each containing the
+        // witness accessed during the block execution. We need to accumulate
+        // all the nodes accessed during the entire batch execution.
+        let mut accumulated_state_trie_witness = current_trie_witness
+            .lock()
+            .map_err(|_| {
+                ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+            })?
+            .clone();
 
         let mut touched_account_storage_slots = BTreeMap::new();
         // This will become the state trie + storage trie
@@ -217,7 +225,7 @@ impl Blockchain {
 
         let mut block_hashes = HashMap::new();
         let mut codes = Vec::new();
-
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
         for block in blocks {
             let parent_hash = block.header.parent_hash;
 
@@ -385,26 +393,22 @@ impl Blockchain {
             // Use the updated state trie for the next block
             trie = updated_trie;
 
-            for state_trie_witness in state_trie_witness
+            for state_trie_witness in current_trie_witness
                 .lock()
                 .map_err(|_| {
                     ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
                 })?
                 .iter()
             {
-                global_state_trie_witness.insert(state_trie_witness.clone());
+                accumulated_state_trie_witness.insert(state_trie_witness.clone());
             }
 
-            state_trie_witness = new_state_trie_witness;
+            current_trie_witness = new_state_trie_witness;
         }
 
-        // Get the witness for the state trie
-        // let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
-        //     ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
-        // })?;
-        // let state_trie_witness = std::mem::take(&mut *state_trie_witness);
-        let state_trie_witness = global_state_trie_witness;
-        used_trie_nodes.extend_from_slice(&Vec::from_iter(state_trie_witness.into_iter()));
+        used_trie_nodes
+            .extend_from_slice(&Vec::from_iter(accumulated_state_trie_witness.into_iter()));
+
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty()
             && let Some(root) = root_node
@@ -413,6 +417,7 @@ impl Blockchain {
         }
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
+
         needed_block_numbers.sort();
 
         // Last needed block header for the witness is the parent of the last block we need to execute
@@ -422,14 +427,18 @@ impl Blockchain {
             .header
             .number
             .saturating_sub(1);
+
         // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
         let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
+
         if let Some(block_number_from_logger) = needed_block_numbers.first()
             && **block_number_from_logger < first_needed_block_number
         {
             first_needed_block_number = **block_number_from_logger;
         }
+
         let mut block_headers_bytes = Vec::new();
+
         for block_number in first_needed_block_number..=last_needed_block_number {
             let header = self.storage.get_block_header(block_number)?.ok_or(
                 ChainError::WitnessGeneration(format!("Failed to get block {block_number} header")),
