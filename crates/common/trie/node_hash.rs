@@ -51,9 +51,7 @@ impl NodeHash {
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
     pub fn finalize(self) -> H256 {
         match self {
-            NodeHash::Inline(_) => {
-                H256::from_slice(&Keccak256::new().chain_update(self.as_ref()).finalize())
-            }
+            NodeHash::Inline(_) => H256::from_slice(&Keccak256::digest(self.as_ref())),
             NodeHash::Hashed(x) => x,
         }
     }
