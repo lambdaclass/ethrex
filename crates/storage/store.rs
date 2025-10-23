@@ -17,7 +17,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use sha3::{Digest as _, Keccak256};
 use std::sync::Arc;
 use std::{
@@ -383,7 +383,6 @@ impl Store {
         account_updates: Vec<AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         //let mut ret_storage_updates = Vec::new();
-        let code_updates = std::sync::Mutex::new(Vec::new());
         let state_root = state_trie.hash_no_commit();
 
         // TODO!
@@ -400,13 +399,21 @@ impl Store {
         });
         */
 
+        let code_updates: Vec<_> = account_updates
+            .par_iter()
+            .filter_map(|u| {
+                u.info
+                    .as_ref()
+                    .and_then(|i| u.code.as_ref().map(|c| (i.code_hash, c.clone())))
+            })
+            .collect();
+
         let ret_account_updates: Vec<_> = account_updates
             .into_par_iter()
             .map(|update_for_storage| {
                 let removed = update_for_storage.removed;
                 let removed_storage = update_for_storage.removed_storage;
                 let info = &update_for_storage.info;
-                let code = &update_for_storage.code;
 
                 let added_storage = &update_for_storage.added_storage;
                 let hashed_address = hash_address(&update_for_storage.address);
@@ -430,13 +437,6 @@ impl Store {
                     account_state.nonce = info.nonce;
                     account_state.balance = info.balance;
                     account_state.code_hash = info.code_hash;
-                    // Store updated code in DB
-                    if let Some(code) = code {
-                        code_updates
-                            .lock()
-                            .unwrap()
-                            .push((info.code_hash, code.clone()));
-                    }
                 }
 
                 let engine = Arc::clone(&self.engine);
@@ -483,7 +483,7 @@ impl Store {
             state_trie_hash,
             state_updates,
             storage_updates,
-            code_updates: code_updates.into_inner().unwrap(),
+            code_updates,
         })
     }
 
