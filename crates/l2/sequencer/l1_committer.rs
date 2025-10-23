@@ -826,6 +826,14 @@ impl GenServer for L1Committer {
             let commit_time: u128 = self.commit_time_ms.into();
             let should_send_commitment =
                 current_time - self.last_committed_batch_timestamp > commit_time;
+
+            debug!(
+                last_committed_batch_at = self.last_committed_batch_timestamp,
+                will_send_commitment = should_send_commitment,
+                last_committed_batch = self.last_committed_batch,
+                "Committer waked up"
+            );
+
             #[expect(clippy::collapsible_if)]
             if should_send_commitment {
                 if self
