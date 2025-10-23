@@ -384,7 +384,7 @@ impl Store {
             then drops the lock again.
 
             - Second, it performs the logic of persisting the bottom-most diff layer to disk. This is the part of the logic that block execution does not
-            need to proceed. What does need to be aware of this section is the process in charge of generating the snapshot (a.k.a. FlatKeyValue). 
+            need to proceed. What does need to be aware of this section is the process in charge of generating the snapshot (a.k.a. FlatKeyValue).
             Because of this, this section first sends a message to pause the FlatKeyValue generation, then persists the diff layer to disk, then notifies
             again for FlatKeyValue generation to continue.
 
