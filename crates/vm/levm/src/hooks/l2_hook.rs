@@ -363,8 +363,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     // We have to merge, not insert
     vm.db
         .initial_accounts_state
-        .entry(fee_token)
-        .or_insert_with(|| initial_state_fee_token);
+        .insert(fee_token, initial_state_fee_token);
     dbg!("m");
 
     Ok(())
