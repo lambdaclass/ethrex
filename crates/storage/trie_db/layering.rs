@@ -25,21 +25,7 @@ pub struct TrieLayerCache {
     layers: HashMap<H256, TrieLayer>,
 
     // Layer cache stats: `(hit_count, miss_count)`.
-    stats: (AtomicUsize, AtomicUsize),
-}
-
-impl Drop for TrieLayerCache {
-    fn drop(&mut self) {
-        println!("#### Dropping `TrieLayerCache`. Final stats:");
-        println!(
-            "####   Hit  count: {}",
-            self.stats.0.load(Ordering::Relaxed),
-        );
-        println!(
-            "####   Miss count: {}",
-            self.stats.0.load(Ordering::Relaxed),
-        );
-    }
+    stats: (AtomicUsize, AtomicUsize, bool),
 }
 
 impl TrieLayerCache {
@@ -109,11 +95,27 @@ impl TrieLayerCache {
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+        if !self.stats.2 {
+            self.stats.2 = true;
+
+            println!("#### Final stats:");
+            println!(
+                "####   Hit  count: {}",
+                self.stats.0.load(Ordering::Relaxed),
+            );
+            println!(
+                "####   Miss count: {}",
+                self.stats.0.load(Ordering::Relaxed),
+            );
+        }
+
         let mut layer = self.layers.remove(&state_root)?;
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
         self.layers.retain(|_, item| item.id > layer.id);
+
+        self.stats.2 = false;
         Some(
             parent_nodes
                 .unwrap_or_default()
