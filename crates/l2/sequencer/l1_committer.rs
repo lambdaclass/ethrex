@@ -10,12 +10,9 @@ use crate::{
 use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, BlockchainType, vm::StoreVmDatabase};
 use ethrex_common::{
-    Address, H256, U256,
     types::{
-        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
-        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
-        l2_to_l2_message::L2toL2Message,
-    },
+        batch::Batch, blobs_bundle, fake_exponential_checked, l2_to_l2_message::{get_l2_message_hash, L2toL2Message}, AccountUpdate, BlobsBundle, Block, BlockNumber, TxType, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS
+    }, Address, H256, U256
 };
 use ethrex_l2_common::{
     calldata::Value,
@@ -61,7 +58,7 @@ use spawned_concurrency::tasks::{
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,(uint256,address,uint256,uint256,bytes)[],bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes32)";
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
@@ -642,18 +639,21 @@ impl L1Committer {
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
         let messages_merkle_root = compute_merkle_root(&batch.l1_message_hashes);
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
+        let l2_messages_merkle_root =
+            compute_merkle_root(&batch.l2_to_l2_messages.iter().map(|m| get_l2_message_hash(m)).collect::<Vec<H256>>());
 
         let mut calldata_values = vec![
             Value::Uint(U256::from(batch.number)),
             Value::FixedBytes(batch.state_root.0.to_vec().into()),
             Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
-            Value::Array(
+            /*Value::Array(
                 batch
                     .l2_to_l2_messages
                     .iter()
                     .map(value_from_l2_to_l2_message)
                     .collect(),
-            ),
+            ),*/
+            Value::FixedBytes(l2_messages_merkle_root.0.to_vec().into()),
             Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
             Value::FixedBytes(last_block_hash.0.to_vec().into()),
         ];

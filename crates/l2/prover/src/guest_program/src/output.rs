@@ -24,6 +24,9 @@ pub struct ProgramOutput {
     pub chain_id: U256,
     /// amount of non-privileged transactions
     pub non_privileged_count: U256,
+    #[cfg(feature = "l2")]
+    // merkle root of all l2 messages in a batch
+    pub l2messages_merkle_root: H256,
 }
 
 impl ProgramOutput {

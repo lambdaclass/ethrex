@@ -1,7 +1,9 @@
 use bytes::Bytes;
-use ethereum_types::{Address, U256};
+use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, structs::Decoder};
 use serde::{Deserialize, Serialize};
+
+use crate::utils::keccak;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Represents a message from the L2 to another L2
@@ -43,4 +45,21 @@ impl RLPDecode for L2toL2Message {
             decoder.finish()?,
         ))
     }
+}
+
+impl L2toL2Message {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&self.chain_id.to_big_endian());
+        bytes.extend_from_slice(&self.from.to_fixed_bytes());
+        bytes.extend_from_slice(&self.to.to_fixed_bytes());
+        bytes.extend_from_slice(&self.value.to_big_endian());
+        bytes.extend_from_slice(&self.gas_limit.to_big_endian());
+        bytes.extend_from_slice(&self.data);
+        bytes
+    }
+}
+
+pub fn get_l2_message_hash(msg: &L2toL2Message) -> H256 {
+    keccak(msg.encode())
 }

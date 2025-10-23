@@ -36,6 +36,7 @@ contract OnChainProposer is
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
+        bytes32 l2ToL2MessagesMerkleRoot;
     }
 
     /// @notice The commitments of the committed batches.
@@ -197,7 +198,7 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
-        L2toL2Message[] calldata l2CrossMessages,
+        bytes32 l2ToL2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external override onlySequencer whenNotPaused {
@@ -234,7 +235,7 @@ contract OnChainProposer is
             );
         }
 
-        for (uint256 i = 0; i < l2CrossMessages.length; i++) {
+        /*for (uint256 i = 0; i < l2CrossMessages.length; i++) {
             L2toL2Message calldata message = l2CrossMessages[i];
             ICommonBridge.SendValues memory sendValues = ICommonBridge.SendValues(
                 message.to,
@@ -243,7 +244,7 @@ contract OnChainProposer is
                 message.data
             );
             ICommonBridge(BRIDGE).sendMessage(message.chainId, sendValues);
-        }
+        }*/
 
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
@@ -264,7 +265,8 @@ contract OnChainProposer is
             blobVersionedHash,
             processedPrivilegedTransactionsRollingHash,
             withdrawalsLogsMerkleRoot,
-            lastBlockHash
+            lastBlockHash,
+            l2ToL2MessagesMerkleRoot
         );
         emit BatchCommitted(newStateRoot);
 
@@ -288,6 +290,7 @@ contract OnChainProposer is
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
+        L2toL2Message[] calldata l2CrossMessages
     ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
@@ -392,6 +395,19 @@ contract OnChainProposer is
             }
         }
 
+        //TODO: Verify that these l2 to l2 messages have the same merkle root as the committed one.
+
+        for (uint256 i = 0; i < l2CrossMessages.length; i++) {
+            L2toL2Message calldata message = l2CrossMessages[i];
+            ICommonBridge.SendValues memory sendValues = ICommonBridge.SendValues(
+                message.to,
+                message.gasLimit,
+                message.value,
+                message.data
+            );
+            ICommonBridge(BRIDGE).sendMessage(message.chainId, sendValues);
+        }
+
         lastVerifiedBatch = batchNumber;
 
         // Remove previous batch commitment as it is no longer needed.
@@ -485,7 +501,7 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        if (publicData.length != 256) {
+        if (publicData.length != 288) {
             return "invalid public data length";
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -543,6 +559,11 @@ contract OnChainProposer is
         ) {
             return
                 "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
+        }
+        bytes32 l2ToL2MessagesMerkleRoot = bytes32(publicData[256:288]);
+        if (batchCommitments[batchNumber].l2ToL2MessagesMerkleRoot != l2ToL2MessagesMerkleRoot) {
+            return
+                "l2 to l2 messages merkle root public inputs don't match with l2 to l2 messages merkle root";
         }
         return "";
     }

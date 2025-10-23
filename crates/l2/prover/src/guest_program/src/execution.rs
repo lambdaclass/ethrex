@@ -5,6 +5,8 @@ use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
+#[cfg(feature = "l2")]
+use ethrex_common::types::l2_to_l2_message::L2toL2Message;
 use ethrex_common::types::AccountUpdate;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
@@ -152,6 +154,8 @@ pub fn stateless_validation_l1(
         last_block_hash,
         chain_id: chain_id.into(),
         non_privileged_count,
+        #[cfg(feature = "l2")]
+        l2messages_merkle_root: H256::zero(),
     })
 }
 
@@ -180,12 +184,13 @@ pub fn stateless_validation_l2(
         parent_block_header,
     } = execute_stateless(blocks, execution_witness, elasticity_multiplier, fee_config)?;
 
-    let (l1messages, privileged_transactions) =
-        get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
+    let (l1messages, l2messages, privileged_transactions) =
+        get_batch_l1_and_l2_messages_and_privileged_transactions(blocks, &receipts)?;
 
-    let (l1messages_merkle_root, privileged_transactions_hash) =
-        compute_l1messages_and_privileged_transactions_digests(
+    let (l1messages_merkle_root, l2messages_merkle_root, privileged_transactions_hash) =
+        compute_l1_and_l2_messages_and_privileged_transactions_digests(
             &l1messages,
+            &l2messages,
             &privileged_transactions,
         )?;
 
@@ -235,6 +240,7 @@ pub fn stateless_validation_l2(
         last_block_hash,
         chain_id: chain_id.into(),
         non_privileged_count,
+        l2messages_merkle_root
     })
 }
 
@@ -404,30 +410,37 @@ fn execute_stateless(
 }
 
 #[cfg(feature = "l2")]
-fn get_batch_l1messages_and_privileged_transactions(
+fn get_batch_l1_and_l2_messages_and_privileged_transactions(
     blocks: &[Block],
     receipts: &[Vec<Receipt>],
-) -> Result<(Vec<L1Message>, Vec<PrivilegedL2Transaction>), StatelessExecutionError> {
+) -> Result<(Vec<L1Message>, Vec<L2toL2Message>, Vec<PrivilegedL2Transaction>), StatelessExecutionError> {
     let mut l1messages = vec![];
+    let mut l2messages = vec![];
     let mut privileged_transactions = vec![];
 
     for (block, receipts) in blocks.iter().zip(receipts) {
+        use ethrex_l2_common::l1_messages::get_l2_to_l2_messages;
+
         let txs = &block.body.transactions;
         privileged_transactions.extend(get_block_privileged_transactions(txs));
         l1messages.extend(get_block_l1_messages(receipts));
+        l2messages.extend(get_l2_to_l2_messages(receipts))
     }
 
-    Ok((l1messages, privileged_transactions))
+    Ok((l1messages, l2messages, privileged_transactions))
 }
 
 #[cfg(feature = "l2")]
-fn compute_l1messages_and_privileged_transactions_digests(
+fn compute_l1_and_l2_messages_and_privileged_transactions_digests(
     l1messages: &[L1Message],
+    l2messags: &[L2toL2Message],
     privileged_transactions: &[PrivilegedL2Transaction],
-) -> Result<(H256, H256), StatelessExecutionError> {
-    use ethrex_l2_common::{l1_messages::get_l1_message_hash, merkle_tree::compute_merkle_root};
+) -> Result<(H256, H256, H256), StatelessExecutionError> {
+    use ethrex_common::types::l2_to_l2_message::get_l2_message_hash;
+    use ethrex_l2_common::{l1_messages::get_l1_message_hash, merkle_tree::compute_merkle_root, };
 
     let message_hashes: Vec<_> = l1messages.iter().map(get_l1_message_hash).collect();
+    let l2message_hashes: Vec<_> = l2messags.iter().map(get_l2_message_hash).collect();
     let privileged_transactions_hashes: Vec<_> = privileged_transactions
         .iter()
         .map(PrivilegedL2Transaction::get_privileged_hash)
@@ -435,11 +448,12 @@ fn compute_l1messages_and_privileged_transactions_digests(
         .collect::<Result<_, _>>()?;
 
     let l1message_merkle_root = compute_merkle_root(&message_hashes);
+    let l2message_merkle_root = compute_merkle_root(&l2message_hashes);
     let privileged_transactions_hash =
         compute_privileged_transactions_hash(privileged_transactions_hashes)
             .map_err(StatelessExecutionError::PrivilegedTransactionError)?;
 
-    Ok((l1message_merkle_root, privileged_transactions_hash))
+    Ok((l1message_merkle_root, l2message_merkle_root, privileged_transactions_hash))
 }
 
 #[cfg(feature = "l2")]
