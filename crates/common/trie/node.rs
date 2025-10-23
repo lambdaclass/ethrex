@@ -95,7 +95,9 @@ impl NodeRef {
     }
 
     pub fn memoize_hashes(&self) {
-        if let NodeRef::Node(node, hash) = &self && hash.get().is_none() {
+        if let NodeRef::Node(node, hash) = &self 
+            && hash.get().is_none() 
+        {
             node.memoize_hashes();
             let _ = hash.set(node.compute_hash());
         }
