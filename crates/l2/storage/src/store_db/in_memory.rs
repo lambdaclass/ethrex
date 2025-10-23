@@ -7,7 +7,10 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, l2_to_l2_message::L2toL2Message},
+    types::{
+        AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig,
+        l2_to_l2_message::L2toL2Message,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -50,6 +53,8 @@ struct StoreInner {
     l2_to_l2_messages: HashMap<u64, Vec<L2toL2Message>>,
     /// Map of (batch_number, prover_version) to serialized prover input data
     batch_prover_input: HashMap<(u64, String), Vec<u8>>,
+    /// Map of block number to FeeConfig
+    fee_config_by_block: HashMap<BlockNumber, FeeConfig>,
 }
 
 impl Store {
@@ -400,6 +405,28 @@ impl StoreEngineRollup for Store {
             })?;
 
         Ok(Some(prover_input))
+    }
+
+    async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .fee_config_by_block
+            .insert(block_number, fee_config);
+        Ok(())
+    }
+
+    async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .fee_config_by_block
+            .get(&block_number)
+            .cloned())
     }
 }
 

@@ -3,12 +3,14 @@ use crate::{
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{
         errors::CommitterError,
-        utils::{self, fetch_batch_blocks, get_git_commit_hash, system_now_ms},
+        utils::{
+            self, fetch_blocks_with_respective_fee_configs, get_git_commit_hash, system_now_ms,
+        },
     },
 };
 
 use bytes::Bytes;
-use ethrex_blockchain::{Blockchain, BlockchainType, vm::StoreVmDatabase};
+use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -578,9 +580,12 @@ impl L1Committer {
         &self,
         batch: &Batch,
     ) -> Result<(), CommitterError> {
-        let blocks =
-            fetch_batch_blocks::<CommitterError>(batch.number, &self.store, &self.rollup_store)
-                .await?;
+        let (blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
+            batch.number,
+            &self.store,
+            &self.rollup_store,
+        )
+        .await?;
 
         let batch_witness = self
             .blockchain
@@ -613,19 +618,13 @@ impl L1Committer {
             )
         };
 
-        let BlockchainType::L2(fee_config) = self.blockchain.options.r#type else {
-            return Err(CommitterError::Unreachable(
-                "Batch witness generation is only supported for L2 blockchains".to_string(),
-            ));
-        };
-
         let prover_input = ProverInputData {
             blocks,
             execution_witness: batch_witness,
             elasticity_multiplier: self.elasticity_multiplier,
             blob_commitment,
             blob_proof,
-            fee_config,
+            fee_configs,
         };
 
         self.rollup_store
@@ -661,9 +660,12 @@ impl L1Committer {
         let (commit_function_signature, values) = if self.based {
             let mut encoded_blocks: Vec<Bytes> = Vec::new();
 
-            let blocks =
-                fetch_batch_blocks::<CommitterError>(batch.number, &self.store, &self.rollup_store)
-                    .await?;
+            let (blocks, _) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
+                batch.number,
+                &self.store,
+                &self.rollup_store,
+            )
+            .await?;
 
             for block in blocks {
                 encoded_blocks.push(block.encode_to_vec().into());

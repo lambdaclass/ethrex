@@ -8,7 +8,7 @@ use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
     types::{
-        AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch,
+        AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch, fee_config::FeeConfig,
         l2_to_l2_message::L2toL2Message,
     },
 };
@@ -405,5 +405,21 @@ impl Store {
         self.engine
             .get_prover_input_by_batch_and_version(batch_number, prover_version)
             .await
+    }
+
+    pub async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_fee_config_by_block(block_number, fee_config)
+            .await
+    }
+    pub async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        self.engine.get_fee_config_by_block(block_number).await
     }
 }
