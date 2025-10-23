@@ -180,7 +180,6 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-
       - name: Download ethrex L2 image artifact
         uses: actions/download-artifact@v4
         with:
@@ -214,6 +213,10 @@ jobs:
           #
           touch cmd/.env
           cd crates/l2
+          if  [ "${{ matrix.based }}" = true ]; then
+            export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
+            export COMPILE_CONTRACTS=true
+          fi
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
