@@ -558,7 +558,9 @@ impl L1Committer {
         &self,
         batch: &Batch,
     ) -> Result<(), CommitterError> {
-        let blocks = self.fetch_batch_blocks(batch).await?;
+        let blocks =
+            fetch_batch_blocks::<CommitterError>(batch.number, &self.store, &self.rollup_store)
+                .await?;
 
         let batch_witness = self
             .blockchain
@@ -632,7 +634,9 @@ impl L1Committer {
         let (commit_function_signature, values) = if self.based {
             let mut encoded_blocks: Vec<Bytes> = Vec::new();
 
-            let blocks = self.fetch_batch_blocks(batch).await?;
+            let blocks =
+                fetch_batch_blocks::<CommitterError>(batch.number, &self.store, &self.rollup_store)
+                    .await?;
 
             for block in blocks {
                 encoded_blocks.push(block.encode_to_vec().into());
@@ -730,10 +734,6 @@ impl L1Committer {
         info!("Commitment sent: {commit_tx_hash:#x}");
 
         Ok(commit_tx_hash)
-    }
-
-    async fn fetch_batch_blocks(&self, batch: &Batch) -> Result<Vec<Block>, CommitterError> {
-        fetch_batch_blocks(batch.number, &self.store, &self.rollup_store).await
     }
 
     fn stop_committer(&mut self) -> CallResponse<Self> {
