@@ -4,6 +4,7 @@ use tokio::{
     net::TcpStream,
 };
 
+use ethrex_l2::constants::BIN_VERSION;
 use ethrex_l2::sequencer::proof_coordinator::ProofData;
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -15,6 +16,7 @@ const SERVER_URL_DEV: &str = "localhost:3900";
 pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), String> {
     let batch = connect_to_prover_server_wr(&ProofData::BatchRequest {
         commit_hash: commit_hash.clone(),
+        version: BIN_VERSION.to_string(),
     })
     .await
     .map_err(|e| format!("Failed to get Response: {e}"))?;
