@@ -9,7 +9,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -353,6 +353,27 @@ impl Store {
     ) -> Result<(), RollupStoreError> {
         self.engine
             .delete_proof_by_batch_and_type(batch_number, proof_type)
+            .await
+    }
+
+    pub async fn store_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_prover_input_by_batch_and_version(batch_number, prover_version, prover_input)
+            .await
+    }
+
+    pub async fn get_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+    ) -> Result<Option<ProverInputData>, RollupStoreError> {
+        self.engine
+            .get_prover_input_by_batch_and_version(batch_number, prover_version)
             .await
     }
 

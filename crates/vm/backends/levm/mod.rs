@@ -310,7 +310,7 @@ impl LEVM {
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env, db, vm_type)?;
 
         let report = vm.stateless_execute()?;
 

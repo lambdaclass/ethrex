@@ -246,6 +246,7 @@ impl StateDiff {
                     info: account_info,
                     code: diff.bytecode.clone(),
                     added_storage: diff.storage.clone().into_iter().collect(),
+                    removed_storage: false,
                 },
             );
         }
