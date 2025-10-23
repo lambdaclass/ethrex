@@ -1526,15 +1526,15 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "checkpointer"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "ethrex",
  "ethrex-blockchain",
- "ethrex-common 4.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-config",
  "ethrex-l2",
  "ethrex-l2-rpc",
- "ethrex-storage 4.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-storage-rollup",
  "ethrex-vm",
  "secp256k1",
