@@ -23,7 +23,7 @@ use crate::{
 pub struct Code {
     pub hash: H256,
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<u16> (needs to enable serde rc feature)
+    // TODO: Consider using Arc<[u16]> (needs to enable serde rc feature)
     pub jump_targets: Vec<u16>,
 }
 
@@ -44,6 +44,7 @@ impl Code {
         let mut targets = Vec::new();
         let mut i = 0;
         while i < code.len() {
+            // TODO: we don't use the constants from the vm module to avoid a circular dependency
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
@@ -51,6 +52,7 @@ impl Code {
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
+                    // OP_PUSH0
                     i += (c - 0x5F) as usize;
                 }
                 _ => (),
