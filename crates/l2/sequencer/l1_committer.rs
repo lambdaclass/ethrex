@@ -834,7 +834,7 @@ impl GenServer for L1Committer {
                 }
             }
         }
-        self.schedule_commit(self.commit_time_ms, handle.clone());
+        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
         CastResponse::NoReply
     }
 
