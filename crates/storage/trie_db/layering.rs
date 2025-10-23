@@ -133,25 +133,8 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
 
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        // TODO: this is unused, because we call `TrieLayerCache::put_batch` directly
-        let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
-        let new_state_root = match last_pair {
-            Some((_, noderlp)) => {
-                let root_node = Node::decode(noderlp)?;
-                root_node.compute_hash().finalize()
-            }
-            None => *EMPTY_TRIE_HASH,
-        };
-        let mut inner = TrieLayerCache::clone(&self.inner);
-        inner.put_batch(
-            self.state_root,
-            new_state_root,
-            key_values
-                .into_iter()
-                .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
-                .collect(),
-        );
-        Ok(())
+    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        // TODO: Get rid of this.
+        unimplemented!("This function should not be called");
     }
 }
