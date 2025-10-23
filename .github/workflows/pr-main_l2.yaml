@@ -123,16 +123,24 @@ jobs:
           - name: "Validium"
             validium: true
             web3signer: false
+            based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla"
             validium: false
             web3signer: false
+            based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla with Web3signer"
             validium: false
             web3signer: true
+            based: false
             compose_targets:
               [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
+          - name: "Based"
+            validium: false
+            web3signer: false
+            based: true
+            compose_targets: [docker-compose.yaml]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -172,7 +180,32 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      - name: Start L1 & Deploy contracts
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
+
+      - name: Start L1
+        run: |
+          cd crates/l2
+          docker compose up --detach ethrex_l1
+
+      - name: Install rex
+        if: ${{ matrix.based }}
+        run: |
+          cd ..
+          git clone https://github.com/lambdaclass/rex.git
+          cd rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
+          make cli
+          echo "rex install successfully at $(which rex)"
+
+      - name: Deploy contracts
         run: |
           #
           # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries 
@@ -180,6 +213,10 @@ jobs:
           #
           touch cmd/.env
           cd crates/l2
+          if  [ "${{ matrix.based }}" = true ]; then
+            export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
+            export COMPILE_CONTRACTS=true
+          fi
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
@@ -223,7 +260,9 @@ jobs:
             export ETHREX_BASED=true
             cd ..
           else
-           export ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+            export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+            export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
+            export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
           fi
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
@@ -236,7 +275,7 @@ jobs:
       - name: Run test
         run: |
           if  [ "${{ matrix.based }}" = true ]; then
-            export INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true
+            export INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true
           fi
           sudo chmod -R a+rw crates/l2
           cd crates/l2
@@ -330,7 +369,9 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
-          ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+          ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+          ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+          ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000 \
           ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
           docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
 
@@ -463,7 +504,7 @@ jobs:
       - name: Run test
         run: |
           cd crates/l2
-          INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true \
+          INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true \
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           cargo test l2 --release -- --nocapture --test-threads=1
 

@@ -2071,7 +2071,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -2089,7 +2089,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -2128,7 +2128,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
@@ -2137,7 +2137,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -2156,7 +2156,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "aligned-sdk",
  "axum",
@@ -2213,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2223,15 +2223,17 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "lambdaworks-crypto 0.11.0",
+ "rkyv",
  "secp256k1",
  "serde",
+ "serde_with",
  "sha3",
  "thiserror 2.0.16",
 ]
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "axum",
  "bytes",
@@ -2260,11 +2262,12 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff",
+ "bitvec",
  "bls12_381",
  "bytes",
  "datatest-stable",
@@ -2290,7 +2293,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -2301,7 +2304,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "aes",
  "async-trait",
@@ -2342,7 +2345,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2355,7 +2358,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -2389,7 +2392,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2414,7 +2417,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "thiserror 2.0.16",
  "tracing",
@@ -2422,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2442,7 +2445,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2454,6 +2457,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "futures",
+ "rkyv",
  "thiserror 2.0.16",
  "tracing",
 ]
@@ -2467,7 +2471,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2488,7 +2492,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -2865,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
@@ -5858,9 +5862,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa00b753ef7c942c13ee953f13609746a41c0fb8cf221849bbf3f654811a6669"
+checksum = "c34171afa9ef68114f07b4be6cf294f49a388380b62a036010b31534ecc0f927"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -5871,9 +5875,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42396ff1bc8bfdcad31f099a3af74b4830fb7bdc09a70d843dcfa8bab74ecea4"
+checksum = "b83e35512b851b51d27a6dcee6025da1c61e7d842e2ec79971124eab2be3e974"
 dependencies = [
  "crossbeam 0.7.3",
  "tokio",
