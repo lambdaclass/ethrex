@@ -312,10 +312,7 @@ impl<'a> VM<'a> {
         decrease: U256,
     ) -> Result<(), InternalError> {
         let account = self.get_account_mut(address)?;
-        account.info.balance = account
-            .info
-            .balance
-            .checked_sub(decrease)
+        account.info.balance = dbg!(dbg!(account.info.balance).checked_sub(decrease))
             .ok_or(InternalError::Underflow)?;
         Ok(())
     }

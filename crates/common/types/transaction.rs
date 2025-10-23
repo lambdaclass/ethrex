@@ -103,6 +103,7 @@ impl RLPDecode for P2PTransaction {
                 // EIP7702
                 0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::EIP7702Transaction(tx), rem)),
+                // TODO: CustomFee - Do we want to include them here for P2P as well?
                 // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::PrivilegedL2Transaction(tx), rem)),
@@ -1439,6 +1440,7 @@ impl TxType {
             0x02 => Some(Self::EIP1559),
             0x03 => Some(Self::EIP4844),
             0x04 => Some(Self::EIP7702),
+            0x7d => Some(Self::CustomFee),
             0x7e => Some(Self::Privileged),
             _ => None,
         }
