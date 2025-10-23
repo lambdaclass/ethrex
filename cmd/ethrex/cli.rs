@@ -471,7 +471,7 @@ impl FromStr for LogColor {
             "auto" => Ok(LogColor::Auto),
             "always" => Ok(LogColor::Always),
             "never" => Ok(LogColor::Never),
-            _ => Err("Unknown value".to_string()),
+            _ => Err(format!("Invalid log color '{}'. Expected: auto, always, or never", s)),
         }
     }
 }
