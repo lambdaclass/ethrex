@@ -136,9 +136,9 @@ jobs:
           sudo apt-get install -y git build-essential cmake clang ninja-build ccache python3 z3 libz3-dev libboost-all-dev
           git clone --depth 1 --branch v0.8.29 https://github.com/ethereum/solidity.git solidity
           cd solidity
-          sed -i "s/j2/j$(nproc)/g" /tmp/solidity/scripts/build.sh
+          sed -i "s/j2/j$(nproc)/g" scripts/build.sh
           ./scripts/build.sh
-          mkdir -p /home/admin/.cache/solc/v0.8.29/
+          mkdir -p ~/.cache/solc/v0.8.29/
           cp /usr/local/bin/solc ~/.cache/solc/v0.8.29/solc
 
       - name: Install solc from cache (Linux ARM)
