@@ -40,17 +40,16 @@ pub struct L2Hook {
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
-            prepare_execution_privileged(vm)
+            return prepare_execution_privileged(vm);
         } else if vm.env.custom_fee_token.is_some() {
-            prepare_execution_custom_fee(vm)
+            prepare_execution_custom_fee(vm)?;
         } else {
             DefaultHook.prepare_execution(vm)?;
-            // Different from L1:
-
-            // Max fee per gas must be sufficient to cover base fee + operator fee
-            validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
-            Ok(())
         }
+        // Different from L1:
+        // Max fee per gas must be sufficient to cover base fee + operator fee
+        validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
+        Ok(())
     }
 
     fn finalize_execution(
@@ -66,7 +65,7 @@ impl Hook for L2Hook {
             // They can call contracts that use CREATE/CREATE2
             default_hook::delete_self_destruct_accounts(vm)?;
         } else if vm.env.custom_fee_token.is_some() {
-            finalize_execution_custom_fee(vm, ctx_result, self.fee_config.base_fee_vault)?;
+            finalize_execution_custom_fee(vm, ctx_result, &self.fee_config)?;
         } else {
             if !ctx_result.is_success() {
                 undo_value_transfer(vm)?;
@@ -408,6 +407,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         data,
         ..Default::default()
     };
+    dbg!(&tx_check_balance);
     let tx_check_balance = Transaction::EIP1559Transaction(tx_check_balance);
     let mut env_clone = vm.env.clone();
     // Disable fee checks and update fields
@@ -428,6 +428,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     new_vm.hooks = vec![Rc::new(RefCell::new(EmptyHook))];
     set_bytecode_and_code_address(&mut new_vm)?;
     let b = new_vm.execute()?;
+    dbg!(b.clone());
     if !b.is_success() {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientAccountFunds,
@@ -453,7 +454,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
 fn finalize_execution_custom_fee(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
-    fee_vault: Option<Address>,
+    fee_vault: &FeeConfig,
 ) -> Result<(), crate::errors::VMError> {
     if !ctx_result.is_success() {
         undo_value_transfer(vm)?;
@@ -464,11 +465,13 @@ fn finalize_execution_custom_fee(
 
     refund_sender_custom_fee(vm, ctx_result, gas_refunded, actual_gas_used)?;
 
-    pay_coinbase_custom_fee(vm, actual_gas_used)?;
-
     delete_self_destruct_accounts(vm)?;
 
-    pay_to_fee_vault_custom_fee(vm, ctx_result.gas_used, fee_vault)
+    pay_coinbase_custom_fee(vm, ctx_result.gas_used, &fee_vault.operator_fee_config)?;
+
+    pay_to_fee_vault_custom_fee(vm, ctx_result.gas_used, fee_vault.base_fee_vault)?;
+
+    pay_operator_fee_custom_fee(vm, ctx_result.gas_used, &fee_vault.operator_fee_config)
 }
 
 fn refund_sender_custom_fee(
@@ -512,11 +515,44 @@ fn refund_sender_custom_fee(
     Ok(())
 }
 
-fn pay_coinbase_custom_fee(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
+fn pay_coinbase_custom_fee(
+    vm: &mut VM<'_>,
+    gas_to_pay: u64,
+    operator_fee_config: &Option<OperatorFeeConfig>,
+) -> Result<(), VMError> {
+    let Some(fee_config) = operator_fee_config else {
+        let priority_fee_per_gas = vm
+            .env
+            .gas_price
+            .checked_sub(vm.env.base_fee_per_gas)
+            .ok_or(InternalError::Underflow)?;
+
+        let coinbase_fee = U256::from(gas_to_pay)
+            .checked_mul(priority_fee_per_gas)
+            .ok_or(InternalError::Overflow)?;
+
+        /*
+        function payFee(address receiver, uint256 amount) internal onlyFeeCollector {
+            IERC20(feeToken).transferFrom(address(this), receiver, amount);
+        }
+        */
+        // 0x72746eaf
+        let pay_fee_selector = vec![0x72, 0x74, 0x6e, 0xaf];
+        let mut data = vec![];
+        data.extend_from_slice(&pay_fee_selector);
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&vm.env.coinbase.0);
+        data.extend_from_slice(&coinbase_fee.to_big_endian());
+        transfer_fee_token(vm, data.into())?;
+        return Ok(());
+    };
+
     let priority_fee_per_gas = vm
         .env
         .gas_price
         .checked_sub(vm.env.base_fee_per_gas)
+        .ok_or(InternalError::Underflow)?
+        .checked_sub(U256::from(fee_config.operator_fee_per_gas))
         .ok_or(InternalError::Underflow)?;
 
     let coinbase_fee = U256::from(gas_to_pay)
@@ -576,6 +612,36 @@ fn pay_to_fee_vault_custom_fee(
     data.extend_from_slice(&[0u8; 12]);
     data.extend_from_slice(&fee_vault.0);
     data.extend_from_slice(&base_fee.to_big_endian());
+    transfer_fee_token(vm, data.into())?;
+    Ok(())
+}
+
+fn pay_operator_fee_custom_fee(
+    vm: &mut VM<'_>,
+    gas_to_pay: u64,
+    operator_fee_config: &Option<OperatorFeeConfig>,
+) -> Result<(), crate::errors::VMError> {
+    let Some(fee_config) = operator_fee_config else {
+        // No operator fee configured, operator fee is not paid
+        return Ok(());
+    };
+
+    let operator_fee = U256::from(gas_to_pay)
+        .checked_mul(U256::from(fee_config.operator_fee_per_gas))
+        .ok_or(InternalError::Overflow)?;
+
+    /*
+    function payFee(address receiver, uint256 amount) internal onlyFeeCollector {
+        IERC20(feeToken).transferFrom(address(this), receiver, amount);
+    }
+    */
+    // 0x72746eaf
+    let pay_fee_selector = vec![0x72, 0x74, 0x6e, 0xaf];
+    let mut data = vec![];
+    data.extend_from_slice(&pay_fee_selector);
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(&fee_config.operator_fee_vault.0);
+    data.extend_from_slice(&operator_fee.to_big_endian());
     transfer_fee_token(vm, data.into())?;
     Ok(())
 }

@@ -29,7 +29,7 @@ contract FeeToken is ERC20 {
             print(string("adentro if"));
             _burn(address(this), amount);
         } else {
-            print(string("afuera if"));
+            print(string("afuera if"), address(receiver));
             _transfer(address(this), receiver, amount);
         }
     }
