@@ -4,7 +4,10 @@ use crate::ValueRLP;
 use crate::nibbles::Nibbles;
 use crate::node::NodeRemoveResult;
 use crate::node_hash::NodeHash;
-use crate::{TrieDB, error::TrieError};
+use crate::{
+    TrieDB,
+    error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError},
+};
 
 use super::{BranchNode, Node, NodeRef, ValueOrHash};
 
@@ -27,10 +30,16 @@ impl ExtensionNode {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
+                ))
+            })?;
 
             child_node.get(db, path)
         } else {
@@ -60,10 +69,17 @@ impl ExtensionNode {
         if match_index == self.prefix.len() {
             let path = path.offset(match_index);
             // Insert into child node
-            self.child
-                .get_node_mut(db, path.current())?
-                .ok_or(TrieError::InconsistentTree)?
-                .insert(db, path, value)?;
+            let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
+                return Err(TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
+                )));
+            };
+            child_node.insert(db, path, value)?;
             self.child.clear_hash();
             Ok(None)
         } else if match_index == 0 {
@@ -82,7 +98,30 @@ impl ExtensionNode {
                     Some(Node::Leaf(leaf)) => {
                         BranchNode::new_with_value(choices, leaf.value.clone())
                     }
-                    _ => return Err(TrieError::InconsistentTree),
+                    Some(_) => {
+                        return Err(TrieError::InconsistentTree(Box::new(
+                            InconsistentTreeError::ExtensionNodeChildDiffers(
+                                ExtensionNodeErrorData {
+                                    node_hash: new_node.compute_hash().finalize(),
+                                    extension_node_hash: self.compute_hash().finalize(),
+                                    extension_node_prefix: self.prefix.clone(),
+                                    node_path: path.current(),
+                                },
+                            ),
+                        )));
+                    }
+                    None => {
+                        return Err(TrieError::InconsistentTree(Box::new(
+                            InconsistentTreeError::ExtensionNodeChildNotFound(
+                                ExtensionNodeErrorData {
+                                    node_hash: new_node.compute_hash().finalize(),
+                                    extension_node_hash: self.compute_hash().finalize(),
+                                    extension_node_prefix: self.prefix.clone(),
+                                    node_path: path.current(),
+                                },
+                            ),
+                        )));
+                    }
                 }
             } else {
                 choices[self.prefix.at(0)] = new_node;
@@ -117,10 +156,16 @@ impl ExtensionNode {
 
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node_mut(db, path.current())?
-                .ok_or(TrieError::InconsistentTree)?;
+            let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
+                return Err(TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
+                )));
+            };
             // Remove value from child subtrie
             let (empty_trie, old_value) = child_node.remove(db, path)?;
             // Restructure node based on removal
@@ -189,10 +234,16 @@ impl ExtensionNode {
         };
         // Continue to child
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.clone().compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
+                ))
+            })?;
             child_node.get_path(db, path, node_path)?;
         }
         Ok(())

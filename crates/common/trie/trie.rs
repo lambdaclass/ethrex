@@ -25,7 +25,7 @@ pub use self::{
     node_hash::NodeHash,
 };
 
-pub use self::error::TrieError;
+pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
@@ -113,14 +113,15 @@ impl Trie {
 
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
-            NodeRef::Hash(hash) if hash.is_valid() => Node::decode(
-                &self
-                    .db
-                    .get(Nibbles::default())?
-                    .ok_or(TrieError::InconsistentTree)?,
-            )
-            .map_err(TrieError::RLPDecode)?
-            .get(self.db.as_ref(), path)?,
+            NodeRef::Hash(hash) if hash.is_valid() => {
+                Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
+                        hash.finalize(),
+                    )))
+                })?)
+                .map_err(TrieError::RLPDecode)?
+                .get(self.db.as_ref(), path)?
+            }
             _ => None,
         })
     }
@@ -134,8 +135,10 @@ impl Trie {
             // If the trie is not empty, call the root node's insertion logic.
             self.root
                 .get_node_mut(self.db.as_ref(), Nibbles::default())?
-                .ok_or(TrieError::InconsistentTree)?
-                .insert(self.db.as_ref(), path, value)?;
+                .ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
+                })?
+                .insert(self.db.as_ref(), path, value)?
         } else {
             // If the trie is empty, just add a leaf.
             self.root = Node::from(LeafNode::new(path, value)).into()
@@ -156,12 +159,14 @@ impl Trie {
         }
 
         // If the trie is not empty, call the root node's removal logic.
-        let (empty_trie, value) = self
+        let (is_trie_empty, value) = self
             .root
             .get_node_mut(self.db.as_ref(), Nibbles::default())?
-            .ok_or(TrieError::InconsistentTree)?
+            .ok_or_else(|| {
+                TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
+            })?
             .remove(self.db.as_ref(), Nibbles::from_bytes(path))?;
-        if empty_trie {
+        if is_trie_empty {
             self.root = NodeRef::default();
         } else {
             self.root.clear_hash();
@@ -186,6 +191,14 @@ impl Trie {
         } else {
             *EMPTY_TRIE_HASH
         }
+    }
+
+    pub fn get_root_node(&self, path: Nibbles) -> Result<Arc<Node>, TrieError> {
+        self.root.get_node(self.db.as_ref(), path)?.ok_or_else(|| {
+            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
+                self.root.compute_hash().finalize(),
+            )))
+        })
     }
 
     /// Returns a list of changes in a TrieNode format since last root hash processed.
@@ -261,11 +274,7 @@ impl Trie {
         paths: &[PathRLP],
     ) -> Result<(Option<NodeRLP>, Vec<NodeRLP>), TrieError> {
         if self.root.is_valid() {
-            let encoded_root = self
-                .root
-                .get_node(self.db.as_ref(), Nibbles::default())?
-                .ok_or(TrieError::InconsistentTree)?
-                .encode_raw();
+            let encoded_root = self.get_root_node(Nibbles::default())?.encode_raw();
 
             let mut node_path = HashSet::new();
             for path in paths {
@@ -296,9 +305,9 @@ impl Trie {
             return Ok(NodeRef::default());
         }
 
-        let root_rlp = all_nodes
-            .get(&root_hash)
-            .ok_or(TrieError::InconsistentTree)?;
+        let root_rlp = all_nodes.get(&root_hash).ok_or_else(|| {
+            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(root_hash)))
+        })?;
 
         fn get_embedded_node(
             all_nodes: &BTreeMap<H256, Vec<u8>>,
@@ -422,9 +431,16 @@ impl Trie {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
                             let child_path = current_path.append_new(idx as u8);
-                            let child_node = child_ref
-                                .get_node(db, child_path.clone())?
-                                .ok_or(TrieError::InconsistentTree)?;
+                            let child_node =
+                                child_ref.get_node(db, child_path.clone())?.ok_or_else(|| {
+                                    TrieError::InconsistentTree(Box::new(
+                                        InconsistentTreeError::NodeNotFoundOnBranchNode(
+                                            child_ref.compute_hash().finalize(),
+                                            branch_node.compute_hash().finalize(),
+                                            child_path.clone(),
+                                        ),
+                                    ))
+                                })?;
                             get_node_inner(db, child_path, child_node, partial_path)
                         } else {
                             Ok(vec![])
@@ -440,7 +456,23 @@ impl Trie {
                         let child_node = extension_node
                             .child
                             .get_node(db, child_path.clone())?
-                            .ok_or(TrieError::InconsistentTree)?;
+                            .ok_or_else(|| {
+                                TrieError::InconsistentTree(Box::new(
+                                    InconsistentTreeError::ExtensionNodeChildNotFound(
+                                        ExtensionNodeErrorData {
+                                            node_hash: extension_node
+                                                .child
+                                                .compute_hash()
+                                                .finalize(),
+                                            extension_node_hash: extension_node
+                                                .compute_hash()
+                                                .finalize(),
+                                            extension_node_prefix: extension_node.prefix.clone(),
+                                            node_path: child_path.clone(),
+                                        },
+                                    ),
+                                ))
+                            })?;
                         get_node_inner(db, child_path, child_node, partial_path)
                     } else {
                         Ok(vec![])
@@ -455,9 +487,7 @@ impl Trie {
             get_node_inner(
                 self.db.as_ref(),
                 Default::default(),
-                self.root
-                    .get_node(self.db.as_ref(), Default::default())?
-                    .ok_or(TrieError::InconsistentTree)?,
+                self.get_root_node(Default::default())?,
                 partial_path,
             )
         } else {
@@ -506,7 +536,9 @@ impl ProofTrie {
             self.0
                 .root
                 .get_node_mut(self.0.db.as_ref(), Nibbles::default())?
-                .ok_or(TrieError::InconsistentTree)?
+                .ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
+                })?
                 .insert(self.0.db.as_ref(), partial_path, external_ref)?;
             self.0.root.clear_hash();
         } else {
