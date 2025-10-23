@@ -25,21 +25,25 @@ pub struct TrieLayerCache {
     layers: HashMap<H256, TrieLayer>,
 
     // Layer cache stats: `(hit_count, miss_count)`.
-    stats: (AtomicUsize, AtomicUsize, bool),
+    stats: (AtomicUsize, AtomicUsize, AtomicUsize, bool),
 }
 
 impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         let mut current_state_root = state_root;
         // TODO: Why a `HashMap` and not a vec with a relative depth direct index?
+        let mut index = 0;
         while let Some(layer) = self.layers.get(&current_state_root) {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
                 self.stats.0.fetch_add(1, Ordering::Relaxed);
+                self.stats.2.fetch_add(index, Ordering::Relaxed);
                 return Some(value.clone());
             }
 
             current_state_root = layer.parent;
             assert_ne!(current_state_root, state_root, "state cycle found");
+
+            index += 1;
         }
 
         self.stats.1.fetch_add(1, Ordering::Relaxed);
@@ -95,13 +99,14 @@ impl TrieLayerCache {
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        if !self.stats.2 {
-            self.stats.2 = true;
+        if !self.stats.3 {
+            self.stats.3 = true;
 
             println!("#### Final stats:");
+            let n_hits = self.stats.0.swap(0, Ordering::Relaxed);
             println!(
-                "####   Hit  count: {}",
-                self.stats.0.swap(0, Ordering::Relaxed),
+                "####   Hit  count: {n_hits} (at average layer depth of {})",
+                self.stats.2.swap(0, Ordering::Relaxed) as f64 / n_hits as f64,
             );
             println!(
                 "####   Miss count: {}",
@@ -115,7 +120,7 @@ impl TrieLayerCache {
         // older layers are useless
         self.layers.retain(|_, item| item.id > layer.id);
 
-        self.stats.2 = false;
+        self.stats.3 = false;
         Some(
             parent_nodes
                 .unwrap_or_default()
