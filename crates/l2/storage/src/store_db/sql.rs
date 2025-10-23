@@ -28,7 +28,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 15] = [
+const DB_SCHEMA: [&str; 16] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -44,6 +44,7 @@ const DB_SCHEMA: [&str; 15] = [
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE batch_witness (batch INT, prover_version TEXT, witness BLOB, PRIMARY KEY (batch, prover_version))",
 ];
 
 impl SQLStore {
@@ -280,6 +281,20 @@ impl SQLStore {
                 .await?;
         }
         Ok(())
+    }
+
+    async fn store_witness_by_batch_and_version_in_tx(
+        &self,
+        batch_number: u64,
+        prover_version: String,
+        witness: Vec<u8>,
+        db_tx: Option<&Transaction>,
+    ) -> Result<(), RollupStoreError> {
+        let queries = vec![(
+            "INSERT OR REPLACE INTO batch_witness VALUES (?1, ?2, ?3)",
+            (batch_number, prover_version, witness).into_params()?,
+        )];
+        self.execute_in_tx(queries, db_tx).await
     }
 }
 
@@ -580,6 +595,10 @@ impl StoreEngineRollup for SQLStore {
                 "DELETE FROM batch_proofs WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
+            (
+                "DELETE FROM batch_witness WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
         ];
         self.execute_in_tx(queries, None).await
     }
@@ -781,6 +800,34 @@ impl StoreEngineRollup for SQLStore {
             .map(|row| read_from_row_int(&row, 0))
             .transpose()
     }
+
+    async fn store_witness_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: String,
+        witness: Vec<u8>,
+    ) -> Result<(), RollupStoreError> {
+        self.store_witness_by_batch_and_version_in_tx(batch_number, prover_version, witness, None)
+            .await
+    }
+
+    async fn get_witness_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: String,
+    ) -> Result<Option<Vec<u8>>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT witness FROM batch_witness WHERE batch = ?1 AND prover_version = ?2",
+                (batch_number, prover_version),
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 0)?;
+            return Ok(Some(vec));
+        }
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -802,6 +849,7 @@ mod tests {
             "batch_proofs",
             "block_signatures",
             "batch_signatures",
+            "batch_witness",
         ];
         let mut attributes = Vec::new();
         for table in tables {
@@ -846,6 +894,9 @@ mod tests {
                 ("block_signatures", "signature") => "BLOB",
                 ("batch_signatures", "batch") => "INT",
                 ("batch_signatures", "signature") => "BLOB",
+                ("batch_witness", "batch") => "INT",
+                ("batch_witness", "prover_version") => "TEXT",
+                ("batch_witness", "witness") => "BLOB",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",

@@ -7,7 +7,10 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
+    types::{
+        AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch,
+        block_execution_witness::ExecutionWitness,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use tracing::info;
@@ -353,6 +356,27 @@ impl Store {
     ) -> Result<(), RollupStoreError> {
         self.engine
             .delete_proof_by_batch_and_type(batch_number, proof_type)
+            .await
+    }
+
+    pub async fn store_witness_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: String,
+        witness: ExecutionWitness,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_witness_by_batch_and_version(batch_number, prover_version, witness)
+            .await
+    }
+
+    pub async fn get_witness_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: String,
+    ) -> Result<Option<ExecutionWitness>, RollupStoreError> {
+        self.engine
+            .get_witness_by_batch_and_version(batch_number, prover_version)
             .await
     }
 }

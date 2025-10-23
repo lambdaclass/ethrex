@@ -7,7 +7,9 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{
+        AccountUpdate, Blob, BlockNumber, batch::Batch, block_execution_witness::ExecutionWitness,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -46,6 +48,8 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
+    /// Map of (batch_number, prover_version) to witness data
+    batch_witness: HashMap<(u64, String), Vec<u8>>,
 }
 
 impl Store {
@@ -287,6 +291,9 @@ impl StoreEngineRollup for Store {
             .retain(|batch, _| *batch <= batch_number);
         store.state_roots.retain(|batch, _| *batch <= batch_number);
         store.blobs.retain(|batch, _| *batch <= batch_number);
+        store
+            .batch_witness
+            .retain(|(batch, _), _| *batch <= batch_number);
         Ok(())
     }
 
@@ -333,6 +340,47 @@ impl StoreEngineRollup for Store {
 
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
         Ok(self.inner()?.state_roots.keys().max().cloned())
+    }
+
+    async fn store_witness_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: String,
+        witness: ExecutionWitness,
+    ) -> Result<(), RollupStoreError> {
+        let witness_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&witness)
+            .map_err(|e| RollupStoreError::Custom(format!("Failed to serialize witness: {}", e)))?
+            .to_vec();
+
+        self.inner()?
+            .batch_witness
+            .insert((batch_number, prover_version), witness_bytes);
+
+        Ok(())
+    }
+
+    async fn get_witness_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: String,
+    ) -> Result<Option<ExecutionWitness>, RollupStoreError> {
+        let Some(witness_bytes) = self
+            .inner()?
+            .batch_witness
+            .get(&(batch_number, prover_version.clone()))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+
+        let witness = rkyv::from_bytes::<ExecutionWitness, rkyv::rancor::Error>(&witness_bytes)
+            .map_err(|e| {
+                RollupStoreError::Custom(format!(
+                    "Failed to deserialize witness for batch {batch_number} and version {prover_version}: {e}",
+                ))
+            })?;
+
+        Ok(Some(witness))
     }
 }
 
