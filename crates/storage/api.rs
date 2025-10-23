@@ -1,7 +1,7 @@
-use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
+    Transaction,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -121,13 +121,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Option<Receipt>, StoreError>;
 
     /// Add account code
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError>;
+    async fn add_account_code(&self, code: Code) -> Result<(), StoreError>;
 
     /// Clears all checkpoint data created during the last snap sync
     async fn clear_snap_state(&self) -> Result<(), StoreError>;
 
     /// Obtain account code via code hash
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError>;
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError>;
 
     async fn get_transaction_by_hash(
         &self,
@@ -360,7 +360,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError>;
 
     /// Add a batch of headers downloaded during fullsync
