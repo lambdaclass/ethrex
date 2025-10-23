@@ -3,7 +3,7 @@ use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
 };
 
@@ -18,7 +18,7 @@ pub struct RocksDBPreRead {
     /// RocksDB database
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Pre-read data
-    cache: BTreeMap<Vec<u8>, Vec<u8>>,
+    cache: HashMap<Vec<u8>, Vec<u8>>,
     last_computed_flatkeyvalue: Vec<u8>,
     tlc: Arc<RwLock<TrieLayerCache>>,
     state_root: H256,
@@ -133,7 +133,7 @@ impl RocksDBPreRead {
             }
         }
         let tlc_lock = tlc.write().map_err(|_| TrieError::LockError)?;
-        let cache: BTreeMap<_, _> = results
+        let cache: HashMap<_, _> = results
             .into_par_iter()
             .map(|(key, value)| {
                 if let Some(value) = tlc_lock.get(state_root, &key) {
