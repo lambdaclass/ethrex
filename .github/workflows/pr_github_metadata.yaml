@@ -1,7 +1,7 @@
 name: PR Github Metadata
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, reopened]
 
 permissions:
@@ -32,7 +32,6 @@ jobs:
 
   label-pr:
     name: Set Labels
-    if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

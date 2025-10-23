@@ -10,15 +10,22 @@ on:
         edited,
         ready_for_review,
         converted_to_draft,
+        labeled,
+        unlabeled,
       ]
   pull_request_review:
     types: [submitted]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   update-project-status:
     name: Update PR status for ethrex_l1 project
     runs-on: ubuntu-latest
-    # sadly pull_request_review doesn't have direct access to labels information so we'll have to check this later.
+    # Skip forked PRs: they can't access the GitHub App secrets this job relies on.
+    # pull_request_review lacks label data, so the script double-checks before proceeding.
     if: github.event.pull_request.head.repo.fork == false && (github.event_name == 'pull_request_review' || contains(github.event.pull_request.labels.*.name, 'L1'))
     permissions:
       contents: read
