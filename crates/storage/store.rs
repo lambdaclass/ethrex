@@ -36,6 +36,7 @@ pub struct Store {
     pub engine: Arc<dyn StoreEngine>,
     pub chain_config: Arc<RwLock<ChainConfig>>,
     pub latest_block_header: Arc<RwLock<BlockHeader>>,
+    storage_trie_cache: Arc<RwLock<Option<StorageTrieCacheEntry>>>,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -69,6 +70,21 @@ pub struct AccountUpdatesList {
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
+struct StorageTrieCacheEntry {
+    block_hash: BlockHash,
+    address: Address,
+    trie: Trie,
+}
+
+impl std::fmt::Debug for StorageTrieCacheEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageTrieCacheEntry")
+            .field("block_hash", &self.block_hash)
+            .field("address", &self.address)
+            .finish()
+    }
+}
+
 impl Store {
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
@@ -83,11 +99,13 @@ impl Store {
                 engine: Arc::new(RocksDBStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                storage_trie_cache: Arc::new(RwLock::new(None)),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                storage_trie_cache: Arc::new(RwLock::new(None)),
             },
         };
 
@@ -710,14 +728,58 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        let hashed_key = hash_key(&storage_key);
+        if let Some(value) = self.cached_storage_trie_value(block_hash, address, &hashed_key)? {
+            return value
+                .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+                .transpose();
+        }
+
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
-        let hashed_key = hash_key(&storage_key);
-        storage_trie
-            .get(&hashed_key)?
+        let value_rlp = storage_trie.get(&hashed_key)?;
+        self.update_storage_trie_cache(block_hash, address, storage_trie)?;
+        value_rlp
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
             .transpose()
+    }
+
+    fn cached_storage_trie_value(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        hashed_key: &Vec<u8>,
+    ) -> Result<Option<Option<Vec<u8>>>, StoreError> {
+        let cache = self
+            .storage_trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?;
+        if let Some(entry) = cache.as_ref() {
+            if entry.block_hash == block_hash && entry.address == address {
+                let value = entry.trie.get(hashed_key)?;
+                return Ok(Some(value));
+            }
+        }
+        Ok(None)
+    }
+
+    fn update_storage_trie_cache(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        trie: Trie,
+    ) -> Result<(), StoreError> {
+        let mut cache = self
+            .storage_trie_cache
+            .write()
+            .map_err(|_| StoreError::LockError)?;
+        *cache = Some(StorageTrieCacheEntry {
+            block_hash,
+            address,
+            trie,
+        });
+        Ok(())
     }
 
     pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
