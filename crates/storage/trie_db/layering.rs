@@ -1,9 +1,9 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     sync::{
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -136,6 +136,8 @@ pub struct TrieWrapper {
     pub inner: Arc<RwLock<TrieLayerCache>>,
     pub db: Box<dyn TrieDB>,
     pub prefix: Option<H256>,
+
+    pub read_layer: Mutex<HashMap<Nibbles, Vec<u8>>>,
 }
 
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
@@ -165,7 +167,18 @@ impl TrieDB for TrieWrapper {
         {
             return Ok(Some(value));
         }
-        self.db.get(key)
+
+        let mut read_layer = self.read_layer.lock().expect("");
+        Ok(match read_layer.entry(key.clone()) {
+            Entry::Occupied(entry) => Some(entry.into_mut().clone()),
+            Entry::Vacant(entry) => self
+                .db
+                .get(key)?
+                .inspect(|x| {
+                    entry.insert(x.clone());
+                })
+                .clone(),
+        })
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {

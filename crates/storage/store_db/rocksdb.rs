@@ -19,9 +19,9 @@ use rocksdb::{
     Options, WriteBatch,
 };
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 use tracing::{debug, error, info};
 
@@ -1305,6 +1305,8 @@ impl StoreEngine for Store {
             inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
+
+            read_layer: Mutex::new(HashMap::new()),
         });
         Ok(Trie::open(wrap_db, storage_root))
     }
@@ -1316,6 +1318,8 @@ impl StoreEngine for Store {
             inner: self.trie_cache.clone(),
             db,
             prefix: None,
+
+            read_layer: Mutex::new(HashMap::new()),
         });
         Ok(Trie::open(wrap_db, state_root))
     }
@@ -1349,6 +1353,8 @@ impl StoreEngine for Store {
             inner: self.trie_cache.clone(),
             db,
             prefix: None,
+
+            read_layer: Mutex::new(HashMap::new()),
         });
         Ok(Trie::open(wrap_db, state_root))
     }
@@ -1369,6 +1375,8 @@ impl StoreEngine for Store {
             inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
+
+            read_layer: Mutex::new(HashMap::new()),
         });
         Ok(Trie::open(wrap_db, storage_root))
     }
