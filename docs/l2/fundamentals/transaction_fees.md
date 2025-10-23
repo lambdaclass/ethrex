@@ -34,7 +34,7 @@ All collected operator fees are deposited into a dedicated `operator fee vault` 
 To set the operator fee amount:
 
 ```sh
-ethrex l2 --block-producer.operator-fee <amount-in-wei>
+ethrex l2 --block-producer.operator-fee-per-gas <amount-in-wei>
 ```
 
 To set the operator fee vault address:
