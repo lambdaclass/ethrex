@@ -6,7 +6,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlockNumber, batch::Batch, l2_to_l2_message::L2toL2Message},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
 use crate::error::RollupStoreError;
 
@@ -158,4 +158,17 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError>;
+
+    async fn store_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError>;
+
+    async fn get_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+    ) -> Result<Option<ProverInputData>, RollupStoreError>;
 }

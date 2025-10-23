@@ -1,14 +1,14 @@
 use crate::{
-    CommitterConfig, EthConfig, SequencerConfig,
+    BlockProducerConfig, CommitterConfig, EthConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{
         errors::CommitterError,
-        utils::{self, system_now_ms},
+        utils::{self, fetch_batch_blocks, get_git_commit_hash, system_now_ms},
     },
 };
 
 use bytes::Bytes;
-use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
+use ethrex_blockchain::{Blockchain, BlockchainType, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -28,6 +28,7 @@ use ethrex_l2_common::{
         PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash,
         get_block_privileged_transactions,
     },
+    prover::ProverInputData,
     state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
@@ -107,6 +108,10 @@ pub struct L1Committer {
     last_committed_batch: u64,
     /// Cancellation token for the next inbound InMessage::Commit
     cancellation_token: Option<CancellationToken>,
+    /// Elasticity multiplier for prover input generation
+    elasticity_multiplier: u64,
+    /// Git commit hash of the build
+    git_commit_hash: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -129,6 +134,7 @@ impl L1Committer {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         committer_config: &CommitterConfig,
+        proposer_config: &BlockProducerConfig,
         eth_config: &EthConfig,
         blockchain: Arc<Blockchain>,
         store: Store,
@@ -167,6 +173,8 @@ impl L1Committer {
             last_committed_batch_timestamp: 0,
             last_committed_batch,
             cancellation_token: None,
+            elasticity_multiplier: proposer_config.elasticity_multiplier,
+            git_commit_hash: get_git_commit_hash(),
         })
     }
 
@@ -179,6 +187,7 @@ impl L1Committer {
     ) -> Result<GenServerHandle<L1Committer>, CommitterError> {
         let state = Self::new(
             &cfg.l1_committer,
+            &cfg.block_producer,
             &cfg.eth,
             blockchain,
             store.clone(),
@@ -269,6 +278,15 @@ impl L1Committer {
                 batch
             }
         };
+
+        info!(
+            first_block = batch.first_block,
+            last_block = batch.last_block,
+            "Generating and storing witness for batch {}",
+            batch.number,
+        );
+
+        self.generate_and_store_batch_prover_input(&batch).await?;
 
         info!(
             first_block = batch.first_block,
@@ -556,6 +574,71 @@ impl L1Committer {
         ))
     }
 
+    async fn generate_and_store_batch_prover_input(
+        &self,
+        batch: &Batch,
+    ) -> Result<(), CommitterError> {
+        let blocks =
+            fetch_batch_blocks::<CommitterError>(batch.number, &self.store, &self.rollup_store)
+                .await?;
+
+        let batch_witness = self
+            .blockchain
+            .generate_witness_for_blocks(&blocks)
+            .await
+            .map_err(CommitterError::FailedToGenerateBatchWitness)?;
+
+        // We still need to differentiate the validium case because for validium
+        // we are generating the BlobsBundle with BlobsBundle::default which
+        // sets the commitments and proofs to empty vectors.
+        let (blob_commitment, blob_proof) = if self.validium {
+            ([0; 48], [0; 48])
+        } else {
+            let BlobsBundle {
+                commitments,
+                proofs,
+                ..
+            } = &batch.blobs_bundle;
+
+            (
+                commitments
+                    .first()
+                    .cloned()
+                    .ok_or(CommitterError::Unreachable(
+                        "Blob commitment missing in batch blobs bundle".to_string(),
+                    ))?,
+                proofs.first().cloned().ok_or(CommitterError::Unreachable(
+                    "Blob proof missing in batch blobs bundle".to_string(),
+                ))?,
+            )
+        };
+
+        let BlockchainType::L2(fee_config) = self.blockchain.options.r#type else {
+            return Err(CommitterError::Unreachable(
+                "Batch witness generation is only supported for L2 blockchains".to_string(),
+            ));
+        };
+
+        let prover_input = ProverInputData {
+            blocks,
+            execution_witness: batch_witness,
+            elasticity_multiplier: self.elasticity_multiplier,
+            blob_commitment,
+            blob_proof,
+            fee_config,
+        };
+
+        self.rollup_store
+            .store_prover_input_by_batch_and_version(
+                batch.number,
+                &self.git_commit_hash,
+                prover_input,
+            )
+            .await?;
+
+        Ok(())
+    }
+
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
         let messages_merkle_root = compute_merkle_root(&batch.l1_message_hashes);
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
@@ -578,22 +661,11 @@ impl L1Committer {
         let (commit_function_signature, values) = if self.based {
             let mut encoded_blocks: Vec<Bytes> = Vec::new();
 
-            for i in batch.first_block..=batch.last_block {
-                let block_header = self
-                    .store
-                    .get_block_header(i)
-                    .map_err(CommitterError::from)?
-                    .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+            let blocks =
+                fetch_batch_blocks::<CommitterError>(batch.number, &self.store, &self.rollup_store)
+                    .await?;
 
-                let block_body = self
-                    .store
-                    .get_block_body(i)
-                    .await
-                    .map_err(CommitterError::from)?
-                    .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
-
-                let block = Block::new(block_header, block_body);
-
+            for block in blocks {
                 encoded_blocks.push(block.encode_to_vec().into());
             }
 
@@ -774,7 +846,7 @@ impl GenServer for L1Committer {
             let commit_time: u128 = self.commit_time_ms.into();
             let should_send_commitment =
                 current_time - self.last_committed_batch_timestamp > commit_time;
-            #[allow(clippy::collapsible_if)]
+            #[expect(clippy::collapsible_if)]
             if should_send_commitment {
                 if self
                     .commit_next_batch_to_l1()

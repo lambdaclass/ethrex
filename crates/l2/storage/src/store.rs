@@ -12,7 +12,7 @@ use ethrex_common::{
         l2_to_l2_message::L2toL2Message,
     },
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -384,5 +384,26 @@ impl Store {
         batch_number: u64,
     ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError> {
         self.engine.get_l2_to_l2_messages(batch_number).await
+    }
+
+    pub async fn store_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_prover_input_by_batch_and_version(batch_number, prover_version, prover_input)
+            .await
+    }
+
+    pub async fn get_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+    ) -> Result<Option<ProverInputData>, RollupStoreError> {
+        self.engine
+            .get_prover_input_by_batch_and_version(batch_number, prover_version)
+            .await
     }
 }
