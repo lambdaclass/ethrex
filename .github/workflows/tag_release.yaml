@@ -270,3 +270,8 @@ jobs:
             Installation and running instructions can be found in [our docs](https://docs.ethrex.xyz/)
 
             ${{ steps.changelog.outputs.changes }}
+
+  publish-apt:
+    needs:
+      - finalize-release
+    uses: lambdaclass/ethrex-apt/.github/workflows/publish-apt.yml@main
