@@ -1,4 +1,4 @@
-use ethrex_rlp::structs::Encoder;
+use ethrex_rlp::encode::RLPEncode;
 
 use crate::{
     InconsistentTreeError, TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles,
@@ -248,25 +248,7 @@ impl BranchNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(&self.encode_raw())
-    }
-
-    /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        let mut encoder = Encoder::new(&mut buf);
-        for child in self.choices.iter() {
-            match child.compute_hash() {
-                NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
-                child @ NodeHash::Inline(raw) if raw.1 != 0 => {
-                    encoder = encoder.encode_raw(child.as_ref())
-                }
-                _ => encoder = encoder.encode_bytes(&[]),
-            }
-        }
-        encoder = encoder.encode_bytes(&self.value);
-        encoder.finish();
-        buf
+        NodeHash::from_encoded(&self.encode_to_vec())
     }
 
     /// Traverses own subtrie until reaching the node containing `path`
@@ -279,7 +261,7 @@ impl BranchNode {
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
-        let encoded = self.encode_raw();
+        let encoded = self.encode_to_vec();
         if encoded.len() >= 32 {
             node_path.push(encoded);
         };
@@ -307,6 +289,7 @@ impl BranchNode {
 #[cfg(test)]
 mod test {
     use ethereum_types::H256;
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
     use super::*;
 
@@ -654,7 +637,7 @@ mod test {
             }
         }
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 
     #[test]
@@ -670,7 +653,7 @@ mod test {
             }
         }
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 
     #[test]
@@ -696,6 +679,6 @@ mod test {
             } with_leaf { &[0x1] => vec![0x1] }
         }
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 }

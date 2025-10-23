@@ -347,7 +347,7 @@ impl Blockchain {
         if used_trie_nodes.is_empty()
             && let Some(root) = root_node
         {
-            used_trie_nodes.push(root.encode_raw());
+            used_trie_nodes.push(root.encode_to_vec());
         }
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
