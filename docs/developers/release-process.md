@@ -28,18 +28,17 @@ There are currently three `Cargo.lock` files that will be affected. Make sure yo
 
 ## 3rd - Create & Push Tag
 
-Create a tag with a format `vX.Y.Z[-custom]` where `X.Y.Z` is the semantic version and `-custom` is an optional subversion. Example of valid tags:
+Create a tag with a format `vX.Y.Z-rc.W` where `X.Y.Z` is the semantic version and `W` is a release candidate version. Other names for subversions are also accepted. Example of valid tags:
 
-- `v0.0.1`
 - `v0.1.3-rc.1`
 - `v0.0.2-alpha`
 
 ```bash
 git tag <release_version>
-git push --tags
+git push origin <release_version>
 ```
 
-After pushing the tag, a CI job will compile the binaries for different architectures and create a release with the version specified in the tag name. Along with the binaries, a tar file is uploaded with the contracts and the verification keys. The following binaries are built:
+After pushing the tag, a CI job will compile the binaries for different architectures and create a pre-release with the version specified in the tag name. Along with the binaries, a tar file is uploaded with the contracts and the verification keys. The following binaries are built:
 
 | name | L2 stack | Provers | CUDA support |
 | --- | --- | --- | --- |
@@ -53,21 +52,27 @@ After pushing the tag, a CI job will compile the binaries for different architec
 | ethrex-l2-macos-aarch64 | ✅ | Exec | ❌ |
 
 Also, two docker images are built and pushed to the Github Container registry:
-- `ghcr.io/lambdaclass/ethrex:latest`
-- `ghcr.io/lambdaclass/ethrex:X.Y.Z[-custom]`
-- `ghcr.io/lambdaclass/ethrex:l2`
-- `ghcr.io/lambdaclass/ethrex:X.Y.Z[-custom]-l2`
+- `ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W`
+- `ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2`
 
-A changelog will be generated based on commit names (using conventional commits) from the last tag.
+A changelog will be generated based on commit names (using conventional commits) from the last stable tag.
 
-> [!NOTE]
-> If the tag has format `vX.Y.Z-rc*`, the release will be a pre-release and in draft mode. Also, `latest` and `l2` docker tags will not be updated.
+## 4th - Test & Publish Release
 
-## 4th - Update Homebrew
+When you are sure all the binaries and docker images work as expected, you can proceed to publish the release. To do so, edit the last pre-release with the following changes:
+- Change the name to `ethrex: vX.Y.Z`
+- Change the tag to a new one `vX.Y.Z`. **IMPORTANT**: Make sure to select the `release/vX.Y.Z` branch when changing the tag.
+- Set the release as the latest release (you will need to uncheck the pre-release first).
+
+Once done, the CI will publish new tags for the already compiled docker images:
+- `ghcr.io/lambdaclass/ethrex:X.Y.Z`, `ghcr.io/lambdaclass/ethrex:latest`
+- `ghcr.io/lambdaclass/ethrex:X.Y.Z-l2`, `ghcr.io/lambdaclass/ethrex:l2`
+
+## 5th - Update Homebrew
 
 Disclaimer: We should automate this
 
-1. Commit a change in https://github.com/lambdaclass/homebrew-tap/ bumping the ethrex version (like this one  https://github.com/lambdaclass/homebrew-tap/commit/d78a2772ad9c5412e7f84c6210bd85c970fcd0e6).
+1. Commit a change in https://github.com/lambdaclass/homebrew-tap/ bumping the ethrex version (like [this one](https://github.com/lambdaclass/homebrew-tap/commit/d78a2772ad9c5412e7f84c6210bd85c970fcd0e6)).
     - The first SHA is the hash of the `.tar.gz` from the release. You can get it by downloading the `Source code (tar.gz)` from the ethrex release and running
 
         ```bash
@@ -75,11 +80,11 @@ Disclaimer: We should automate this
         ```
 
     - For the second one:
-        - First download the `ethrex-macos_aarch64` binary from the ethrex release
+        - First download the `ethrex-l2-macos-aarch64` binary from the ethrex release
         - Give exec permissions to binary
 
             ```bash
-            chmod +x ethrex-macos_aarch64
+            chmod +x ethrex-l2-macos-aarch64
             ```
 
         - Create a dir `ethrex/3.0.0/bin` (replace the version as needed)
@@ -105,10 +110,9 @@ Disclaimer: We should automate this
 
         - Use this as the second hash (the one in the `bottle` section)
 2. Push the commit
-3. Create a new release with tag `v3.0.0`
-IMPORTANT: attach the `ethrex-3.0.0.arm64_sonoma.bottle.tar.gz` to the release
+3. Create a new release with tag `v3.0.0`. **IMPORTANT**: attach the `ethrex-3.0.0.arm64_sonoma.bottle.tar.gz` to the release
 
-## 5th - Merge the release branch via PR
+## 6th - Merge the release branch via PR
 
 Once the release is verified, **merge the branch via PR**.
 
