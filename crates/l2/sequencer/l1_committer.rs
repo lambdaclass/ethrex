@@ -515,14 +515,6 @@ impl L1Committer {
                         },
                     )
                     .await?;
-
-                apply_fork_choice(
-                    &one_time_checkpoint_store,
-                    potential_batch_block.hash(),
-                    potential_batch_block.hash(),
-                    potential_batch_block.hash(),
-                )
-                .await?;
             }
 
             // Accumulate block data with the rest of the batch.
