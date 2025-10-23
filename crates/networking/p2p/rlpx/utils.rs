@@ -80,34 +80,6 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     Ok(snappy_decoder.decompress_vec(msg_data)?)
 }
 
-#[macro_export]
-macro_rules! log_peer_trace {
-    ( $node:expr, $($text:tt)+ ) => {
-        tracing::trace!(client_name=%$node.client_name(), client_id=%$node.node_id(), client_ip=%$node.ip, "{}", $($text)+)
-    }
-}
-
-#[macro_export]
-macro_rules! log_peer_debug {
-    ( $node:expr, $($text:tt)+ ) => {
-        tracing::debug!(client_name=%$node.client_name(), client_id=%$node.node_id(), client_ip=%$node.ip, "{}", $($text)+)
-    }
-}
-
-#[macro_export]
-macro_rules! log_peer_warn {
-    ( $node:expr, $($text:tt)+ ) => {
-        tracing::warn!(client_name=%$node.client_name(), client_id=%$node.node_id(), client_ip=%$node.ip, "{}", $($text)+)
-    }
-}
-
-#[macro_export]
-macro_rules! log_peer_error {
-    ( $node:expr, $($text:tt)+ ) => {
-        tracing::error!(client_name=%$node.client_name(), client_id=%$node.node_id(), client_ip=%$node.ip, "{}", $($text)+)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

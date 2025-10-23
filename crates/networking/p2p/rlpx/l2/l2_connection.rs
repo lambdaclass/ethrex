@@ -1,4 +1,3 @@
-use crate::log_peer_error;
 use crate::rlpx::connection::server::send;
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
@@ -12,7 +11,7 @@ use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::messages::batch_hash;
 use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
@@ -46,8 +45,13 @@ fn broadcast_message(state: &Established, msg: Message) -> Result<(), PeerConnec
     match msg {
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
+            error!(
+                            client_name=%state.node.client_name(),
+                            client_id=%state.node.node_id(),
+                            client_ip=%state.node.ip,
+                            message=%msg,
+                            "Broadcasting for this message is not supported");
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
-            log_peer_error!(&state.node, &error_message);
             Err(PeerConnectionError::BroadcastError(error_message))
         }
     }
@@ -158,9 +162,10 @@ pub(crate) fn broadcast_l2_message(
                 .connection_broadcast_send
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
-                    log_peer_error!(
-                        &state.node,
-                        &format!("Could not broadcast l2 message BatchSealed: {e}"),
+                    error!(
+                            client_name=%state.node.client_name(),
+                            client_id=%state.node.node_id(),
+                            client_ip=%state.node.ip, error=%e, "Could not broadcast l2 message BatchSealed"
                     );
                 })
                 .map_err(|_| {
@@ -176,9 +181,12 @@ pub(crate) fn broadcast_l2_message(
                 .connection_broadcast_send
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
-                    log_peer_error!(
-                        &state.node,
-                        &format!("Could not broadcast l2 message NewBlock: {e}"),
+                    error!(
+                            client_name=%state.node.client_name(),
+                            client_id=%state.node.node_id(),
+                            client_ip=%state.node.ip,
+                            error=%e,
+                        "Could not broadcast l2 message NewBlock",
                     );
                 })
                 .map_err(|_| {
@@ -303,9 +311,12 @@ async fn should_process_new_block(
                 PeerConnectionError::InternalError("Recover Address task failed".to_string())
             })?
             .map_err(|e| {
-                log_peer_error!(
-                    &established.node,
-                    &format!("Failed to recover lead sequencer: {e}"),
+                error!(
+                            client_name=%established.node.client_name(),
+                            client_id=%established.node.node_id(),
+                            client_ip=%established.node.ip,
+                            error=%e,
+                    "Failed to recover lead sequencer",
                 );
                 PeerConnectionError::CryptographyError(e.to_string())
             })?;
@@ -352,9 +363,12 @@ async fn should_process_batch_sealed(
     let hash = batch_hash(&msg.batch);
 
     let recovered_lead_sequencer = recover_address(msg.signature, hash).map_err(|e| {
-        log_peer_error!(
-            &established.node,
-            &format!("Failed to recover lead sequencer: {e}"),
+        error!(
+                        client_name=%established.node.client_name(),
+                        client_id=%established.node.node_id(),
+                        client_ip=%established.node.ip,
+                        error=%e,
+            "Failed to recover lead sequencer",
         );
         PeerConnectionError::CryptographyError(e.to_string())
     })?;
@@ -398,12 +412,14 @@ async fn process_new_block(
             .add_block(block)
             .await
             .inspect_err(|e| {
-                log_peer_error!(
-                    &established.node,
-                    &format!(
-                        "Error adding new block {} with hash {:?}, error: {e}",
-                        block_number, block_hash
-                    ),
+                error!(
+                        client_name=%established.node.client_name(),
+                        client_id=%established.node.node_id(),
+                        client_ip=%established.node.ip,
+                        error=%e,
+                        block_number,
+                        ?block_hash,
+                    "Error adding new block",
                 );
             })?;
 
