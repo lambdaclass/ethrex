@@ -104,14 +104,14 @@ impl TrieLayerCache {
 
             println!("#### Final stats:");
             let n_hits = self.stats.0.swap(0, Ordering::Relaxed);
+            let n_miss = self.stats.1.swap(0, Ordering::Relaxed);
+            let n_read = self.stats.3.swap(0, Ordering::Relaxed);
             println!(
                 "####   Hit  count: {n_hits} (at average layer depth of {})",
                 self.stats.2.swap(0, Ordering::Relaxed) as f64 / n_hits as f64,
             );
-            println!(
-                "####   Miss count: {}",
-                self.stats.1.swap(0, Ordering::Relaxed),
-            );
+            println!("####   Miss count: {}", n_miss - n_read);
+            println!("####   Read count: {}", n_read);
         }
 
         let mut layer = self.layers.remove(&state_root)?;
