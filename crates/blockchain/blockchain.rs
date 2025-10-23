@@ -202,7 +202,9 @@ impl Blockchain {
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
-        let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
+        let (mut state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
+
+        let mut global_state_trie_witness = state_trie_witness.lock().unwrap().clone();
 
         let mut touched_account_storage_slots = BTreeMap::new();
         // This will become the state trie + storage trie
@@ -373,19 +375,35 @@ impl Blockchain {
                 touched_account_storage_slots.entry(address).or_default();
             }
 
+            let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
+                self.storage
+                    .state_trie(block.hash())
+                    .map_err(|_| ChainError::ParentStateNotFound)?
+                    .ok_or(ChainError::ParentStateNotFound)?,
+            );
+
             // Use the updated state trie for the next block
-            trie = self
-                .storage
-                .state_trie(block.hash())
-                .map_err(|_| ChainError::ParentStateNotFound)?
-                .ok_or(ChainError::ParentStateNotFound)?;
+            trie = updated_trie;
+
+            for state_trie_witness in state_trie_witness
+                .lock()
+                .map_err(|_| {
+                    ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+                })?
+                .iter()
+            {
+                global_state_trie_witness.insert(state_trie_witness.clone());
+            }
+
+            state_trie_witness = new_state_trie_witness;
         }
 
         // Get the witness for the state trie
-        let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
-            ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
-        })?;
-        let state_trie_witness = std::mem::take(&mut *state_trie_witness);
+        // let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
+        //     ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+        // })?;
+        // let state_trie_witness = std::mem::take(&mut *state_trie_witness);
+        let state_trie_witness = global_state_trie_witness;
         used_trie_nodes.extend_from_slice(&Vec::from_iter(state_trie_witness.into_iter()));
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty()
