@@ -3,7 +3,7 @@ use crate::{
     utils::{self},
 };
 use clap::Parser;
-use ethrex_common::{Address, U256, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
@@ -457,13 +457,13 @@ pub struct BlockProducerOptions {
     pub operator_fee_vault_address: Option<Address>,
     #[arg(
         long,
-        value_name = "UINT256",
+        value_name = "UINT64",
         env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS",
         requires = "operator_fee_vault_address",
         help_heading = "Block producer options",
-        help = "Fee per gas that the operator will receive for each transaction included in a block."
+        help = "Fee that the operator will receive for each unit of gas consumed in a block."
     )]
-    pub operator_fee_per_gas: Option<U256>,
+    pub operator_fee_per_gas: Option<u64>,
     #[arg(
         long = "block-producer.l1-fee-vault-address",
         value_name = "ADDRESS",

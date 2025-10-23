@@ -331,17 +331,14 @@ pub async fn get_operator_fee_config(
         .block_producer_opts
         .operator_fee_vault_address;
 
-    let operator_fee_config = if let (Some(operator_fee_vault), Some(operator_fee)) = (address, fee)
-    {
-        let operator_fee_per_gas = operator_fee
-            .try_into()
-            .map_err(|_| eyre::eyre!("Failed to convert operator_fee_per_gas to u64"))?;
-        Some(OperatorFeeConfig {
-            operator_fee_vault,
-            operator_fee_per_gas,
-        })
-    } else {
-        None
-    };
+    let operator_fee_config =
+        if let (Some(operator_fee_vault), Some(operator_fee_per_gas)) = (address, fee) {
+            Some(OperatorFeeConfig {
+                operator_fee_vault,
+                operator_fee_per_gas,
+            })
+        } else {
+            None
+        };
     Ok(operator_fee_config)
 }
