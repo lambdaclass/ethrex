@@ -768,7 +768,7 @@ impl GenServer for L1Committer {
             let commit_time: u128 = self.commit_time_ms.into();
             let should_send_commitment =
                 current_time - self.last_committed_batch_timestamp > commit_time;
-            #[allow(clippy::collapsible_if)]
+            #[expect(clippy::collapsible_if)]
             if should_send_commitment {
                 if self
                     .commit_next_batch_to_l1()

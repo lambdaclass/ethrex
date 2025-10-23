@@ -190,7 +190,7 @@ pub struct ProofCoordinator {
 }
 
 impl ProofCoordinator {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn new(
         config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
