@@ -1,9 +1,8 @@
 use crate::{EvmError, VmDatabase};
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountState, AccountUpdate, Block, BlockHeader, ChainConfig,
+        AccountState, AccountUpdate, Block, BlockHeader, ChainConfig, Code,
         block_execution_witness::{GuestProgramState, GuestProgramStateError},
     },
 };
@@ -60,7 +59,7 @@ impl GuestProgramStateWrapper {
 }
 
 impl VmDatabase for GuestProgramStateWrapper {
-    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
             .get_account_code(code_hash)

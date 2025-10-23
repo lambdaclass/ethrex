@@ -99,6 +99,7 @@ impl RpcHandler for GetCodeRequest {
             .storage
             .get_code_by_account_address(block_number, self.address)
             .await?
+            .map(|c| c.bytecode)
             .unwrap_or_default();
 
         serde_json::to_value(format!("0x{code:x}"))

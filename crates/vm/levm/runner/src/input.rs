@@ -3,6 +3,7 @@ use ethrex_common::H256;
 use ethrex_common::serde_utils::bytes::deserialize;
 use ethrex_common::serde_utils::u64;
 use ethrex_common::serde_utils::u256;
+use ethrex_common::types::Code;
 use ethrex_common::types::{Account, AccountInfo, code_hash};
 use ethrex_common::{Address, U256, types::Fork};
 use serde::Deserialize;
@@ -40,7 +41,7 @@ impl From<InputAccount> for Account {
                 balance: account.balance,
                 nonce: 0,
             },
-            code: account.code,
+            code: Code::from_bytecode(account.code),
             storage: account
                 .storage
                 .into_iter()

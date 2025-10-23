@@ -9,8 +9,8 @@ use bytes::Bytes;
 use ethrex_common::{
     H256,
     types::{
-        AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-        Receipt, Transaction,
+        AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
+        Index, Receipt, Transaction,
     },
 };
 use ethrex_trie::{Nibbles, Node, Trie};
@@ -29,11 +29,14 @@ use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
     api::StoreEngine,
     error::StoreError,
-    rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
+    rlp::{BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
     trie_db::rocksdb::RocksDBTrieDB,
     utils::{ChainDataIndex, SnapStateIndex},
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_rlp::{
+    decode::{RLPDecode, decode_bytes},
+    encode::RLPEncode,
+};
 use std::fmt::Debug;
 
 // TODO: use finalized hash to determine when to commit
@@ -738,9 +741,16 @@ impl StoreEngine for Store {
             }
 
             for (code_hash, code) in update_batch.code_updates {
-                let code_key = code_hash.as_bytes();
-                let code_value = AccountCodeRLP::from(code).bytes().clone();
-                batch.put_cf(&cf_codes, code_key, code_value);
+                let mut buf =
+                    Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+                code.bytecode.encode(&mut buf);
+                code.jump_targets
+                    .into_iter()
+                    .flat_map(|t| t.to_le_bytes())
+                    .collect::<Vec<u8>>()
+                    .as_slice()
+                    .encode(&mut buf);
+                batch.put_cf(&cf_codes, code_hash.0, buf);
             }
 
             // Single write operation
@@ -1106,11 +1116,17 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        let hash_key = code_hash.as_bytes().to_vec();
-        let code_value = AccountCodeRLP::from(code).bytes().clone();
-        self.write_async(CF_ACCOUNT_CODES, hash_key, code_value)
-            .await
+    async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
+        let hash_key = code.hash.0.to_vec();
+        let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+        code.bytecode.encode(&mut buf);
+        code.jump_targets
+            .into_iter()
+            .flat_map(|t| t.to_le_bytes())
+            .collect::<Vec<u8>>()
+            .as_slice()
+            .encode(&mut buf);
+        self.write_async(CF_ACCOUNT_CODES, hash_key, buf).await
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
@@ -1135,12 +1151,26 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         let hash_key = code_hash.as_bytes().to_vec();
-        self.read_sync(CF_ACCOUNT_CODES, hash_key)?
-            .map(|bytes| AccountCodeRLP::from_bytes(bytes).to())
-            .transpose()
-            .map_err(StoreError::from)
+        let Some(bytes) = self.read_sync(CF_ACCOUNT_CODES, hash_key)? else {
+            return Ok(None);
+        };
+        let bytes = Bytes::from_owner(bytes);
+        let (bytecode, targets) = decode_bytes(&bytes)?;
+        let (targets, rest) = decode_bytes(targets)?;
+        if !rest.is_empty() || !targets.len().is_multiple_of(2) {
+            return Err(StoreError::DecodeError);
+        }
+        let code = Code {
+            hash: code_hash,
+            bytecode: Bytes::copy_from_slice(bytecode),
+            jump_targets: targets
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect(),
+        };
+        Ok(Some(code))
     }
 
     async fn get_transaction_by_hash(
@@ -1656,14 +1686,21 @@ impl StoreEngine for Store {
 
     async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 
         for (code_hash, code) in account_codes {
             let key = code_hash.as_bytes().to_vec();
-            let value = AccountCodeRLP::from(code).bytes().clone();
-            batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, value));
+            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            code.bytecode.encode(&mut buf);
+            code.jump_targets
+                .into_iter()
+                .flat_map(|t| t.to_le_bytes())
+                .collect::<Vec<u8>>()
+                .as_slice()
+                .encode(&mut buf);
+            batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, buf));
         }
 
         self.write_batch_async(batch_ops).await

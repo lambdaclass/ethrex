@@ -5,7 +5,7 @@ lazy_static::lazy_static! {
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};
-use ethrex_common::types::BlockHash;
+use ethrex_common::types::{BlockHash, Code};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
@@ -147,7 +147,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
         // Add code to DB if it is not empty
         if dump_account.code_hash != *EMPTY_KECCACK_HASH {
             store
-                .add_account_code(dump_account.code_hash, dump_account.code.clone())
+                .add_account_code(Code::from_bytecode(dump_account.code.clone()))
                 .await?;
         }
         // Process storage trie if it is not empty

@@ -4,7 +4,7 @@ use env_logger::Env;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     Address, H160, H256, U256,
-    types::{Account, LegacyTransaction, Transaction},
+    types::{Account, Code, LegacyTransaction, Transaction},
 };
 use ethrex_levm::{
     EVMConfig, Environment,
@@ -285,7 +285,7 @@ fn setup_initial_state(
         if let Some(to) = runner_input.transaction.to {
             // Contract Bytecode, set code of recipient.
             let acc = initial_state.entry(to).or_default();
-            acc.code = bytecode;
+            acc.code = Code::from_bytecode(bytecode);
         } else {
             // Initcode should be data of transaction
             runner_input.transaction.data = bytecode;

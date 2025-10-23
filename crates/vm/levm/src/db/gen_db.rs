@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
+use ethrex_common::types::Code;
 use ethrex_common::utils::ZERO_U256;
-use ethrex_common::utils::keccak;
 
 use super::Database;
 use crate::account::AccountStatus;
@@ -28,7 +27,7 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
-    pub codes: BTreeMap<H256, Bytes>,
+    pub codes: BTreeMap<H256, Code>,
     pub tx_backup: Option<CallFrameBackup>,
 }
 
@@ -97,7 +96,7 @@ impl GeneralizedDatabase {
     /// Gets code immutably given the code hash.
     /// Use this only inside of the VM, when we don't surely know if the code is in the cache or not
     /// But e.g. in `get_state_transitions` just do `db.codes.get(code_hash)` because we know for sure code is there.
-    pub fn get_code(&mut self, code_hash: H256) -> Result<&Bytes, InternalError> {
+    pub fn get_code(&mut self, code_hash: H256) -> Result<&Code, InternalError> {
         match self.codes.entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
@@ -108,7 +107,7 @@ impl GeneralizedDatabase {
     }
 
     /// Shortcut for getting the code when we only have the address of an account and we don't need anything else.
-    pub fn get_account_code(&mut self, address: Address) -> Result<&Bytes, InternalError> {
+    pub fn get_account_code(&mut self, address: Address) -> Result<&Code, InternalError> {
         let code_hash = self.get_account(address)?.info.code_hash;
         self.get_code(code_hash)
     }
@@ -326,11 +325,11 @@ impl<'a> VM<'a> {
     pub fn update_account_bytecode(
         &mut self,
         address: Address,
-        new_bytecode: Bytes,
+        new_bytecode: Code,
     ) -> Result<(), InternalError> {
         let acc = self.get_account_mut(address)?;
-        let code_hash = keccak(new_bytecode.as_ref()).0.into();
-        acc.info.code_hash = code_hash;
+        let code_hash = new_bytecode.hash;
+        acc.info.code_hash = new_bytecode.hash;
         self.db.codes.entry(code_hash).or_insert(new_bytecode);
         Ok(())
     }

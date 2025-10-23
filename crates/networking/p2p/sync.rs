@@ -17,6 +17,7 @@ use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+use ethrex_common::types::Code;
 use ethrex_common::{
     BigEndianHash, H256, U256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
@@ -949,7 +950,10 @@ impl Syncer {
 
                         store
                             .write_account_code_batch(
-                                code_hashes_to_download.drain(..).zip(bytecodes).collect(),
+                                code_hashes_to_download
+                                    .drain(..)
+                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                                    .collect(),
                             )
                             .await?;
                     }
@@ -967,7 +971,10 @@ impl Syncer {
                 .ok_or(SyncError::BytecodesNotFound)?;
             store
                 .write_account_code_batch(
-                    code_hashes_to_download.into_iter().zip(bytecodes).collect(),
+                    code_hashes_to_download
+                        .drain(..)
+                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                        .collect(),
                 )
                 .await?;
         }

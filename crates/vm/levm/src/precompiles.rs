@@ -457,9 +457,7 @@ pub fn sha2_256(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resul
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let digest = sha2::Sha256::digest(calldata);
-    let result = digest.as_slice();
-
-    Ok(Bytes::copy_from_slice(result))
+    Ok(Bytes::copy_from_slice(&digest))
 }
 
 /// Returns the calldata hashed by ripemd-160 algorithm, padded by zeros at left

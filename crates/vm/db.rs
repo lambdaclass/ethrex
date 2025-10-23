@@ -1,9 +1,8 @@
 use crate::EvmError;
-use bytes::Bytes;
 use dyn_clone::DynClone;
 use ethrex_common::{
     Address, H256, U256,
-    types::{AccountState, ChainConfig},
+    types::{AccountState, ChainConfig, Code},
 };
 
 pub trait VmDatabase: Send + Sync + DynClone {
@@ -11,7 +10,7 @@ pub trait VmDatabase: Send + Sync + DynClone {
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError>;
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError>;
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError>;
-    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError>;
+    fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError>;
 }
 
 dyn_clone::clone_trait_object!(VmDatabase);
