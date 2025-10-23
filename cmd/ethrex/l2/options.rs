@@ -456,7 +456,7 @@ pub struct BlockProducerOptions {
     )]
     pub operator_fee_vault_address: Option<Address>,
     #[arg(
-        long,
+        long = "block-producer.operator-fee-per-gas",
         value_name = "UINT64",
         env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS",
         requires = "operator_fee_vault_address",
