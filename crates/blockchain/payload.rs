@@ -367,17 +367,18 @@ impl Blockchain {
         cancel_token: CancellationToken,
     ) -> Result<PayloadBuildResult, ChainError> {
         let start = Instant::now();
-        let self_clone = self.clone();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        // TODO: start with an empty block
-        let mut res = self_clone.build_payload(payload.clone())?;
+        // TODO(#4997): start with an empty block
+        let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
             let self_clone = self.clone();
             let building_task =
                 tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
+            // TODO(#5011): this doesn't stop the building task, but only keeps it running in the background,
+            //   which wastes CPU resources.
             match cancel_token.run_until_cancelled(building_task).await {
                 Some(Ok(current_res)) => {
                     res = current_res?;
