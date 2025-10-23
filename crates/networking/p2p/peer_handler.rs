@@ -1,3 +1,4 @@
+use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     discv4::peer_table::{PeerData, PeerTable, PeerTableError, TARGET_PEERS},
     metrics::{CurrentStepValue, METRICS},
@@ -34,6 +35,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io::ErrorKind,
@@ -68,6 +70,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: PeerTable,
+    pub initiator: GenServerHandle<RLPxInitiator>,
 }
 
 pub enum BlockRequestOrder {
@@ -142,14 +145,18 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTable) -> PeerHandler {
-        Self { peer_table }
+    pub fn new(peer_table: PeerTable, initiator: GenServerHandle<RLPxInitiator>) -> PeerHandler {
+        Self {
+            peer_table,
+            initiator,
+        }
     }
 
     /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
     /// This should only be used in tests as it won't be able to interact with the node's connected peers
-    pub fn dummy() -> PeerHandler {
-        PeerHandler::new(PeerTable::spawn(TARGET_PEERS))
+    pub async fn dummy() -> PeerHandler {
+        let peer_table = PeerTable::spawn(TARGET_PEERS);
+        PeerHandler::new(peer_table.clone(), RLPxInitiator::dummy(peer_table).await)
     }
 
     async fn make_request(

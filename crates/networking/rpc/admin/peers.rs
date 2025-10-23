@@ -3,7 +3,6 @@ use core::net::SocketAddr;
 use ethrex_common::H256;
 use ethrex_p2p::{
     discv4::peer_table::PeerData,
-    network::P2PContext,
     rlpx::{
         initiator::{InMessage, RLPxInitiator},
         p2p::Capability,
@@ -12,7 +11,7 @@ use ethrex_p2p::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use spawned_concurrency::tasks::GenServer;
+use spawned_concurrency::tasks::GenServerHandle;
 
 /// Serializable peer data returned by the node's rpc
 #[derive(Serialize)]
@@ -98,7 +97,10 @@ pub async fn peers(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
     Ok(serde_json::to_value(peers)?)
 }
 use crate::utils::RpcRequest;
-pub async fn add_peers(request: &RpcRequest, context: P2PContext) -> Result<Value, RpcErr> {
+pub async fn add_peers(
+    request: &RpcRequest,
+    mut server: GenServerHandle<RLPxInitiator>,
+) -> Result<Value, RpcErr> {
     let params = request
         .params
         .clone()
@@ -115,9 +117,6 @@ pub async fn add_peers(request: &RpcRequest, context: P2PContext) -> Result<Valu
         .ok_or(RpcErr::WrongParam("Expected string".to_string()))?;
 
     let node = Node::from_enode_url(url).map_err(|error| RpcErr::BadParams(error.to_string()))?;
-
-    let state = RLPxInitiator::new(context);
-    let mut server = RLPxInitiator::start_on_thread(state.clone());
 
     match server.cast(InMessage::Initiate { node }).await {
         Err(_) => Ok(serde_json::to_value(false)?),

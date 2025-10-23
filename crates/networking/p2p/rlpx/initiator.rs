@@ -1,6 +1,8 @@
 use crate::types::Node;
 use crate::{
-    discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext,
+    discv4::peer_table::{PeerTable, PeerTableError},
+    metrics::METRICS,
+    network::P2PContext,
     rlpx::connection::server::PeerConnection,
 };
 use spawned_concurrency::{
@@ -42,11 +44,12 @@ impl RLPxInitiator {
         }
     }
 
-    pub async fn spawn(context: P2PContext) {
+    pub async fn spawn(context: P2PContext) -> GenServerHandle<RLPxInitiator> {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(context);
         let mut server = RLPxInitiator::start_on_thread(state.clone());
         let _ = server.cast(InMessage::LookForPeers).await;
+        server
     }
 
     async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
@@ -76,6 +79,12 @@ impl RLPxInitiator {
             debug!("Reached target number of peers. Using longer lookup interval.");
             self.lookup_interval
         }
+    }
+
+    pub async fn dummy(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
+        info!("Starting RLPx Initiator");
+        let state = RLPxInitiator::new(P2PContext::dummy(peer_table).await);
+        RLPxInitiator::start_on_thread(state.clone())
     }
 }
 

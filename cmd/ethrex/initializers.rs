@@ -11,8 +11,7 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
-#[cfg(feature = "l2")]
-use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
+use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     network::P2PContext,
@@ -143,7 +142,6 @@ pub async fn init_rpc_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
     extra_data: String,
-    p2p_context: P2PContext,
 ) {
     init_datadir(&opts.datadir);
 
@@ -185,7 +183,6 @@ pub async fn init_rpc_api(
         log_filter_handler,
         gas_ceil,
         extra_data,
-        p2p_context,
     );
 
     tracker.spawn(rpc_api);
@@ -199,7 +196,6 @@ pub async fn init_network(
     peer_handler: PeerHandler,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
-    #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
     context: P2PContext,
 ) {
     if opts.dev {
@@ -429,7 +425,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.target_peers));
+    let peer_table = PeerTable::spawn(opts.target_peers);
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -441,7 +437,7 @@ pub async fn init_l1(
         local_node_record.clone(),
         tracker.clone(),
         signer,
-        peer_handler.peer_table.clone(),
+        peer_table.clone(),
         store.clone(),
         blockchain.clone(),
         get_client_version(),
@@ -451,6 +447,10 @@ pub async fn init_l1(
     )
     .await
     .expect("P2P context could not be created");
+
+    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+
+    let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
 
     init_rpc_api(
         &opts.clone(),
@@ -465,7 +465,6 @@ pub async fn init_l1(
         // TODO (#4482): Make this configurable.
         None,
         opts.clone().extra_data,
-        p2p_context.clone(),
     )
     .await;
 
@@ -484,8 +483,6 @@ pub async fn init_l1(
             peer_handler.clone(),
             tracker.clone(),
             blockchain.clone(),
-            #[cfg(feature = "l2")]
-            None,
             p2p_context,
         )
         .await;

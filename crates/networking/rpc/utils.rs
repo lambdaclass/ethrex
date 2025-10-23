@@ -394,8 +394,8 @@ pub mod test_utils {
                 jwt_secret,
                 local_p2p_node,
                 local_node_record,
-                SyncManager::dummy(),
-                PeerHandler::dummy(),
+                SyncManager::dummy().await,
+                PeerHandler::dummy().await,
                 "ethrex/test".to_string(),
                 None,
                 None,
@@ -413,8 +413,8 @@ pub mod test_utils {
             storage,
             blockchain,
             active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            peer_handler: PeerHandler::dummy(),
+            syncer: Arc::new(SyncManager::dummy().await),
+            peer_handler: PeerHandler::dummy().await,
             node_data: NodeData {
                 jwt_secret: Default::default(),
                 local_p2p_node: example_p2p_node(),
@@ -425,7 +425,6 @@ pub mod test_utils {
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler: None,
             gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
-            p2p_context,
         }
     }
 }

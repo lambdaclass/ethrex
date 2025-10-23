@@ -3542,6 +3542,8 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",

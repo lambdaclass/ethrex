@@ -54,7 +54,6 @@ use axum_extra::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
-use ethrex_p2p::network::P2PContext;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -166,7 +165,6 @@ pub struct RpcApiContext {
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     pub gas_ceil: u64,
-    pub p2p_context: P2PContext,
 }
 
 #[derive(Debug, Clone)]
@@ -214,7 +212,6 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
     extra_data: String,
-    p2p_cxt: P2PContext,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -235,7 +232,6 @@ pub async fn start_api(
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
         gas_ceil: gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
-        p2p_context: p2p_cxt,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -535,7 +531,7 @@ pub async fn map_admin_requests(
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
-        "admin_addPeer" => admin::add_peers(req, context.p2p_context).await,
+        "admin_addPeer" => admin::add_peers(req, context.peer_handler.initiator).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }

@@ -11,6 +11,8 @@ use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
+use ethrex_p2p::network::P2PContext;
+use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     peer_handler::PeerHandler,
@@ -32,7 +34,7 @@ use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: PeerTable,
+    peer_handler: PeerHandler,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -43,8 +45,6 @@ async fn init_rpc_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
-
     init_datadir(&opts.datadir);
 
     // Create SyncManager
@@ -181,18 +181,52 @@ pub async fn init_l2(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
+    let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
     let mut join_set = JoinSet::new();
+
+    let p2p_context = P2PContext::new(
+        local_p2p_node.clone(),
+        local_node_record.clone(),
+        tracker.clone(),
+        signer,
+        peer_table.clone(),
+        store.clone(),
+        blockchain.clone(),
+        get_client_version(),
+        #[cfg(feature = "l2")]
+        Some(P2PBasedContext {
+            store_rollup: rollup_store.clone(),
+            // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
+            // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
+            // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
+            // This should be replaced with the Signer enum once the refactor is complete.
+            committer_key: Arc::new(
+                SecretKey::from_slice(
+                    &hex::decode(
+                        "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
+                    )
+                    .expect("Invalid committer key"),
+                )
+                .expect("Failed to create committer key"),
+            ),
+        }),
+        opts.node_opts.tx_broadcasting_time_interval,
+    )
+    .await
+    .expect("P2P context could not be created");
+
+    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers), initiator);
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
     init_rpc_api(
         &opts.node_opts,
         &opts,
-        peer_handler.peer_table.clone(),
+        peer_handler.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
         store.clone(),
@@ -224,29 +258,10 @@ pub async fn init_l2(
             &opts.node_opts,
             &network,
             &datadir,
-            local_p2p_node,
-            local_node_record.clone(),
-            signer,
             peer_handler.clone(),
-            store.clone(),
             tracker,
             blockchain.clone(),
-            Some(P2PBasedContext {
-                store_rollup: rollup_store.clone(),
-                // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
-                // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
-                // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
-                // This should be replaced with the Signer enum once the refactor is complete.
-                committer_key: Arc::new(
-                    SecretKey::from_slice(
-                        &hex::decode(
-                            "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
-                        )
-                        .expect("Invalid committer key"),
-                    )
-                    .expect("Failed to create committer key"),
-                ),
-            }),
+            p2p_context,
         )
         .await;
     } else {

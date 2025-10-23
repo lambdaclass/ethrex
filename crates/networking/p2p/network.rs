@@ -8,7 +8,7 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
-        initiator::RLPxInitiator,
+        //initiator::RLPxInitiator,
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
@@ -94,6 +94,43 @@ impl P2PContext {
             tx_broadcaster,
         })
     }
+    pub async fn dummy(peer_table: PeerTable) -> P2PContext {
+        use ethrex_blockchain::BlockchainOptions;
+        use ethrex_storage::EngineType;
+
+        let blockchain_opts = BlockchainOptions::default();
+        let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+        let blockchain: Arc<Blockchain> =
+            Arc::new(Blockchain::new(storage.clone(), blockchain_opts));
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::from_slice(&[
+            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
+            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+        ])
+        .expect("Bad secret key");
+        let (channel_broadcast_send_end, _) =
+            tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<Message>)>(100000);
+        P2PContext {
+            tracker: TaskTracker::default(),
+            signer: SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
+            table: peer_table.clone(),
+            storage,
+            blockchain: blockchain.clone(),
+            broadcast: channel_broadcast_send_end,
+            local_node: local_node.clone(),
+            local_node_record: Arc::new(Mutex::new(
+                NodeRecord::from_node(&local_node, 1, &signer).expect("Bad Node Record"),
+            )),
+            client_version: "".to_string(),
+            #[cfg(feature = "l2")]
+            based_context: None,
+            tx_broadcaster: TxBroadcaster::spawn(peer_table.clone(), blockchain, 1000)
+                .await
+                .expect("Failed to spawn tx broadcaster"),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -123,7 +160,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery server: {e}");
     })?;
 
-    RLPxInitiator::spawn(context.clone()).await;
+    //RLPxInitiator::spawn(context.clone()).await;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
