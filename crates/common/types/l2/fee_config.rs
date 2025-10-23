@@ -10,7 +10,7 @@ use crate::rkyv_utils::{H160Wrapper, OptionH160Wrapper};
 pub struct FeeConfig {
     /// If set, the base fee is sent to this address instead of being burned.
     #[rkyv(with=OptionH160Wrapper)]
-    pub fee_vault: Option<Address>,
+    pub base_fee_vault: Option<Address>,
     pub operator_fee_config: Option<OperatorFeeConfig>,
 }
 
@@ -22,5 +22,5 @@ pub struct FeeConfig {
 pub struct OperatorFeeConfig {
     #[rkyv(with=H160Wrapper)]
     pub operator_fee_vault: Address,
-    pub operator_fee: u64,
+    pub operator_fee_per_gas: u64,
 }

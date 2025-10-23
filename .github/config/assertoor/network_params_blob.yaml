@@ -2,13 +2,13 @@ participants:
   - el_type: geth
     el_image: ethereum/client-go:v1.16.1
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.1.0
+    cl_image: sigp/lighthouse:v8.0.0-rc.1
     validator_count: 32
     count: 2
   - el_type: ethrex
     el_image: ethrex:ci
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.1.0
+    cl_image: sigp/lighthouse:v8.0.0-rc.1
     validator_count: 32
 
 additional_services:
