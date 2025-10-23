@@ -812,6 +812,11 @@ impl GenServer for L1Committer {
 
             // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
             if current_last_committed_batch > self.last_committed_batch {
+                info!(
+                    l1_batch = current_last_committed_batch,
+                    last_batch_registered = self.last_committed_batch,
+                    "Committer was not aware of new L1 committed batches, updating internal state accordingly"
+                );
                 self.last_committed_batch = current_last_committed_batch;
                 self.last_committed_batch_timestamp = current_time;
                 self.schedule_commit(self.committer_wake_up_ms, handle.clone());
