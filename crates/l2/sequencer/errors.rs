@@ -121,8 +121,8 @@ pub enum ProofCoordinatorError {
     MissingTDXPrivateKey,
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
-    #[error("Missing witness for batch {0}")]
-    MissingBatchWitness(u64),
+    #[error("Missing prover input for batch {0} (version {1})")]
+    MissingBatchProverInput(u64, String),
 }
 
 #[derive(Debug, thiserror::Error)]

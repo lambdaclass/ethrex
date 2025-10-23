@@ -1,5 +1,5 @@
 use crate::{
-    CommitterConfig, EthConfig, SequencerConfig,
+    BlockProducerConfig, CommitterConfig, EthConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     constants::BIN_VERSION,
     sequencer::{
@@ -9,7 +9,7 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
+use ethrex_blockchain::{Blockchain, BlockchainType, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -25,6 +25,7 @@ use ethrex_l2_common::{
         PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash,
         get_block_privileged_transactions,
     },
+    prover::ProverInputData,
     state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
@@ -104,6 +105,7 @@ pub struct L1Committer {
     last_committed_batch: u64,
     /// Cancellation token for the next inbound InMessage::Commit
     cancellation_token: Option<CancellationToken>,
+    elasticity_multiplier: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -126,6 +128,7 @@ impl L1Committer {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         committer_config: &CommitterConfig,
+        proposer_config: &BlockProducerConfig,
         eth_config: &EthConfig,
         blockchain: Arc<Blockchain>,
         store: Store,
@@ -164,6 +167,7 @@ impl L1Committer {
             last_committed_batch_timestamp: 0,
             last_committed_batch,
             cancellation_token: None,
+            elasticity_multiplier: proposer_config.elasticity_multiplier,
         })
     }
 
@@ -176,6 +180,7 @@ impl L1Committer {
     ) -> Result<GenServerHandle<L1Committer>, CommitterError> {
         let state = Self::new(
             &cfg.l1_committer,
+            &cfg.block_producer,
             &cfg.eth,
             blockchain,
             store.clone(),
@@ -272,7 +277,7 @@ impl L1Committer {
             batch.number,
         );
 
-        self.generate_and_store_batch_witness(&batch).await?;
+        self.generate_and_store_batch_prover_input(&batch).await?;
 
         info!(
             first_block = batch.first_block,
@@ -546,7 +551,10 @@ impl L1Committer {
         ))
     }
 
-    async fn generate_and_store_batch_witness(&self, batch: &Batch) -> Result<(), CommitterError> {
+    async fn generate_and_store_batch_prover_input(
+        &self,
+        batch: &Batch,
+    ) -> Result<(), CommitterError> {
         let blocks = self.fetch_batch_blocks(batch).await?;
 
         let batch_witness = self
@@ -555,11 +563,51 @@ impl L1Committer {
             .await
             .map_err(CommitterError::FailedToGenerateBatchWitness)?;
 
+        // We still need to differentiate the validium case because for validium
+        // we are generating the BlobsBundle with BlobsBundle::default which
+        // sets the commitments and proofs to empty vectors.
+        let (blob_commitment, blob_proof) = if self.validium {
+            ([0; 48], [0; 48])
+        } else {
+            let BlobsBundle {
+                commitments,
+                proofs,
+                ..
+            } = &batch.blobs_bundle;
+
+            (
+                commitments
+                    .first()
+                    .cloned()
+                    .ok_or(CommitterError::Unreachable(
+                        "Blob commitment missing in batch blobs bundle".to_string(),
+                    ))?,
+                proofs.first().cloned().ok_or(CommitterError::Unreachable(
+                    "Blob proof missing in batch blobs bundle".to_string(),
+                ))?,
+            )
+        };
+
+        let BlockchainType::L2(fee_config) = self.blockchain.options.r#type else {
+            return Err(CommitterError::Unreachable(
+                "Batch witness generation is only supported for L2 blockchains".to_string(),
+            ));
+        };
+
+        let prover_input = ProverInputData {
+            blocks,
+            execution_witness: batch_witness,
+            elasticity_multiplier: self.elasticity_multiplier,
+            blob_commitment,
+            blob_proof,
+            fee_config,
+        };
+
         self.rollup_store
-            .store_witness_by_batch_and_version(
+            .store_prover_input_by_batch_and_version(
                 batch.number,
                 BIN_VERSION.to_string(),
-                batch_witness,
+                prover_input,
             )
             .await?;
 

@@ -7,12 +7,9 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
-    types::{
-        AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch,
-        block_execution_witness::ExecutionWitness,
-    },
+    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -359,24 +356,24 @@ impl Store {
             .await
     }
 
-    pub async fn store_witness_by_batch_and_version(
+    pub async fn store_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
         prover_version: String,
-        witness: ExecutionWitness,
+        prover_input: ProverInputData,
     ) -> Result<(), RollupStoreError> {
         self.engine
-            .store_witness_by_batch_and_version(batch_number, prover_version, witness)
+            .store_prover_input_by_batch_and_version(batch_number, prover_version, prover_input)
             .await
     }
 
-    pub async fn get_witness_by_batch_and_version(
+    pub async fn get_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
         prover_version: String,
-    ) -> Result<Option<ExecutionWitness>, RollupStoreError> {
+    ) -> Result<Option<ProverInputData>, RollupStoreError> {
         self.engine
-            .get_witness_by_batch_and_version(batch_number, prover_version)
+            .get_prover_input_by_batch_and_version(batch_number, prover_version)
             .await
     }
 }

@@ -4,11 +4,9 @@ use std::fmt::Debug;
 
 use ethrex_common::{
     H256,
-    types::{
-        AccountUpdate, Blob, BlockNumber, batch::Batch, block_execution_witness::ExecutionWitness,
-    },
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
 use crate::error::RollupStoreError;
 
@@ -150,16 +148,16 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 
-    async fn store_witness_by_batch_and_version(
+    async fn store_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
         prover_version: String,
-        witness: ExecutionWitness,
+        prover_input: ProverInputData,
     ) -> Result<(), RollupStoreError>;
 
-    async fn get_witness_by_batch_and_version(
+    async fn get_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
         prover_version: String,
-    ) -> Result<Option<ExecutionWitness>, RollupStoreError>;
+    ) -> Result<Option<ProverInputData>, RollupStoreError>;
 }

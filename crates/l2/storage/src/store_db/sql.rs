@@ -4,11 +4,9 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
-    types::{
-        AccountUpdate, Blob, BlockNumber, batch::Batch, block_execution_witness::ExecutionWitness,
-    },
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
 use libsql::{
     Builder, Connection, Row, Rows, Transaction, Value,
@@ -46,7 +44,7 @@ const DB_SCHEMA: [&str; 16] = [
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
-    "CREATE TABLE batch_witness (batch INT, prover_version TEXT, witness BLOB, PRIMARY KEY (batch, prover_version))",
+    "CREATE TABLE batch_prover_input (batch INT, prover_version TEXT, prover_input BLOB, PRIMARY KEY (batch, prover_version))",
 ];
 
 impl SQLStore {
@@ -285,20 +283,22 @@ impl SQLStore {
         Ok(())
     }
 
-    async fn store_witness_by_batch_and_version_in_tx(
+    async fn store_prover_input_by_batch_and_version_in_tx(
         &self,
         batch_number: u64,
         prover_version: String,
-        witness: ExecutionWitness,
+        prover_input: ProverInputData,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
-        let witness_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&witness)
-            .map_err(|e| RollupStoreError::Custom(format!("Failed to serialize witness: {e}")))?
+        let prover_input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&prover_input)
+            .map_err(|e| {
+                RollupStoreError::Custom(format!("Failed to serialize prover input: {e}"))
+            })?
             .to_vec();
 
         let queries = vec![(
-            "INSERT OR REPLACE INTO batch_witness VALUES (?1, ?2, ?3)",
-            (batch_number, prover_version, witness_bytes).into_params()?,
+            "INSERT OR REPLACE INTO batch_prover_input VALUES (?1, ?2, ?3)",
+            (batch_number, prover_version, prover_input_bytes).into_params()?,
         )];
 
         self.execute_in_tx(queries, db_tx).await
@@ -603,7 +603,7 @@ impl StoreEngineRollup for SQLStore {
                 [batch_number].into_params()?,
             ),
             (
-                "DELETE FROM batch_witness WHERE batch > ?1",
+                "DELETE FROM batch_prover_input WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
         ];
@@ -808,38 +808,43 @@ impl StoreEngineRollup for SQLStore {
             .transpose()
     }
 
-    async fn store_witness_by_batch_and_version(
+    async fn store_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
         prover_version: String,
-        witness: ExecutionWitness,
+        prover_input: ProverInputData,
     ) -> Result<(), RollupStoreError> {
-        self.store_witness_by_batch_and_version_in_tx(batch_number, prover_version, witness, None)
-            .await
+        self.store_prover_input_by_batch_and_version_in_tx(
+            batch_number,
+            prover_version,
+            prover_input,
+            None,
+        )
+        .await
     }
 
-    async fn get_witness_by_batch_and_version(
+    async fn get_prover_input_by_batch_and_version(
         &self,
         batch_number: u64,
         prover_version: String,
-    ) -> Result<Option<ExecutionWitness>, RollupStoreError> {
+    ) -> Result<Option<ProverInputData>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT witness FROM batch_witness WHERE batch = ?1 AND prover_version = ?2",
+                "SELECT prover_input FROM batch_prover_input WHERE batch = ?1 AND prover_version = ?2",
                 (batch_number, prover_version.clone()),
             )
             .await?;
         if let Some(row) = rows.next().await? {
             let vec = read_from_row_blob(&row, 0)?;
 
-            let witness = rkyv::from_bytes::<ExecutionWitness, rkyv::rancor::Error>(&vec)
+            let prover_input = rkyv::from_bytes::<ProverInputData, rkyv::rancor::Error>(&vec)
                 .map_err(|e| {
                     RollupStoreError::Custom(format!(
-                        "Failed to deserialize witness for batch {batch_number} and version {prover_version}: {e}",
+                        "Failed to deserialize prover input for batch {batch_number} and version {prover_version}: {e}",
                     ))
                 })?;
 
-            return Ok(Some(witness));
+            return Ok(Some(prover_input));
         }
         Ok(None)
     }
@@ -864,7 +869,7 @@ mod tests {
             "batch_proofs",
             "block_signatures",
             "batch_signatures",
-            "batch_witness",
+            "batch_prover_input",
         ];
         let mut attributes = Vec::new();
         for table in tables {
@@ -909,9 +914,9 @@ mod tests {
                 ("block_signatures", "signature") => "BLOB",
                 ("batch_signatures", "batch") => "INT",
                 ("batch_signatures", "signature") => "BLOB",
-                ("batch_witness", "batch") => "INT",
-                ("batch_witness", "prover_version") => "TEXT",
-                ("batch_witness", "witness") => "BLOB",
+                ("batch_prover_input", "batch") => "INT",
+                ("batch_prover_input", "prover_version") => "TEXT",
+                ("batch_prover_input", "prover_input") => "BLOB",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",
