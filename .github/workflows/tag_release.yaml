@@ -130,7 +130,7 @@ jobs:
           key: solc-${{ runner.os }}-${{ matrix.arch }}-v0-8-29
 
       - name: Compile solc from source (Linux ARM)
-        if: ${{ matrix.platform == 'ubuntu-22.04-arm' && steps.cache-solc.outputs.cache-hit != 'true' }}
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }} && ${{ steps.cache-solc.outputs.cache-hit != 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y git build-essential cmake clang ninja-build ccache python3 z3 libz3-dev libboost-all-dev
