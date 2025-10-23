@@ -1,4 +1,3 @@
-use crate::constants::BIN_VERSION;
 use crate::sequencer::errors::{ConnectionHandlerError, ProofCoordinatorError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
@@ -48,7 +47,10 @@ pub enum ProofData {
     /// The Client initiates the connection with a BatchRequest.
     /// Asking for the ProverInputData the prover_server considers/needs.
     /// The commit hash is used to ensure the client and server are compatible.
-    BatchRequest { commit_hash: String },
+    BatchRequest {
+        commit_hash: String,
+        version: String,
+    },
 
     /// 4.
     /// The Server responds with an InvalidCodeVersion if the code version is not compatible.
@@ -91,8 +93,11 @@ impl ProofData {
     }
 
     /// Builder function for creating a BatchRequest
-    pub fn batch_request(commit_hash: String) -> Self {
-        ProofData::BatchRequest { commit_hash }
+    pub fn batch_request(commit_hash: String, version: String) -> Self {
+        ProofData::BatchRequest {
+            commit_hash,
+            version,
+        }
     }
 
     /// Builder function for creating a InvalidCodeVersion
@@ -254,6 +259,7 @@ impl ProofCoordinator {
         &mut self,
         stream: &mut TcpStream,
         commit_hash: String,
+        version: String,
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received");
 
@@ -298,12 +304,12 @@ impl ProofCoordinator {
             } else {
                 let Some(input) = self
                     .rollup_store
-                    .get_prover_input_by_batch_and_version(batch_to_verify, BIN_VERSION.to_string())
+                    .get_prover_input_by_batch_and_version(batch_to_verify, version.clone())
                     .await?
                 else {
                     return Err(ProofCoordinatorError::MissingBatchProverInput(
                         batch_to_verify,
-                        BIN_VERSION.to_string(),
+                        version,
                     ));
                 };
                 debug!("Sending BatchResponse for block_number: {batch_to_verify}");
@@ -483,10 +489,13 @@ impl ConnectionHandler {
 
             let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
             match data {
-                Ok(ProofData::BatchRequest { commit_hash }) => {
+                Ok(ProofData::BatchRequest {
+                    commit_hash,
+                    version,
+                }) => {
                     if let Err(e) = self
                         .proof_coordinator
-                        .handle_request(&mut stream, commit_hash)
+                        .handle_request(&mut stream, commit_hash, version)
                         .await
                     {
                         error!("Failed to handle BatchRequest: {e}");
