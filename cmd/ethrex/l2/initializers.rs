@@ -3,12 +3,12 @@ use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
     get_network, get_signer, init_blockchain, init_network, init_store, regenerate_head_state,
 };
-use crate::l2::L2Options;
+use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::fee_config::{FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
 use ethrex_p2p::{
@@ -156,9 +156,14 @@ pub async fn init_l2(
     let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
+    let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
+
     let fee_config = FeeConfig {
-        fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
-        ..Default::default()
+        base_fee_vault: opts
+            .sequencer_opts
+            .block_producer_opts
+            .base_fee_vault_address,
+        operator_fee_config,
     };
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
@@ -289,4 +294,30 @@ pub async fn init_l2(
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
     Ok(())
+}
+
+pub async fn get_operator_fee_config(
+    sequencer_opts: &SequencerOptions,
+) -> eyre::Result<Option<OperatorFeeConfig>> {
+    if sequencer_opts.based {
+        // If based is enabled, operator fee is not applicable
+        return Ok(None);
+    }
+
+    let fee = sequencer_opts.block_producer_opts.operator_fee_per_gas;
+
+    let address = sequencer_opts
+        .block_producer_opts
+        .operator_fee_vault_address;
+
+    let operator_fee_config =
+        if let (Some(operator_fee_vault), Some(operator_fee_per_gas)) = (address, fee) {
+            Some(OperatorFeeConfig {
+                operator_fee_vault,
+                operator_fee_per_gas,
+            })
+        } else {
+            None
+        };
+    Ok(operator_fee_config)
 }
