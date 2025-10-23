@@ -57,9 +57,9 @@ impl LEVM {
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
-                matches!(report.result.clone(), TxResult::Success),
+                matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                report.logs.clone(),
+                report.logs,
             );
 
             receipts.push(receipt);
