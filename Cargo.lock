@@ -3758,8 +3758,10 @@ dependencies = [
  "ethrex-trie 5.0.0",
  "ethrex-vm",
  "lambdaworks-crypto 0.11.0",
+ "rkyv",
  "secp256k1",
  "serde",
+ "serde_with",
  "sha3",
  "thiserror 2.0.17",
 ]
@@ -4083,6 +4085,7 @@ dependencies = [
  "ethrex-trie 5.0.0",
  "futures",
  "libsql",
+ "rkyv",
  "thiserror 2.0.17",
  "tokio",
  "tracing",

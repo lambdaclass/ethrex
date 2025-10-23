@@ -110,10 +110,8 @@ pub async fn start_l2(
         error!("Error starting Committer: {err}");
     });
     let _ = ProofCoordinator::spawn(
-        store.clone(),
         rollup_store.clone(),
         cfg.clone(),
-        blockchain.clone(),
         needed_proof_types.clone(),
     )
     .await

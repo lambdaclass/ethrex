@@ -1,4 +1,5 @@
 use aligned_sdk::common::types::Network;
+use ethrex_common::types::Block;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, types::TxType};
 use ethrex_l2_common::prover::ProverType;
@@ -11,6 +12,8 @@ use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides},
 };
+use ethrex_storage::Store;
+use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use rand::Rng;
 use std::time::{Duration, SystemTime};
@@ -158,4 +161,48 @@ where
         .await?;
 
     Ok(is_up_to_date)
+}
+
+pub async fn fetch_batch_blocks<E>(
+    batch_number: u64,
+    store: &Store,
+    rollup_store: &StoreRollup,
+) -> Result<Vec<Block>, E>
+where
+    E: From<StoreError> + From<RollupStoreError>,
+{
+    let batch_blocks = rollup_store
+        .get_block_numbers_by_batch(batch_number)
+        .await?
+        .ok_or(RollupStoreError::Custom(
+            "failed to retrieve data from storage".to_string(),
+        ))?;
+
+    let mut blocks = Vec::new();
+
+    for block_number in batch_blocks {
+        let block_header = store
+            .get_block_header(block_number)?
+            .ok_or(StoreError::Custom(
+                "failed to retrieve data from storage".to_string(),
+            ))?;
+
+        let block_body = store
+            .get_block_body(block_number)
+            .await?
+            .ok_or(StoreError::Custom(
+                "failed to retrieve data from storage".to_string(),
+            ))?;
+
+        let block = Block::new(block_header, block_body);
+
+        blocks.push(block);
+    }
+
+    Ok(blocks)
+}
+
+/// Returns the git commit hash of the current build.
+pub fn get_git_commit_hash() -> String {
+    env!("VERGEN_GIT_SHA").to_string()
 }

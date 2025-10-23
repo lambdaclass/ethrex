@@ -1,7 +1,25 @@
+use ethrex_common::types::{
+    Block, blobs_bundle, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
+};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use std::fmt::{Debug, Display};
 
 use crate::calldata::Value;
+
+#[serde_as]
+#[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive)]
+pub struct ProverInputData {
+    pub blocks: Vec<Block>,
+    pub execution_witness: ExecutionWitness,
+    pub elasticity_multiplier: u64,
+    #[serde_as(as = "[_; 48]")]
+    pub blob_commitment: blobs_bundle::Commitment,
+    #[serde_as(as = "[_; 48]")]
+    pub blob_proof: blobs_bundle::Proof,
+    pub fee_config: FeeConfig,
+}
 
 /// Enum used to identify the different proving systems.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]

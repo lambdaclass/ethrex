@@ -1248,8 +1248,10 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "lambdaworks-crypto",
+ "rkyv",
  "secp256k1",
  "serde",
+ "serde_with",
  "sha3",
  "thiserror",
 ]
