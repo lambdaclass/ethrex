@@ -101,11 +101,11 @@ impl TrieLayerCache {
             println!("#### Final stats:");
             println!(
                 "####   Hit  count: {}",
-                self.stats.0.load(Ordering::Relaxed),
+                self.stats.0.swap(0, Ordering::Relaxed),
             );
             println!(
                 "####   Miss count: {}",
-                self.stats.1.load(Ordering::Relaxed),
+                self.stats.1.swap(0, Ordering::Relaxed),
             );
         }
 
