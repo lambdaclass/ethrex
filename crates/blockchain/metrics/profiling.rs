@@ -22,6 +22,7 @@ fn initialize_histogram_vec() -> HistogramVec {
 #[derive(Default)]
 pub struct FunctionProfilingLayer;
 
+/// Wrapper around [`HistogramTimer`] to avoid conflicts with other layers
 struct ProfileTimer(HistogramTimer);
 
 impl<S> Layer<S> for FunctionProfilingLayer
