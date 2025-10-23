@@ -1,7 +1,7 @@
 use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
 
-use crate::{Nibbles, Node, NodeRLP, Trie, error::TrieError};
+use crate::{Nibbles, Node, NodeRLP, Trie, ValueRLP, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -12,6 +12,9 @@ pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
+    fn get_key(&self, _key: &Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+        Ok(None)
+    }
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
@@ -25,7 +28,7 @@ pub trait TrieDB: Send + Sync {
     fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
-    fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, _key: &Nibbles) -> bool {
         false
     }
 }

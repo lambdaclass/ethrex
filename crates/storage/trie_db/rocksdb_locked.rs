@@ -64,7 +64,7 @@ impl RocksDBLockedTrieDB {
         })
     }
 
-    fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
+    fn make_key(&self, node_hash: &Nibbles) -> Vec<u8> {
         apply_prefix(self.address_prefix, node_hash)
             .as_ref()
             .to_vec()
@@ -84,8 +84,8 @@ impl Drop for RocksDBLockedTrieDB {
 }
 
 impl TrieDB for RocksDBLockedTrieDB {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        self.last_computed_flatkeyvalue >= key
+    fn flatkeyvalue_computed(&self, key: &Nibbles) -> bool {
+        &self.last_computed_flatkeyvalue >= key
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = if key.is_leaf() {
@@ -93,7 +93,7 @@ impl TrieDB for RocksDBLockedTrieDB {
         } else {
             &self.cf
         };
-        let db_key = self.make_key(key);
+        let db_key = self.make_key(&key);
 
         self.snapshot
             .get_cf(cf, db_key)

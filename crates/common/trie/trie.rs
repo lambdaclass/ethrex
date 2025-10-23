@@ -96,17 +96,11 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32
-            && !self.pending_removal.contains(&path)
-            && self.db().flatkeyvalue_computed(path.clone())
-        {
-            let Some(value_rlp) = self.db.get(path)? else {
-                return Ok(None);
-            };
-            if value_rlp.is_empty() {
-                return Ok(None);
-            }
-            return Ok(Some(value_rlp));
+        if self.pending_removal.contains(&path) {
+            return Ok(None);
+        }
+        if let Some(value) = self.db().get_key(&path)? {
+            return Ok(Some(value));
         }
 
         Ok(match self.root {

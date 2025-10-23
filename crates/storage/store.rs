@@ -547,7 +547,7 @@ impl Store {
                 .flat_map(|(account_hash, nodes)| {
                     nodes
                         .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                        .map(move |(path, node)| (apply_prefix(Some(account_hash), &path), node))
                 })
                 .chain(state_nodes)
                 .collect(),

@@ -558,7 +558,7 @@ impl Store {
                     let Node::Leaf(node) = node else {
                         return Ok(());
                     };
-                    let key = apply_prefix(Some(account_hash), path);
+                    let key = apply_prefix(Some(account_hash), &path);
                     batch.put_cf(&cf_misc, "last_written", key.as_ref());
                     batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
                     ctr += 1;
@@ -698,9 +698,9 @@ impl StoreEngine for Store {
                     .storage_updates
                     .into_iter()
                     .flat_map(|(account_hash, nodes)| {
-                        nodes
-                            .into_iter()
-                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                        nodes.into_iter().map(move |(path, node)| {
+                            (apply_prefix(Some(account_hash), &path), node)
+                        })
                     })
                     .chain(update_batch.account_updates)
                     .collect(),
@@ -1668,7 +1668,7 @@ impl StoreEngine for Store {
 
             for (address_hash, nodes) in storage_trie_nodes {
                 for (node_hash, node_data) in nodes {
-                    let key = apply_prefix(Some(address_hash), node_hash);
+                    let key = apply_prefix(Some(address_hash), &node_hash);
                     if node_data.is_empty() {
                         batch.delete_cf(&cf, key.as_ref());
                     } else {

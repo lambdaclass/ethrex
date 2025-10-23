@@ -136,7 +136,7 @@ impl StoreEngine for Store {
                 .flat_map(|(account_hash, nodes)| {
                     nodes
                         .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                        .map(move |(path, node)| (apply_prefix(Some(account_hash), &path), node))
                 })
                 .chain(update_batch.account_updates)
                 .collect();
@@ -474,7 +474,7 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let store = self.inner()?;
         let trie_backend = store.state_trie_nodes.clone();
-        let prefix = apply_prefix(Some(hashed_address), Default::default());
+        let prefix = apply_prefix(Some(hashed_address), &Default::default());
         let db = Box::new(InMemoryTrieDB::new_with_prefix(trie_backend, prefix));
         Ok(Trie::open(db, storage_root))
     }
@@ -676,7 +676,7 @@ impl StoreEngine for Store {
 
         for (hashed_address, nodes) in storage_trie_nodes {
             for (node_path, node_data) in nodes {
-                let full_path = apply_prefix(Some(hashed_address), node_path);
+                let full_path = apply_prefix(Some(hashed_address), &node_path);
                 trie.insert(full_path.into_vec(), node_data);
             }
         }

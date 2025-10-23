@@ -39,6 +39,25 @@ impl TrieLayerCache {
         }
         None
     }
+    pub fn get_key(&self, state_root: H256, key: &Nibbles) -> Option<Vec<u8>> {
+        let mut current_state_root = state_root;
+        while let Some(layer) = self.layers.get(&current_state_root) {
+            if let Some(value) = layer.nodes.get(key.as_ref()) {
+                return Some(value.clone());
+            }
+            current_state_root = layer.parent;
+            if current_state_root == state_root {
+                // TODO: check if this is possible in practice
+                // This can't happen in L1, due to system contracts irreversibly modifying state
+                // at each block.
+                // On L2, if no transactions are included in a block, the state root remains the same,
+                // but we handle that case in put_batch. It may happen, however, if someone modifies
+                // state with a privileged tx and later reverts it (since it doesn't update nonce).
+                panic!("State cycle found");
+            }
+        }
+        None
+    }
 
     // TODO: use finalized hash to know when to commit
     pub fn get_commitable(
@@ -110,24 +129,24 @@ pub struct TrieWrapper {
     pub prefix: Option<H256>,
 }
 
-pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
+pub fn apply_prefix(prefix: Option<H256>, path: &Nibbles) -> Nibbles {
     // Apply a prefix with an invalid nibble (17) as a separator, to
     // differentiate between a state trie value and a storage trie root.
     match prefix {
         Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
             .append_new(17)
             .concat(&path),
-        None => path,
+        None => path.clone(),
     }
 }
 
 impl TrieDB for TrieWrapper {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, key: &Nibbles) -> bool {
         let key = apply_prefix(self.prefix, key);
-        self.db.flatkeyvalue_computed(key)
+        self.db.flatkeyvalue_computed(&key)
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let key = apply_prefix(self.prefix, key);
+        let key = apply_prefix(self.prefix, &key);
         if let Some(value) = self
             .inner
             .read()
@@ -137,6 +156,18 @@ impl TrieDB for TrieWrapper {
             return Ok(Some(value));
         }
         self.db.get(key)
+    }
+    fn get_key(&self, key: &Nibbles) -> Result<Option<ethrex_trie::ValueRLP>, TrieError> {
+        let key = apply_prefix(self.prefix, key);
+        if let Some(value) = self
+            .inner
+            .read()
+            .map_err(|_| TrieError::LockError)?
+            .get_key(self.state_root, &key)
+        {
+            return Ok(Some(value));
+        }
+        self.db.get_key(&key)
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
@@ -155,7 +186,7 @@ impl TrieDB for TrieWrapper {
             new_state_root,
             key_values
                 .into_iter()
-                .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
+                .map(move |(path, node)| (apply_prefix(self.prefix, &path), node))
                 .collect(),
         );
         Ok(())

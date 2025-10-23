@@ -66,7 +66,7 @@ impl RocksDBTrieDB {
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
-    fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
+    fn make_key(&self, node_hash: &Nibbles) -> Vec<u8> {
         apply_prefix(self.address_prefix, node_hash)
             .as_ref()
             .to_vec()
@@ -74,8 +74,8 @@ impl RocksDBTrieDB {
 }
 
 impl TrieDB for RocksDBTrieDB {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        self.last_computed_flatkeyvalue >= key
+    fn flatkeyvalue_computed(&self, key: &Nibbles) -> bool {
+        &self.last_computed_flatkeyvalue >= key
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = if key.is_leaf() {
@@ -83,8 +83,20 @@ impl TrieDB for RocksDBTrieDB {
         } else {
             self.cf_handle()?
         };
-        let db_key = self.make_key(key);
+        let db_key = self.make_key(&key);
 
+        let res = self
+            .db
+            .get_cf(&cf, &db_key)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
+        Ok(res)
+    }
+    fn get_key(&self, key: &Nibbles) -> Result<Option<ethrex_trie::ValueRLP>, TrieError> {
+        if !self.flatkeyvalue_computed(key) {
+            return Ok(None);
+        }
+        let cf = self.cf_handle_flatkeyvalue()?;
+        let db_key = self.make_key(key);
         let res = self
             .db
             .get_cf(&cf, &db_key)
@@ -99,7 +111,7 @@ impl TrieDB for RocksDBTrieDB {
 
         for (key, value) in key_values {
             let cf = if key.is_leaf() { &cf_snapshot } else { &cf };
-            let db_key = self.make_key(key);
+            let db_key = self.make_key(&key);
             if value.is_empty() {
                 batch.delete_cf(cf, db_key);
             } else {
@@ -125,7 +137,7 @@ impl TrieDB for RocksDBTrieDB {
             } else {
                 &cf
             };
-            let db_key = self.make_key(hash.clone());
+            let db_key = self.make_key(hash);
             buffer.clear();
             node.encode(&mut buffer);
             batch.put_cf(cf, db_key, &buffer);
