@@ -375,6 +375,9 @@ impl L1Committer {
 
         info!("Preparing state diff from block {first_block_of_batch}, {batch_number}");
 
+        let one_time_checkpoint_path =
+            default_datadir().join(format!("temp_checkpoint_batch_{batch_number}_"));
+
         // For re-execution we need to use a checkpoint to the previous state
         // (i.e. checkpoint of the state to the latest block from the previous
         // batch, or the state of the genesis if this is the first batch).
@@ -382,13 +385,9 @@ impl L1Committer {
         // struct, but we need to create a one-time copy of it because
         // we still need to use the current checkpoint store later for witness
         // generation.
-        let (one_time_checkpoint_store, one_time_checkpoint_blockchain) = {
-            let one_time_checkpoint_path =
-                default_datadir().join(format!("temp_checkpoint_batch_{batch_number}_"));
-
-            self.create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
-                .await?
-        };
+        let (one_time_checkpoint_store, one_time_checkpoint_blockchain) = self
+            .create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
+            .await?;
 
         loop {
             let block_to_commit_number = last_added_block_number + 1;
