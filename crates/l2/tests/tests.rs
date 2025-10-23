@@ -158,7 +158,6 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await
     .unwrap();
-    dbg!(&generic_tx);
 
     let signer = Signer::Local(LocalSigner::new(rich_wallet_private_key));
     generic_tx.gas = generic_tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
@@ -166,7 +165,6 @@ async fn custom_fee_test() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .unwrap();
     let receipt = ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 100).await?;
-    dbg!(receipt);
 
     let sender_balance_after_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))

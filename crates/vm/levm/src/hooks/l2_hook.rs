@@ -37,13 +37,10 @@ pub struct L2Hook {
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
-            dbg!("PRIVILEGED - PREPARE");
             prepare_execution_privileged(vm)
         } else if vm.env.custom_fee_token.is_some() {
-            dbg!("CUSTOM_FEE - PREPARE");
             prepare_execution_custom_fee(vm)
         } else {
-            dbg!("DEFAULT - PREPARE");
             DefaultHook.prepare_execution(vm)
         }
     }
@@ -54,7 +51,6 @@ impl Hook for L2Hook {
         ctx_result: &mut ContextResult,
     ) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
-            dbg!("PRIVILEGED - FINALIZE");
             if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
                 default_hook::undo_value_transfer(vm)?;
             }
@@ -62,10 +58,8 @@ impl Hook for L2Hook {
             // They can call contracts that use CREATE/CREATE2
             default_hook::delete_self_destruct_accounts(vm)?;
         } else if vm.env.custom_fee_token.is_some() {
-            dbg!("CUSTOM_FEE - FINALIZE");
             finalize_execution_custom_fee(vm, ctx_result, self.fee_config.fee_vault)?;
         } else {
-            dbg!("DEFAULT - FINALIZE");
             DefaultHook.finalize_execution(vm, ctx_result)?;
             // Different from L1, the base fee is not burned
             return pay_to_fee_vault(vm, ctx_result.gas_used, self.fee_config.fee_vault);
@@ -179,7 +173,6 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     if vm.env.config.fork >= Fork::Prague {
         validate_min_gas_limit(vm)?;
@@ -193,14 +186,12 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         }
     }
 
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
     // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
     let gaslimit_price_product = vm
         .env
         .gas_price // TODO: here we should ensure that the gas price is the correct ratio from the token erc20 to ETH
         .checked_mul(vm.env.gas_limit.into())
         .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // TODO: validate sender balance for custom fee token
 
@@ -209,26 +200,21 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 
     // (3) INSUFFICIENT_ACCOUNT_FUNDS
     deduct_caller_custom_token(vm, gaslimit_price_product, sender_address)?;
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
     validate_sufficient_max_fee_per_gas(vm)?;
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (5) INITCODE_SIZE_EXCEEDED
     if vm.is_create()? {
         validate_init_code_size(vm)?;
     }
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (6) INTRINSIC_GAS_TOO_LOW
     vm.add_intrinsic_gas()?;
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (7) NONCE_IS_MAX
     vm.increment_account_nonce(sender_address)
         .map_err(|_| TxValidationError::NonceIsMax)?;
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // check for nonce mismatch
     if sender_info.nonce != vm.env.tx_nonce {
@@ -238,7 +224,6 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         }
         .into());
     }
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
     if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
@@ -252,16 +237,13 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         }
         .into());
     }
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (9) SENDER_NOT_EOA
     let code = vm.db.get_code(sender_info.code_hash)?;
     validate_sender(sender_address, code)?;
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // (10) GAS_ALLOWANCE_EXCEEDED
     validate_gas_allowance(vm)?;
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
     // NOT CHECKED: custom fee transactions are not type 3
@@ -269,12 +251,9 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     // Transaction is type 4 if authorization_list is Some
     // NOT CHECKED: custom fee transactions are not type 4
 
-    dbg!(sender_address);
     transfer_value(vm)?;
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
 
     set_bytecode_and_code_address(vm)?;
-    dbg!(vm.db.get_account(sender_address)?.info.balance);
     Ok(())
 }
 
@@ -312,17 +291,12 @@ pub fn deduct_caller_custom_token(
 
 #[allow(clippy::unwrap_used)]
 fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
-    dbg!("a");
     let fee_token = vm.env.custom_fee_token.unwrap();
 
-    dbg!("b");
     let mut db_clone = vm.db.clone(); // expensive
-    dbg!("c");
     let sequencer =
         Address::from_slice(&hex::decode("0002bf507275217c9e5ee250bc1b5ca177bb4f74").unwrap());
-    dbg!("d");
     let nonce = db_clone.get_account(sequencer)?.info.nonce;
-    dbg!("e", sequencer, nonce);
     let tx_check_balance = EIP1559Transaction {
         chain_id: vm.env.chain_id.as_u64(),
         nonce,
@@ -334,11 +308,8 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         data,
         ..Default::default()
     };
-    dbg!("f", &tx_check_balance);
     let tx_check_balance = Transaction::EIP1559Transaction(tx_check_balance);
-    dbg!("g", &tx_check_balance);
     let mut env_clone = vm.env.clone();
-    dbg!("h");
     // Disable fee checks and update fields
     env_clone.base_fee_per_gas = U256::zero();
     env_clone.block_excess_blob_gas = None;
@@ -355,19 +326,14 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         VMType::L2(Default::default()),
     )?;
     new_vm.hooks = vec![Rc::new(RefCell::new(EmptyHook))];
-    dbg!("i");
     set_bytecode_and_code_address(&mut new_vm)?;
-    dbg!("j");
     let b = new_vm.execute()?;
-    dbg!("k", &b);
     if !b.is_success() {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientAccountFunds,
         ));
     }
     let fee_storage = db_clone.get_account(fee_token)?.storage.clone();
-    dbg!("l");
-    dbg!(&vm.db.get_account(fee_token)?.storage, &fee_storage);
     vm.db.get_account_mut(fee_token)?.storage = fee_storage;
 
     // update the initial state account
@@ -380,7 +346,6 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     vm.db
         .initial_accounts_state
         .insert(fee_token, initial_state_fee_token);
-    dbg!("m");
 
     Ok(())
 }
@@ -481,7 +446,6 @@ fn pay_to_fee_vault_custom_fee(
     fee_vault: Option<Address>,
 ) -> Result<(), crate::errors::VMError> {
     let Some(fee_vault) = fee_vault else {
-        dbg!("=========== BURN ADDRESS ===========");
         let base_fee = U256::from(gas_to_pay)
             .checked_mul(vm.env.base_fee_per_gas)
             .ok_or(InternalError::Overflow)?;
@@ -495,7 +459,6 @@ fn pay_to_fee_vault_custom_fee(
         transfer_fee_token(vm, data.into())?;
         return Ok(());
     };
-    dbg!("=========== FEE VAULT ===========");
 
     let base_fee = U256::from(gas_to_pay)
         .checked_mul(vm.env.base_fee_per_gas)
