@@ -415,7 +415,7 @@ impl GenServer for PeerConnectionServer {
                         return CastResponse::Stop;
                     }
                     PeerConnectionError::StoreError(StoreError::Trie(
-                        TrieError::InconsistentTree,
+                        TrieError::InconsistentTree(_),
                     )) => {
                         if established_state.blockchain.is_synced() {
                             log_peer_error!(
