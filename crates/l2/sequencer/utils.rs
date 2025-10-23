@@ -1,5 +1,6 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::types::Block;
+use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, types::TxType};
 use ethrex_l2_common::prover::ProverType;
@@ -163,11 +164,11 @@ where
     Ok(is_up_to_date)
 }
 
-pub async fn fetch_batch_blocks<E>(
+pub async fn fetch_blocks_with_respective_fee_configs<E>(
     batch_number: u64,
     store: &Store,
     rollup_store: &StoreRollup,
-) -> Result<Vec<Block>, E>
+) -> Result<(Vec<Block>, Vec<FeeConfig>), E>
 where
     E: From<StoreError> + From<RollupStoreError>,
 {
@@ -179,6 +180,7 @@ where
         ))?;
 
     let mut blocks = Vec::new();
+    let mut fee_configs = vec![];
 
     for block_number in batch_blocks {
         let block_header = store
@@ -197,9 +199,17 @@ where
         let block = Block::new(block_header, block_body);
 
         blocks.push(block);
+
+        // Fetch the L1 fee config for this block
+        let fee_config = rollup_store
+            .get_fee_config_by_block(block_number)
+            .await?
+            .ok_or(RollupStoreError::Custom("Fee config not found".to_string()))?;
+
+        fee_configs.push(fee_config);
     }
 
-    Ok(blocks)
+    Ok((blocks, fee_configs))
 }
 
 /// Returns the git commit hash of the current build.

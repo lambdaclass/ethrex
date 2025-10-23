@@ -18,7 +18,7 @@ pub struct ProverInputData {
     pub blob_commitment: blobs_bundle::Commitment,
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
-    pub fee_config: FeeConfig,
+    pub fee_configs: Vec<FeeConfig>,
 }
 
 /// Enum used to identify the different proving systems.
