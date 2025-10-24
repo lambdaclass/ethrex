@@ -31,8 +31,12 @@ secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patc
 ecdsa = { git = "https://github.com/sp1-patches/signatures", tag = "patch-16.9-sp1-4.1.0" }
 k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-5.0.0" }
 
+
 [patch."https://github.com/lambdaclass/bls12_381"]
 bls12_381 = { git = "https://github.com/lambdaclass/bls12_381-patch/", branch = "expose-fp-struct" }
+
+[patch."https://github.com/grandinetech/rust-kzg"]
+bls12_381 = { git = "https://github.com/sp1-patches/bls12_381", tag = "patch-0.8.0-sp1-5.0.0"}
 
 [features]
 l2 = ["guest_program/l2", "sp1-zkvm/embedded"]
