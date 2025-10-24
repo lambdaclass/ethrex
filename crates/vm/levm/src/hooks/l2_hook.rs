@@ -21,10 +21,10 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, U256,
+    Address, H160, H256, U256,
     types::{
-        EIP1559Transaction, Fork, Transaction, TxKind, fee_config::FeeConfig,
-        fee_config::OperatorFeeConfig,
+        Code, EIP1559Transaction, Fork, Transaction, TxKind,
+        fee_config::{FeeConfig, OperatorFeeConfig},
     },
 };
 
@@ -282,8 +282,11 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         // If the transaction failed some validation, but it must still be included
         // To prevent it from taking effect, we force it to revert
         vm.current_call_frame.msg_value = U256::zero();
-        vm.current_call_frame
-            .set_code(vec![Opcode::INVALID.into()].into())?;
+        vm.current_call_frame.set_code(Code {
+            hash: H256::zero(),
+            bytecode: vec![Opcode::INVALID.into()].into(),
+            jump_targets: Vec::new(),
+        })?;
         return Ok(());
     }
 
@@ -362,7 +365,7 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 
     // (9) SENDER_NOT_EOA
     let code = vm.db.get_code(sender_info.code_hash)?;
-    validate_sender(sender_address, code)?;
+    validate_sender(sender_address, &code.bytecode)?;
 
     // (10) GAS_ALLOWANCE_EXCEEDED
     validate_gas_allowance(vm)?;

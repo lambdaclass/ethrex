@@ -3,7 +3,7 @@ use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::H256;
 use ethrex_common::{
     Address, U256,
-    types::{Account, EIP1559Transaction, Transaction, TxKind},
+    types::{Account, Code, EIP1559Transaction, Transaction, TxKind},
 };
 use ethrex_levm::errors::VMError;
 use ethrex_levm::{
@@ -58,18 +58,32 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     let cache = BTreeMap::from([
         (
             Address::from_low_u64_be(CONTRACT_ADDRESS),
-            Account::new(U256::MAX, bytecode.clone(), 0, BTreeMap::new()),
+            Account::new(
+                U256::MAX,
+                Code::from_bytecode(bytecode.clone()),
+                0,
+                BTreeMap::new(),
+            ),
         ),
         (
             Address::from_low_u64_be(SENDER_ADDRESS),
-            Account::new(U256::MAX, Bytes::new(), 0, BTreeMap::new()),
+            Account::new(
+                U256::MAX,
+                Code::from_bytecode(Bytes::new()),
+                0,
+                BTreeMap::new(),
+            ),
         ),
     ]);
 
     GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
 }
 
-fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> Result<VM, VMError> {
+fn init_vm(
+    db: &'_ mut GeneralizedDatabase,
+    nonce: u64,
+    calldata: Bytes,
+) -> Result<VM<'_>, VMError> {
     let env = Environment {
         origin: Address::from_low_u64_be(SENDER_ADDRESS),
         tx_nonce: nonce,

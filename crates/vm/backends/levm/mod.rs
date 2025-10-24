@@ -57,9 +57,9 @@ impl LEVM {
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
-                matches!(report.result.clone(), TxResult::Success),
+                matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                report.logs.clone(),
+                report.logs,
             );
 
             receipts.push(receipt);
@@ -391,7 +391,7 @@ pub fn generic_system_contract_levm(
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .any(|contract| contract.address == contract_address)
-        && db.get_account_code(contract_address)?.is_empty()
+        && db.get_account_code(contract_address)?.bytecode.is_empty()
     {
         return Err(EvmError::SystemContractCallFailed(format!(
             "System contract: {contract_address} has no code after deployment"

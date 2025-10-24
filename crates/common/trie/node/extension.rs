@@ -1,4 +1,4 @@
-use ethrex_rlp::structs::Encoder;
+use ethrex_rlp::encode::RLPEncode;
 
 use crate::ValueRLP;
 use crate::nibbles::Nibbles;
@@ -190,16 +190,7 @@ impl ExtensionNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(&self.encode_raw())
-    }
-
-    /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
-        encoder = self.child.compute_hash().encode(encoder);
-        encoder.finish();
-        buf
+        NodeHash::from_encoded(&self.encode_to_vec())
     }
 
     /// Traverses own subtrie until reaching the node containing `path`
@@ -212,7 +203,7 @@ impl ExtensionNode {
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
-        let encoded = self.encode_raw();
+        let encoded = self.encode_to_vec();
         if encoded.len() >= 32 {
             node_path.push(encoded);
         };
@@ -236,6 +227,8 @@ impl ExtensionNode {
 
 #[cfg(test)]
 mod test {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+
     use super::*;
     use crate::{Trie, node::LeafNode, pmt_node};
 
@@ -544,7 +537,7 @@ mod test {
             } }
         }
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 
     #[test]
@@ -560,7 +553,7 @@ mod test {
         }
         .into();
 
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 
     #[test]
@@ -585,6 +578,6 @@ mod test {
             } }
         }
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 }
