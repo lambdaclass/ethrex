@@ -604,7 +604,7 @@ async fn handle_new_payload_v1_v2(
     let latest_valid_hash = block.header.parent_hash;
 
     if context.syncer.sync_mode() == SyncMode::Snap {
-        warn!("Snap sync in progress, skipping new payload validation");
+        debug!("Snap sync in progress, skipping new payload validation");
         return Ok(PayloadStatus::syncing());
     }
 
@@ -783,7 +783,10 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
 }
 
 async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
-    debug!("Requested payload with id: {:#018x}", payload_id);
+    info!(
+        id = %format!("{:#018x}", payload_id),
+        "Requested payload with"
+    );
     let (blobs_bundle, requests, block_value, block) = {
         let PayloadBuildResult {
             blobs_bundle,
