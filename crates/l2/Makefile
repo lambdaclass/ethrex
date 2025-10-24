@@ -45,7 +45,6 @@ L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
 PROOF_COORDINATOR_ADDRESS?=127.0.0.1
-ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS?=1000000000 \
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -70,7 +69,7 @@ down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
 init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
-	../../target/release/ethrex \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
 	--http.addr ${L1_RPC_ADDRESS} \
@@ -79,11 +78,11 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--datadir ${ethrex_L1_DEV_DB}
 
 rm-db-l1: ## 🛑 Removes the DB used by the L1
-	../../target/release/ethrex removedb --datadir ${ethrex_L1_DEV_DB} --force
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_DB} --force
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
-	../../target/release/ethrex l2 deploy \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -120,7 +119,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
-	../../target/release/ethrex \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -128,15 +127,12 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
-	--no-monitor \
 	--datadir ${ethrex_L2_DEV_DB} \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
 	--eth.rpc-url ${L1_RPC_URL} \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
-	--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
-	--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
-	--operator-fee-per-gas ${ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS} \
+	--block-producer.fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
@@ -160,7 +156,7 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pgrep -a -f "ethrex l2" | awk '!/prover/ {print $1}' | xargs -r kill -s SIGINT
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
-	../../target/release/ethrex l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
@@ -185,7 +181,7 @@ build-prover:
 ../../target/release/ethrex: $(PROVER_SRC_FILES)
 	@if [ -z "$$PROVER" ]; then \
 		echo "Warn: ProverType (PROVER) is missing. Building only with exec mode."; \
-		echo "You can provide it as an argument:"; \
+		echo "Please provide it as an argument:"; \
 		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> G=<true>"; \
 		echo "The prover can also be run with GPU (G)"; \
 	fi; \

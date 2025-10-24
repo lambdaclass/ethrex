@@ -20,29 +20,19 @@
     "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
     "blobSchedule": {
       "cancun": {
-        "baseFeeUpdateFraction": 3338477,
+        "target": 3,
         "max": 6,
-        "target": 3
+        "baseFeeUpdateFraction": 3338477
       },
       "prague": {
-        "baseFeeUpdateFraction": 5007716,
+        "target": 6,
         "max": 9,
-        "target": 6
+        "baseFeeUpdateFraction": 5007716
       },
       "osaka": {
-        "baseFeeUpdateFraction": 5007716,
+        "target": 6,
         "max": 9,
-        "target": 6
-      },
-      "bpo1": {
-        "baseFeeUpdateFraction": 8346193,
-        "max": 15,
-        "target": 10
-      },
-      "bpo2": {
-        "baseFeeUpdateFraction": 11684671,
-        "max": 21,
-        "target": 14
+        "baseFeeUpdateFraction": 5007716
       }
     },
     "mergeNetsplitBlock": 0,
