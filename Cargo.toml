@@ -32,7 +32,7 @@ members = [
   "crates/common/config",
   "tooling/reorgs",
   "crates/concurrency",
-  "tooling/migrations", "tooling/checkpointer",
+  "tooling/migrations",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
 resolver = "2"
