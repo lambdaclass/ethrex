@@ -2001,7 +2001,7 @@ mod serde_impl {
             S: serde::Serializer,
         {
             let mut struct_serializer = serializer.serialize_struct("CustomFeeTransaction", 15)?;
-            struct_serializer.serialize_field("type", &TxType::EIP1559)?;
+            struct_serializer.serialize_field("type", &TxType::CustomFee)?;
             struct_serializer.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
             struct_serializer.serialize_field("to", &self.to)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
@@ -2029,7 +2029,7 @@ mod serde_impl {
             struct_serializer
                 .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity as u8))?;
             struct_serializer
-                .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?; // added to match Hive tests
+                .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?;
             struct_serializer.serialize_field("r", &self.signature_r)?;
             struct_serializer.serialize_field("s", &self.signature_s)?;
             struct_serializer.end()
