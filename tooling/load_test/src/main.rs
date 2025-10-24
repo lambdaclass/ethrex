@@ -363,8 +363,7 @@ async fn tps_load_test(
             Entry::Vacant(entry) => {
                 let nonce = client
                     .get_nonce(address, BlockIdentifier::Tag(BlockTag::Latest))
-                    .await?
-                    + 1;
+                    .await?;
                 entry.insert(nonce);
                 nonce
             }
