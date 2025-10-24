@@ -1,13 +1,17 @@
-use std::{collections::BTreeMap, fmt};
+use std::collections::BTreeMap;
 
 use crate::{
-    clients::eth::errors::{CallError, GetPeerCountError, GetWitnessError, TxPoolContentError},
+    clients::eth::errors::{
+        CallError, GetBlobBaseFeeRequestError, GetPeerCountError, GetWitnessError,
+        TxPoolContentError,
+    },
     debug::execution_witness::RpcExecutionWitness,
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
         block_identifier::BlockIdentifier,
         receipt::{RpcLog, RpcReceipt},
+        transaction::RpcTransaction,
     },
     utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
@@ -20,12 +24,12 @@ use errors::{
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlobsBundle, Block, GenericTransaction, TxKind, TxType},
+    types::{BlobsBundle, Block, GenericTransaction, TxKind},
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{debug, trace, warn};
 
@@ -611,7 +615,7 @@ impl EthClient {
     pub async fn get_transaction_by_hash(
         &self,
         tx_hash: H256,
-    ) -> Result<Option<GetTransactionByHashTransaction>, EthClientError> {
+    ) -> Result<Option<RpcTransaction>, EthClientError> {
         let params = Some(vec![json!(format!("{tx_hash:#x}"))]);
         let request = RpcRequest::new("eth_getTransactionByHash", params);
 
@@ -663,6 +667,24 @@ impl EthClient {
         }
     }
 
+    pub async fn get_blob_base_fee(&self, block: BlockIdentifier) -> Result<u64, EthClientError> {
+        let params = Some(vec![block.into()]);
+        let request = RpcRequest::new("eth_blobBaseFee", params);
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => Ok(u64::from_str_radix(
+                serde_json::from_value::<String>(result.result)
+                    .map_err(GetBlobBaseFeeRequestError::SerdeJSONError)?
+                    .trim_start_matches("0x"),
+                16,
+            )
+            .map_err(GetBlobBaseFeeRequestError::ParseIntError)?),
+            RpcResponse::Error(error_response) => {
+                Err(GetBlobBaseFeeRequestError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
     /// Smoke test the all the urls by calling eth_blockNumber
     pub async fn test_urls(&self) -> BTreeMap<String, serde_json::Value> {
         let mut map = BTreeMap::new();
@@ -682,99 +704,5 @@ impl EthClient {
             map.insert(url.to_string(), response);
         }
         map
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactionByHashTransaction {
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub chain_id: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub nonce: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub max_priority_fee_per_gas: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub max_fee_per_gas: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub gas_limit: u64,
-    #[serde(default)]
-    pub to: Address,
-    #[serde(default)]
-    pub value: U256,
-    #[serde(default, with = "ethrex_common::serde_utils::vec_u8", alias = "input")]
-    pub data: Vec<u8>,
-    #[serde(default)]
-    pub access_list: Vec<(Address, Vec<H256>)>,
-    #[serde(default)]
-    pub r#type: TxType,
-    #[serde(default)]
-    pub signature_y_parity: bool,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub signature_r: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub signature_s: u64,
-    #[serde(default)]
-    pub block_number: U256,
-    #[serde(default)]
-    pub block_hash: H256,
-    #[serde(default)]
-    pub from: Address,
-    #[serde(default)]
-    pub hash: H256,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub transaction_index: u64,
-    #[serde(default)]
-    pub blob_versioned_hashes: Option<Vec<H256>>,
-}
-
-impl fmt::Display for GetTransactionByHashTransaction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            r#"
-chain_id: {},
-nonce: {},
-max_priority_fee_per_gas: {},
-max_fee_per_gas: {},
-gas_limit: {},
-to: {:#x},
-value: {},
-data: {:#?},
-access_list: {:#?},
-type: {:?},
-signature_y_parity: {},
-signature_r: {:x},
-signature_s: {:x},
-block_number: {},
-block_hash: {:#x},
-from: {:#x},
-hash: {:#x},
-transaction_index: {}"#,
-            self.chain_id,
-            self.nonce,
-            self.max_priority_fee_per_gas,
-            self.max_fee_per_gas,
-            self.gas_limit,
-            self.to,
-            self.value,
-            self.data,
-            self.access_list,
-            self.r#type,
-            self.signature_y_parity,
-            self.signature_r,
-            self.signature_s,
-            self.block_number,
-            self.block_hash,
-            self.from,
-            self.hash,
-            self.transaction_index,
-        )?;
-
-        if let Some(blob_versioned_hashes) = &self.blob_versioned_hashes {
-            write!(f, "\nblob_versioned_hashes: {blob_versioned_hashes:#?}")?;
-        }
-
-        fmt::Result::Ok(())
     }
 }
