@@ -749,11 +749,8 @@ impl L1Committer {
             .join(format!("checkpoint_batch_{}", latest_batch.number));
 
         if new_checkpoint_path.exists() {
-            remove_dir_all(&new_checkpoint_path).map_err(|e| {
-                CommitterError::FailedToCreateCheckpoint(format!(
-                    "Failed to remove existing checkpoint directory {new_checkpoint_path:?}: {e}"
-                ))
-            })?;
+            debug!("Checkpoint at path {new_checkpoint_path:?} already exists, skipping creation");
+            return Ok(());
         }
 
         let (new_checkpoint_store, new_checkpoint_blockchain) = self
