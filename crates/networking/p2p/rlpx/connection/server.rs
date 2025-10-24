@@ -451,7 +451,7 @@ impl GenServer for PeerConnectionServer {
                         // We should check why we're failling to handle the cast message
                         debug!(
                             peer=%established_state.node,
-                            client_capabilities=?established_state.capabilities,
+                            capabilities=?established_state.capabilities,
                             error=%e,
                             "Error handling cast message",
                         );
