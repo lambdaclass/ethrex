@@ -55,7 +55,7 @@ Rollup L2 (publishes blobs), with 1.000.000 genesis accounts (big state)
 **Note:**
 
 1. Validium doesn’t include blob KZG verification, which adds some overhead.
-2. Validium doesn’t publishes blobs, which can limit batch size.
+2. Validium doesn’t publish blobs, which can limit batch size.
 3. The L2 state is small. A bigger state means a bigger trie, which implies more trie/hashing operations that increase proving time.
 4. For the big state case, the accounts don’t have storage nor code.
 
