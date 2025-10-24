@@ -1243,7 +1243,7 @@
         }
       },
       "pluginVersion": "12.2.0",
-      "repeat": "instance",
+      "repeat": "instace_repeat",
       "repeatDirection": "h",
       "targets": [
         {
@@ -2504,6 +2504,27 @@
         "query": {
           "qryType": 1,
           "query": "label_values({__name__=~\"(gigagas|eth_con_beacon_slot)\"},instance)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "/^(?<text>[^:]+)(?::\\d+)?$/",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values({__name__=~\"(gigagas|eth_con_beacon_slot)\", instance!=\"ethereum-metrics-exporter:9093\"},instance)",
+        "includeAll": true,
+        "multi": true,
+        "name": "instace_repeat",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values({__name__=~\"(gigagas|eth_con_beacon_slot)\", instance!=\"ethereum-metrics-exporter:9093\"},instance)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
