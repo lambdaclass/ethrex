@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_rlp::Encodable;
 use bytes::Bytes;
-use ethrex_common::types::TxType;
+use ethrex_common::types::{Code, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256,
@@ -466,7 +466,7 @@ pub async fn compare_levm_revm_account_updates(
                 .collect();
             let account = Account::new(
                 pre_state_value.balance,
-                pre_state_value.code.clone(),
+                Code::from_bytecode(pre_state_value.code.clone()),
                 pre_state_value.nonce,
                 account_storage,
             );
