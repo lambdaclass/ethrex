@@ -33,6 +33,9 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xff,
 ]);
 
+const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
+const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
+
 pub struct L2Hook {
     pub fee_config: FeeConfig,
 }
@@ -128,18 +131,12 @@ fn pay_coinbase_l2(
     gas_to_pay: u64,
     operator_fee_config: &Option<OperatorFeeConfig>,
 ) -> Result<(), crate::errors::VMError> {
-    let Some(fee_config) = operator_fee_config else {
+    if operator_fee_config.is_none() {
         // No operator fee configured, operator fee is not paid
         return pay_coinbase(vm, gas_to_pay);
-    };
+    }
 
-    let priority_fee_per_gas = vm
-        .env
-        .gas_price
-        .checked_sub(vm.env.base_fee_per_gas)
-        .ok_or(InternalError::Underflow)?
-        .checked_sub(U256::from(fee_config.operator_fee_per_gas))
-        .ok_or(InternalError::Underflow)?;
+    let priority_fee_per_gas = compute_priority_fee_per_gas(vm, operator_fee_config)?;
 
     let coinbase_fee = U256::from(gas_to_pay)
         .checked_mul(priority_fee_per_gas)
@@ -148,6 +145,34 @@ fn pay_coinbase_l2(
     vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
 
     Ok(())
+}
+
+fn compute_priority_fee_per_gas(
+    vm: &VM<'_>,
+    operator_fee_config: &Option<OperatorFeeConfig>,
+) -> Result<U256, InternalError> {
+    let priority_fee = vm
+        .env
+        .gas_price
+        .checked_sub(vm.env.base_fee_per_gas)
+        .ok_or(InternalError::Underflow)?;
+
+    if let Some(fee_config) = operator_fee_config {
+        priority_fee
+            .checked_sub(U256::from(fee_config.operator_fee_per_gas))
+            .ok_or(InternalError::Underflow)
+    } else {
+        Ok(priority_fee)
+    }
+}
+
+fn compute_operator_fee_amount(
+    gas_to_pay: u64,
+    fee_config: &OperatorFeeConfig,
+) -> Result<U256, InternalError> {
+    U256::from(gas_to_pay)
+        .checked_mul(U256::from(fee_config.operator_fee_per_gas))
+        .ok_or(InternalError::Overflow)
 }
 
 fn pay_base_fee_vault(
@@ -178,9 +203,7 @@ fn pay_operator_fee(
         return Ok(());
     };
 
-    let operator_fee = U256::from(gas_to_pay)
-        .checked_mul(U256::from(fee_config.operator_fee_per_gas))
-        .ok_or(InternalError::Overflow)?;
+    let operator_fee = compute_operator_fee_amount(gas_to_pay, fee_config)?;
 
     vm.increase_account_balance(fee_config.operator_fee_vault, operator_fee)?;
     Ok(())
@@ -298,7 +321,7 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     // NOT CHECKED: the blob price does not matter, custom fee transactions do not support blobs
 
     // (3) INSUFFICIENT_ACCOUNT_FUNDS
-    deduct_caller_custom_token(vm, gaslimit_price_product, sender_address)?;
+    deduct_caller_custom_token(vm, gaslimit_price_product)?;
 
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
     validate_sufficient_max_fee_per_gas(vm)?;
@@ -359,33 +382,47 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 pub fn deduct_caller_custom_token(
     vm: &mut VM<'_>,
     gas_limit_price_product: U256,
-    sender_address: Address,
 ) -> Result<(), VMError> {
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice (in ERC20) + value
+    let sender_address = vm.env.origin;
     let value = vm.current_call_frame.msg_value;
 
     // First, try to deduct the value sent
     vm.decrease_account_balance(sender_address, value)
         .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
-    // Then, deduct the gas cost in the custom fee token
-    let sender_address = vm.env.origin;
-
-    /*
-    function lockFee(address payer, uint256 amount) internal onlyFeeCollector {
-        IERC20(feeToken).transferFrom(payer, address(this), amount);
-    }
-    */
-    // 0x899c86e2
-    let lock_fee_selector = vec![0x89, 0x9c, 0x86, 0xe2];
-    let mut data = vec![];
-    data.extend_from_slice(&lock_fee_selector);
-    data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&sender_address.0);
-    data.extend_from_slice(&gas_limit_price_product.to_big_endian());
-    transfer_fee_token(vm, data.into())?;
+    // Then, deduct the gas cost in the custom fee token by locking it in the fee collector
+    lock_fee_token(vm, sender_address, gas_limit_price_product)?;
 
     Ok(())
+}
+
+fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> Bytes {
+    let mut data = Vec::with_capacity(4 + 32 + 32);
+    data.extend_from_slice(&selector);
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(&address.0);
+    data.extend_from_slice(&amount.to_big_endian());
+    data.into()
+}
+
+fn call_fee_token_contract(
+    vm: &mut VM<'_>,
+    selector: [u8; 4],
+    address: Address,
+    amount: U256,
+) -> Result<(), VMError> {
+    transfer_fee_token(vm, encode_fee_token_call(selector, address, amount))
+}
+
+fn lock_fee_token(vm: &mut VM<'_>, payer: Address, amount: U256) -> Result<(), VMError> {
+    // lockFee(address payer, uint256 amount) internal onlyFeeCollector
+    call_fee_token_contract(vm, LOCK_FEE_SELECTOR, payer, amount)
+}
+
+fn pay_fee_token(vm: &mut VM<'_>, receiver: Address, amount: U256) -> Result<(), VMError> {
+    // payFee(address receiver, uint256 amount) internal onlyFeeCollector
+    call_fee_token_contract(vm, PAY_FEE_SELECTOR, receiver, amount)
 }
 
 #[allow(clippy::unwrap_used)]
@@ -397,17 +434,17 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         Address::from_slice(&hex::decode("0002bf507275217c9e5ee250bc1b5ca177bb4f74").unwrap());
     let nonce = db_clone.get_account(sequencer)?.info.nonce;
     let tx_check_balance = EIP1559Transaction {
+        // we are simulating the transaction
         chain_id: vm.env.chain_id.as_u64(),
         nonce,
-        max_priority_fee_per_gas: 9999999,
-        max_fee_per_gas: 9999999,
-        gas_limit: 999999999,
+        max_priority_fee_per_gas: 100,
+        max_fee_per_gas: 100,
+        gas_limit: 21000 * 100,
         to: TxKind::Call(fee_token),
         value: U256::zero(),
         data,
         ..Default::default()
     };
-    dbg!(&tx_check_balance);
     let tx_check_balance = Transaction::EIP1559Transaction(tx_check_balance);
     let mut env_clone = vm.env.clone();
     // Disable fee checks and update fields
@@ -415,8 +452,8 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     env_clone.block_excess_blob_gas = None;
     env_clone.gas_price = U256::zero();
     env_clone.origin = sequencer;
-    env_clone.custom_fee_token = None; // prevent recursion
-    env_clone.gas_limit = 999999999;
+    env_clone.custom_fee_token = None;
+    env_clone.gas_limit = 21000 * 100;
 
     let mut new_vm = VM::new(
         env_clone,
@@ -427,9 +464,8 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     )?;
     new_vm.hooks = vec![Rc::new(RefCell::new(EmptyHook))];
     set_bytecode_and_code_address(&mut new_vm)?;
-    let b = new_vm.execute()?;
-    dbg!(b.clone());
-    if !b.is_success() {
+    let execution_result = new_vm.execute()?;
+    if !execution_result.is_success() {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientAccountFunds,
         ));
@@ -498,19 +534,7 @@ fn refund_sender_custom_fee(
         .ok_or(InternalError::Overflow)?;
     let sender_address = vm.env.origin;
 
-    /*
-    function payFee(address receiver, uint256 amount) internal onlyFeeCollector {
-        IERC20(feeToken).transferFrom(address(this), receiver, amount);
-    }
-    */
-    // 0x72746eaf
-    let pay_fee_selector = vec![0x72, 0x74, 0x6e, 0xaf];
-    let mut data = vec![];
-    data.extend_from_slice(&pay_fee_selector);
-    data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&sender_address.0);
-    data.extend_from_slice(&erc20_return_amount.to_big_endian());
-    transfer_fee_token(vm, data.into())?;
+    pay_fee_token(vm, sender_address, erc20_return_amount)?;
 
     Ok(())
 }
@@ -520,60 +544,13 @@ fn pay_coinbase_custom_fee(
     gas_to_pay: u64,
     operator_fee_config: &Option<OperatorFeeConfig>,
 ) -> Result<(), VMError> {
-    let Some(fee_config) = operator_fee_config else {
-        let priority_fee_per_gas = vm
-            .env
-            .gas_price
-            .checked_sub(vm.env.base_fee_per_gas)
-            .ok_or(InternalError::Underflow)?;
-
-        let coinbase_fee = U256::from(gas_to_pay)
-            .checked_mul(priority_fee_per_gas)
-            .ok_or(InternalError::Overflow)?;
-
-        /*
-        function payFee(address receiver, uint256 amount) internal onlyFeeCollector {
-            IERC20(feeToken).transferFrom(address(this), receiver, amount);
-        }
-        */
-        // 0x72746eaf
-        let pay_fee_selector = vec![0x72, 0x74, 0x6e, 0xaf];
-        let mut data = vec![];
-        data.extend_from_slice(&pay_fee_selector);
-        data.extend_from_slice(&[0u8; 12]);
-        data.extend_from_slice(&vm.env.coinbase.0);
-        data.extend_from_slice(&coinbase_fee.to_big_endian());
-        transfer_fee_token(vm, data.into())?;
-        return Ok(());
-    };
-
-    let priority_fee_per_gas = vm
-        .env
-        .gas_price
-        .checked_sub(vm.env.base_fee_per_gas)
-        .ok_or(InternalError::Underflow)?
-        .checked_sub(U256::from(fee_config.operator_fee_per_gas))
-        .ok_or(InternalError::Underflow)?;
+    let priority_fee_per_gas = compute_priority_fee_per_gas(vm, operator_fee_config)?;
 
     let coinbase_fee = U256::from(gas_to_pay)
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    /*
-    function payFee(address receiver, uint256 amount) internal onlyFeeCollector {
-        IERC20(feeToken).transferFrom(address(this), receiver, amount);
-    }
-    */
-    // 0x72746eaf
-    let pay_fee_selector = vec![0x72, 0x74, 0x6e, 0xaf];
-    let mut data = vec![];
-    data.extend_from_slice(&pay_fee_selector);
-    data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&vm.env.coinbase.0);
-    data.extend_from_slice(&coinbase_fee.to_big_endian());
-    transfer_fee_token(vm, data.into())?;
-
-    Ok(())
+    pay_fee_token(vm, vm.env.coinbase, coinbase_fee)
 }
 
 fn pay_to_fee_vault_custom_fee(
@@ -581,39 +558,14 @@ fn pay_to_fee_vault_custom_fee(
     gas_to_pay: u64,
     fee_vault: Option<Address>,
 ) -> Result<(), crate::errors::VMError> {
-    let Some(fee_vault) = fee_vault else {
-        let base_fee = U256::from(gas_to_pay)
-            .checked_mul(vm.env.base_fee_per_gas)
-            .ok_or(InternalError::Overflow)?;
-        // 0x72746eaf
-        let pay_fee_selector = vec![0x72, 0x74, 0x6e, 0xaf];
-        let mut data = vec![];
-        data.extend_from_slice(&pay_fee_selector);
-        data.extend_from_slice(&[0u8; 12]);
-        data.extend_from_slice(&[0u8; 20]); // address(0) - burn address
-        data.extend_from_slice(&base_fee.to_big_endian());
-        transfer_fee_token(vm, data.into())?;
-        return Ok(());
-    };
-
     let base_fee = U256::from(gas_to_pay)
         .checked_mul(vm.env.base_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    /*
-    function payFee(address receiver, uint256 amount) internal onlyFeeCollector {
-        IERC20(feeToken).transferFrom(address(this), receiver, amount);
-    }
-    */
-    // 0x72746eaf
-    let pay_fee_selector = vec![0x72, 0x74, 0x6e, 0xaf];
-    let mut data = vec![];
-    data.extend_from_slice(&pay_fee_selector);
-    data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&fee_vault.0);
-    data.extend_from_slice(&base_fee.to_big_endian());
-    transfer_fee_token(vm, data.into())?;
-    Ok(())
+    // When no vault is configured fees are burned via the zero address.
+    let target = fee_vault.unwrap_or_else(Address::zero);
+
+    pay_fee_token(vm, target, base_fee)
 }
 
 fn pay_operator_fee_custom_fee(
@@ -626,22 +578,7 @@ fn pay_operator_fee_custom_fee(
         return Ok(());
     };
 
-    let operator_fee = U256::from(gas_to_pay)
-        .checked_mul(U256::from(fee_config.operator_fee_per_gas))
-        .ok_or(InternalError::Overflow)?;
+    let operator_fee = compute_operator_fee_amount(gas_to_pay, fee_config)?;
 
-    /*
-    function payFee(address receiver, uint256 amount) internal onlyFeeCollector {
-        IERC20(feeToken).transferFrom(address(this), receiver, amount);
-    }
-    */
-    // 0x72746eaf
-    let pay_fee_selector = vec![0x72, 0x74, 0x6e, 0xaf];
-    let mut data = vec![];
-    data.extend_from_slice(&pay_fee_selector);
-    data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&fee_config.operator_fee_vault.0);
-    data.extend_from_slice(&operator_fee.to_big_endian());
-    transfer_fee_token(vm, data.into())?;
-    Ok(())
+    pay_fee_token(vm, fee_config.operator_fee_vault, operator_fee)
 }
