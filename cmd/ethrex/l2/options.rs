@@ -404,7 +404,7 @@ pub struct WatcherOptions {
         long = "watcher.l1-fee-update-interval-ms",
         value_name = "ADDRESS",
         default_value = "60000",
-        env = "ETHREX_BLOCK_PRODUCER_L1_FEE_UPDATE_INTERVAL_MS",
+        env = "ETHREX_WATCHER_L1_FEE_UPDATE_INTERVAL_MS",
         help_heading = "Block producer options"
     )]
     pub l1_fee_update_interval_ms: u64,

@@ -79,7 +79,7 @@ impl BlockProducer {
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
-    ) -> Result<Self, BlockProducerError> {
+    ) -> Self {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
@@ -103,7 +103,7 @@ impl BlockProducer {
             );
         }
 
-        Ok(Self {
+        Self {
             store,
             blockchain,
             sequencer_state,
@@ -114,7 +114,7 @@ impl BlockProducer {
             // FIXME: Initialize properly to the last privileged nonce in the chain
             last_privileged_nonce: None,
             block_gas_limit: *block_gas_limit,
-        })
+        }
     }
 
     pub async fn spawn(
@@ -130,7 +130,7 @@ impl BlockProducer {
             rollup_store,
             blockchain,
             sequencer_state,
-        )?
+        )
         .start_blocking();
         block_producer
             .cast(InMessage::Produce)
@@ -263,25 +263,22 @@ impl GenServer for BlockProducer {
 
     async fn handle_cast(
         &mut self,
-        message: Self::CastMsg,
+        _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        match message {
-            InMessage::Produce => {
-                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-                    let _ = self
-                        .produce_block()
-                        .await
-                        .inspect_err(|e| error!("Block Producer Error: {e}"));
-                }
-                send_after(
-                    Duration::from_millis(self.block_time_ms),
-                    handle.clone(),
-                    Self::CastMsg::Produce,
-                );
-                CastResponse::NoReply
-            }
+        // Right now we only have the Produce message, so we ignore the message
+        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+            let _ = self
+                .produce_block()
+                .await
+                .inspect_err(|e| error!("Block Producer Error: {e}"));
         }
+        send_after(
+            Duration::from_millis(self.block_time_ms),
+            handle.clone(),
+            Self::CastMsg::Produce,
+        );
+        CastResponse::NoReply
     }
 
     async fn handle_call(

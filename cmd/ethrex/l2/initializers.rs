@@ -168,8 +168,8 @@ pub async fn init_l2(
         l1_fee_config,
     };
 
-    // We wrap fee_config in an Arc<RwLock> to let the block producer
-    // update the L1 fee from block to block.
+    // We wrap fee_config in an Arc<RwLock> to let the watcher
+    // update the L1 fee periodically.
     let l2_config = L2Config {
         fee_config: Arc::new(tokio::sync::RwLock::new(fee_config)),
     };
