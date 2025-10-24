@@ -1,23 +1,22 @@
 use ethrex_common::H256;
-use ethrex_rlp::decode::RLPDecode;
 use rustc_hash::FxHashMap;
-use std::{sync::Arc, sync::RwLock};
+use std::sync::Arc;
 
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: FxHashMap<H256, TrieLayer>,
+    layers: FxHashMap<H256, Arc<TrieLayer>>,
 }
 
 impl TrieLayerCache {
@@ -42,11 +41,7 @@ impl TrieLayerCache {
     }
 
     // TODO: use finalized hash to know when to commit
-    pub fn get_commitable(
-        &mut self,
-        mut state_root: H256,
-        commit_threshold: usize,
-    ) -> Option<H256> {
+    pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
@@ -70,26 +65,29 @@ impl TrieLayerCache {
             tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
             return;
         }
-        self.layers
-            .entry(state_root)
-            .or_insert_with(|| {
-                self.last_id += 1;
-                TrieLayer {
-                    nodes: FxHashMap::default(),
-                    parent,
-                    id: self.last_id,
-                }
-            })
-            .nodes
-            .extend(
-                key_values
-                    .into_iter()
-                    .map(|(path, node)| (path.into_vec(), node)),
-            );
+        if self.layers.contains_key(&state_root) {
+            return;
+        }
+
+        let nodes = FxHashMap::from_iter(
+            key_values
+                .into_iter()
+                .map(|(path, node)| (path.into_vec(), node)),
+        );
+        self.last_id += 1;
+        let entry = TrieLayer {
+            nodes: Arc::new(nodes),
+            parent,
+            id: self.last_id,
+        };
+        self.layers.insert(state_root, Arc::new(entry));
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let mut layer = self.layers.remove(&state_root)?;
+        let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
+            Ok(layer) => layer,
+            Err(layer) => TrieLayer::clone(&layer),
+        };
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
@@ -98,7 +96,7 @@ impl TrieLayerCache {
             parent_nodes
                 .unwrap_or_default()
                 .into_iter()
-                .chain(layer.nodes.drain())
+                .chain(layer.nodes.as_ref().clone())
                 .collect(),
         )
     }
@@ -106,7 +104,7 @@ impl TrieLayerCache {
 
 pub struct TrieWrapper {
     pub state_root: H256,
-    pub inner: Arc<RwLock<TrieLayerCache>>,
+    pub inner: Arc<TrieLayerCache>,
     pub db: Box<dyn TrieDB>,
     pub prefix: Option<H256>,
 }
@@ -129,36 +127,14 @@ impl TrieDB for TrieWrapper {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self
-            .inner
-            .read()
-            .map_err(|_| TrieError::LockError)?
-            .get(self.state_root, key.as_ref())
-        {
+        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
         self.db.get(key)
     }
 
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        // TODO: this is unused, because we call `TrieLayerCache::put_batch` directly
-        let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
-        let new_state_root = match last_pair {
-            Some((_, noderlp)) => {
-                let root_node = Node::decode(noderlp)?;
-                root_node.compute_hash().finalize()
-            }
-            None => *EMPTY_TRIE_HASH,
-        };
-        let mut inner = self.inner.write().map_err(|_| TrieError::LockError)?;
-        inner.put_batch(
-            self.state_root,
-            new_state_root,
-            key_values
-                .into_iter()
-                .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
-                .collect(),
-        );
-        Ok(())
+    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        // TODO: Get rid of this.
+        unimplemented!("This function should not be called");
     }
 }

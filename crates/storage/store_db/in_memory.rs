@@ -17,7 +17,7 @@ use ethrex_trie::{EMPTY_TRIE_HASH, InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
     collections::HashMap,
     fmt::Debug,
-    sync::{Arc, Mutex, MutexGuard, RwLock},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 // NOTE: we use a different commit threshold than rocksdb since tests
@@ -41,7 +41,7 @@ pub struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    trie_cache: Arc<RwLock<TrieLayerCache>>,
+    trie_cache: Arc<TrieLayerCache>,
     // Contains account trie nodes
     state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -94,10 +94,7 @@ impl StoreEngine for Store {
 
         // Store trie updates
         {
-            let mut trie = store
-                .trie_cache
-                .write()
-                .map_err(|_| StoreError::LockError)?;
+            let mut trie = TrieLayerCache::clone(&store.trie_cache);
             let parent = update_batch
                 .blocks
                 .first()
@@ -118,21 +115,24 @@ impl StoreEngine for Store {
                 .header
                 .state_root;
 
-            let mut state_trie = store
-                .state_trie_nodes
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
+            {
+                let mut state_trie = store
+                    .state_trie_nodes
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?;
 
-            if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
-                let nodes = trie.commit(root).unwrap_or_default();
-                for (key, value) in nodes {
-                    if value.is_empty() {
-                        state_trie.remove(&key);
-                    } else {
-                        state_trie.insert(key, value);
+                if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
+                    let nodes = trie.commit(root).unwrap_or_default();
+                    for (key, value) in nodes {
+                        if value.is_empty() {
+                            state_trie.remove(&key);
+                        } else {
+                            state_trie.insert(key, value);
+                        }
                     }
                 }
             }
+
             let key_values = update_batch
                 .storage_updates
                 .into_iter()
@@ -144,6 +144,7 @@ impl StoreEngine for Store {
                 .chain(update_batch.account_updates)
                 .collect();
             trie.put_batch(pre_state_root, last_state_root, key_values);
+            store.trie_cache = Arc::new(trie);
         }
 
         for block in update_batch.blocks {
