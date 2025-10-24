@@ -11,6 +11,10 @@ on:
       - .github/workflows/common_hive_reports.yaml
       - .github/scripts/publish_hive.sh
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   hive-report-creation:
     name: Run Hive tests

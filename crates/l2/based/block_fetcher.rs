@@ -251,7 +251,7 @@ impl BlockFetcher {
         missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
 
         for (batch_committed_log, batch_number) in missing_batches_logs {
-            let batch_commit_tx_calldata = self
+            let tx = self
                 .eth_client
                 .get_transaction_by_hash(batch_committed_log.transaction_hash)
                 .await?
@@ -259,9 +259,9 @@ impl BlockFetcher {
                     "Failed to get the receipt for transaction {:x}",
                     batch_committed_log.transaction_hash
                 )))?
-                .data;
+                .tx;
 
-            let batch = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
+            let batch = decode_batch_from_calldata(tx.data())?;
 
             self.store_batch(&batch).await?;
 
