@@ -380,6 +380,10 @@ impl Blockchain {
             self.store_block(block.clone(), account_updates_list, execution_result)
                 .await?;
 
+            // Here we compute the hash from the header because we don't
+            // want to initialize the block hash.
+            let block_hash = block.header.compute_block_hash();
+
             // Later in this function we query the batch block headers by number,
             // to do so, they need to be marked as canonical.
             // Only users that have the state previous to the first batch block
@@ -389,7 +393,7 @@ impl Blockchain {
                 .get_block_header(block.header.number)?
                 .is_none()
             {
-                apply_fork_choice(&self.storage, block.hash(), block.hash(), block.hash())
+                apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
                     .await
                     .map_err(|e| {
                         ChainError::WitnessGeneration(format!(
@@ -410,7 +414,7 @@ impl Blockchain {
 
             let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
                 self.storage
-                    .state_trie(block.hash())
+                    .state_trie(block_hash)
                     .map_err(|_| ChainError::ParentStateNotFound)?
                     .ok_or(ChainError::ParentStateNotFound)?,
             );
