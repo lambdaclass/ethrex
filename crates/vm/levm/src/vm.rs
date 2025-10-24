@@ -27,6 +27,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     mem,
     rc::Rc,
+    sync::atomic::AtomicUsize,
 };
 
 pub type Storage = HashMap<U256, H256>;
@@ -326,6 +327,9 @@ pub struct VM<'a> {
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+
+    // (sload, sstore)
+    pub stats: (AtomicUsize, AtomicUsize),
 }
 
 impl<'a> VM<'a> {
@@ -375,6 +379,8 @@ impl<'a> VM<'a> {
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+
+            stats: Default::default(),
         };
 
         let call_type = if is_create {

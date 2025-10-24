@@ -28,6 +28,7 @@ use ethrex_levm::{
     vm::VM,
 };
 use std::cmp::min;
+use std::sync::atomic::Ordering;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -132,7 +133,15 @@ impl LEVM {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
-        vm.execute().map_err(VMError::into)
+        let result = vm.execute()?;
+        println!(
+            "### [TX {}] #SLOAD = {}, #SSTORE = {}",
+            tx.hash(),
+            vm.stats.0.swap(0, Ordering::Relaxed),
+            vm.stats.1.swap(0, Ordering::Relaxed),
+        );
+
+        Ok(result)
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
