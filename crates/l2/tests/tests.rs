@@ -1917,7 +1917,7 @@ async fn test_custom_fee(
 
     let custom_fee_token_contract =
         hex::decode(std::fs::read(path.join("solc_out/FeeToken.bin"))?)?;
-    let (fee_token_address, mut fees_details) = test_deploy(
+    let (fee_token_address, fees_details) = test_deploy(
         &l2_client,
         &custom_fee_token_contract,
         &rich_wallet_private_key,
@@ -1965,7 +1965,7 @@ async fn test_custom_fee(
     let signer = Signer::Local(LocalSigner::new(rich_wallet_private_key));
     generic_tx.gas = generic_tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
     let tx_hash = send_generic_transaction(&l2_client, generic_tx, &signer).await?;
-    let receipt = ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 100).await?;
+    ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 100).await?;
 
     let sender_balance_after_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -2012,9 +2012,6 @@ async fn test_custom_fee(
             "Fee vault address fee token balance did not increase"
         );
     }
-
-    let tx_fees = get_fees_details_l2(&receipt, &l2_client).await;
-    fees_details += tx_fees;
 
     Ok(fees_details)
 }
