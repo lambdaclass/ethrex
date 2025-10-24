@@ -18,7 +18,7 @@ use std::{
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -291,9 +291,7 @@ async fn heal_state_trie(
                     }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
-                let trie_db = store
-                    .open_direct_state_trie(*EMPTY_TRIE_HASH)
-                    .expect("Store should open");
+                let trie_db = store.open_direct_state_trie().expect("Store should open");
                 let db = trie_db.db();
                 // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
                 db.put_batch(encoded_to_write.into_iter().collect())
@@ -337,7 +335,7 @@ fn heal_state_batch(
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
     nodes_to_write: &mut Vec<(Nibbles, Node)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_direct_state_trie()?;
     for node in nodes.into_iter() {
         let path = batch.remove(0);
         let (missing_children_count, missing_children) =

@@ -506,7 +506,7 @@ impl Store {
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut nodes = HashMap::new();
-        let mut genesis_state_trie = self.engine.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut genesis_state_trie = self.engine.open_direct_state_trie()?;
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
@@ -516,7 +516,7 @@ impl Store {
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
-                .open_direct_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
+                .open_direct_storage_trie(H256::from_slice(&hashed_address))?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
@@ -917,7 +917,7 @@ impl Store {
 
         let mut storage_proof = Vec::with_capacity(storage_keys.len());
 
-        if let Some(account) = &account_opt {
+        if let Some(_account) = &account_opt {
             let storage_trie = self
                 .engine
                 .open_storage_trie(state_trie.hash_no_commit(), hashed_address)?;
@@ -985,11 +985,6 @@ impl Store {
         hashed_address: H256,
         starting_slot: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
-        let state_trie = self.engine.open_locked_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
-            return Ok(None);
-        };
-        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         let mut iter = self
             .engine
             .open_locked_storage_trie(state_root, hashed_address)?
@@ -1031,11 +1026,6 @@ impl Store {
         starting_hash: H256,
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
-            return Ok(None);
-        };
-        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         let storage_trie = self.engine.open_storage_trie(state_root, hashed_address)?;
         let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
         if let Some(last_hash) = last_hash {
@@ -1059,23 +1049,16 @@ impl Store {
         let Some(account_path) = paths.first() else {
             return Ok(vec![]);
         };
-        let state_trie = self.engine.open_state_trie(state_root)?;
         // State Trie Nodes Request
         if paths.len() == 1 {
+            let state_trie = self.engine.open_state_trie(state_root)?;
             // Fetch state trie node
             let node = state_trie.get_node(account_path)?;
             return Ok(vec![node]);
         }
         // Storage Trie Nodes Request
-        let Some(account_state) = state_trie
-            .get(account_path)?
-            .map(|ref rlp| AccountState::decode(rlp))
-            .transpose()?
-        else {
-            return Ok(vec![]);
-        };
         // We can't access the storage trie without the account's address hash
-        let Ok(hashed_address) = account_path.clone().try_into().map(H256) else {
+        let Ok(hashed_address) = AsRef::<[u8]>::as_ref(&account_path).try_into().map(H256) else {
             return Ok(vec![]);
         };
         let storage_trie = self.engine.open_storage_trie(state_root, hashed_address)?;
@@ -1119,21 +1102,20 @@ impl Store {
         self.engine.open_locked_state_trie(state_root)
     }
 
-    pub fn open_direct_storage_trie(&self, addr: H256, root: H256) -> Result<Trie, StoreError> {
-        self.engine.open_direct_storage_trie(addr, root)
+    pub fn open_direct_storage_trie(&self, addr: H256) -> Result<Trie, StoreError> {
+        self.engine.open_direct_storage_trie(addr)
     }
 
-    pub fn open_direct_state_trie(&self, root: H256) -> Result<Trie, StoreError> {
-        self.engine.open_direct_state_trie(root)
+    pub fn open_direct_state_trie(&self) -> Result<Trie, StoreError> {
+        self.engine.open_direct_state_trie()
     }
 
     /// Obtain a storage trie from the given address and storage_root.
     /// Doesn't check if the account is stored
     pub fn open_storage_trie(
         &self,
-        account_hash: H256,
-        storage_root: H256,
         state_root: H256,
+        account_hash: H256,
     ) -> Result<Trie, StoreError> {
         self.engine.open_storage_trie(state_root, account_hash)
     }
@@ -1142,9 +1124,8 @@ impl Store {
     /// Doesn't check if the account is stored
     pub fn open_locked_storage_trie(
         &self,
-        account_hash: H256,
-        storage_root: H256,
         state_root: H256,
+        account_hash: H256,
     ) -> Result<Trie, StoreError> {
         self.engine
             .open_locked_storage_trie(state_root, account_hash)
@@ -1504,9 +1485,7 @@ mod tests {
             })
             .collect();
         slots.sort_by_key(|a| a.0);
-        let mut trie = store
-            .open_storage_trie(address, *EMPTY_TRIE_HASH, *EMPTY_TRIE_HASH)
-            .unwrap();
+        let mut trie = store.open_storage_trie(*EMPTY_TRIE_HASH, address).unwrap();
         for (slot, value) in &slots {
             trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
         }

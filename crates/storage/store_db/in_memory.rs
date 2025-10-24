@@ -466,22 +466,28 @@ impl StoreEngine for Store {
         Ok(Trie::open(wrap_db, state_root))
     }
 
-    fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+    fn open_direct_state_trie(&self) -> Result<Trie, StoreError> {
         let store = self.inner()?;
         let trie_backend = store.state_trie_nodes.clone();
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        // TODO: check if this is actually used internally
+        let state_root = db
+            .get(Nibbles::default())?
+            .map(keccak)
+            .unwrap_or_else(|| *EMPTY_TRIE_HASH);
         Ok(Trie::open(db, state_root))
     }
 
-    fn open_direct_storage_trie(
-        &self,
-        hashed_address: H256,
-        storage_root: H256,
-    ) -> Result<Trie, StoreError> {
+    fn open_direct_storage_trie(&self, hashed_address: H256) -> Result<Trie, StoreError> {
         let store = self.inner()?;
         let trie_backend = store.state_trie_nodes.clone();
         let prefix = apply_prefix(Some(hashed_address), Default::default());
         let db = Box::new(InMemoryTrieDB::new_with_prefix(trie_backend, prefix));
+        // TODO: check if this is actually used internally
+        let storage_root = db
+            .get(Nibbles::default())?
+            .map(keccak)
+            .unwrap_or_else(|| *EMPTY_TRIE_HASH);
         Ok(Trie::open(db, storage_root))
     }
 

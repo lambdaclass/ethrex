@@ -10,8 +10,8 @@ use ethrex_common::{
     H256,
     constants::EMPTY_TRIE_HASH,
     types::{
-        AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-        Index, Receipt, Transaction,
+        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
+        Transaction,
     },
     utils::keccak,
 };
@@ -532,7 +532,8 @@ impl Store {
 
             let mut ctr = 0;
             let mut batch = WriteBatch::default();
-            let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
+            // TODO: just iter the DB entries filtering leaves
+            let mut iter = self.open_direct_state_trie()?.into_iter();
             if last_written_account > Nibbles::default() {
                 iter.advance(last_written_account.to_bytes())?;
             }
@@ -540,7 +541,6 @@ impl Store {
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
-                let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
                 batch.put_cf(&cf_misc, "last_written", path.as_ref());
                 batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
@@ -549,9 +549,8 @@ impl Store {
                     self.db.write(std::mem::take(&mut batch))?;
                 }
 
-                let mut iter_inner = self
-                    .open_direct_storage_trie(account_hash, account_state.storage_root)?
-                    .into_iter();
+                // TODO: just iter the DB entries filtering leaves
+                let mut iter_inner = self.open_direct_storage_trie(account_hash)?.into_iter();
                 if last_written_storage > Nibbles::default() {
                     iter_inner.advance(last_written_storage.to_bytes())?;
                     last_written_storage = Nibbles::default();
@@ -1355,21 +1354,25 @@ impl StoreEngine for Store {
         Ok(Trie::open(wrap_db, state_root))
     }
 
-    fn open_direct_storage_trie(
-        &self,
-        hashed_address: H256,
-        storage_root: H256,
-    ) -> Result<Trie, StoreError> {
+    fn open_direct_storage_trie(&self, hashed_address: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
             CF_TRIE_NODES,
             Some(hashed_address),
         )?);
+        let storage_root = db
+            .get(Nibbles::default())?
+            .map(keccak)
+            .unwrap_or_else(|| *EMPTY_TRIE_HASH);
         Ok(Trie::open(db, storage_root))
     }
 
-    fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+    fn open_direct_state_trie(&self) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let state_root = db
+            .get(Nibbles::default())?
+            .map(keccak)
+            .unwrap_or_else(|| *EMPTY_TRIE_HASH);
         Ok(Trie::open(db, state_root))
     }
 

@@ -567,10 +567,9 @@ pub fn determine_missing_children(
     let mut count = 0;
     let node = node_response.node.clone();
     let trie = store
-        .open_direct_storage_trie(
-            H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
-            *EMPTY_TRIE_HASH,
-        )
+        .open_direct_storage_trie(H256::from_slice(
+            &node_response.node_request.acc_path.to_bytes(),
+        ))
         .inspect_err(|_| {
             error!("Malformed data when opening the storage trie in determine missing children")
         })?;
