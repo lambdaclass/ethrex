@@ -750,8 +750,9 @@ impl L1Committer {
 
         // CAUTION
         // We need to skip checkpoint creation if the directory already exists.
-        // If not skipped, this would cause a lock error when rocksdb feature
-        // is enabled.
+        // Sometimes the commit_next_batch task is retried after a failure, and in
+        // that case we would try to create a checkpoint again at the same path,
+        // causing an lock error under rocksdb feature.
         if new_checkpoint_path.exists() {
             debug!("Checkpoint at path {new_checkpoint_path:?} already exists, skipping creation");
             return Ok(());
