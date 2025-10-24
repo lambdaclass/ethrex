@@ -12,15 +12,15 @@ use std::{
 use crate::calldata::Value;
 
 #[cfg(feature = "sp1")]
-const SP1_VM_PROGRAM_CODE: Option<Vec<u8>> = Some(include_bytes!(concat!(
-    "../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf"
+const SP1_VM_PROGRAM_CODE: Option<&[u8]> = Some(include_bytes!(concat!(
+    "../../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf"
 )));
 #[cfg(not(feature = "sp1"))]
-const SP1_VM_PROGRAM_CODE: Option<Vec<u8>> = None;
+const SP1_VM_PROGRAM_CODE: Option<&[u8]> = None;
 
 #[cfg(feature = "risc0")]
 const RISC0_VM_PROGRAM_CODE: Option<&str> = Some(include_str!(concat!(
-    "../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk"
+    "../../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk"
 )));
 #[cfg(not(feature = "risc0"))]
 const RISC0_VM_PROGRAM_CODE: Option<&str> = None;
@@ -111,7 +111,7 @@ impl ProverType {
             },
             // for sp1, Aligned requires the ELF file
             Self::SP1 => {
-                Ok(SP1_VM_PROGRAM_CODE)
+                Ok(SP1_VM_PROGRAM_CODE.map(|x| x.to_vec()))
             }
             ,
             // other types are not supported by Aligned
