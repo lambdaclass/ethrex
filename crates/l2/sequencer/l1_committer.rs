@@ -608,7 +608,7 @@ impl L1Committer {
                 .cloned()
                 .ok_or_else(|| CommitterError::MissingBlob(batch.number))?;
 
-            if proofs.len() < proof_count {
+            if proofs.len() != proof_count {
                 return Err(CommitterError::MissingBlob(batch.number));
             }
 
