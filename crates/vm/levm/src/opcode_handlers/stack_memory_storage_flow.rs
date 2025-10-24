@@ -12,6 +12,7 @@ use ethrex_common::{
     U256,
     utils::{u256_to_big_endian, u256_to_h256},
 };
+use std::sync::atomic::Ordering;
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -128,6 +129,8 @@ impl<'a> VM<'a> {
 
     // SLOAD operation
     pub fn op_sload(&mut self) -> Result<OpcodeResult, VMError> {
+        self.stats.0.fetch_add(1, Ordering::Relaxed);
+
         let (storage_slot_key, address) = {
             let current_call_frame = &mut self.current_call_frame;
             let storage_slot_key = current_call_frame.stack.pop1()?;
@@ -152,6 +155,8 @@ impl<'a> VM<'a> {
         if self.current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
+
+        self.stats.1.fetch_add(1, Ordering::Relaxed);
 
         let (storage_slot_key, new_storage_slot_value, to) = {
             let current_call_frame = &mut self.current_call_frame;
