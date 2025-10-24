@@ -28,7 +28,7 @@ type Proof = Bytes48;
 pub fn warm_up_trusted_setup() {
     #[cfg(feature = "c-kzg")]
     {
-        let _ = c_kzg::ethereum_kzg_settings(8);
+        let _ = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
     }
 }
 
@@ -176,10 +176,12 @@ pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proo
 pub fn blob_to_commitment_and_cell_proofs(
     blob: &Blob,
 ) -> Result<(Commitment, Vec<Proof>), KzgError> {
-    let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
     let blob: c_kzg::Blob = (*blob).into();
-    let commitment =
-        c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg::ethereum_kzg_settings(8), &blob)?;
+    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(
+        c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
+        &blob,
+    )?;
     let commitment_bytes = commitment.to_bytes();
 
     let (_cells, cell_proofs) = c_kzg_settings
