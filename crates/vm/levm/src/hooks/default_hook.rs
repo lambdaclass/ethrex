@@ -9,7 +9,10 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_common::{Address, U256, types::Fork};
+use ethrex_common::{
+    Address, U256,
+    types::{Code, Fork},
+};
 
 pub const MAX_REFUND_QUOTIENT: u64 = 5;
 
@@ -96,7 +99,7 @@ impl Hook for DefaultHook {
 
         // (9) SENDER_NOT_EOA
         let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, code)?;
+        validate_sender(sender_address, &code.bytecode)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -492,7 +495,7 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     let (bytecode, code_address) = if vm.is_create()? {
         // Here bytecode is the calldata and the code_address is just the created contract address.
         let calldata = std::mem::take(&mut vm.current_call_frame.calldata);
-        (calldata, vm.current_call_frame.to)
+        (Code::from_bytecode(calldata), vm.current_call_frame.to)
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;
