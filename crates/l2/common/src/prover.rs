@@ -11,6 +11,20 @@ use std::{
 
 use crate::calldata::Value;
 
+#[cfg(feature = "sp1")]
+const SP1_VM_PROGRAM_CODE: Option<Vec<u8>> = Some(include_bytes!(concat!(
+    "../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf"
+)));
+#[cfg(not(feature = "sp1"))]
+const SP1_VM_PROGRAM_CODE: Option<Vec<u8>> = None;
+
+#[cfg(feature = "risc0")]
+const RISC0_VM_PROGRAM_CODE: Option<&str> = Some(include_str!(concat!(
+    "../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk"
+)));
+#[cfg(not(feature = "risc0"))]
+const RISC0_VM_PROGRAM_CODE: Option<&str> = None;
+
 #[serde_as]
 #[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive)]
 pub struct ProverInputData {
@@ -89,13 +103,7 @@ impl ProverType {
     pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
         match self {
             Self::RISC0 => {
-                let path = format!(
-                    "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
-                    env!("CARGO_MANIFEST_DIR")
-                );
-                let path = std::fs::canonicalize(path)?;
-                let string = std::fs::read_to_string(path)?;
-                let trimmed = string.trim_start_matches("0x").trim();
+                let trimmed = RISC0_VM_PROGRAM_CODE.unwrap_or_default().trim_start_matches("0x").trim();
                 let decoded = hex::decode(trimmed).map_err(|e| {
                     std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
                 })?;
@@ -103,11 +111,7 @@ impl ProverType {
             },
             // for sp1, Aligned requires the ELF file
             Self::SP1 => {
-                let path = format!(
-                    "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf",
-                    env!("CARGO_MANIFEST_DIR"));
-                let path = std::fs::canonicalize(path)?;
-                std::fs::read(path).map(Some)
+                Ok(SP1_VM_PROGRAM_CODE)
             }
             ,
             // other types are not supported by Aligned
