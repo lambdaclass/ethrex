@@ -425,14 +425,17 @@ fn pay_fee_token(vm: &mut VM<'_>, receiver: Address, amount: U256) -> Result<(),
     call_fee_token_contract(vm, PAY_FEE_SELECTOR, receiver, amount)
 }
 
-#[allow(clippy::unwrap_used)]
 fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
-    let fee_token = vm.env.custom_fee_token.unwrap();
+    let fee_token = vm
+        .env
+        .custom_fee_token
+        .ok_or(VMError::Internal(InternalError::Custom(
+            "No fee token address provided, this is a bug".to_owned(),
+        )))?;
 
     let mut db_clone = vm.db.clone(); // expensive
-    let sequencer =
-        Address::from_slice(&hex::decode("0002bf507275217c9e5ee250bc1b5ca177bb4f74").unwrap());
-    let nonce = db_clone.get_account(sequencer)?.info.nonce;
+    let origin = COMMON_BRIDGE_L2_ADDRESS; // We set the common bridge to restrict access to the fee token contract
+    let nonce = db_clone.get_account(origin)?.info.nonce;
     let tx_check_balance = EIP1559Transaction {
         // we are simulating the transaction
         chain_id: vm.env.chain_id.as_u64(),
@@ -451,7 +454,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     env_clone.base_fee_per_gas = U256::zero();
     env_clone.block_excess_blob_gas = None;
     env_clone.gas_price = U256::zero();
-    env_clone.origin = sequencer;
+    env_clone.origin = origin;
     env_clone.custom_fee_token = None;
     env_clone.gas_limit = 21000 * 100;
 
@@ -478,7 +481,9 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         .initial_accounts_state
         .get(&fee_token)
         .cloned()
-        .unwrap();
+        .ok_or(VMError::Internal(InternalError::Custom(
+            "No initial state found for fee token".to_owned(),
+        )))?;
     // We have to merge, not insert
     vm.db
         .initial_accounts_state
