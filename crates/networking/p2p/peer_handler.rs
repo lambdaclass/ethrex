@@ -30,7 +30,7 @@ use ethrex_common::{
     BigEndianHash, H256, U256,
     types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
@@ -1858,7 +1858,7 @@ impl PeerHandler {
             Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
                 .nodes
                 .iter()
-                .map(|node| Node::decode_raw(node))
+                .map(|node| Node::decode(node))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| {
                     RequestStateTrieNodesError::RequestError(PeerConnectionError::RLPDecodeError(e))
