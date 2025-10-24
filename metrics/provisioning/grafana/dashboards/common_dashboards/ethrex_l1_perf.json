@@ -2496,14 +2496,14 @@
           "text": "",
           "value": ""
         },
-        "definition": "label_values(gigagas,instance)",
+        "definition": "label_values({__name__=~\"(gigagas|eth_con_beacon_slot)\"},instance)",
         "includeAll": true,
         "multi": true,
         "name": "instance",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(gigagas,instance)",
+          "query": "label_values({__name__=~\"(gigagas|eth_con_beacon_slot)\"},instance)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
