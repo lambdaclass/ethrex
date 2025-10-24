@@ -399,19 +399,19 @@ async fn initialize_checkpoint(
 
     let db_latest_block_number = store.get_latest_block_number().await?;
 
-    let checkpoint_latest_block = checkpoint_store
-        .get_block_by_number(checkpoint_latest_block_number)
-        .await?
-        .ok_or(eyre::eyre!("latest block not found in checkpoint store"))?;
+    let checkpoint_latest_block_header = checkpoint_store
+        .get_block_header(checkpoint_latest_block_number)?
+        .ok_or(eyre::eyre!(
+            "latest block header ({checkpoint_latest_block_number}) not found in checkpoint store"
+        ))?;
 
-    let db_latest_block = store
-        .get_block_by_number(db_latest_block_number)
-        .await?
+    let db_latest_block_header = store
+        .get_block_header(db_latest_block_number)?
         .ok_or(eyre::eyre!("latest block not found in main store"))?;
 
     // Final sanity check
 
-    if !checkpoint_store.has_state_root(checkpoint_latest_block.header.state_root)? {
+    if !checkpoint_store.has_state_root(checkpoint_latest_block_header.state_root)? {
         return Err(eyre::eyre!(
             "checkpoint store state is not regenerated properly"
         ));
@@ -423,7 +423,7 @@ async fn initialize_checkpoint(
         ));
     }
 
-    if checkpoint_latest_block.hash() != db_latest_block.hash() {
+    if checkpoint_latest_block_header.state_root != db_latest_block_header.state_root {
         return Err(eyre::eyre!(
             "checkpoint store latest block hash does not match main store latest block hash after regeneration"
         ));
