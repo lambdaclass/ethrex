@@ -153,7 +153,7 @@ impl Syncer {
                 );
             }
 
-            // TODO #2767: If the error is irrecoverable, we should exit ethrex
+            // If the error is irrecoverable, we exit ethrex
             Err(error) => {
                 match error {
                     SyncError::SnapshotReadError(_, _)
@@ -165,7 +165,6 @@ impl Syncer {
                     | SyncError::AccountStoragesSnapshotsDirNotFound
                     | SyncError::CodeHashesSnapshotsDirNotFound
                     | SyncError::DifferentStateRoots(_, _, _)
-                    | SyncError::NoPeers
                     | SyncError::NoBlockHeaders
                     | SyncError::PeerHandler(_)
                     | SyncError::CorruptPath
@@ -174,6 +173,7 @@ impl Syncer {
                     | SyncError::StorageTempDBDirNotFound
                     | SyncError::RocksDBError(_)
                     | SyncError::BytecodeFileError
+                    | SyncError::NoLatestCanonical
                     | SyncError::PeerTableError(_) => {
                         // We do nothing, as the error is recoverable
                         error!(
@@ -182,7 +182,17 @@ impl Syncer {
                         );
                         std::process::exit(-1);
                     }
-                    _ => {
+                    SyncError::Chain(_)
+                    | SyncError::Store(_)
+                    | SyncError::Send(_)
+                    | SyncError::Trie(_)
+                    | SyncError::Rlp(_)
+                    | SyncError::JoinHandle(_)
+                    | SyncError::CorruptDB
+                    | SyncError::BodiesNotFound
+                    | SyncError::InvalidRangeReceived
+                    | SyncError::BlockNumber(_)
+                    | SyncError::NoBlocks => {
                         // We do nothing, as the error is recoverable
                         error!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
@@ -1189,8 +1199,6 @@ pub enum SyncError {
     DifferentStateRoots(H256, H256, H256),
     #[error("Failed to get block headers")]
     NoBlockHeaders,
-    #[error("The download datadir folders at {0} are not empty, delete them first")]
-    NotEmptyDatadirFolders(PathBuf),
     #[error("Peer handler error: {0}")]
     PeerHandler(#[from] PeerHandlerError),
     #[error("Corrupt Path")]
