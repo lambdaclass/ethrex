@@ -73,7 +73,7 @@ dependencies = [
 [[package]]
 name = "aligned-sdk"
 version = "0.1.0"
-source = "git+https://github.com/yetanotherco/aligned_layer?tag=v0.19.1#030e1285889e144b53275cf3922a851e046e5916"
+source = "git+https://github.com/yetanotherco/aligned_layer?rev=c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23#c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23"
 dependencies = [
  "ciborium",
  "dialoguer",
@@ -2438,8 +2438,8 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "serde 1.0.228",
  "rustc-hash",
+ "serde 1.0.228",
  "serde_json",
  "sha3",
  "thiserror 2.0.16",
