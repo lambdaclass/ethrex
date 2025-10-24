@@ -14,10 +14,6 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_common::H256;
-use ethrex_rpc::{
-    EthClient,
-    types::block_identifier::{BlockIdentifier, BlockTag},
-};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
@@ -29,7 +25,7 @@ use spawned_concurrency::tasks::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BlockProducerConfig, EthConfig, SequencerConfig,
+    BlockProducerConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
 };
 
@@ -47,7 +43,6 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Produce,
-    UpdateL1BlobBaseFee,
 }
 
 #[derive(Clone)]
@@ -67,8 +62,6 @@ pub struct BlockProducer {
     // Needed to ensure privileged tx nonces are sequential
     last_privileged_nonce: Option<u64>,
     block_gas_limit: u64,
-    l1_blob_base_fee_update_interval: u64,
-    eth_client: EthClient,
 }
 
 #[derive(Clone, Serialize)]
@@ -82,7 +75,6 @@ pub struct BlockProducerHealth {
 impl BlockProducer {
     pub fn new(
         config: &BlockProducerConfig,
-        eth_config: &EthConfig,
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
@@ -95,10 +87,7 @@ impl BlockProducer {
             operator_fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
-            l1_blob_base_fee_update_interval,
         } = config;
-
-        let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
 
         if base_fee_vault_address.is_some_and(|base_fee_vault| base_fee_vault == *coinbase_address)
         {
@@ -125,8 +114,6 @@ impl BlockProducer {
             // FIXME: Initialize properly to the last privileged nonce in the chain
             last_privileged_nonce: None,
             block_gas_limit: *block_gas_limit,
-            l1_blob_base_fee_update_interval: *l1_blob_base_fee_update_interval,
-            eth_client,
         })
     }
 
@@ -139,17 +126,12 @@ impl BlockProducer {
     ) -> Result<GenServerHandle<BlockProducer>, BlockProducerError> {
         let mut block_producer = Self::new(
             &cfg.block_producer,
-            &cfg.eth,
             store,
             rollup_store,
             blockchain,
             sequencer_state,
         )?
         .start_blocking();
-        block_producer
-            .cast(InMessage::UpdateL1BlobBaseFee)
-            .await
-            .map_err(BlockProducerError::InternalError)?;
         block_producer
             .cast(InMessage::Produce)
             .await
@@ -297,44 +279,6 @@ impl GenServer for BlockProducer {
                     handle.clone(),
                     Self::CastMsg::Produce,
                 );
-                CastResponse::NoReply
-            }
-            InMessage::UpdateL1BlobBaseFee => {
-                info!("Updating L1 blob base fee");
-                let Ok(blob_base_fee) = self
-                    .eth_client
-                    .get_blob_base_fee(BlockIdentifier::Tag(BlockTag::Latest))
-                    .await
-                    .inspect_err(|e| {
-                        error!("Failed to fetch L1 blob base fee: {e}");
-                    })
-                else {
-                    return CastResponse::NoReply;
-                };
-
-                info!("Fetched L1 blob base fee: {blob_base_fee}");
-
-                let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
-                    error!("Invalid blockchain type. Expected L2.");
-                    return CastResponse::NoReply;
-                };
-
-                let mut fee_config_guard = l2_config.fee_config.write().await;
-
-                let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_mut() else {
-                    warn!("L1 fee config is not set. Skipping L1 blob base fee update.");
-                    return CastResponse::NoReply;
-                };
-
-                info!(
-                    "Updating L1 blob base fee from {} to {}",
-                    l1_fee_config.l1_fee_per_blob_gas, blob_base_fee
-                );
-
-                l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
-
-                let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
-                send_after(interval, handle.clone(), Self::CastMsg::UpdateL1BlobBaseFee);
                 CastResponse::NoReply
             }
         }

@@ -166,9 +166,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
                 block_gas_limit: opts.block_producer_opts.block_gas_limit,
-                l1_blob_base_fee_update_interval: opts
-                    .block_producer_opts
-                    .l1_fee_update_interval_ms,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
@@ -201,6 +198,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
+                l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -402,6 +400,14 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub watcher_block_delay: u64,
+    #[arg(
+        long = "watcher.l1-fee-update-interval-ms",
+        value_name = "ADDRESS",
+        default_value = "60000",
+        env = "ETHREX_BLOCK_PRODUCER_L1_FEE_UPDATE_INTERVAL_MS",
+        help_heading = "Block producer options"
+    )]
+    pub l1_fee_update_interval_ms: u64,
 }
 
 impl Default for WatcherOptions {
@@ -411,6 +417,7 @@ impl Default for WatcherOptions {
             watch_interval_ms: 1000,
             max_block_step: 5000,
             watcher_block_delay: 0,
+            l1_fee_update_interval_ms: 60000,
         }
     }
 }
@@ -472,14 +479,6 @@ pub struct BlockProducerOptions {
     )]
     pub l1_fee_vault_address: Option<Address>,
     #[arg(
-        long = "block-producer.l1-fee-update-interval-ms",
-        value_name = "ADDRESS",
-        default_value = "60000",
-        env = "ETHREX_BLOCK_PRODUCER_L1_FEE_UPDATE_INTERVAL_MS",
-        help_heading = "Block producer options"
-    )]
-    pub l1_fee_update_interval_ms: u64,
-    #[arg(
         long,
         default_value = "2",
         value_name = "UINT64",
@@ -513,7 +512,6 @@ impl Default for BlockProducerOptions {
             l1_fee_vault_address: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
-            l1_fee_update_interval_ms: 60000,
         }
     }
 }
