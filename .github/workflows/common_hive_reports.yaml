@@ -12,6 +12,10 @@ on:
         description: "The name of the hive report artifact"
         value: ${{ jobs.hive-report.outputs.artifact_name }}
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
