@@ -1,7 +1,7 @@
 use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
 
-use crate::{Nibbles, Node, NodeRLP, Trie, error::TrieError};
+use crate::{FlatKeyValue, Nibbles, Node, NodeRLP, Trie, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -12,21 +12,36 @@ pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
+    fn put_batch(
+        &self,
+        key_values: Vec<(Nibbles, Vec<u8>)>,
+        fkv: Vec<FlatKeyValue>,
+    ) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
-    fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
+    fn put_batch_no_alloc(
+        &self,
+        key_values: &[(Nibbles, Node)],
+        fkv: Vec<FlatKeyValue>,
+    ) -> Result<(), TrieError> {
         self.put_batch(
             key_values
                 .iter()
                 .map(|node| (node.0.clone(), node.1.encode_to_vec()))
                 .collect(),
+            fkv,
         )
     }
     fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
-        self.put_batch(vec![(key, value)])
+        self.put_batch(
+            vec![(key.clone(), value.clone())],
+            vec![(key.to_bytes(), value)],
+        )
     }
-    fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, _key: &[u8]) -> bool {
         false
+    }
+    fn get_fkv(&self, _key: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
+        unimplemented!();
     }
 }
 
@@ -65,7 +80,7 @@ impl InMemoryTrieDB {
     ) -> Result<Self, TrieError> {
         let mut embedded_root = Trie::get_embedded_root(state_nodes, root_hash)?;
         let mut hashed_nodes = vec![];
-        embedded_root.commit(Nibbles::default(), &mut hashed_nodes);
+        embedded_root.commit(Nibbles::default(), &mut hashed_nodes, &mut vec![]);
 
         let hashed_nodes = hashed_nodes
             .into_iter()
@@ -94,9 +109,12 @@ impl TrieDB for InMemoryTrieDB {
             .cloned())
     }
 
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(
+        &self,
+        key_values: Vec<(Nibbles, Vec<u8>)>,
+        _fkv: Vec<FlatKeyValue>,
+    ) -> Result<(), TrieError> {
         let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
-
         for (key, value) in key_values {
             let prefixed_key = self.apply_prefix(key);
             db.insert(prefixed_key.into_vec(), value);

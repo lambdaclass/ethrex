@@ -1,7 +1,7 @@
 use crate::{
     rlp::AccountCodeHashRLP,
     trie_db::{
-        layering::{TrieLayerCache, TrieWrapper, apply_prefix},
+        layering::{apply_prefix, apply_prefix_fkv, TrieLayerCache, TrieWrapper},
         rocksdb_locked::RocksDBLockedTrieDB,
     },
 };
@@ -518,30 +518,27 @@ impl Store {
                 .get_cf(&cf_misc, "last_written")?
                 .unwrap_or_default();
             let last_written_account = last_written
-                .get(0..64)
-                .map(|v| Nibbles::from_hex(v.to_vec()))
-                .unwrap_or_default();
+                .get(0..32);
             let mut last_written_storage = last_written
-                .get(66..130)
-                .map(|v| Nibbles::from_hex(v.to_vec()))
-                .unwrap_or_default();
+                .get(32..64);
 
             debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
 
             let mut ctr = 0;
             let mut batch = WriteBatch::default();
             let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
-            if last_written_account > Nibbles::default() {
-                iter.advance(last_written_account.to_bytes())?;
+            if let Some(account) = last_written_account {
+                iter.advance(account.to_vec())?;
             }
             let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
+                let account_path = path.to_bytes();
                 let account_state = AccountState::decode(&node.value)?;
-                let account_hash = H256::from_slice(&path.to_bytes());
-                batch.put_cf(&cf_misc, "last_written", path.as_ref());
-                batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
+                let account_hash = H256::from_slice(&account_path);
+                batch.put_cf(&cf_misc, "last_written", &account_path);
+                batch.put_cf(&cf_flatkeyvalue, &account_path, node.value);
                 ctr += 1;
                 if ctr > 10_000 {
                     self.db.write(std::mem::take(&mut batch))?;
@@ -550,17 +547,17 @@ impl Store {
                 let mut iter_inner = self
                     .open_direct_storage_trie(account_hash, account_state.storage_root)?
                     .into_iter();
-                if last_written_storage > Nibbles::default() {
-                    iter_inner.advance(last_written_storage.to_bytes())?;
-                    last_written_storage = Nibbles::default();
+                if let Some(storage) = last_written_storage {
+                    iter_inner.advance(storage.to_vec())?;
+                    last_written_storage = None;
                 }
                 iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
                     let Node::Leaf(node) = node else {
                         return Ok(());
                     };
-                    let key = apply_prefix(Some(account_hash), path);
-                    batch.put_cf(&cf_misc, "last_written", key.as_ref());
-                    batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
+                    let key = apply_prefix_fkv(Some(account_hash), &path.to_bytes());
+                    batch.put_cf(&cf_misc, "last_written", &key);
+                    batch.put_cf(&cf_flatkeyvalue, &key, node.value);
                     ctr += 1;
                     if ctr > 10_000 {
                         self.db.write(std::mem::take(&mut batch))?;
@@ -672,38 +669,30 @@ impl StoreEngine for Store {
                 let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Stop);
 
                 let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
-                let nodes = trie.commit(root).unwrap_or_default();
+                let (nodes, fkvs) = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
-                    let is_leaf = key.len() == 65 || key.len() == 131;
-
-                    if is_leaf && key > last_written {
+                    if value.is_empty() {
+                        batch.delete_cf(&cf_trie_nodes, key);
+                    } else {
+                        batch.put_cf(&cf_trie_nodes, key, value);
+                    }
+                }
+                for (key, value) in fkvs {
+                    if key > last_written {
                         continue;
                     }
-                    let cf = if is_leaf {
-                        &cf_flatkeyvalue
-                    } else {
-                        &cf_trie_nodes
-                    };
                     if value.is_empty() {
-                        batch.delete_cf(cf, key);
+                        batch.delete_cf(&cf_flatkeyvalue, key);
                     } else {
-                        batch.put_cf(cf, key, value);
+                        batch.put_cf(&cf_flatkeyvalue, key, value);
                     }
                 }
             }
             trie.put_batch(
                 parent_state_root,
                 last_state_root,
-                update_batch
-                    .storage_updates
-                    .into_iter()
-                    .flat_map(|(account_hash, nodes)| {
-                        nodes
-                            .into_iter()
-                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                    })
-                    .chain(update_batch.account_updates)
-                    .collect(),
+                update_batch.trie_updates,
+                update_batch.fkv_updates,
             );
 
             for block in update_batch.blocks {

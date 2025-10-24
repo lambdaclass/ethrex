@@ -121,7 +121,7 @@ impl StoreEngine for Store {
                 .map_err(|_| StoreError::LockError)?;
 
             if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
-                let nodes = trie.commit(root).unwrap_or_default();
+                let (nodes, _) = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
                     if value.is_empty() {
                         state_trie.remove(&key);
@@ -130,17 +130,12 @@ impl StoreEngine for Store {
                     }
                 }
             }
-            let key_values = update_batch
-                .storage_updates
-                .into_iter()
-                .flat_map(|(account_hash, nodes)| {
-                    nodes
-                        .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                })
-                .chain(update_batch.account_updates)
-                .collect();
-            trie.put_batch(pre_state_root, last_state_root, key_values);
+            trie.put_batch(
+                pre_state_root,
+                last_state_root,
+                update_batch.trie_updates,
+                vec![],
+            );
         }
 
         for block in update_batch.blocks {

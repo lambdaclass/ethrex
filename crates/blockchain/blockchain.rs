@@ -433,8 +433,8 @@ impl Blockchain {
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
         let update_batch = UpdateBatch {
-            account_updates: account_updates_list.state_updates,
-            storage_updates: account_updates_list.storage_updates,
+            trie_updates: account_updates_list.trie_updates,
+            fkv_updates: account_updates_list.fkv_updates,
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
@@ -636,19 +636,16 @@ impl Blockchain {
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
         let new_state_root = account_updates_list.state_trie_hash;
-        let state_updates = account_updates_list.state_updates;
-        let accounts_updates = account_updates_list.storage_updates;
-        let code_updates = account_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
         let update_batch = UpdateBatch {
-            account_updates: state_updates,
-            storage_updates: accounts_updates,
+            trie_updates: account_updates_list.trie_updates,
+            fkv_updates: account_updates_list.fkv_updates,
             blocks,
             receipts: all_receipts,
-            code_updates,
+            code_updates: account_updates_list.code_updates,
         };
 
         self.storage

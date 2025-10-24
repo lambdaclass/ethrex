@@ -137,7 +137,7 @@ fn flush_nodes_to_write(
     db: &dyn TrieDB,
     sender: Sender<Vec<(Nibbles, Node)>>,
 ) -> Result<(), TrieGenerationError> {
-    db.put_batch_no_alloc(&nodes_to_write)
+    db.put_batch_no_alloc(&nodes_to_write, vec![])
         .map_err(TrieGenerationError::FlushToDbError)?;
     nodes_to_write.clear();
     let _ = sender.send(nodes_to_write);

@@ -1,4 +1,4 @@
-use crate::error::StoreError;
+use crate::{error::StoreError, trie_db::layering::apply_prefix_fkv};
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
+use ethrex_trie::{FlatKeyValue, Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::sync::Arc;
 use std::{
@@ -47,10 +47,10 @@ pub enum EngineType {
 }
 
 pub struct UpdateBatch {
-    /// Nodes to be added to the state trie
-    pub account_updates: Vec<TrieNode>,
-    /// Storage tries updated and their new nodes
-    pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
+    /// Trie nodes updated
+    pub trie_updates: Vec<TrieNode>,
+    /// Values updated
+    pub fkv_updates: Vec<FlatKeyValue>,
     /// Blocks to be added
     pub blocks: Vec<Block>,
     /// Receipts added per block
@@ -59,12 +59,10 @@ pub struct UpdateBatch {
     pub code_updates: Vec<(H256, Code)>,
 }
 
-type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
-
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
-    pub state_updates: Vec<(Nibbles, Vec<u8>)>,
-    pub storage_updates: StorageUpdates,
+    pub trie_updates: Vec<TrieNode>,
+    pub fkv_updates: Vec<FlatKeyValue>,
     pub code_updates: Vec<(H256, Code)>,
 }
 
@@ -380,11 +378,14 @@ impl Store {
         mut state_trie: Trie,
         account_updates: impl IntoIterator<Item = &AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
-        let mut ret_storage_updates = Vec::new();
+        let mut trie_updates = Vec::new();
+        let mut fkv_updates = Vec::new();
+
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
         for update in account_updates {
             let hashed_address = hash_address(&update.address);
+            let address_hash = H256::from_slice(&hashed_address);
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(&hashed_address)?;
@@ -411,7 +412,7 @@ impl Store {
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
                 let mut storage_trie = self.engine.open_storage_trie(
-                    H256::from_slice(&hashed_address),
+                    address_hash,
                     account_state.storage_root,
                     state_root,
                 )?;
@@ -423,19 +424,25 @@ impl Store {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
-                let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                let (storage_hash, (nodes, fkvs)) = storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                trie_updates.extend(nodes.into_iter().map(|(path, node)| {
+                    (apply_prefix(Some(address_hash), path), node)
+                }));
+                fkv_updates.extend(fkvs.into_iter().map(|(path, value)| {
+                    (apply_prefix_fkv(Some(address_hash), &path), value)
+                }));
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, (nodes, fkvs)) = state_trie.collect_changes_since_last_hash();
+        trie_updates.extend(nodes);
+        fkv_updates.extend(fkvs);
 
         Ok(AccountUpdatesList {
             state_trie_hash,
-            state_updates,
-            storage_updates: ret_storage_updates,
+            trie_updates,
+            fkv_updates,
             code_updates,
         })
     }
@@ -527,7 +534,7 @@ impl Store {
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
-            let (storage_root, new_nodes) = storage_trie.collect_changes_since_last_hash();
+            let (storage_root, (new_nodes, _)) = storage_trie.collect_changes_since_last_hash();
             nodes.insert(H256::from_slice(&hashed_address), new_nodes);
             // Add account to trie
             let account_state = AccountState {
@@ -538,7 +545,7 @@ impl Store {
             };
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_root, state_nodes) = genesis_state_trie.collect_changes_since_last_hash();
+        let (state_root, (state_nodes, _)) = genesis_state_trie.collect_changes_since_last_hash();
 
         // TODO: replace this with a Store method
         genesis_state_trie.db().put_batch(
@@ -551,6 +558,7 @@ impl Store {
                 })
                 .chain(state_nodes)
                 .collect(),
+            vec![], // fkv generation will take care
         )?;
         Ok(state_root)
     }

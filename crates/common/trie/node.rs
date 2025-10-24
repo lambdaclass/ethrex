@@ -9,7 +9,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{NodeRLP, PathRLP, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -47,17 +47,22 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
+    pub fn commit(
+        &mut self,
+        path: Nibbles,
+        acc: &mut Vec<(Nibbles, NodeRLP)>,
+        fkv_acc: &mut Vec<(PathRLP, ValueRLP)>,
+    ) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for (choice, node) in &mut node.choices.iter_mut().enumerate() {
-                            node.commit(path.append_new(choice as u8), acc);
+                            node.commit(path.append_new(choice as u8), acc, fkv_acc);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(path.concat(&node.prefix), acc);
+                        node.child.commit(path.concat(&node.prefix), acc, fkv_acc);
                     }
                     Node::Leaf(_) => {}
                 }
@@ -65,7 +70,7 @@ impl NodeRef {
                 node.encode(&mut buf);
                 let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
                 if let Node::Leaf(leaf) = node.as_ref() {
-                    acc.push((path.concat(&leaf.partial), leaf.value.clone()));
+                    fkv_acc.push((path.concat(&leaf.partial).to_bytes(), leaf.value.clone()));
                 }
                 acc.push((path.clone(), buf));
 

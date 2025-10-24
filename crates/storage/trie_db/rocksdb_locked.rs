@@ -1,11 +1,11 @@
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
+use ethrex_trie::{error::TrieError, FlatKeyValue, Nibbles, TrieDB};
 use rocksdb::{DBWithThreadMode, MultiThreaded, SnapshotWithThreadMode};
 use std::sync::Arc;
 
 use crate::{
     store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES},
-    trie_db::layering::apply_prefix,
+    trie_db::layering::{apply_prefix, apply_prefix_fkv},
 };
 
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
@@ -20,7 +20,7 @@ pub struct RocksDBLockedTrieDB {
     snapshot: SnapshotWithThreadMode<'static, DBWithThreadMode<MultiThreaded>>,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
-    last_computed_flatkeyvalue: Nibbles,
+    last_computed_flatkeyvalue: Vec<u8>,
 }
 
 impl RocksDBLockedTrieDB {
@@ -47,7 +47,6 @@ impl RocksDBLockedTrieDB {
         let last_computed_flatkeyvalue = db
             .get_cf(&cf_misc, "last_written")
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Error reading last_written: {e}")))?
-            .map(|v| Nibbles::from_hex(v.to_vec()))
             .unwrap_or_default();
         drop(cf_misc);
 
@@ -84,23 +83,25 @@ impl Drop for RocksDBLockedTrieDB {
 }
 
 impl TrieDB for RocksDBLockedTrieDB {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        self.last_computed_flatkeyvalue >= key
+    fn flatkeyvalue_computed(&self, key: &[u8]) -> bool {
+        self.last_computed_flatkeyvalue.as_slice() >= key
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let cf = if key.is_leaf() {
-            &self.cf_flatkeyvalue
-        } else {
-            &self.cf
-        };
         let db_key = self.make_key(key);
 
         self.snapshot
-            .get_cf(cf, db_key)
+            .get_cf(&self.cf, db_key)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB snapshot get error: {}", e)))
+    }
+    fn get_fkv(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
+        let db_key = apply_prefix_fkv(self.address_prefix, key);
+
+        self.snapshot
+            .get_cf(&self.cf_flatkeyvalue, db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB snapshot get error: {}", e)))
     }
 
-    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>, _fkv: Vec<FlatKeyValue>) -> Result<(), TrieError> {
         Err(TrieError::DbError(anyhow::anyhow!(
             "LockedTrie is read-only"
         )))

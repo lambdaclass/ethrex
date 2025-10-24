@@ -47,12 +47,16 @@ pub type ValueRLP = Vec<u8>;
 pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
 pub type TrieNode = (Nibbles, NodeRLP);
+/// Represent a FlatKey (ie no tree traversal needed) Value in the trie
+pub type FlatKeyValue = (PathRLP, ValueRLP);
+
+pub type TrieUpdates = (Vec<TrieNode>, Vec<FlatKeyValue>);
 
 /// Ethereum-compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
-    pending_removal: HashSet<Nibbles>,
+    pending_removal: HashSet<PathRLP>,
 }
 
 impl Default for Trie {
@@ -97,10 +101,10 @@ impl Trie {
         let path = Nibbles::from_bytes(pathrlp);
 
         if pathrlp.len() == 32
-            && !self.pending_removal.contains(&path)
-            && self.db().flatkeyvalue_computed(path.clone())
+            && !self.pending_removal.contains(pathrlp)
+            && self.db().flatkeyvalue_computed(pathrlp)
         {
-            let Some(value_rlp) = self.db.get(path)? else {
+            let Some(value_rlp) = self.db.get_fkv(pathrlp)? else {
                 return Ok(None);
             };
             if value_rlp.is_empty() {
@@ -126,8 +130,8 @@ impl Trie {
 
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
-        let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
+        let path = Nibbles::from_bytes(&path);
 
         self.root = if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -149,7 +153,7 @@ impl Trie {
             return Ok(None);
         }
         if path.len() == 32 {
-            self.pending_removal.insert(Nibbles::from_bytes(path));
+            self.pending_removal.insert(path.clone());
         }
 
         // If the trie is not empty, call the root node's removal logic.
@@ -192,7 +196,7 @@ impl Trie {
     /// # Returns
     ///
     /// A tuple containing the hash and the list of changes.
-    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
+    pub fn collect_changes_since_last_hash(&mut self) -> (H256, TrieUpdates) {
         let updates = self.commit_without_storing();
         let ret_hash = self.hash_no_commit();
         (ret_hash, updates)
@@ -203,25 +207,29 @@ impl Trie {
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
     /// the cached nodes.
     pub fn commit(&mut self) -> Result<(), TrieError> {
-        let acc = self.commit_without_storing();
-        self.db.put_batch(acc)?;
+        let (acc, fkv_acc) = self.commit_without_storing();
+        self.db.put_batch(acc, fkv_acc)?;
 
         Ok(())
     }
 
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
-    pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
+    pub fn commit_without_storing(&mut self) -> TrieUpdates {
         let mut acc = Vec::new();
+        let mut fkv_acc = self
+            .pending_removal
+            .drain()
+            .map(|path| (path, vec![]))
+            .collect();
         if self.root.is_valid() {
-            self.root.commit(Nibbles::default(), &mut acc);
+            self.root.commit(Nibbles::default(), &mut acc, &mut fkv_acc);
         }
         if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
             acc.push((Nibbles::default(), vec![RLP_NULL]))
         }
-        acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
 
-        acc
+        (acc, fkv_acc)
     }
 
     /// Obtain a merkle proof for the given path.
@@ -380,7 +388,7 @@ impl Trie {
                 Ok(None)
             }
 
-            fn put_batch(&self, _key_values: Vec<TrieNode>) -> Result<(), TrieError> {
+            fn put_batch(&self, _key_values: Vec<TrieNode>, _fkv: Vec<FlatKeyValue>) -> Result<(), TrieError> {
                 Ok(())
             }
         }

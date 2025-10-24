@@ -296,7 +296,7 @@ async fn heal_state_trie(
                     .expect("Store should open");
                 let db = trie_db.db();
                 // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
-                db.put_batch(encoded_to_write.into_iter().collect())
+                db.put_batch(encoded_to_write.into_iter().collect(), vec![])
                     .expect("The put batch on the store failed");
             });
         }

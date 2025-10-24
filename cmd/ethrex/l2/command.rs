@@ -436,13 +436,9 @@ impl Command {
                     store
                         .open_direct_state_trie(current_state_root)?
                         .db()
-                        .put_batch(account_updates_list.state_updates)?;
+                        .put_batch(account_updates_list.trie_updates, account_updates_list.fkv_updates)?;
 
                     current_state_root = account_updates_list.state_trie_hash;
-
-                    store
-                        .write_storage_trie_nodes_batch(account_updates_list.storage_updates)
-                        .await?;
 
                     store
                         .write_account_code_batch(account_updates_list.code_updates)

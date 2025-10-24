@@ -1,12 +1,12 @@
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
+use ethrex_trie::{Nibbles, Node, PathRLP, TrieDB, ValueRLP, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
 use crate::{
     store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES},
-    trie_db::layering::apply_prefix,
+    trie_db::layering::{apply_prefix, apply_prefix_fkv},
 };
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
@@ -18,7 +18,7 @@ pub struct RocksDBTrieDB {
     /// Storage trie address prefix
     address_prefix: Option<H256>,
     /// Last flatkeyvalue path already generated
-    last_computed_flatkeyvalue: Nibbles,
+    last_computed_flatkeyvalue: Vec<u8>,
 }
 
 impl RocksDBTrieDB {
@@ -40,7 +40,6 @@ impl RocksDBTrieDB {
         let last_computed_flatkeyvalue = db
             .get_cf(&cf_misc, "last_written")
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Error reading last_written: {e}")))?
-            .map(|v| Nibbles::from_hex(v.to_vec()))
             .unwrap_or_default();
         drop(cf_misc);
 
@@ -74,15 +73,11 @@ impl RocksDBTrieDB {
 }
 
 impl TrieDB for RocksDBTrieDB {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        self.last_computed_flatkeyvalue >= key
+    fn flatkeyvalue_computed(&self, key: &[u8]) -> bool {
+        self.last_computed_flatkeyvalue.as_slice() >= key
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let cf = if key.is_leaf() {
-            self.cf_handle_flatkeyvalue()?
-        } else {
-            self.cf_handle()?
-        };
+        let cf = self.cf_handle()?;
         let db_key = self.make_key(key);
 
         let res = self
@@ -91,19 +86,40 @@ impl TrieDB for RocksDBTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
         Ok(res)
     }
+    fn get_fkv(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
+        let cf = self.cf_handle_flatkeyvalue()?;
+        let db_key = apply_prefix_fkv(self.address_prefix, key);
 
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let cf = self.cf_handle()?;
-        let cf_snapshot = self.cf_handle_flatkeyvalue()?;
+        let res = self
+            .db
+            .get_cf(&cf, &db_key)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
+        Ok(res)
+    }
+
+    fn put_batch(
+        &self,
+        key_values: Vec<(Nibbles, Vec<u8>)>,
+        fkv: Vec<(PathRLP, ValueRLP)>,
+    ) -> Result<(), TrieError> {
+        let cf_nodes = self.cf_handle()?;
+        let cf_flatkeyvalue = self.cf_handle_flatkeyvalue()?;
         let mut batch = rocksdb::WriteBatch::default();
 
         for (key, value) in key_values {
-            let cf = if key.is_leaf() { &cf_snapshot } else { &cf };
             let db_key = self.make_key(key);
             if value.is_empty() {
-                batch.delete_cf(cf, db_key);
+                batch.delete_cf(&cf_nodes, db_key);
             } else {
-                batch.put_cf(cf, db_key, value);
+                batch.put_cf(&cf_nodes, db_key, value);
+            }
+        }
+        for (key, value) in fkv {
+            let db_key = apply_prefix_fkv(self.address_prefix, &key);
+            if value.is_empty() {
+                batch.delete_cf(&cf_flatkeyvalue, db_key);
+            } else {
+                batch.put_cf(&cf_flatkeyvalue, db_key, value);
             }
         }
 
@@ -112,23 +128,26 @@ impl TrieDB for RocksDBTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
     }
 
-    fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
-        let cf = self.cf_handle()?;
+    fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)], fkv: Vec<(PathRLP, ValueRLP)>) -> Result<(), TrieError> {
+        let cf_nodes = self.cf_handle()?;
         let cf_flatkeyvalue = self.cf_handle_flatkeyvalue()?;
         let mut batch = rocksdb::WriteBatch::default();
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
 
         for (hash, node) in key_values {
-            let cf = if hash.is_leaf() {
-                &cf_flatkeyvalue
-            } else {
-                &cf
-            };
             let db_key = self.make_key(hash.clone());
             buffer.clear();
             node.encode(&mut buffer);
-            batch.put_cf(cf, db_key, &buffer);
+            batch.put_cf(&cf_nodes, db_key, &buffer);
+        }
+        for (key, value) in fkv {
+            let db_key = apply_prefix_fkv(self.address_prefix, &key);
+            if value.is_empty() {
+                batch.delete_cf(&cf_flatkeyvalue, db_key);
+            } else {
+                batch.put_cf(&cf_flatkeyvalue, db_key, value);
+            }
         }
 
         self.db
@@ -174,7 +193,7 @@ mod tests {
 
         // Test put_batch
         trie_db
-            .put_batch(vec![(node_hash.clone(), node_data.clone())])
+            .put_batch(vec![(node_hash.clone(), node_data.clone())], vec![])
             .unwrap();
 
         // Test get
@@ -217,7 +236,7 @@ mod tests {
 
         // Test put_batch
         trie_db
-            .put_batch(vec![(node_hash.clone(), node_data.clone())])
+            .put_batch(vec![(node_hash.clone(), node_data.clone())], vec![])
             .unwrap();
 
         // Test get
@@ -258,7 +277,7 @@ mod tests {
         ];
 
         // Test batch put
-        trie_db.put_batch(batch_data.clone()).unwrap();
+        trie_db.put_batch(batch_data.clone(), vec![]).unwrap();
 
         // Test batch get
         for (node_hash, expected_data) in batch_data {

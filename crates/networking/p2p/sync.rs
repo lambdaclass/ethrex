@@ -1034,7 +1034,7 @@ fn compute_storage_roots(
         METRICS.storage_leaves_inserted.inc();
     }
 
-    let (_, changes) = storage_trie.collect_changes_since_last_hash();
+    let (_, (changes, _)) = storage_trie.collect_changes_since_last_hash();
 
     Ok((account_hash, changes))
 }
