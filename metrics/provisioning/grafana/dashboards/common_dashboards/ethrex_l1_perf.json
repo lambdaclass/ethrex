@@ -1136,14 +1136,9 @@
         {
           "id": "filterFieldsByName",
           "options": {
+            "byVariable": false,
             "include": {
-              "names": [
-                "Time",
-                "Block time ethrex-mainnet-4-0-0-pathbased:3701",
-                "Block time ethrex-snapsync-big-12:3701",
-                "Block",
-                "Block time ethrex-mainnet-3-0-0:3701"
-              ]
+              "pattern": "^(?!.*all_same_block).*$"
             }
           }
         },
@@ -3823,8 +3818,8 @@
     "to": "now"
   },
   "timepicker": {},
-  "timezone": "browser",
+  "timezone": "utc",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 27
+  "version": 28
 }
