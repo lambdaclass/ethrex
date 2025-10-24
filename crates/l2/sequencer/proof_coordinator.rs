@@ -4,7 +4,7 @@ use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_git_commit_hash;
 use bytes::Bytes;
 use ethrex_common::Address;
-use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType, ProofFormat};
+use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverInputData, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage_rollup::StoreRollup;
