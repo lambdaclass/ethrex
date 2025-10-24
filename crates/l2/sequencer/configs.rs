@@ -57,6 +57,7 @@ pub struct L1WatcherConfig {
     pub check_interval_ms: u64,
     pub max_block_step: U256,
     pub watcher_block_delay: u64,
+    pub l1_blob_base_fee_update_interval: u64,
 }
 
 #[derive(Clone, Debug)]

@@ -12,6 +12,7 @@ pub struct FeeConfig {
     #[rkyv(with=OptionH160Wrapper)]
     pub base_fee_vault: Option<Address>,
     pub operator_fee_config: Option<OperatorFeeConfig>,
+    pub l1_fee_config: Option<L1FeeConfig>,
 }
 
 /// Configuration for operator fees on L2
@@ -23,4 +24,13 @@ pub struct OperatorFeeConfig {
     #[rkyv(with=H160Wrapper)]
     pub operator_fee_vault: Address,
     pub operator_fee_per_gas: u64,
+}
+
+/// L1 Fee is used to pay for the cost of
+/// posting data to L1 (e.g. blob data).
+#[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive, Clone, Copy, Debug)]
+pub struct L1FeeConfig {
+    #[rkyv(with=H160Wrapper)]
+    pub l1_fee_vault: Address,
+    pub l1_fee_per_blob_gas: u64,
 }

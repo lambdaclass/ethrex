@@ -219,7 +219,7 @@ pub struct PayloadBuildContext {
 }
 
 impl PayloadBuildContext {
-    pub fn new(
+    pub async fn new(
         payload: Block,
         storage: &Store,
         blockchain_type: BlockchainType,
@@ -238,7 +238,9 @@ impl PayloadBuildContext {
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
         let vm = match blockchain_type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2(fee_config) => Evm::new_for_l2(vm_db, fee_config)?,
+            BlockchainType::L2(l2_config) => {
+                Evm::new_for_l2(vm_db, *l2_config.fee_config.read().await)?
+            }
         };
 
         Ok(PayloadBuildContext {
@@ -392,7 +394,7 @@ impl Blockchain {
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
         let mut context =
-            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
+            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone()).await?;
 
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;

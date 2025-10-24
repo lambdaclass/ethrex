@@ -7,8 +7,8 @@ use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
-use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::fee_config::{FeeConfig, OperatorFeeConfig};
+use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
+use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
 use ethrex_p2p::{
@@ -157,6 +157,7 @@ pub async fn init_l2(
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
     let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
+    let l1_fee_config = get_l1_fee_config(&opts.sequencer_opts);
 
     let fee_config = FeeConfig {
         base_fee_vault: opts
@@ -164,11 +165,18 @@ pub async fn init_l2(
             .block_producer_opts
             .base_fee_vault_address,
         operator_fee_config,
+        l1_fee_config,
+    };
+
+    // We wrap fee_config in an Arc<RwLock> to let the watcher
+    // update the L1 fee periodically.
+    let l2_config = L2Config {
+        fee_config: Arc::new(tokio::sync::RwLock::new(fee_config)),
     };
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
         max_mempool_size: opts.node_opts.mempool_max_size,
-        r#type: BlockchainType::L2(fee_config),
+        r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
     };
 
@@ -296,11 +304,26 @@ pub async fn init_l2(
     Ok(())
 }
 
+pub fn get_l1_fee_config(sequencer_opts: &SequencerOptions) -> Option<L1FeeConfig> {
+    if sequencer_opts.based {
+        // If based is enabled, skip L1 fee configuration
+        return None;
+    }
+
+    sequencer_opts
+        .block_producer_opts
+        .l1_fee_vault_address
+        .map(|addr| L1FeeConfig {
+            l1_fee_vault: addr,
+            l1_fee_per_blob_gas: 0, // This is set by the L1 watcher
+        })
+}
+
 pub async fn get_operator_fee_config(
     sequencer_opts: &SequencerOptions,
 ) -> eyre::Result<Option<OperatorFeeConfig>> {
     if sequencer_opts.based {
-        // If based is enabled, operator fee is not applicable
+        // If based is enabled, skip operator fee configuration
         return Ok(None);
     }
 

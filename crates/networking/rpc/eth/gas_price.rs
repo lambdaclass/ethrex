@@ -39,10 +39,11 @@ impl RpcHandler for GasPrice {
         let mut gas_price = base_fee + estimated_gas_tip;
 
         // Add the operator fee to the gas price if configured
-        if let BlockchainType::L2(fee_config) = &context.blockchain.options.r#type
-            && let Some(operator_fee_config) = &fee_config.operator_fee_config
-        {
-            gas_price += operator_fee_config.operator_fee_per_gas;
+        if let BlockchainType::L2(l2_config) = &context.blockchain.options.r#type {
+            let fee_config = *l2_config.fee_config.read().await;
+            if let Some(operator_fee_config) = &fee_config.operator_fee_config {
+                gas_price += operator_fee_config.operator_fee_per_gas;
+            }
         }
 
         let gas_as_hex = format!("0x{gas_price:x}");

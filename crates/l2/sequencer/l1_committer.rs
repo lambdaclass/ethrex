@@ -424,7 +424,7 @@ impl L1Committer {
 
                 let vm_db =
                     StoreVmDatabase::new(self.store.clone(), block_to_commit.header.parent_hash);
-                let mut vm = self.blockchain.new_evm(vm_db)?;
+                let mut vm = self.blockchain.new_evm(vm_db).await?;
                 vm.execute_block(&block_to_commit)?;
                 vm.get_state_transitions()?
             };
@@ -569,7 +569,7 @@ impl L1Committer {
 
         let batch_witness = self
             .blockchain
-            .generate_witness_for_blocks(&blocks)
+            .generate_witness_for_blocks_with_fee_configs(&blocks, Some(&fee_configs))
             .await
             .map_err(CommitterError::FailedToGenerateBatchWitness)?;
 
