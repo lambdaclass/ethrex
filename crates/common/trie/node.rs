@@ -26,8 +26,8 @@ impl NodeRef {
     pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
-            NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some(Arc::new(Node::decode(&data[..*len as usize])?)))
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
                 .get(path)?
@@ -48,7 +48,7 @@ impl NodeRef {
         match self {
             NodeRef::Node(node, _) => Ok(Some(Arc::make_mut(node))),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
-                let node = Node::decode_raw(hash.as_ref())?;
+                let node = Node::decode(hash.as_ref())?;
                 *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
                 self.get_node_mut(db, path)
             }
@@ -270,14 +270,6 @@ impl Node {
             Node::Extension(n) => n.compute_hash(),
             Node::Leaf(n) => n.compute_hash(),
         }
-    }
-}
-
-fn decode_child(rlp: &[u8]) -> NodeHash {
-    match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
-        Ok((&[], &[])) => NodeHash::default(),
-        _ => NodeHash::from_slice(rlp),
     }
 }
 
