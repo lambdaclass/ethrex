@@ -163,6 +163,8 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
         SocketAddr::V6(_) => TcpSocket::new_v6(),
     }?;
     tcp_socket.bind(tcp_addr)?;
+    tcp_socket.set_reuseport(true).ok();
+    tcp_socket.set_reuseaddr(true).ok();
     tcp_socket.listen(50)
 }
 
