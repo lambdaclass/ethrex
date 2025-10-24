@@ -9,7 +9,6 @@ use crate::{
     },
 };
 
-use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
@@ -642,24 +641,7 @@ impl L1Committer {
         let messages_merkle_root = compute_merkle_root(&batch.l1_message_hashes);
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
 
-        let mut calldata_values = vec![
-            Value::Uint(U256::from(batch.number)),
-            Value::FixedBytes(batch.state_root.0.to_vec().into()),
-            Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
-            Value::Array(
-                batch
-                    .l2_to_l2_messages
-                    .iter()
-                    .map(value_from_l2_to_l2_message)
-                    .collect(),
-            ),
-            Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
-            Value::FixedBytes(last_block_hash.0.to_vec().into()),
-        ];
-
-        let (commit_function_signature, values) = if self.based {
-            let mut encoded_blocks: Vec<Bytes> = Vec::new();
-
+        let calldata = if self.based {
             let (blocks, _) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
                 batch.number,
                 &self.store,
@@ -667,20 +649,39 @@ impl L1Committer {
             )
             .await?;
 
-            for block in blocks {
-                encoded_blocks.push(block.encode_to_vec().into());
-            }
+            let encoded_blocks = blocks
+                .into_iter()
+                .map(|block| Value::Bytes(block.encode_to_vec().into()))
+                .collect::<Vec<Value>>();
 
-            calldata_values.push(Value::Array(
-                encoded_blocks.into_iter().map(Value::Bytes).collect(),
-            ));
+            let calldata_values = vec![
+                Value::Uint(U256::from(batch.number)),
+                Value::FixedBytes(batch.state_root.0.to_vec().into()),
+                Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
+                Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
+                Value::FixedBytes(last_block_hash.0.to_vec().into()),
+                Value::Array(encoded_blocks),
+            ];
 
-            (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
+            encode_calldata(COMMIT_FUNCTION_SIGNATURE_BASED, &calldata_values)?
         } else {
-            (COMMIT_FUNCTION_SIGNATURE, calldata_values)
-        };
+            let calldata_values = vec![
+                Value::Uint(U256::from(batch.number)),
+                Value::FixedBytes(batch.state_root.0.to_vec().into()),
+                Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
+                Value::Array(
+                    batch
+                        .l2_to_l2_messages
+                        .iter()
+                        .map(value_from_l2_to_l2_message)
+                        .collect(),
+                ),
+                Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
+                Value::FixedBytes(last_block_hash.0.to_vec().into()),
+            ];
 
-        let calldata = encode_calldata(commit_function_signature, &values)?;
+            encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?
+        };
 
         let gas_price = self
             .eth_client
