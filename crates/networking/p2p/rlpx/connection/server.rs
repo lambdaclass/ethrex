@@ -992,8 +992,8 @@ async fn handle_incoming_message(
         Message::BlockRangeUpdate(update) => {
             trace!(
                 peer=%state.node,
-                range_earliest=update.earliest_block,
-                range_latest=update.latest_block,
+                range_from=update.earliest_block,
+                range_to=update.latest_block,
                 "Block range update",
             );
             // We will only validate the incoming update, we may decide to store and use this information in the future
