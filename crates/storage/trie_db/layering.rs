@@ -1,13 +1,13 @@
+use ahash::AHashMap;
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use rustc_hash::FxHashMap;
 use std::{sync::Arc, sync::RwLock};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
 #[derive(Debug)]
 struct TrieLayer {
-    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    nodes: AHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
@@ -17,7 +17,7 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: FxHashMap<H256, TrieLayer>,
+    layers: AHashMap<H256, TrieLayer>,
 }
 
 impl TrieLayerCache {
@@ -75,7 +75,7 @@ impl TrieLayerCache {
             .or_insert_with(|| {
                 self.last_id += 1;
                 TrieLayer {
-                    nodes: FxHashMap::default(),
+                    nodes: AHashMap::default(),
                     parent,
                     id: self.last_id,
                 }
