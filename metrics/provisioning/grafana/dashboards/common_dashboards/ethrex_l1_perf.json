@@ -2518,6 +2518,7 @@
           ]
         },
         "definition": "label_values({__name__=~\"(gigagas|eth_con_beacon_slot)\", instance!=\"ethereum-metrics-exporter:9093\"},instance)",
+        "hide": 2,
         "includeAll": true,
         "multi": true,
         "name": "instace_repeat",
