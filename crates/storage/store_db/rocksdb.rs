@@ -247,7 +247,7 @@ impl Store {
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_TRIE_NODES => {
+                CF_TRIE_NODES | CF_FLATKEYVALUE => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
