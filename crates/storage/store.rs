@@ -410,11 +410,9 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie = self.engine.open_storage_trie(
-                    H256::from_slice(&hashed_address),
-                    account_state.storage_root,
-                    state_root,
-                )?;
+                let mut storage_trie = self
+                    .engine
+                    .open_storage_trie(state_root, H256::from_slice(&hashed_address))?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -478,11 +476,9 @@ impl Store {
                     let (_witness, storage_trie) = match storage_tries.entry(update.address) {
                         std::collections::hash_map::Entry::Occupied(value) => value.into_mut(),
                         std::collections::hash_map::Entry::Vacant(vacant) => {
-                            let trie = self.engine.open_storage_trie(
-                                H256::from_slice(&hashed_address),
-                                account_state.storage_root,
-                                state_root,
-                            )?;
+                            let trie = self
+                                .engine
+                                .open_storage_trie(state_root, H256::from_slice(&hashed_address))?;
                             vacant.insert(TrieLogger::open_trie(trie))
                         }
                     };
@@ -852,21 +848,10 @@ impl Store {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
-        // Fetch Account from state_trie
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
         let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        let account = AccountState::decode(&encoded_account)?;
-        // Open storage_trie
-        let storage_root = account.storage_root;
         Ok(Some(self.engine.open_storage_trie(
-            H256::from_slice(&hashed_address),
-            storage_root,
             header.state_root,
+            H256::from_slice(&hashed_address),
         )?))
     }
 
@@ -933,11 +918,9 @@ impl Store {
         let mut storage_proof = Vec::with_capacity(storage_keys.len());
 
         if let Some(account) = &account_opt {
-            let storage_trie = self.engine.open_storage_trie(
-                hashed_address,
-                account.storage_root,
-                state_trie.hash_no_commit(),
-            )?;
+            let storage_trie = self
+                .engine
+                .open_storage_trie(state_trie.hash_no_commit(), hashed_address)?;
 
             for key in storage_keys {
                 let hashed_key = hash_key(key);
@@ -1009,7 +992,7 @@ impl Store {
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         let mut iter = self
             .engine
-            .open_locked_storage_trie(hashed_address, storage_root, state_root)?
+            .open_locked_storage_trie(state_root, hashed_address)?
             .into_iter();
         iter.advance(starting_slot.0.to_vec())?;
         Ok(Some(iter.content().map_while(|(path, value)| {
@@ -1053,9 +1036,7 @@ impl Store {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
-        let storage_trie =
-            self.engine
-                .open_storage_trie(hashed_address, storage_root, state_root)?;
+        let storage_trie = self.engine.open_storage_trie(state_root, hashed_address)?;
         let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
         if let Some(last_hash) = last_hash {
             proof.extend_from_slice(&storage_trie.get_proof(&last_hash.as_bytes().to_vec())?);
@@ -1097,11 +1078,7 @@ impl Store {
         let Ok(hashed_address) = account_path.clone().try_into().map(H256) else {
             return Ok(vec![]);
         };
-        let storage_trie = self.engine.open_storage_trie(
-            hashed_address,
-            account_state.storage_root,
-            state_root,
-        )?;
+        let storage_trie = self.engine.open_storage_trie(state_root, hashed_address)?;
         // Fetch storage trie nodes
         let mut nodes = vec![];
         let mut bytes_used = 0;
@@ -1158,8 +1135,7 @@ impl Store {
         storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
-        self.engine
-            .open_storage_trie(account_hash, storage_root, state_root)
+        self.engine.open_storage_trie(state_root, account_hash)
     }
 
     /// Obtain a read-locked storage trie from the given address and storage_root.
@@ -1171,7 +1147,7 @@ impl Store {
         state_root: H256,
     ) -> Result<Trie, StoreError> {
         self.engine
-            .open_locked_storage_trie(account_hash, storage_root, state_root)
+            .open_locked_storage_trie(state_root, account_hash)
     }
 
     pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {

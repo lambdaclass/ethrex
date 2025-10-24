@@ -8,12 +8,14 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     H256,
+    constants::EMPTY_TRIE_HASH,
     types::{
         AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
         Index, Receipt, Transaction,
     },
+    utils::keccak,
 };
-use ethrex_trie::{Nibbles, Node, Trie};
+use ethrex_trie::{Nibbles, Node, Trie, TrieDB};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch,
@@ -1325,9 +1327,8 @@ impl StoreEngine for Store {
 
     fn open_storage_trie(
         &self,
-        hashed_address: H256,
-        storage_root: H256,
         state_root: H256,
+        hashed_address: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         let wrap_db = Box::new(TrieWrapper {
@@ -1336,6 +1337,10 @@ impl StoreEngine for Store {
             db,
             prefix: Some(hashed_address),
         });
+        let storage_root = wrap_db
+            .get(Nibbles::default())?
+            .map(keccak)
+            .unwrap_or_else(|| *EMPTY_TRIE_HASH);
         Ok(Trie::open(wrap_db, storage_root))
     }
 
@@ -1385,9 +1390,8 @@ impl StoreEngine for Store {
 
     fn open_locked_storage_trie(
         &self,
-        hashed_address: H256,
-        storage_root: H256,
         state_root: H256,
+        hashed_address: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
@@ -1400,6 +1404,10 @@ impl StoreEngine for Store {
             db,
             prefix: Some(hashed_address),
         });
+        let storage_root = wrap_db
+            .get(Nibbles::default())?
+            .map(keccak)
+            .unwrap_or_else(|| *EMPTY_TRIE_HASH);
         Ok(Trie::open(wrap_db, storage_root))
     }
 

@@ -216,12 +216,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Obtain a storage trie from the given address and storage_root
     /// Doesn't check if the account is stored
     /// Used for internal store operations
-    fn open_storage_trie(
-        &self,
-        hashed_address: H256,
-        storage_root: H256,
-        state_root: H256,
-    ) -> Result<Trie, StoreError>;
+    fn open_storage_trie(&self, state_root: H256, hashed_address: H256)
+    -> Result<Trie, StoreError>;
 
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
@@ -254,11 +250,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Used for internal store operations
     fn open_locked_storage_trie(
         &self,
-        hashed_address: H256,
-        storage_root: H256,
         state_root: H256,
+        hashed_address: H256,
     ) -> Result<Trie, StoreError> {
-        self.open_storage_trie(hashed_address, storage_root, state_root)
+        self.open_storage_trie(state_root, hashed_address)
     }
 
     async fn forkchoice_update(

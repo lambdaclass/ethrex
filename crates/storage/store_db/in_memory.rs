@@ -7,10 +7,13 @@ use crate::{
     trie_db::layering::{TrieLayerCache, TrieWrapper},
 };
 use ethereum_types::H256;
-use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
+use ethrex_common::{
+    types::{
+        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
+    },
+    utils::keccak,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
+use ethrex_trie::{EMPTY_TRIE_HASH, InMemoryTrieDB, Nibbles, Trie, TrieDB, db::NodeMap};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -431,9 +434,8 @@ impl StoreEngine for Store {
 
     fn open_storage_trie(
         &self,
-        hashed_address: H256,
-        storage_root: H256,
         state_root: H256,
+        hashed_address: H256,
     ) -> Result<Trie, StoreError> {
         let store = self.inner()?;
         let trie_backend = store.state_trie_nodes.clone();
@@ -444,6 +446,10 @@ impl StoreEngine for Store {
             db,
             prefix: Some(hashed_address),
         });
+        let storage_root = wrap_db
+            .get(Nibbles::default())?
+            .map(keccak)
+            .unwrap_or_else(|| *EMPTY_TRIE_HASH);
         Ok(Trie::open(wrap_db, storage_root))
     }
 
