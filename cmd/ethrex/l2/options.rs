@@ -217,7 +217,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .proof_coordinator_tdx_private_key,
                 qpl_tool_path: opts.proof_coordinator_opts.proof_coordinator_qpl_tool_path,
                 validium: opts.validium,
-                osaka_activation_time: opts.osaka_activation_time,
             },
             based: BasedConfig {
                 enabled: opts.based,

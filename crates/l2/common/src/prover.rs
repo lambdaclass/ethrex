@@ -16,8 +16,8 @@ pub struct ProverInputData {
     pub elasticity_multiplier: u64,
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
-    #[serde_as(as = "[_; 48]")]
-    pub blob_proof: blobs_bundle::Proof,
+    #[serde_as(as = "Vec<[_; 48]>")]
+    pub blob_proof: Vec<blobs_bundle::Proof>,
     pub fee_configs: Vec<FeeConfig>,
 }
 

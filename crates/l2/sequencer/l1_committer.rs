@@ -587,7 +587,7 @@ impl L1Committer {
         // we are generating the BlobsBundle with BlobsBundle::default which
         // sets the commitments and proofs to empty vectors.
         let (blob_commitment, blob_proof) = if self.validium {
-            ([0; 48], [0; 48])
+            ([0; 48], vec![[0; 48]])
         } else {
             let BlobsBundle {
                 commitments,
@@ -595,20 +595,29 @@ impl L1Committer {
                 ..
             } = &batch.blobs_bundle;
 
+            let fork = is_osaka_activated_on_l1(&self.eth_client, self.osaka_activation_time)
+                .await
+                .map_err(CommitterError::EthClientError)?;
             let proof_count = if fork < Fork::Osaka {
                 1
             } else {
                 CELLS_PER_EXT_BLOB
             };
             let commitment = commitments
-                .pop()
-                .ok_or_else(|| ProofCoordinatorError::MissingBlob(batch_number))?;
+                .last()
+                .cloned()
+                .ok_or_else(|| CommitterError::MissingBlob(batch.number))?;
 
             if proofs.len() < proof_count {
-                return Err(ProofCoordinatorError::MissingBlob(batch_number));
+                return Err(CommitterError::MissingBlob(batch.number));
             }
 
-            let proof = proofs.split_off(proofs.len() - proof_count);
+            let proof = proofs
+                .iter()
+                .rev()
+                .take(proof_count)
+                .cloned()
+                .collect::<Vec<_>>();
 
             (commitment, proof)
         };

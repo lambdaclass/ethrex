@@ -265,6 +265,8 @@ pub enum CommitterError {
     Unreachable(String),
     #[error("Failed to generate batch witness: {0}")]
     FailedToGenerateBatchWitness(#[source] ChainError),
+    #[error("Missing blob for batch {0}")]
+    MissingBlob(u64),
 }
 
 #[derive(Debug, thiserror::Error)]

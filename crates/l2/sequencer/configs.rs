@@ -69,7 +69,6 @@ pub struct ProofCoordinatorConfig {
     pub validium: bool,
     pub tdx_private_key: Option<SecretKey>,
     pub qpl_tool_path: Option<String>,
-    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]

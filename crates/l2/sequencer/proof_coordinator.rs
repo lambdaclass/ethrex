@@ -3,16 +3,8 @@ use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::{get_git_commit_hash, get_latest_sent_batch};
 use crate::{CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig};
 use bytes::Bytes;
-use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use ethrex_common::types::fee_config::FeeConfig;
-use ethrex_common::types::{BlobsBundle, CELLS_PER_EXT_BLOB, Fork};
-use ethrex_common::{
-    Address,
-    types::{Block, blobs_bundle},
-};
+use ethrex_common::Address;
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
-use ethrex_l2_sdk::is_osaka_activated_on_l1;
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage_rollup::StoreRollup;
@@ -160,7 +152,6 @@ pub struct ProofCoordinator {
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
     qpl_tool_path: Option<String>,
-    osaka_activation_time: Option<u64>,
 }
 
 impl ProofCoordinator {
@@ -203,7 +194,6 @@ impl ProofCoordinator {
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
             qpl_tool_path: config.qpl_tool_path.clone(),
-            osaka_activation_time: config.osaka_activation_time,
         })
     }
 
