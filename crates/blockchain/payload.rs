@@ -127,7 +127,7 @@ pub fn create_payload(
     let parent_block = storage
         .get_block_header_by_hash(args.parent)?
         .ok_or_else(|| ChainError::ParentNotFound)?;
-    let chain_config = storage.get_chain_config()?;
+    let chain_config = storage.get_chain_config();
     let fork = chain_config.fork(args.timestamp);
     let gas_limit = calc_gas_limit(parent_block.gas_limit, args.gas_ceil);
     let excess_blob_gas = chain_config
@@ -219,14 +219,12 @@ pub struct PayloadBuildContext {
 }
 
 impl PayloadBuildContext {
-    pub fn new(
+    pub async fn new(
         payload: Block,
         storage: &Store,
         blockchain_type: BlockchainType,
     ) -> Result<Self, EvmError> {
-        let config = storage
-            .get_chain_config()
-            .map_err(|e| EvmError::DB(e.to_string()))?;
+        let config = storage.get_chain_config();
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -238,7 +236,9 @@ impl PayloadBuildContext {
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
         let vm = match blockchain_type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2(fee_config) => Evm::new_for_l2(vm_db, fee_config)?,
+            BlockchainType::L2(l2_config) => {
+                Evm::new_for_l2(vm_db, *l2_config.fee_config.read().await)?
+            }
         };
 
         Ok(PayloadBuildContext {
@@ -271,10 +271,8 @@ impl PayloadBuildContext {
         self.payload.header.number
     }
 
-    fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.store
-            .get_chain_config()
-            .map_err(|e| EvmError::DB(e.to_string()))
+    fn chain_config(&self) -> ChainConfig {
+        self.store.get_chain_config()
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {
@@ -392,7 +390,7 @@ impl Blockchain {
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
         let mut context =
-            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
+            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone()).await?;
 
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
@@ -484,7 +482,7 @@ impl Blockchain {
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-        let chain_config = context.chain_config()?;
+        let chain_config = context.chain_config();
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
@@ -586,7 +584,7 @@ impl Blockchain {
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
         let tx_hash = head.tx.hash();
-        let chain_config = context.chain_config()?;
+        let chain_config = context.chain_config();
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
@@ -613,7 +611,7 @@ impl Blockchain {
 
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         if !context
-            .chain_config()?
+            .chain_config()
             .is_prague_activated(context.payload.header.timestamp)
         {
             return Ok(());

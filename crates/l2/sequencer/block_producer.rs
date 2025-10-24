@@ -186,7 +186,7 @@ impl BlockProducer {
 
         // Blockchain stores block
         let block = payload_build_result.payload;
-        let chain_config = self.store.get_chain_config()?;
+        let chain_config = self.store.get_chain_config();
         validate_block(
             &block,
             &head_header,
@@ -241,10 +241,12 @@ impl BlockProducer {
         Ok(())
     }
     async fn store_fee_config_by_block(&self, block_number: u64) -> Result<(), BlockProducerError> {
-        let BlockchainType::L2(fee_config) = self.blockchain.options.r#type else {
+        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
             error!("Invalid blockchain type. Expected L2.");
             return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
         };
+
+        let fee_config = *l2_config.fee_config.read().await;
 
         self.rollup_store
             .store_fee_config_by_block(block_number, fee_config)

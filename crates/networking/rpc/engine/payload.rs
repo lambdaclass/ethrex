@@ -60,7 +60,7 @@ impl RpcHandler for NewPayloadV2Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let chain_config = &context.storage.get_chain_config()?;
+        let chain_config = &context.storage.get_chain_config();
         if chain_config.is_shanghai_activated(self.payload.timestamp) {
             validate_execution_payload_v2(&self.payload)?;
         } else {
@@ -203,7 +203,7 @@ impl RpcHandler for NewPayloadV4Request {
             }
         };
 
-        let chain_config = context.storage.get_chain_config()?;
+        let chain_config = context.storage.get_chain_config();
 
         if !chain_config.is_prague_activated(block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
@@ -331,7 +331,7 @@ impl RpcHandler for GetPayloadV4Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
-        let chain_config = &context.storage.get_chain_config()?;
+        let chain_config = &context.storage.get_chain_config();
 
         if !chain_config.is_prague_activated(payload_bundle.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
@@ -383,7 +383,7 @@ impl RpcHandler for GetPayloadV5Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
-        let chain_config = &context.storage.get_chain_config()?;
+        let chain_config = &context.storage.get_chain_config();
 
         if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
@@ -539,7 +539,7 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
 }
 
 fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
-    let chain_config = &context.storage.get_chain_config()?;
+    let chain_config = &context.storage.get_chain_config();
     if chain_config.is_cancun_activated(block.header.timestamp) {
         return Err(RpcErr::UnsuportedFork(
             "Cancun payload received".to_string(),
@@ -773,7 +773,7 @@ fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr>
 
 fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(), RpcErr> {
     // Check timestamp matches valid fork
-    let chain_config = &context.storage.get_chain_config()?;
+    let chain_config = &context.storage.get_chain_config();
     let current_fork = chain_config.get_fork(block.header.timestamp);
 
     if current_fork != fork {
