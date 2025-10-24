@@ -56,6 +56,11 @@ Node options:
 
           [default: INFO]
 
+      --log.color <LOG_COLOR>
+          Possible values: auto, always, never
+
+          [default: auto]
+
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
@@ -213,6 +218,11 @@ Node options:
           Possible values: info, debug, trace, warn, error
 
           [default: INFO]
+
+      --log.color <LOG_COLOR>
+          Possible values: auto, always, never
+
+          [default: auto]
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
