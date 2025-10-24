@@ -1271,7 +1271,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "hex",
  "k256",
  "lambdaworks-math",
  "lazy_static",
