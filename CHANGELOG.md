@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-21
+
+- Instead of lazy computation of blocklist, do greedy computation of allowlist and store the result, fetch it with the DB. [#4961](https://github.com/lambdaclass/ethrex/pull/4961)
+
 ### 2025-10-20
 
 - Remove duplicate subgroup check in ecpairing precompile [#4960](https://github.com/lambdaclass/ethrex/pull/4960)

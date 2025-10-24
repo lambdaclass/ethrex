@@ -9,10 +9,11 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::tracing::CallType::{
-    self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
-};
 use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
+use ethrex_common::{
+    tracing::CallType::{self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL},
+    types::Code,
+};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -681,7 +682,7 @@ impl<'a> VM<'a> {
             deployer,
             new_address,
             new_address,
-            code,
+            Code::from_bytecode(code),
             value,
             Bytes::new(),
             false,
@@ -726,7 +727,7 @@ impl<'a> VM<'a> {
         calldata: Bytes,
         ret_offset: usize,
         ret_size: usize,
-        bytecode: Bytes,
+        bytecode: Code,
         is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data

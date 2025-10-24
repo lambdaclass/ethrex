@@ -1,5 +1,5 @@
 use crate::{
-    cli::Options,
+    cli::{LogColor, Options},
     utils::{
         display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
         read_jwtsecret_file, read_node_config_file,
@@ -58,7 +58,9 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let mut layer = fmt::layer();
 
-    if !std::io::stdout().is_terminal() {
+    if opts.log_color == LogColor::Never
+        || (opts.log_color == LogColor::Auto && !std::io::stdout().is_terminal())
+    {
         layer = layer.with_ansi(false);
     }
 
@@ -130,7 +132,7 @@ pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<
     Blockchain::new(store, blockchain_opts).into()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
     peer_handler: PeerHandler,
@@ -141,8 +143,6 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: Option<u64>,
-    extra_data: String,
 ) {
     init_datadir(&opts.datadir);
 
@@ -182,8 +182,8 @@ pub async fn init_rpc_api(
         peer_handler,
         get_client_version(),
         log_filter_handler,
-        gas_ceil,
-        extra_data,
+        opts.gas_limit,
+        opts.extra_data.clone(),
     );
 
     tracker.spawn(rpc_api);
@@ -463,9 +463,6 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
-        // TODO (#4482): Make this configurable.
-        None,
-        opts.extra_data.clone(),
     )
     .await;
 
