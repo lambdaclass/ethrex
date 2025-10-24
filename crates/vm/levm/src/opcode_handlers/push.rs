@@ -21,6 +21,7 @@ impl<'a> VM<'a> {
 
         let value = if let Some(slice) = call_frame
             .bytecode
+            .bytecode
             .get(call_frame.pc..call_frame.pc.wrapping_add(N))
         {
             u256_from_big_endian_const(
