@@ -67,8 +67,8 @@ pub fn verify_cell_kzg_proof_batch(
         let mut cells = Vec::new();
         for blob in blobs {
             let blob: c_kzg::Blob = (*blob).into();
-            let (cells_blob, _cell_proofs) = c_kzg_settings
-                .compute_cells_and_kzg_proofs(&blob)
+            let cells_blob = c_kzg_settings
+                .compute_cells(&blob)
                 .map_err(KzgError::CKzg)?;
             cells.extend(*cells_blob);
         }
