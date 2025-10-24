@@ -3750,14 +3750,14 @@
           "text": "",
           "value": ""
         },
-        "definition": "label_values(eth_con_beacon_slot,instance)",
+        "definition": "label_values(gigagas,instance)",
         "includeAll": true,
         "multi": true,
         "name": "instance",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(eth_con_beacon_slot,instance)",
+          "query": "label_values(gigagas,instance)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
