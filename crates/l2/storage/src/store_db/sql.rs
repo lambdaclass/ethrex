@@ -308,6 +308,27 @@ impl SQLStore {
 
         self.execute_in_tx(queries, db_tx).await
     }
+
+    async fn store_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+        messages: Vec<L2toL2Message>,
+        db_tx: Option<&Transaction>,
+    ) -> Result<(), RollupStoreError> {
+        let mut queries = Vec::with_capacity(messages.len());
+
+        for (idx, message) in messages.iter().enumerate() {
+            let idx = u64::try_from(idx)
+                .map_err(|_| RollupStoreError::Custom("Message index out of range".to_string()))?;
+            queries.push((
+                "INSERT INTO l2_to_l2_messages (batch, idx, message) VALUES (?1, ?2, ?3)",
+                libsql::params!(batch_number, idx, bincode::serialize(message)?).into_params()?,
+            ))
+        }
+
+        self.execute_in_tx(queries, db_tx).await?;
+        Ok(())
+    }
 }
 
 fn read_from_row_int(row: &Row, index: i32) -> Result<u64, RollupStoreError> {
@@ -676,6 +697,8 @@ impl StoreEngineRollup for SQLStore {
             Some(&transaction),
         )
         .await?;
+        self.store_l2_to_l2_messages(batch.number, batch.l2_to_l2_messages, Some(&transaction))
+            .await?;
         self.store_privileged_transactions_hash_by_batch_number_in_tx(
             batch.number,
             batch.privileged_transactions_hash,
@@ -811,26 +834,6 @@ impl StoreEngineRollup for SQLStore {
             .await?
             .map(|row| read_from_row_int(&row, 0))
             .transpose()
-    }
-
-    async fn store_l2_to_l2_messages(
-        &self,
-        batch_number: u64,
-        messages: Vec<L2toL2Message>,
-    ) -> Result<(), RollupStoreError> {
-        let mut queries = Vec::with_capacity(messages.len());
-
-        for (idx, message) in messages.iter().enumerate() {
-            let idx = u64::try_from(idx)
-                .map_err(|_| RollupStoreError::Custom("Message index out of range".to_string()))?;
-            queries.push((
-                "INSERT INTO l2_to_l2_messages (batch, idx, message) VALUES (?1, ?2, ?3)",
-                libsql::params!(batch_number, idx, bincode::serialize(message)?).into_params()?,
-            ))
-        }
-
-        self.execute_in_tx(queries, None).await?;
-        Ok(())
     }
 
     async fn get_l2_to_l2_messages(

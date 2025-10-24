@@ -369,16 +369,6 @@ impl Store {
             .await
     }
 
-    pub async fn store_l2_to_l2_messages(
-        &self,
-        batch_number: u64,
-        messages: Vec<L2toL2Message>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_l2_to_l2_messages(batch_number, messages)
-            .await
-    }
-
     pub async fn get_l2_to_l2_messages(
         &self,
         batch_number: u64,

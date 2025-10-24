@@ -317,6 +317,10 @@ impl StoreEngineRollup for Store {
             .insert(batch.number, batch.l1_message_hashes);
 
         inner
+            .l2_to_l2_messages
+            .insert(batch.number, batch.l2_to_l2_messages);
+
+        inner
             .privileged_transactions_hashes
             .insert(batch.number, batch.privileged_transactions_hash);
 
@@ -352,18 +356,6 @@ impl StoreEngineRollup for Store {
         batch_number: u64,
     ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError> {
         Ok(self.inner()?.l2_to_l2_messages.get(&batch_number).cloned())
-    }
-
-    async fn store_l2_to_l2_messages(
-        &self,
-        batch_number: u64,
-        messages: Vec<L2toL2Message>,
-    ) -> Result<(), RollupStoreError> {
-        let mut store = self.inner()?;
-
-        store.l2_to_l2_messages.insert(batch_number, messages);
-
-        Ok(())
     }
 
     async fn store_prover_input_by_batch_and_version(

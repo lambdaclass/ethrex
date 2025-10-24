@@ -151,12 +151,6 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 
-    async fn store_l2_to_l2_messages(
-        &self,
-        batch_number: u64,
-        messages: Vec<L2toL2Message>,
-    ) -> Result<(), RollupStoreError>;
-
     async fn get_l2_to_l2_messages(
         &self,
         batch_number: u64,
