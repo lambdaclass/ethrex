@@ -11,6 +11,8 @@ path = "./lib.rs"
 [dependencies]
 # TODO(#1102): Move to Lambdaworks in the future
 c-kzg = { version = "2.1.1", optional = true }
+kzg = { git = "https://github.com/grandinetech/rust-kzg.git", package = "rust-kzg-zkcrypto" }
+kzg_traits = { git = "https://github.com/grandinetech/rust-kzg.git", package = "kzg" }
 kzg-rs.workspace = true
 
 thiserror.workspace = true

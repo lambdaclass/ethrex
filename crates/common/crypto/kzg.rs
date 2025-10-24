@@ -1,4 +1,22 @@
-use std::iter::repeat_n;
+use std::{
+    cell::LazyCell,
+    iter::repeat_n,
+    sync::{LazyLock, OnceLock},
+};
+
+use kzg::{
+    eip_4844::load_trusted_setup_filename_rust,
+    eip_7594::ZBackend,
+    kzg_proofs::{KZGSettings, generate_trusted_setup},
+};
+use kzg_traits::{
+    DAS, EcBackend, Fr, G1,
+    eip_4844::{bytes_to_blob, load_trusted_setup_rust, load_trusted_setup_string},
+    eth::{
+        c_bindings::{compute_cells_and_kzg_proofs, verify_cell_kzg_proof_batch},
+        eip_7594::compute_cells_raw,
+    },
+};
 
 // TODO: Currently, we cannot include the types crate independently of common because the crates are not yet split.
 // After issue #4596 ("Split types crate from common") is resolved, update this to import the types crate directly,
@@ -50,17 +68,54 @@ impl From<kzg_rs::KzgError> for KzgError {
     }
 }
 
+static TRUSTED_SETUP_STRING: &str = include_str!("./kzg_trusted_setup.txt");
+static TRUSTED_SETUP: LazyLock<KZGSettings> = LazyLock::new(|| {
+    let (g1_monomial_bytes, g1_lagrange_bytes, g2_monomial_bytes) =
+        load_trusted_setup_string(TRUSTED_SETUP_STRING).unwrap();
+    load_trusted_setup_rust(&g1_monomial_bytes, &g1_lagrange_bytes, &g2_monomial_bytes).unwrap()
+});
+
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
 /// as defined by EIP-7594.
-pub fn verify_cell_kzg_proof_batch(
+/// TODO: change doc
+pub fn verify_cell_kzg_proof_batchh(
     blobs: &[Blob],
     commitments: &[Commitment],
     cell_proof: &[Proof],
 ) -> Result<bool, KzgError> {
     #[cfg(not(feature = "c-kzg"))]
-    return Err(KzgError::NotSupportedWithoutCKZG(String::from(
-        "Cell proof verification",
-    )));
+    {
+        let mut cells = Vec::with_capacity(blobs.len());
+        let mut proofs = Vec::with_capacity(blobs.len());
+
+        for bytes in blobs {
+            let blob = bytes_to_blob(bytes).unwrap();
+            <KZGSettings as DAS<ZBackend>>::compute_cells_and_kzg_proofs(
+                &TRUSTED_SETUP,
+                Some(&mut cells),
+                Some(&mut proofs),
+                &blob,
+            )
+            .unwrap();
+        }
+        type ZG1 = <ZBackend as EcBackend>::G1;
+
+        let commitments: Vec<_> = commitments
+            .iter()
+            .map(|commitment| ZG1::from_bytes(commitment).unwrap())
+            .collect();
+        let cell_indices: Vec<_> = repeat_n(0..CELLS_PER_EXT_BLOB, blobs.len())
+            .flatten()
+            .collect();
+        return Ok(<KZGSettings as DAS<ZBackend>>::verify_cell_kzg_proof_batch(
+            &TRUSTED_SETUP,
+            &commitments,
+            &cell_indices,
+            &cells,
+            &proofs,
+        )
+        .unwrap());
+    }
     #[cfg(feature = "c-kzg")]
     {
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
