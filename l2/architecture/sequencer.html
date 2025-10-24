@@ -243,7 +243,7 @@
 <h3 id="block-producer"><a class="header" href="#block-producer">Block Producer</a></h3>
 <p>Creates Blocks with a connection to the <code>auth.rpc</code> port.</p>
 <h3 id="l1-watcher"><a class="header" href="#l1-watcher">L1 Watcher</a></h3>
-<p>This component monitors the L1 for new deposits made by users. For that, it queries the CommonBridge contract on L1 at regular intervals (defined by the config file) for new DepositInitiated() events. Once a new deposit event is detected, it creates the corresponding deposit transaction on the L2.</p>
+<p>This component monitors the L1 for new deposits made by users. For that, it queries the CommonBridge contract on L1 at regular intervals (defined by the config file) for new DepositInitiated() events. Once a new deposit event is detected, it creates the corresponding deposit transaction on the L2. It also periodically fetches the <code>BlobBaseFee</code> from L1 (at a configured interval), which is used to compute the <a href="../fundamentals/transaction_fees.html#l1-fees">L1 fees</a>.</p>
 <h3 id="l1-transaction-sender-aka-l1-committer"><a class="header" href="#l1-transaction-sender-aka-l1-committer">L1 Transaction Sender (a.k.a. L1 Committer)</a></h3>
 <p>As the name suggests, this component sends transactions to the L1. But not any transaction, only commit and verify transactions.</p>
 <p>Commit transactions are sent when the Proposer wants to commit to a new batch of blocks. These transactions contain the batch data to be committed in the L1.</p>
