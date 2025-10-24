@@ -2,9 +2,14 @@
 
 ## Perf
 
+
 ### 2025-10-23
 
 - Batch BlobsBundle::validate [#4993](https://github.com/lambdaclass/ethrex/pull/4993)
+
+### 2025-10-21
+
+- Instead of lazy computation of blocklist, do greedy computation of allowlist and store the result, fetch it with the DB. [#4961](https://github.com/lambdaclass/ethrex/pull/4961)
 
 ### 2025-10-17
 
