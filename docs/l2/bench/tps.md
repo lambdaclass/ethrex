@@ -50,7 +50,7 @@ Rollup L2 (publishes blobs), with 1.000.000 genesis accounts (big state)
 | TPS | Avg. batch size (blocks) | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
 | --- | --- | --- | --- | --- | --- |
 | 2 | 63 | 1.07M | 10m 6s | ✅ | l2-gpu-3 |
-| 3 | 63 |  |  |  | l2-gpu-3 |
+| 3 | 63 | 1.87M | 16m 36s | ❌ | l2-gpu-3 |
 
 **Note:**
 
