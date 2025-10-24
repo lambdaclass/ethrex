@@ -17,6 +17,7 @@ use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+use ethrex_common::types::Code;
 use ethrex_common::{
     BigEndianHash, H256, U256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
@@ -29,7 +30,7 @@ use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::{
     array,
     cmp::min,
@@ -949,7 +950,10 @@ impl Syncer {
 
                         store
                             .write_account_code_batch(
-                                code_hashes_to_download.drain(..).zip(bytecodes).collect(),
+                                code_hashes_to_download
+                                    .drain(..)
+                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                                    .collect(),
                             )
                             .await?;
                     }
@@ -967,7 +971,10 @@ impl Syncer {
                 .ok_or(SyncError::BytecodesNotFound)?;
             store
                 .write_account_code_batch(
-                    code_hashes_to_download.into_iter().zip(bytecodes).collect(),
+                    code_hashes_to_download
+                        .drain(..)
+                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                        .collect(),
                 )
                 .await?;
         }
@@ -1062,11 +1069,18 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        let (peer_id, mut connection) = peers
+        let Some((peer_id, mut connection)) = peers
             .peer_table
             .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
             .await?
-            .ok_or(SyncError::NoPeers)?;
+        else {
+            // When we come here, we may be waiting for requests to timeout.
+            // Because we're waiting for a timeout, we sleep so the rest of the code
+            // can get to them
+            debug!("We tried to get peers during update_pivot, but we found no free peers");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        };
 
         let peer_score = peers.peer_table.get_score(&peer_id).await?;
         info!(
@@ -1166,8 +1180,6 @@ pub enum SyncError {
     CodeHashesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
-    #[error("Cannot find suitable peer")]
-    NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
     #[error("The download datadir folders at {0} are not empty, delete them first")]

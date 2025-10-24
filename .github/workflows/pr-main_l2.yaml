@@ -12,6 +12,10 @@ on:
       - ".github/workflows/pr-main_l2.yaml"
       - "cmd/ethrex/l2/**"
 
+permissions:
+  contents: read
+  actions: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true

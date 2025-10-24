@@ -2,18 +2,10 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::{
-    array,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 pub use branch::BranchNode;
-use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::Decoder,
-};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
@@ -34,8 +26,8 @@ impl NodeRef {
     pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
-            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
-                Ok(Some(Arc::new(Node::decode_raw(hash.as_ref())?)))
+            NodeRef::Hash(NodeHash::Inline((data, len))) => {
+                Ok(Some(Arc::new(Node::decode(&data[..*len as usize])?)))
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
                 .get(path)?
@@ -99,11 +91,13 @@ impl NodeRef {
                     }
                     Node::Leaf(_) => {}
                 }
-                let hash = *hash.get_or_init(|| node.compute_hash());
+                let mut buf = Vec::new();
+                node.encode(&mut buf);
+                let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }
-                acc.push((path.clone(), node.encode_to_vec()));
+                acc.push((path.clone(), buf));
 
                 *self = hash.into();
 
@@ -267,70 +261,6 @@ impl Node {
             Node::Extension(n) => n.get_path(db, path, node_path),
             Node::Leaf(n) => n.get_path(node_path),
         }
-    }
-
-    /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
-        match self {
-            Node::Branch(n) => n.encode_raw(),
-            Node::Extension(n) => n.encode_raw(),
-            Node::Leaf(n) => n.encode_raw(),
-        }
-    }
-
-    /// Decodes the node
-    pub fn decode_raw(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut rlp_items = vec![];
-        let mut decoder = Decoder::new(rlp)?;
-        let mut item;
-        // Get encoded fields
-        loop {
-            (item, decoder) = decoder.get_encoded_item()?;
-            rlp_items.push(item);
-            // Check if we reached the end or if we decoded more items than the ones we need
-            if decoder.is_done() || rlp_items.len() > 17 {
-                break;
-            }
-        }
-        // Deserialize into node depending on the available fields
-        Ok(match rlp_items.len() {
-            // Leaf or Extension Node
-            2 => {
-                let (path, _) = decode_bytes(&rlp_items[0])?;
-                let path = Nibbles::decode_compact(path);
-                if path.is_leaf() {
-                    // Decode as Leaf
-                    let (value, _) = decode_bytes(&rlp_items[1])?;
-                    LeafNode {
-                        partial: path,
-                        value: value.to_vec(),
-                    }
-                    .into()
-                } else {
-                    // Decode as Extension
-                    ExtensionNode {
-                        prefix: path,
-                        child: decode_child(&rlp_items[1]).into(),
-                    }
-                    .into()
-                }
-            }
-            // Branch Node
-            17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
-                let (value, _) = decode_bytes(&rlp_items[16])?;
-                BranchNode {
-                    choices,
-                    value: value.to_vec(),
-                }
-                .into()
-            }
-            n => {
-                return Err(RLPDecodeError::Custom(format!(
-                    "Invalid arg count for Node, expected 2 or 17, got {n}"
-                )));
-            }
-        })
     }
 
     /// Computes the node's hash
