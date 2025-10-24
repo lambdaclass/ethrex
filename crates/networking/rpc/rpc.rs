@@ -53,6 +53,8 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::error::ChainError;
+use ethrex_common::types::Block;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -67,7 +69,12 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tokio::net::TcpListener;
+use tokio::sync::{
+    Mutex as TokioMutex,
+    mpsc::{UnboundedSender, unbounded_channel},
+    oneshot,
+};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, Registry, reload};
@@ -164,6 +171,7 @@ pub struct RpcApiContext {
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     pub gas_ceil: u64,
+    pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +203,21 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
+pub fn start_block_executor(
+    blockchain: Arc<Blockchain>,
+) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
+    let (block_worker_channel, mut block_receiver) =
+        unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
+    std::thread::spawn(move || {
+        while let Some((notify, block)) = block_receiver.blocking_recv() {
+            let _ = notify
+                .send(blockchain.add_block(block))
+                .inspect_err(|_| ::tracing::error!("failed to notify caller"));
+        }
+    });
+    block_worker_channel
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
@@ -215,6 +238,7 @@ pub async fn start_api(
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let block_worker_channel = start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         storage,
         blockchain,
@@ -231,6 +255,7 @@ pub async fn start_api(
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
         gas_ceil,
+        block_worker_channel,
     };
 
     // Periodically clean up the active filters for the filters endpoints.

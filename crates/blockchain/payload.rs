@@ -638,8 +638,7 @@ impl Blockchain {
 
         let ret_acount_updates_list = self
             .storage
-            .apply_account_updates_batch(context.parent_hash(), &account_updates)
-            .await?
+            .apply_account_updates_batch(context.parent_hash(), &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let state_root = ret_acount_updates_list.state_trie_hash;

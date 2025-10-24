@@ -611,7 +611,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         let trie_cache = self.trie_cache.clone();
         let parent_state_root = self
@@ -633,138 +633,133 @@ impl StoreEngine for Store {
             .state_root;
         let flatkeyvalue_control_tx = self.flatkeyvalue_control_tx.clone();
 
-        tokio::task::spawn_blocking(move || {
-            let _span = tracing::trace_span!("Block DB update").entered();
+        let _span = tracing::trace_span!("Block DB update").entered();
 
-            let [
-                cf_trie_nodes,
-                cf_flatkeyvalue,
-                cf_receipts,
-                cf_codes,
-                cf_block_numbers,
-                cf_tx_locations,
-                cf_headers,
-                cf_bodies,
-                cf_misc,
-            ] = open_cfs(
-                &db,
-                [
-                    CF_TRIE_NODES,
-                    CF_FLATKEYVALUE,
-                    CF_RECEIPTS,
-                    CF_ACCOUNT_CODES,
-                    CF_BLOCK_NUMBERS,
-                    CF_TRANSACTION_LOCATIONS,
-                    CF_HEADERS,
-                    CF_BODIES,
-                    CF_MISC_VALUES,
-                ],
-            )?;
+        let [
+            cf_trie_nodes,
+            cf_flatkeyvalue,
+            cf_receipts,
+            cf_codes,
+            cf_block_numbers,
+            cf_tx_locations,
+            cf_headers,
+            cf_bodies,
+            cf_misc,
+        ] = open_cfs(
+            &db,
+            [
+                CF_TRIE_NODES,
+                CF_FLATKEYVALUE,
+                CF_RECEIPTS,
+                CF_ACCOUNT_CODES,
+                CF_BLOCK_NUMBERS,
+                CF_TRANSACTION_LOCATIONS,
+                CF_HEADERS,
+                CF_BODIES,
+                CF_MISC_VALUES,
+            ],
+        )?;
 
-            let mut batch = WriteBatch::default();
+        let mut batch = WriteBatch::default();
 
-            let mut updated_trie = false;
+        let mut updated_trie = false;
 
-            let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
-            if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
-                updated_trie = true;
-                // If the channel is closed, there's nobody to notify
-                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Stop);
+        let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
+        if let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) {
+            updated_trie = true;
+            // If the channel is closed, there's nobody to notify
+            let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Stop);
 
-                let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
-                let nodes = trie.commit(root).unwrap_or_default();
-                for (key, value) in nodes {
-                    let is_leaf = key.len() == 65 || key.len() == 131;
+            let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
+            let nodes = trie.commit(root).unwrap_or_default();
+            for (key, value) in nodes {
+                let is_leaf = key.len() == 65 || key.len() == 131;
 
-                    if is_leaf && key > last_written {
-                        continue;
-                    }
-                    let cf = if is_leaf {
-                        &cf_flatkeyvalue
-                    } else {
-                        &cf_trie_nodes
-                    };
-                    if value.is_empty() {
-                        batch.delete_cf(cf, key);
-                    } else {
-                        batch.put_cf(cf, key, value);
-                    }
+                if is_leaf && key > last_written {
+                    continue;
+                }
+                let cf = if is_leaf {
+                    &cf_flatkeyvalue
+                } else {
+                    &cf_trie_nodes
+                };
+                if value.is_empty() {
+                    batch.delete_cf(cf, key);
+                } else {
+                    batch.put_cf(cf, key, value);
                 }
             }
-            trie.put_batch(
-                parent_state_root,
-                last_state_root,
-                update_batch
-                    .storage_updates
-                    .into_iter()
-                    .flat_map(|(account_hash, nodes)| {
-                        nodes
-                            .into_iter()
-                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                    })
-                    .chain(update_batch.account_updates)
-                    .collect(),
-            );
+        }
+        trie.put_batch(
+            parent_state_root,
+            last_state_root,
+            update_batch
+                .storage_updates
+                .into_iter()
+                .flat_map(|(account_hash, nodes)| {
+                    nodes
+                        .into_iter()
+                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                })
+                .chain(update_batch.account_updates)
+                .collect(),
+        );
 
-            for block in update_batch.blocks {
-                let block_number = block.header.number;
-                let block_hash = block.hash();
+        for block in update_batch.blocks {
+            let block_number = block.header.number;
+            let block_hash = block.hash();
 
-                let hash_key_rlp = BlockHashRLP::from(block_hash);
-                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-                batch.put_cf(&cf_headers, hash_key_rlp.bytes(), header_value_rlp.bytes());
+            let hash_key_rlp = BlockHashRLP::from(block_hash);
+            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+            batch.put_cf(&cf_headers, hash_key_rlp.bytes(), header_value_rlp.bytes());
 
-                let hash_key: AccountCodeHashRLP = block_hash.into();
-                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-                batch.put_cf(&cf_bodies, hash_key.bytes(), body_value.bytes());
+            let hash_key: AccountCodeHashRLP = block_hash.into();
+            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+            batch.put_cf(&cf_bodies, hash_key.bytes(), body_value.bytes());
 
-                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
+            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+            batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
 
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    let tx_hash = transaction.hash();
-                    // Key: tx_hash + block_hash
-                    let mut composite_key = Vec::with_capacity(64);
-                    composite_key.extend_from_slice(tx_hash.as_bytes());
-                    composite_key.extend_from_slice(block_hash.as_bytes());
-                    let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    batch.put_cf(&cf_tx_locations, composite_key, location_value);
-                }
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let tx_hash = transaction.hash();
+                // Key: tx_hash + block_hash
+                let mut composite_key = Vec::with_capacity(64);
+                composite_key.extend_from_slice(tx_hash.as_bytes());
+                composite_key.extend_from_slice(block_hash.as_bytes());
+                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                batch.put_cf(&cf_tx_locations, composite_key, location_value);
             }
+        }
 
-            for (block_hash, receipts) in update_batch.receipts {
-                for (index, receipt) in receipts.into_iter().enumerate() {
-                    let key = (block_hash, index as u64).encode_to_vec();
-                    let value = receipt.encode_to_vec();
-                    batch.put_cf(&cf_receipts, key, value);
-                }
+        for (block_hash, receipts) in update_batch.receipts {
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                let key = (block_hash, index as u64).encode_to_vec();
+                let value = receipt.encode_to_vec();
+                batch.put_cf(&cf_receipts, key, value);
             }
+        }
 
-            for (code_hash, code) in update_batch.code_updates {
-                let mut buf =
-                    Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
-                code.bytecode.encode(&mut buf);
-                code.jump_targets
-                    .into_iter()
-                    .flat_map(|t| t.to_le_bytes())
-                    .collect::<Vec<u8>>()
-                    .as_slice()
-                    .encode(&mut buf);
-                batch.put_cf(&cf_codes, code_hash.0, buf);
-            }
+        for (code_hash, code) in update_batch.code_updates {
+            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            code.bytecode.encode(&mut buf);
+            code.jump_targets
+                .into_iter()
+                .flat_map(|t| t.to_le_bytes())
+                .collect::<Vec<u8>>()
+                .as_slice()
+                .encode(&mut buf);
+            batch.put_cf(&cf_codes, code_hash.0, buf);
+        }
 
-            // Single write operation
-            let ret = db
-                .write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)));
-            if updated_trie {
-                // If the channel is closed, there's nobody to notify
-                let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Continue);
-            }
-            ret
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        // Single write operation
+        let ret = db
+            .write(batch)
+            .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)));
+        if updated_trie {
+            // If the channel is closed, there's nobody to notify
+            let _ = flatkeyvalue_control_tx.send(FKVGeneratorControlMessage::Continue);
+        }
+        ret
     }
 
     /// Add a batch of blocks in a single transaction.
@@ -985,11 +980,13 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
-    async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();
-        self.write_async(CF_PENDING_BLOCKS, hash_key, block_value)
-            .await
+        let cf = self.cf_handle(CF_PENDING_BLOCKS)?;
+        self.db
+            .put_cf(&cf, hash_key, block_value)
+            .map_err(StoreError::RocksdbError)
     }
 
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {

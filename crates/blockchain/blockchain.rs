@@ -139,14 +139,14 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    async fn execute_block(
+    fn execute_block(
         &self,
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
+            self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
         };
 
@@ -156,7 +156,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = self.new_evm(vm_db).await?;
+        let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
@@ -423,7 +423,7 @@ impl Blockchain {
         })
     }
 
-    pub async fn store_block(
+    pub fn store_block(
         &self,
         block: Block,
         account_updates_list: AccountUpdatesList,
@@ -442,20 +442,18 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
-            .await
             .map_err(|e| e.into())
     }
 
-    pub async fn add_block(&self, block: Block) -> Result<(), ChainError> {
+    pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(&block).await?;
+        let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
             .storage
-            .apply_account_updates_batch(block.header.parent_hash, &updates)
-            .await?
+            .apply_account_updates_batch(block.header.parent_hash, &updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
@@ -466,7 +464,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res).await;
+        let result = self.store_block(block, account_updates_list, res);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -565,7 +563,7 @@ impl Blockchain {
             first_block_header.parent_hash,
             block_hash_cache,
         );
-        let mut vm = self.new_evm(vm_db).await.map_err(|e| (e.into(), None))?;
+        let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
@@ -631,7 +629,6 @@ impl Blockchain {
         let account_updates_list = self
             .storage
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
-            .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
@@ -653,7 +650,6 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
-            .await
             .map_err(|e| (e.into(), None))?;
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
@@ -942,11 +938,12 @@ impl Blockchain {
         Ok(result)
     }
 
-    pub async fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
         let evm = match &self.options.r#type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
             BlockchainType::L2(l2_config) => {
-                Evm::new_for_l2(vm_db, *l2_config.fee_config.read().await)?
+                unreachable!()
+                // Evm::new_for_l2(vm_db, *l2_config.fee_config.read().await)?
             }
         };
         Ok(evm)
