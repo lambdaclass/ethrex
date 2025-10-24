@@ -316,6 +316,7 @@ pub fn get_l1_fee_config(sequencer_opts: &SequencerOptions) -> Option<L1FeeConfi
         .map(|addr| L1FeeConfig {
             l1_fee_vault: addr,
             l1_fee_per_blob_gas: 0, // This is set by the L1 watcher
+        })
 }
 
 pub async fn get_operator_fee_config(
