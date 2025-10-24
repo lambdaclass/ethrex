@@ -468,24 +468,26 @@ impl Blockchain {
         since: Instant,
         executed: Instant,
         merkleized: Instant,
-        stored: Instant,
+        _stored: Instant,
     ) {
-        let interval = stored.duration_since(since).as_millis() as f64;
+        // dont count stored time
+        let interval = merkleized.duration_since(since).as_micros() as f64;
         if interval != 0f64 {
             let as_gigas = gas_used as f64 / 10_f64.powf(9_f64);
-            let throughput = as_gigas / interval * 1000_f64;
+            let interval_sec = interval / 1_000_000.0;
+            let ggas_per_sec = as_gigas / interval_sec;
 
             metrics!(
                 let _ = METRICS_BLOCKS.set_block_number(block_number);
                 METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
                 METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
-                METRICS_BLOCKS.set_latest_gigagas(throughput);
+                METRICS_BLOCKS.set_latest_gigagas(ggas_per_sec);
             );
 
             let base_log = format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
                 block_number,
-                throughput,
+                ggas_per_sec,
                 interval,
                 as_gigas,
                 (gas_used as f64 / gas_limit as f64) * 100.0,
@@ -497,10 +499,9 @@ impl Blockchain {
             }
             let extra_log = if as_gigas > 0.0 {
                 format!(
-                    " exec: {}% merkle: {}% store: {}%",
+                    " exec: {}% merkle: {}%",
                     percentage(since, executed, interval),
                     percentage(executed, merkleized, interval),
-                    percentage(merkleized, stored, interval)
                 )
             } else {
                 "".to_string()
