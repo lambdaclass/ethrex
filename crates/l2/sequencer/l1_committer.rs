@@ -321,7 +321,7 @@ impl L1Committer {
         self.generate_and_store_batch_prover_input(&batch).await?;
 
         // We need to update the current checkpoint after generating the witness
-        // with the it, and before sending the commitment.
+        // with it, and before sending the commitment.
         // The actual checkpoint store directory is not pruned until the batch
         // it served in is verified on L1.
         self.update_current_checkpoint(&batch).await?;
