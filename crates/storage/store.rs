@@ -484,7 +484,6 @@ impl Store {
 
                 // Store updated code in DB
                 if let Some(code) = &update.code {
-                    // self.add_account_code(info.code_hash, code.clone()).await?;
                     code_updates.push((info.code_hash, code.clone()));
                 }
             }
