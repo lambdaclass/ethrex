@@ -96,7 +96,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
-    let store = open_store(datadir.as_ref());
+    let mut store = open_store(datadir.as_ref());
     store
         .add_initial_state(genesis)
         .await
