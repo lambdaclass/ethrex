@@ -748,6 +748,10 @@ impl L1Committer {
             .checkpoints_dir
             .join(format!("checkpoint_batch_{}", latest_batch.number));
 
+        // CAUTION
+        // We need to skip checkpoint creation if the directory already exists.
+        // If not skipped, this would cause a lock error when rocksdb feature
+        // is enabled.
         if new_checkpoint_path.exists() {
             debug!("Checkpoint at path {new_checkpoint_path:?} already exists, skipping creation");
             return Ok(());
