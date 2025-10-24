@@ -7,9 +7,9 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
 use crate::api::StoreEngineRollup;
 
@@ -46,6 +46,10 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
+    /// Map of (batch_number, prover_version) to serialized prover input data
+    batch_prover_input: HashMap<(u64, String), Vec<u8>>,
+    /// Map of block number to FeeConfig
+    fee_config_by_block: HashMap<BlockNumber, FeeConfig>,
 }
 
 impl Store {
@@ -284,6 +288,9 @@ impl StoreEngineRollup for Store {
             .retain(|batch, _| *batch <= batch_number);
         store.state_roots.retain(|batch, _| *batch <= batch_number);
         store.blobs.retain(|batch, _| *batch <= batch_number);
+        store
+            .batch_prover_input
+            .retain(|(batch, _), _| *batch <= batch_number);
         Ok(())
     }
 
@@ -330,6 +337,69 @@ impl StoreEngineRollup for Store {
 
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
         Ok(self.inner()?.state_roots.keys().max().cloned())
+    }
+
+    async fn store_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        let witness_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&prover_input)
+            .map_err(|e| RollupStoreError::Custom(format!("Failed to serialize witness: {}", e)))?
+            .to_vec();
+
+        self.inner()?
+            .batch_prover_input
+            .insert((batch_number, prover_version.to_string()), witness_bytes);
+
+        Ok(())
+    }
+
+    async fn get_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+    ) -> Result<Option<ProverInputData>, RollupStoreError> {
+        let Some(witness_bytes) = self
+            .inner()?
+            .batch_prover_input
+            .get(&(batch_number, prover_version.to_string()))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+
+        let prover_input = rkyv::from_bytes::<ProverInputData, rkyv::rancor::Error>(&witness_bytes)
+            .map_err(|e| {
+                RollupStoreError::Custom(format!(
+                    "Failed to deserialize prover input for batch {batch_number} and version {prover_version}: {e}",
+                ))
+            })?;
+
+        Ok(Some(prover_input))
+    }
+
+    async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .fee_config_by_block
+            .insert(block_number, fee_config);
+        Ok(())
+    }
+
+    async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .fee_config_by_block
+            .get(&block_number)
+            .cloned())
     }
 }
 

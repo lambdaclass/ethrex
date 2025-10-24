@@ -1,5 +1,5 @@
 use crate::{backend::Backend, config::ProverConfig, prove, to_batch_proof};
-use ethrex_l2::sequencer::proof_coordinator::{ProofData, get_commit_hash};
+use ethrex_l2::sequencer::{proof_coordinator::ProofData, utils::get_git_commit_hash};
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::input::ProgramInput;
 use std::time::Duration;
@@ -37,7 +37,7 @@ impl Prover {
             backend: cfg.backend,
             proof_coordinator_endpoints: cfg.proof_coordinators,
             proving_time_ms: cfg.proving_time_ms,
-            commit_hash: get_commit_hash(),
+            commit_hash: get_git_commit_hash(),
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: cfg.sp1_server,
         }
@@ -130,7 +130,7 @@ impl Prover {
                 blob_commitment: input.blob_commitment,
                 #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
-                fee_config: Some(input.fee_config),
+                fee_configs: Some(input.fee_configs),
             },
             format,
         }))

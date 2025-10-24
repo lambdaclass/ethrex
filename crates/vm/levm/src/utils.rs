@@ -19,7 +19,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
-    types::{Account, Fork, Transaction, tx_fields::*},
+    types::{Account, Code, Fork, Transaction, tx_fields::*},
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
@@ -199,8 +199,8 @@ pub fn get_max_blob_gas_price(
 
     Ok(max_blob_gas_cost)
 }
-/// Gets the actual blob gas cost.
-pub fn get_blob_gas_price(
+/// Calculate the actual blob gas cost.
+pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
     block_excess_blob_gas: Option<U256>,
     evm_config: &EVMConfig,
@@ -210,14 +210,14 @@ pub fn get_blob_gas_price(
         .try_into()
         .map_err(|_| InternalError::TypeConversion)?;
 
-    let blob_gas_price: u64 = blobhash_amount
+    let blob_gas_used: u64 = blobhash_amount
         .checked_mul(BLOB_GAS_PER_BLOB)
         .unwrap_or_default();
 
     let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
 
-    let blob_gas_price: U256 = blob_gas_price.into();
-    let blob_fee: U256 = blob_gas_price
+    let blob_gas_used: U256 = blob_gas_used.into();
+    let blob_fee: U256 = blob_gas_used
         .checked_mul(base_fee_per_blob_gas)
         .ok_or(InternalError::Overflow)?;
 
@@ -328,7 +328,7 @@ pub fn eip7702_get_code(
     db: &mut GeneralizedDatabase,
     accrued_substate: &mut Substate,
     address: Address,
-) -> Result<(bool, u64, Address, Bytes), VMError> {
+) -> Result<(bool, u64, Address, Code), VMError> {
     // Address is the delgated address
     let bytecode = db.get_account_code(address)?;
 
@@ -336,13 +336,13 @@ pub fn eip7702_get_code(
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !code_has_delegation(bytecode)? {
+    if !code_has_delegation(&bytecode.bytecode)? {
         return Ok((false, 0, address, bytecode.clone()));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address_from_code(bytecode)?;
+    let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
 
     let access_cost = if accrued_substate.add_accessed_address(auth_address) {
         WARM_ADDRESS_ACCESS_COST
@@ -389,8 +389,8 @@ impl<'a> VM<'a> {
             self.substate.add_accessed_address(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
-            let empty_or_delegated =
-                authority_code.is_empty() || code_has_delegation(authority_code)?;
+            let empty_or_delegated = authority_code.bytecode.is_empty()
+                || code_has_delegation(&authority_code.bytecode)?;
             if !empty_or_delegated {
                 continue;
             }
@@ -424,7 +424,7 @@ impl<'a> VM<'a> {
             } else {
                 Bytes::new()
             };
-            self.update_account_bytecode(authority_address, code)?;
+            self.update_account_bytecode(authority_address, Code::from_bytecode(code))?;
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
@@ -526,7 +526,7 @@ impl<'a> VM<'a> {
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create()? {
-            &self.current_call_frame.bytecode
+            &self.current_call_frame.bytecode.bytecode
         } else {
             &self.current_call_frame.calldata
         };
@@ -580,7 +580,7 @@ impl<'a> VM<'a> {
 
 /// Converts Account to LevmAccount
 /// The problem with this is that we don't have the storage root.
-pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
+pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
     (
         LevmAccount {
             info: account.info,
