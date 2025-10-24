@@ -1768,9 +1768,11 @@ impl StoreEngine for Store {
         let checkpoint = Checkpoint::new(&self.db)
             .map_err(|e| StoreError::Custom(format!("Failed to create checkpoint: {e}")))?;
 
-        checkpoint
-            .create_checkpoint(path)
-            .map_err(|e| StoreError::Custom(format!("Failed to create RocksDB checkpoint: {e}")))?;
+        checkpoint.create_checkpoint(path).map_err(|e| {
+            StoreError::Custom(format!(
+                "Failed to create RocksDB checkpoint at {path:?}: {e}"
+            ))
+        })?;
 
         Ok(())
     }
