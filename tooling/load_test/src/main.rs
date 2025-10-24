@@ -485,7 +485,7 @@ fn parse_pk_file(path: &Path) -> eyre::Result<Vec<Signer>> {
         .map(parse_private_key_into_local_signer)
         .collect();
     println!(
-        "Parsed {} rich accounts (limit: {MAX_RICH_ACCOUNTS}",
+        "Parsed {} rich accounts (limit: {MAX_RICH_ACCOUNTS})",
         accounts.len()
     );
     Ok(accounts)
