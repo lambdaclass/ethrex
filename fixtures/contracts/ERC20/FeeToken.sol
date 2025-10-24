@@ -1,13 +1,13 @@
 import "./deps.sol";
-import "./Print.sol";
 
 pragma solidity ^0.8.0;
 
 contract FeeToken is ERC20 {
     uint256 constant defaultMint = 1000000 * (10 ** 18);
+    address constant FEE_COLLECTOR = address(0xffff);
 
     modifier onlyFeeCollector() {
-        require(msg.sender == address(0xffff), "Only fee collector");
+        require(msg.sender == FEE_COLLECTOR, "Only fee collector");
         _;
     }
 
@@ -22,19 +22,14 @@ contract FeeToken is ERC20 {
     }
 
     function lockFee(address payer, uint256 amount) public onlyFeeCollector {
-        print(string("locking fee"));
-        _transfer(payer, address(this), amount);
+        _transfer(payer, FEE_COLLECTOR, amount);
     }
 
     function payFee(address receiver, uint256 amount) public onlyFeeCollector {
-        // this does not check for the receiver to be the address zero as it is burning the fees
-        print(address(receiver));
         if (receiver == address(0)) {
-            print(string("adentro if"));
-            _burn(address(this), amount);
+            _burn(FEE_COLLECTOR, amount);
         } else {
-            print(string("afuera if"), address(receiver));
-            _transfer(address(this), receiver, amount);
+            _transfer(FEE_COLLECTOR, receiver, amount);
         }
     }
 }

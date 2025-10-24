@@ -7,7 +7,6 @@
 // Original license: SPDX_License_Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.1.0) (interfaces/draft-IERC6093.sol)
 pragma solidity ^0.8.20;
-import "./Print.sol";
 
 /**
  * @dev Standard ERC-20 Errors
@@ -505,15 +504,12 @@ abstract contract ERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
      * NOTE: This function is not virtual, {_update} should be overridden instead.
      */
     function _transfer(address from, address to, uint256 value) internal {
-        print(string("a"));
         if (from == address(0)) {
             revert ERC20InvalidSender(address(0));
         }
-        print(string("b"));
         if (to == address(0)) {
             revert ERC20InvalidReceiver(address(0));
         }
-        print(string("c"));
         _update(from, to, value);
     }
 
