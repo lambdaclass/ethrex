@@ -35,42 +35,44 @@ jobs:
               simulation: ethereum/engine,
             }
           - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
-          - {
-              name: "Consume Engine tests (Rest)",
-              file_name: consume-engine-rest,
-              simulation: ethereum/eest/consume-engine,
-              limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
-            }
-          - {
-              name: "Consume Engine tests (Prague)",
-              file_name: consume-engine-prague,
-              simulation: ethereum/eest/consume-engine,
-              limit: ".*fork_Prague.*",
-            }
-          - {
-              name: "Consume Engine tests (Osaka)",
-              file_name: consume-engine-osaka,
-              simulation: ethereum/eest/consume-engine,
-              limit: ".*fork_Osaka.*",
-            }
-          - {
-              name: "Consume RLP tests (Rest)",
-              file_name: consume-rlp-rest,
-              simulation: ethereum/eest/consume-rlp,
-              limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
-            }
-          - {
-              name: "Consume RLP tests (Prague)",
-              file_name: consume-rlp-prague,
-              simulation: ethereum/eest/consume-rlp,
-              limit: ".*fork_Prague.*",
-            }
-          - {
-              name: "Consume RLP tests (Osaka)",
-              file_name: consume-rlp-osaka,
-              simulation: ethereum/eest/consume-rlp,
-              limit: ".*fork_Osaka.*",
-            }
+          # Migratation to EELS currently ongoing, see https://github.com/ethereum/execution-spec-tests/pull/2308#issuecomment-3421843487
+          # When migration is complete, adapt these tests and reenable
+          # - {
+          #     name: "Consume Engine tests (Rest)",
+          #     file_name: consume-engine-rest,
+          #     simulation: ethereum/eest/consume-engine,
+          #     limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
+          #   }
+          # - {
+          #     name: "Consume Engine tests (Prague)",
+          #     file_name: consume-engine-prague,
+          #     simulation: ethereum/eest/consume-engine,
+          #     limit: ".*fork_Prague.*",
+          #   }
+          # - {
+          #     name: "Consume Engine tests (Osaka)",
+          #     file_name: consume-engine-osaka,
+          #     simulation: ethereum/eest/consume-engine,
+          #     limit: ".*fork_Osaka.*",
+          #   }
+          # - {
+          #     name: "Consume RLP tests (Rest)",
+          #     file_name: consume-rlp-rest,
+          #     simulation: ethereum/eest/consume-rlp,
+          #     limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
+          #   }
+          # - {
+          #     name: "Consume RLP tests (Prague)",
+          #     file_name: consume-rlp-prague,
+          #     simulation: ethereum/eest/consume-rlp,
+          #     limit: ".*fork_Prague.*",
+          #   }
+          # - {
+          #     name: "Consume RLP tests (Osaka)",
+          #     file_name: consume-rlp-osaka,
+          #     simulation: ethereum/eest/consume-rlp,
+          #     limit: ".*fork_Osaka.*",
+          #   }
           - {
               name: "Execute Blobs tests",
               file_name: execute-blobs,
