@@ -103,7 +103,9 @@
           "id": 7,
           "options": {
             "legend": {
-              "calcs": [],
+              "calcs": [
+                "mean"
+              ],
               "displayMode": "list",
               "placement": "bottom",
               "showLegend": true
@@ -698,7 +700,9 @@
           "id": 6,
           "options": {
             "legend": {
-              "calcs": [],
+              "calcs": [
+                "mean"
+              ],
               "displayMode": "list",
               "placement": "bottom",
               "showLegend": true
@@ -861,7 +865,9 @@
           "id": 1,
           "options": {
             "legend": {
-              "calcs": [],
+              "calcs": [
+                "mean"
+              ],
               "displayMode": "list",
               "placement": "bottom",
               "showLegend": true
@@ -1195,7 +1201,9 @@
           "id": 11,
           "options": {
             "legend": {
-              "calcs": [],
+              "calcs": [
+                "mean"
+              ],
               "displayMode": "list",
               "placement": "bottom",
               "showLegend": true
@@ -1523,5 +1531,5 @@
   "timezone": "browser",
   "title": "Ethrex Comparison",
   "uid": "ads9rd7",
-  "version": 1
+  "version": 2
 }
