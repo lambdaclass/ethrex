@@ -423,7 +423,7 @@ impl Command {
                     let state_diff = StateDiff::decode(&blob)?;
 
                     // Apply all account updates to trie
-                    let trie = store.open_direct_state_trie(current_state_root)?;
+                    let trie = store.open_direct_state_trie()?;
 
                     let account_updates = state_diff.to_account_updates(&trie)?;
 
@@ -434,7 +434,7 @@ impl Command {
                         .unwrap();
 
                     store
-                        .open_direct_state_trie(current_state_root)?
+                        .open_direct_state_trie()?
                         .db()
                         .put_batch(account_updates_list.state_updates)?;
 
