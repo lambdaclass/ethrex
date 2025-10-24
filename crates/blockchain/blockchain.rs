@@ -225,7 +225,7 @@ impl Blockchain {
 
         let mut block_hashes = HashMap::new();
         let mut codes = Vec::new();
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+
         for block in blocks {
             let parent_hash = block.header.parent_hash;
 
