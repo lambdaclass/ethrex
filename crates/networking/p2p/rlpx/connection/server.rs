@@ -371,7 +371,7 @@ impl GenServer for PeerConnectionServer {
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     trace!(
                         peer=%established_state.node,
-                        %msg,
+                        message=%msg,
                         "Received broadcasted message",
                     );
                     handle_broadcast(established_state, (id, msg)).await
