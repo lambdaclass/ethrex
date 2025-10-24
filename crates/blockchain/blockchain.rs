@@ -37,7 +37,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{Mutex as TokioMutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
@@ -60,7 +60,13 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 pub enum BlockchainType {
     #[default]
     L1,
-    L2(FeeConfig),
+    L2(L2Config),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct L2Config {
+    /// We use a RwLock because the Watcher updates the L1 fee config periodically
+    pub fee_config: Arc<RwLock<FeeConfig>>,
 }
 
 #[derive(Debug)]
@@ -152,7 +158,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = self.new_evm(vm_db)?;
+        let mut vm = self.new_evm(vm_db).await?;
 
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
@@ -187,6 +193,15 @@ impl Blockchain {
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
+    ) -> Result<ExecutionWitness, ChainError> {
+        self.generate_witness_for_blocks_with_fee_configs(blocks, None)
+            .await
+    }
+
+    pub async fn generate_witness_for_blocks_with_fee_configs(
+        &self,
+        blocks: &[Block],
+        fee_configs: Option<&[FeeConfig]>,
     ) -> Result<ExecutionWitness, ChainError> {
         let first_block_header = &blocks
             .first()
@@ -226,7 +241,7 @@ impl Blockchain {
         let mut block_hashes = HashMap::new();
         let mut codes = Vec::new();
 
-        for block in blocks {
+        for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;
 
             // This assumes that the user has the necessary state stored already,
@@ -241,8 +256,18 @@ impl Blockchain {
 
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
-                BlockchainType::L2(fee_config) => {
-                    Evm::new_from_db_for_l2(logger.clone(), fee_config)
+                BlockchainType::L2(_) => {
+                    let l2_config = match fee_configs {
+                        Some(fee_configs) => {
+                            fee_configs.get(i).ok_or(ChainError::WitnessGeneration(
+                                "FeeConfig not found for witness generation".to_string(),
+                            ))?
+                        }
+                        None => Err(ChainError::WitnessGeneration(
+                            "L2Config not found for witness generation".to_string(),
+                        ))?,
+                    };
+                    Evm::new_from_db_for_l2(logger.clone(), *l2_config)
                 }
             };
 
@@ -611,7 +636,7 @@ impl Blockchain {
             first_block_header.parent_hash,
             block_hash_cache,
         );
-        let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
+        let mut vm = self.new_evm(vm_db).await.map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
@@ -988,10 +1013,12 @@ impl Blockchain {
         Ok(result)
     }
 
-    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-        let evm = match self.options.r#type {
+    pub async fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+        let evm = match &self.options.r#type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2(fee_config) => Evm::new_for_l2(vm_db, fee_config)?,
+            BlockchainType::L2(l2_config) => {
+                Evm::new_for_l2(vm_db, *l2_config.fee_config.read().await)?
+            }
         };
         Ok(evm)
     }
