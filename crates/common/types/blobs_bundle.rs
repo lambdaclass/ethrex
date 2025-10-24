@@ -157,8 +157,8 @@ impl BlobsBundle {
 
         if self.version != 0 {
             // Validate the blobs with the commitments and cell proofs
-            use ethrex_crypto::kzg::verify_cell_kzg_proof_batch;
-            if !verify_cell_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
+            use ethrex_crypto::kzg::verify_cell_kzg_proof_batch_our;
+            if !verify_cell_kzg_proof_batch_our(&self.blobs, &self.commitments, &self.proofs)? {
                 return Err(BlobsBundleError::BlobToCommitmentAndProofError);
             }
         } else {

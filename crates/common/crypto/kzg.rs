@@ -78,7 +78,7 @@ static TRUSTED_SETUP: LazyLock<KZGSettings> = LazyLock::new(|| {
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
 /// as defined by EIP-7594.
 /// TODO: change doc
-pub fn verify_cell_kzg_proof_batchh(
+pub fn verify_cell_kzg_proof_batch_our(
     blobs: &[Blob],
     commitments: &[Commitment],
     cell_proof: &[Proof],

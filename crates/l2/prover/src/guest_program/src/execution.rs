@@ -469,7 +469,7 @@ fn verify_blob(
     commitment: Commitment,
     proof: Vec<Proof>,
 ) -> Result<H256, StatelessExecutionError> {
-    use ethrex_crypto::kzg::{verify_blob_kzg_proof, verify_cell_kzg_proof_batch};
+    use ethrex_crypto::kzg::{verify_blob_kzg_proof, verify_cell_kzg_proof_batch_our};
 
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
@@ -479,7 +479,7 @@ fn verify_blob(
         verify_blob_kzg_proof(blob_data, commitment, proof[0])?
     } else {
         // Osaka type proof
-        verify_cell_kzg_proof_batch(&[blob_data], &[commitment], &proof)?
+        verify_cell_kzg_proof_batch_our(&[blob_data], &[commitment], &proof)?
     };
 
     if !proof_is_valid {
