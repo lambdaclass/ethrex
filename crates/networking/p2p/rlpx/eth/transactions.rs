@@ -278,9 +278,7 @@ impl PooledTransactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 if is_l2_mode {
                     debug!(
-                            client_name=%node.client_name(),
-                            client_id=%node.node_id(),
-                            client_ip=%node.ip,
+                        client=%node,
                         "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
                     );
                     continue;
@@ -290,9 +288,10 @@ impl PooledTransactions {
                     .await
                 {
                     debug!(
-                            client_name=%node.client_name(),
-                            client_id=%node.node_id(),
-                            client_ip=%node.ip, error=%e, "Error adding transaction");
+                        client=%node,
+                        error=%e,
+                        "Error adding transaction"
+                    );
                     continue;
                 }
             } else {
@@ -301,9 +300,10 @@ impl PooledTransactions {
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
                 if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
                     debug!(
-                            client_name=%node.client_name(),
-                            client_id=%node.node_id(),
-                            client_ip=%node.ip, error=%e, "Error adding transaction");
+                        client=%node,
+                        error=%e,
+                        "Error adding transaction"
+                    );
                     continue;
                 }
             }

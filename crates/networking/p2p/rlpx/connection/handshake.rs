@@ -69,7 +69,7 @@ pub(crate) async fn perform(
                 Ok(result) => result,
                 Err(error) => {
                     // If we can't find a TCP connection it's an issue we should track in debug
-                    debug!(client_name=%node.client_name(), client_id=%node.node_id(), client_ip=%node.ip, %error, "Error creating tcp connection");
+                    debug!(client=%node, %error, "Error creating tcp connection");
                     return Err(error)?;
                 }
             };
@@ -80,7 +80,7 @@ pub(crate) async fn perform(
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
-            trace!(client_name=%node.client_name(), client_id=%node.node_id(), client_ip=%node.ip, "Completed handshake as initiator");
+            trace!(client=%node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec))
         }
         ConnectionState::Receiver(Receiver {
@@ -106,7 +106,7 @@ pub(crate) async fn perform(
                 peer_addr.port(),
                 remote_state.public_key,
             );
-            trace!(client_name=%node.client_name(), client_id=%node.node_id(), client_ip=%node.ip, "Completed handshake as receiver");
+            trace!(client=%node, "Completed handshake as receiver");
             (context, node, Framed::new(stream, codec))
         }
         ConnectionState::Established(_) => {
