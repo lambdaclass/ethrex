@@ -46,7 +46,7 @@ fn broadcast_message(state: &Established, msg: Message) -> Result<(), PeerConnec
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
             error!(
-                client=%state.node,
+                peer=%state.node,
                 message=%msg,
                 "Broadcasting for this message is not supported"
             );
@@ -162,7 +162,7 @@ pub(crate) fn broadcast_l2_message(
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
                     error!(
-                        client=%state.node,
+                        peer=%state.node,
                         error=%e,
                         "Could not broadcast l2 message BatchSealed"
                     );
@@ -181,7 +181,7 @@ pub(crate) fn broadcast_l2_message(
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
                     error!(
-                        client=%state.node,
+                        peer=%state.node,
                         error=%e,
                         "Could not broadcast l2 message NewBlock",
                     );
@@ -309,7 +309,7 @@ async fn should_process_new_block(
             })?
             .map_err(|e| {
                 error!(
-                    client=%established.node,
+                    peer=%established.node,
                     error=%e,
                     "Failed to recover lead sequencer",
                 );
@@ -359,7 +359,7 @@ async fn should_process_batch_sealed(
 
     let recovered_lead_sequencer = recover_address(msg.signature, hash).map_err(|e| {
         error!(
-            client=%established.node,
+            peer=%established.node,
             error=%e,
             "Failed to recover lead sequencer",
         );
@@ -406,7 +406,7 @@ async fn process_new_block(
             .await
             .inspect_err(|e| {
                 error!(
-                    client=%established.node,
+                    peer=%established.node,
                     error=%e,
                     block_number,
                     ?block_hash,

@@ -262,7 +262,7 @@ impl GenServer for PeerConnectionServer {
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
         match handshake::perform(self.state, eth_version.clone()).await {
             Ok((mut established_state, stream)) => {
-                trace!(client=%established_state.node, "Starting RLPx connection");
+                trace!(peer=%established_state.node, "Starting RLPx connection");
                 if let Err(reason) =
                     initialize_connection(handle, &mut established_state, stream, eth_version).await
                 {
@@ -323,7 +323,7 @@ impl GenServer for PeerConnectionServer {
             let result = match message {
                 Self::CastMsg::IncomingMessage(message) => {
                     trace!(
-                        client=%established_state.node,
+                        peer=%established_state.node,
                         %message,
                         "Received incomming message",
                     );
@@ -331,7 +331,7 @@ impl GenServer for PeerConnectionServer {
                 }
                 Self::CastMsg::OutgoingMessage(message) => {
                     trace!(
-                        client=%established_state.node,
+                        peer=%established_state.node,
                         %message,
                         "Received outgoing request",
                     );
@@ -339,7 +339,7 @@ impl GenServer for PeerConnectionServer {
                 }
                 Self::CastMsg::OutgoingRequest(message, sender) => {
                     trace!(
-                        client=%established_state.node,
+                        peer=%established_state.node,
                         %message,
                         "Received outgoing request",
                     );
@@ -357,7 +357,7 @@ impl GenServer for PeerConnectionServer {
                         // This log should be debug, because we should see if the timeout is something
                         // we don't expect to constantly happen, so in dev mode we should see it
                         debug!(
-                            client=%established_state.node,
+                            peer=%established_state.node,
                             %msg_type,
                             %id,
                             "Request timedout",
@@ -370,7 +370,7 @@ impl GenServer for PeerConnectionServer {
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     trace!(
-                        client=%established_state.node,
+                        peer=%established_state.node,
                         %msg,
                         "Received broadcasted message",
                     );
@@ -378,7 +378,7 @@ impl GenServer for PeerConnectionServer {
                 }
                 Self::CastMsg::BlockRangeUpdate => {
                     trace!(
-                        client=%established_state.node,
+                        peer=%established_state.node,
                         "Block Range Update"
                     );
                     handle_block_range_update(established_state).await
@@ -386,7 +386,7 @@ impl GenServer for PeerConnectionServer {
                 #[cfg(feature = "l2")]
                 Self::CastMsg::L2(msg) if peer_supports_l2 => {
                     trace!(
-                        client=%established_state.node,
+                        peer=%established_state.node,
                         ?msg,
                         "Handling cast for L2 msg"
                     );
@@ -416,7 +416,7 @@ impl GenServer for PeerConnectionServer {
                     | PeerConnectionError::InvalidMessageLength
                     | PeerConnectionError::StateError(_)
                     | PeerConnectionError::InvalidRecoveryId => {
-                        trace!(client=%established_state.node, error=e.to_string(), "Peer connection error");
+                        trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
                         return CastResponse::Stop;
                     }
                     PeerConnectionError::IoError(e)
@@ -424,7 +424,7 @@ impl GenServer for PeerConnectionServer {
                     {
                         // TODO: we need to check if this message is ocurring commonly due to a problem
                         // with our concurrency model
-                        debug!(client=%established_state.node, "Broken pipe with peer, disconnected");
+                        debug!(peer=%established_state.node, "Broken pipe with peer, disconnected");
                         return CastResponse::Stop;
                     }
                     PeerConnectionError::StoreError(StoreError::Trie(
@@ -434,14 +434,14 @@ impl GenServer for PeerConnectionServer {
                             // If we're responding with inconsistent trie while synced, our trie may be broken
                             // If this error is non sporadic we should investigate
                             error!(
-                                client=%established_state.node,
+                                peer=%established_state.node,
                                 error=%e,
                                 "Error handling cast message",
                             );
                         } else {
                             // If we're not synced, we expect to have inconsistent trie errors
                             trace!(
-                                client=%established_state.node,
+                                peer=%established_state.node,
                                 error=%e,
                                 "Error handling cast message",
                             );
@@ -450,7 +450,7 @@ impl GenServer for PeerConnectionServer {
                     _ => {
                         // We should check why we're failling to handle the cast message
                         debug!(
-                            client=%established_state.node,
+                            peer=%established_state.node,
                             client_capabilities=?established_state.capabilities,
                             error=%e,
                             "Error handling cast message",
@@ -468,7 +468,7 @@ impl GenServer for PeerConnectionServer {
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
         match self.state {
             ConnectionState::Established(mut established_state) => {
-                trace!(client=%established_state.node, "Closing connection with established peer");
+                trace!(peer=%established_state.node, "Closing connection with established peer");
                 established_state
                     .peer_table
                     .remove_peer(established_state.node.node_id())
@@ -493,7 +493,7 @@ where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
 {
     if state.peer_table.target_peers_reached().await? {
-        debug!(client=%state.node, "Reached target peer connections, discarding.");
+        debug!(peer=%state.node, "Reached target peer connections, discarding.");
         return Err(PeerConnectionError::TooManyPeers);
     }
     exchange_hello_messages(state, &mut stream).await?;
@@ -523,7 +523,7 @@ where
         )
         .await?;
 
-    trace!(client=%state.node, "Peer connection initialized.");
+    trace!(peer=%state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
     send_all_pooled_tx_hashes(state, &mut connection).await?;
@@ -619,7 +619,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
         .as_ref()
         .is_some_and(|eth| eth.version >= 69)
     {
-        trace!(client=%state.node, "Sending BlockRangeUpdate");
+        trace!(peer=%state.node, "Sending BlockRangeUpdate");
         let update = BlockRangeUpdate::new(&state.storage).await?;
         let lastet_block = update.latest_block;
         send(state, Message::BlockRangeUpdate(update)).await?;
@@ -658,7 +658,7 @@ where
                 )));
             }
         };
-        trace!(client=%state.node, "Sending status");
+        trace!(peer=%state.node, "Sending status");
         send(state, status).await?;
         // The next immediate message in the ETH protocol is the
         // status, reference here:
@@ -669,11 +669,11 @@ where
         };
         match msg {
             Message::Status68(msg_data) => {
-                trace!(client=%state.node, "Received Status(68)");
+                trace!(peer=%state.node, "Received Status(68)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Status69(msg_data) => {
-                trace!(client=%state.node, "Received Status(69)");
+                trace!(peer=%state.node, "Received Status(69)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
@@ -697,7 +697,7 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
         .await
         .unwrap_or_else(|_| {
             debug!(
-                client=%state.node,
+                peer=%state.node,
                 ?reason,
                 "Could not send Disconnect message",
             );
@@ -706,7 +706,7 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
 
 async fn connection_failed(state: &mut Established, error_text: &str, error: &PeerConnectionError) {
     debug!(
-        client=%state.node,
+        peer=%state.node,
         %error_text,
         %error,
         "connection failure"
@@ -724,7 +724,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: &Pe
         PeerConnectionError::DisconnectReceived(DisconnectReason::AlreadyConnected)
         | PeerConnectionError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
             debug!(
-                client=%state.node,
+                peer=%state.node,
                 %error_text,
                 %error,
                 "Peer already connected, don't replace it"
@@ -732,7 +732,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: &Pe
         }
         _ => {
             debug!(
-                client=%state.node,
+                peer=%state.node,
                 %error_text,
                 %error,
                 remote_public_key=%state.node.public_key,
@@ -792,7 +792,7 @@ where
             let mut negotiated_snap_version = 0;
 
             trace!(
-                client=%state.node,
+                peer=%state.node,
                 capabilities=?hello_message.capabilities,
                 "Hello message capabilities",
             );
@@ -887,7 +887,7 @@ async fn handle_incoming_message(
         Message::Disconnect(msg_data) => {
             let reason = msg_data.reason();
             trace!(
-                client=%state.node,
+                peer=%state.node,
                 ?reason,
                 "Received Disconnect"
             );
@@ -905,7 +905,7 @@ async fn handle_incoming_message(
             return Err(PeerConnectionError::DisconnectReceived(reason));
         }
         Message::Ping(_) => {
-            trace!(client=%state.node, "Sending pong message");
+            trace!(peer=%state.node, "Sending pong message");
             send(state, Message::Pong(PongMessage {})).await?;
         }
         Message::Pong(_) => {
@@ -934,13 +934,13 @@ async fn handle_incoming_message(
                     // Reject blob transactions in L2 mode
                     #[cfg(feature = "l2")]
                     if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
-                        debug!(client=%state.node, "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2");
+                        debug!(peer=%state.node, "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2");
                         continue;
                     }
 
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         debug!(
-                            client=%state.node,
+                            peer=%state.node,
                             error=%e,
                             "Error adding transaction"
                         );
@@ -991,7 +991,7 @@ async fn handle_incoming_message(
         }
         Message::BlockRangeUpdate(update) => {
             trace!(
-                client=%state.node,
+                peer=%state.node,
                 range_earliest=update.earliest_block,
                 range_latest=update.latest_block,
                 "Block range update",
@@ -999,7 +999,7 @@ async fn handle_incoming_message(
             // We will only validate the incoming update, we may decide to store and use this information in the future
             if let Err(err) = update.validate() {
                 warn!(
-                    client=%state.node,
+                    peer=%state.node,
                     reason=%err,
                     "disconnected from peer",
                 );
@@ -1027,7 +1027,7 @@ async fn handle_incoming_message(
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(requested, fork).await {
                         warn!(
-                            client=%state.node,
+                            peer=%state.node,
                             reason=%error,
                             "disconnected from peer",
                         );
@@ -1106,7 +1106,7 @@ async fn handle_outgoing_message(
     message: Message,
 ) -> Result<(), PeerConnectionError> {
     trace!(
-        client=%state.node,
+        peer=%state.node,
         %message,
         "Sending message"
     );
@@ -1126,7 +1126,7 @@ async fn handle_outgoing_request(
             .insert(id, (format!("{message}"), sender))
     });
     trace!(
-        client=%state.node,
+        peer=%state.node,
         %message,
         "Sending request"
     );
@@ -1146,7 +1146,7 @@ async fn handle_broadcast(
             }
             msg => {
                 error!(
-                    client=%state.node,
+                    peer=%state.node,
                     message=%msg,
                     "Non-supported message broadcasted"
                 );
