@@ -1967,6 +1967,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "core_affinity"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a034b3a7b624016c6e13f5df875747cc25f884156aad2abd12b6c46797971342"
+dependencies = [
+ "libc",
+ "num_cpus",
+ "winapi",
+]
+
+[[package]]
 name = "cpp_demangle"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3959,6 +3970,7 @@ dependencies = [
  "axum 0.8.6",
  "axum-extra",
  "bytes",
+ "core_affinity",
  "envy",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
