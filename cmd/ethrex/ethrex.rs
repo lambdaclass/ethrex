@@ -5,7 +5,11 @@ use ethrex::{
     utils::{NodeConfigFile, get_client_version, store_node_config_file},
 };
 use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::Path,
+    sync::{Arc, atomic::AtomicUsize},
+    time::Duration,
+};
 use tokio::{
     signal::unix::{SignalKind, signal},
     sync::Mutex,
@@ -48,8 +52,7 @@ async fn server_shutdown(
     info!("Server shutting down!");
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+async fn ethrex_main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
     if let Some(subcommand) = command {
@@ -77,4 +80,23 @@ async fn main() -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+pub fn main() -> eyre::Result<()> {
+    let mut core = AtomicUsize::new(0);
+    let cores = core_affinity::get_core_ids().unwrap_or_default();
+    // Reserve core 0 and 1 for OS, 2 for block execution.
+    let count = cores.len().saturating_sub(3);
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(count)
+        .on_thread_start(|| {
+            let core_offset = core.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Some(core_id) = cores.get(3 + core_offset.rem_euclid(count)) {
+                core_affinity::set_for_current(*core_id);
+            }
+        })
+        .build()
+        .unwrap()
+        .block_on(ethrex_main())
 }
