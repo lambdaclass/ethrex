@@ -83,14 +83,14 @@ async fn ethrex_main() -> eyre::Result<()> {
 }
 
 pub fn main() -> eyre::Result<()> {
-    let mut core = AtomicUsize::new(0);
+    let core = AtomicUsize::new(0);
     let cores = core_affinity::get_core_ids().unwrap_or_default();
     // Reserve core 0 and 1 for OS, 2 for block execution.
     let count = cores.len().saturating_sub(3);
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(count)
-        .on_thread_start(|| {
+        .on_thread_start(move || {
             let core_offset = core.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(core_id) = cores.get(3 + core_offset.rem_euclid(count)) {
                 core_affinity::set_for_current(*core_id);
