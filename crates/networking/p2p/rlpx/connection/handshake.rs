@@ -66,12 +66,12 @@ pub(crate) async fn perform(
     eth_version: Arc<RwLock<EthCapVersion>>,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), PeerConnectionError> {
     let task_id = tokio::task::id();
-    tracing::info!(task_id = ?task_id, "handshake - start");
+    tracing::info!(?task_id, "handshake - start");
     let (context, node, framed) = match state {
-        ConnectionState::Initiator(Initiator { context, node, .. }) => {
-            tracing::info!(task_id = ?task_id, "handshake - initiator");
+        ConnectionState::Initiator(Initiator { context, node }) => {
+            tracing::info!(?task_id, "handshake - initiator");
             let addr = SocketAddr::new(node.ip, node.tcp_port);
-            tracing::info!(task_id = ?task_id, "handshake - SocketAddr::new");
+            tracing::info!(?task_id, "handshake - SocketAddr::new");
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
@@ -80,9 +80,9 @@ pub(crate) async fn perform(
                     return Err(error)?;
                 }
             };
-            tracing::info!(task_id = ?task_id, "handshake - Ok Socket");
+            tracing::info!(?task_id, "handshake - Ok Socket");
             let local_state = send_auth(&context.signer, node.public_key, &mut stream).await?;
-            tracing::info!(task_id = ?task_id, "Auth sent");
+            tracing::info!(?task_id, "Auth sent");
             let remote_state = receive_ack(&context.signer, node.public_key, &mut stream).await?;
             // Local node is initator
             // keccak256(nonce || initiator-nonce)
