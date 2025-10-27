@@ -67,13 +67,6 @@ pub struct L2Config {
     pub fee_config: Arc<RwLock<FeeConfig>>,
 }
 
-impl L2Config {
-    pub fn get_fee_config(&self) -> FeeConfig {
-        // NOTE: this lock is acquired without chance to panic, so it shouldn't be poisoned
-        *self.fee_config.read().expect("lock can't be poisoned")
-    }
-}
-
 #[derive(Debug)]
 pub struct Blockchain {
     storage: Store,
@@ -1045,7 +1038,10 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
     let evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db),
         BlockchainType::L2(l2_config) => {
-            let fee_config = l2_config.get_fee_config();
+            let fee_config = *l2_config
+                .fee_config
+                .read()
+                .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
             Evm::new_for_l2(vm_db, fee_config)?
         }
     };
