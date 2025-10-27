@@ -42,6 +42,10 @@ jobs:
 
       - name: Run cargo clippy
         run: |
+          rustup show
+
+      - name: Run cargo clippy
+        run: |
           cargo clippy -- -D warnings
 
       - name: Run cargo fmt
