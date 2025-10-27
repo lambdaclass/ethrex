@@ -1,13 +1,15 @@
 use std::{
+    fmt::Display,
     fs::{File, metadata, read_dir},
     io::{self, Write},
     path::{Path, PathBuf},
+    str::FromStr,
     time::{Duration, Instant},
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
-use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, fee_config::FeeConfig};
+use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis};
 use ethrex_p2p::{
     discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
@@ -110,6 +112,14 @@ pub struct Options {
         long_help = "Possible values: info, debug, trace, warn, error",
         help_heading = "Node options")]
     pub log_level: Level,
+    #[arg(
+        long = "log.color",
+        default_value_t = LogColor::Auto,
+        help = "Output logs with ANSI color codes.",
+        long_help = "Possible values: auto, always, never",
+        help_heading = "Node options"
+    )]
+    pub log_color: LogColor,
     #[arg(
         help = "Maximum size of the mempool in number of transactions",
         long = "mempool.maxsize",
@@ -291,6 +301,7 @@ impl Default for Options {
             ws_addr: Default::default(),
             ws_port: Default::default(),
             log_level: Level::INFO,
+            log_color: Default::default(),
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
@@ -402,7 +413,7 @@ impl Subcommand {
                 let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
-                    BlockchainType::L2(FeeConfig::default())
+                    BlockchainType::L2(L2Config::default())
                 } else {
                     BlockchainType::L1
                 };
@@ -431,6 +442,40 @@ impl Subcommand {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum LogColor {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+impl Display for LogColor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogColor::Auto => write!(f, "auto"),
+            LogColor::Always => write!(f, "always"),
+            LogColor::Never => write!(f, "never"),
+        }
+    }
+}
+
+impl FromStr for LogColor {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "auto" => Ok(LogColor::Auto),
+            "always" => Ok(LogColor::Always),
+            "never" => Ok(LogColor::Never),
+            _ => Err(format!(
+                "Invalid log color '{}'. Expected: auto, always, or never",
+                s
+            )),
+        }
     }
 }
 

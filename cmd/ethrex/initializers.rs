@@ -1,5 +1,5 @@
 use crate::{
-    cli::Options,
+    cli::{LogColor, Options},
     utils::{
         display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
         read_jwtsecret_file, read_node_config_file,
@@ -58,14 +58,16 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let mut layer = fmt::layer();
 
-    if !std::io::stdout().is_terminal() {
+    if opts.log_color == LogColor::Never
+        || (opts.log_color == LogColor::Auto && !std::io::stdout().is_terminal())
+    {
         layer = layer.with_ansi(false);
     }
 
     let fmt_layer = layer.with_filter(filter);
 
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
-        let profiling_layer = FunctionProfilingLayer::default();
+        let profiling_layer = FunctionProfilingLayer;
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
     } else {
         Box::new(Registry::default().with(fmt_layer))
