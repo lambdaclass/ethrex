@@ -30,5 +30,3 @@ path = "src/compile.rs"
 name = "benchmark"
 path = "src/benchmark.rs"
 
-[lints]
-workspace = true
