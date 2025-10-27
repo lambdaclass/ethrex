@@ -429,7 +429,6 @@ impl Command {
 
                     let account_updates_list = store
                         .apply_account_updates_from_trie_batch(trie, account_updates.values())
-                        .await
                         .map_err(|e| format!("Error applying account updates: {e}"))
                         .unwrap();
 

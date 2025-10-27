@@ -106,7 +106,7 @@ pub async fn check_root(
 ) -> Result<(), RunnerError> {
     let account_updates = backends::levm::LEVM::get_state_transitions(&mut vm.db.clone())
         .map_err(|e| RunnerError::FailedToGetAccountsUpdates(e.to_string()))?;
-    let post_state_root = post_state_root(&account_updates, initial_block_hash, store).await;
+    let post_state_root = post_state_root(&account_updates, initial_block_hash, store);
     if post_state_root != test_case.post.hash {
         check_result.passed = false;
         check_result.root_diff = Some((test_case.post.hash, post_state_root));
@@ -116,14 +116,13 @@ pub async fn check_root(
 
 /// Calculates the post state root applying the changes (the account updates) that are a
 /// result of running the transaction to the storage.
-pub async fn post_state_root(
+pub fn post_state_root(
     account_updates: &[AccountUpdate],
     initial_block_hash: H256,
     store: Store,
 ) -> H256 {
     let ret_account_updates_batch = store
         .apply_account_updates_batch(initial_block_hash, account_updates)
-        .await
         .unwrap()
         .unwrap();
     ret_account_updates_batch.state_trie_hash

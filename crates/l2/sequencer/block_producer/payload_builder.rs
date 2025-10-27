@@ -58,7 +58,7 @@ pub async fn build_payload(
         block_gas_limit,
     )
     .await?;
-    blockchain.finalize_payload(&mut context).await?;
+    blockchain.finalize_payload(&mut context)?;
 
     let interval = Instant::now().duration_since(since).as_millis();
     // TODO: expose as a proper metric

@@ -313,7 +313,7 @@ mod blockchain_integration_test {
         let blockchain = Blockchain::default_with_store(store.clone());
 
         let block = create_payload(&args, store, Bytes::new()).unwrap();
-        let result = blockchain.build_payload(block).await.unwrap();
+        let result = blockchain.build_payload(block).unwrap();
         result.payload
     }
 
