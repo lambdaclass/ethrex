@@ -30,6 +30,10 @@ jobs:
 
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: What version are we actually running
+        run: /usr/bin/git log -1 --format=%H
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
