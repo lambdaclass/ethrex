@@ -524,14 +524,15 @@ fn adjust_disabled_base_fee(env: &mut Environment) {
     }
 }
 
-/// When operator fee is disabled (ie. env.gas_price = 0), set operator fee to None to avoid breaking EVM invariants.
-fn adjust_disabled_operator_fee(env: &Environment, vm_type: VMType) -> VMType {
+/// When l2 fees are disabled (ie. env.gas_price = 0), set fee configs to None to avoid breaking failing fee deductions
+fn adjust_disabled_l2_fees(env: &Environment, vm_type: VMType) -> VMType {
     if env.gas_price == U256::zero()
         && let VMType::L2(fee_config) = vm_type
     {
-        // Don't deduct operator fee if no gas price is set
+        // Don't deduct fees if no gas price is set
         return VMType::L2(FeeConfig {
             operator_fee_config: None,
+            l1_fee_config: None,
             ..fee_config
         });
     }
@@ -611,6 +612,6 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    let vm_type = adjust_disabled_operator_fee(&env, vm_type);
+    let vm_type = adjust_disabled_l2_fees(&env, vm_type);
     VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
 }
