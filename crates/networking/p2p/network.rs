@@ -103,11 +103,7 @@ impl P2PContext {
         let local_node = Node::from_enode_url(
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
-        let signer = SecretKey::from_slice(&[
-            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
-            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
-        ])
-        .expect("Bad secret key");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
         let (channel_broadcast_send_end, _) =
             tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<Message>)>(100000);
         P2PContext {
