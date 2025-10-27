@@ -4,7 +4,7 @@ use rocksdb::{DBWithThreadMode, MultiThreaded, SnapshotWithThreadMode};
 use std::sync::Arc;
 
 use crate::{
-    store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES},
+    store_db::rocksdb::{CF_ACCOUNT_FLATKEYVALUE, CF_MISC_VALUES},
     trie_db::layering::apply_prefix,
 };
 
@@ -37,7 +37,7 @@ impl RocksDBLockedTrieDB {
             TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
         })?;
         // Verify column family exists
-        let cf_flatkeyvalue = db.cf_handle(CF_FLATKEYVALUE).ok_or_else(|| {
+        let cf_flatkeyvalue = db.cf_handle(CF_ACCOUNT_FLATKEYVALUE).ok_or_else(|| {
             TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
         })?;
 

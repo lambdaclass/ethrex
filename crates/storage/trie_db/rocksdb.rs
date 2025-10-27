@@ -5,7 +5,7 @@ use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
 use crate::{
-    store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES},
+    store_db::rocksdb::CF_MISC_VALUES,
     trie_db::layering::apply_prefix,
 };
 
@@ -13,8 +13,10 @@ use crate::{
 pub struct RocksDBTrieDB {
     /// RocksDB database
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    /// Column family name
-    cf_name: String,
+    /// Column family name for the trie nodes
+    trie_cf_name: String,
+    /// Column family name for the flatkeyvalue nodes
+    flatkeyvalue_cf_name: String,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
     /// Last flatkeyvalue path already generated
@@ -24,16 +26,25 @@ pub struct RocksDBTrieDB {
 impl RocksDBTrieDB {
     pub fn new(
         db: Arc<DBWithThreadMode<MultiThreaded>>,
-        cf_name: &str,
+        trie_cf_name: &str,
+        flatkeyvalue_cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
         // Verify column family exists
-        if db.cf_handle(cf_name).is_none() {
+        if db.cf_handle(trie_cf_name).is_none() {
             return Err(TrieError::DbError(anyhow::anyhow!(
-                "Column family not found: {}",
-                cf_name
+                "Column family for the trie not found: {}",
+                trie_cf_name
             )));
         }
+
+        if db.cf_handle(flatkeyvalue_cf_name).is_none() {
+            return Err(TrieError::DbError(anyhow::anyhow!(
+                "Column family for the flatkeyvalue not found: {}",
+                flatkeyvalue_cf_name
+            )));
+        }
+
         let cf_misc = db
             .cf_handle(CF_MISC_VALUES)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
@@ -46,7 +57,8 @@ impl RocksDBTrieDB {
 
         Ok(Self {
             db,
-            cf_name: cf_name.to_string(),
+            trie_cf_name: trie_cf_name.to_string(),
+            flatkeyvalue_cf_name: flatkeyvalue_cf_name.to_string(),
             address_prefix,
             last_computed_flatkeyvalue,
         })
@@ -54,16 +66,16 @@ impl RocksDBTrieDB {
 
     fn cf_handle(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
         self.db
-            .cf_handle(&self.cf_name)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
+            .cf_handle(&self.trie_cf_name)
+            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family for the trie not found")))
     }
 
     fn cf_handle_flatkeyvalue(
         &self,
     ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
         self.db
-            .cf_handle(CF_FLATKEYVALUE)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
+            .cf_handle(&self.flatkeyvalue_cf_name)
+            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family for the flat key value store not found")))
     }
 
     fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
@@ -143,6 +155,7 @@ mod tests {
     use ethrex_trie::Nibbles;
     use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
     use tempfile::TempDir;
+    use crate::store_db::rocksdb::{CF_ACCOUNT_FLATKEYVALUE, CF_MISC_VALUES};
 
     #[test]
     fn test_trie_db_basic_operations() {
@@ -156,7 +169,7 @@ mod tests {
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
         let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
-        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_ACCOUNT_FLATKEYVALUE, Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
@@ -166,7 +179,7 @@ mod tests {
         let db = Arc::new(db);
 
         // Create TrieDB
-        let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
+        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None).unwrap();
 
         // Test data
         let node_hash = Nibbles::from_hex(vec![1]);
@@ -198,7 +211,7 @@ mod tests {
 
         let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_ACCOUNT_FLATKEYVALUE, Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
@@ -209,7 +222,7 @@ mod tests {
 
         // Create TrieDB with address prefix
         let address = H256::from([0xaa; 32]);
-        let trie_db = RocksDBTrieDB::new(db, "test_cf", Some(address)).unwrap();
+        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", Some(address)).unwrap();
 
         // Test data
         let node_hash = Nibbles::from_hex(vec![1]);
@@ -237,7 +250,7 @@ mod tests {
 
         let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let cf_fkv = ColumnFamilyDescriptor::new(CF_FLATKEYVALUE, Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new(CF_ACCOUNT_FLATKEYVALUE, Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
@@ -247,7 +260,7 @@ mod tests {
         let db = Arc::new(db);
 
         // Create TrieDB
-        let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
+        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None).unwrap();
 
         // Test data
         // NOTE: we don't use the same paths to avoid overwriting in the batch

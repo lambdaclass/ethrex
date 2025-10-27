@@ -89,10 +89,15 @@ const CF_CHAIN_DATA: &str = "chain_data";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
 const CF_SNAP_STATE: &str = "snap_state";
 
-/// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// Account State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
 /// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-const CF_TRIE_NODES: &str = "trie_nodes";
+const CF_ACCOUNT_TRIE_NODES: &str = "account_trie_nodes";
+
+/// Storage trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+const CF_STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -109,7 +114,15 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
 const CF_FULLSYNC_HEADERS: &str = "fullsync_headers";
 
-pub const CF_FLATKEYVALUE: &str = "flatkeyvalue";
+/// Account sate flat key-value store: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+pub const CF_ACCOUNT_FLATKEYVALUE: &str = "account_flatkeyvalue";
+
+/// Storage slots key-value store: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+pub const CF_STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const CF_MISC_VALUES: &str = "misc_values";
 
@@ -178,11 +191,13 @@ impl Store {
             CF_TRANSACTION_LOCATIONS,
             CF_CHAIN_DATA,
             CF_SNAP_STATE,
-            CF_TRIE_NODES,
+            CF_ACCOUNT_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
             CF_FULLSYNC_HEADERS,
-            CF_FLATKEYVALUE,
+            CF_ACCOUNT_FLATKEYVALUE,
+            CF_STORAGE_FLATKEYVALUE,
             CF_MISC_VALUES,
         ];
 
@@ -245,7 +260,20 @@ impl Store {
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_TRIE_NODES => {
+                CF_ACCOUNT_TRIE_NODES => {
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
+                    cf_opts.set_max_write_buffer_number(6);
+                    cf_opts.set_min_write_buffer_number_to_merge(2);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                CF_STORAGE_TRIE_NODES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
@@ -491,7 +519,8 @@ impl Store {
         control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
         let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
-        let cf_flatkeyvalue = self.cf_handle(CF_FLATKEYVALUE)?;
+        let cf_accounts_fkv = self.cf_handle(CF_ACCOUNT_FLATKEYVALUE)?;
+        let cf_storage_fkv = self.cf_handle(CF_STORAGE_FLATKEYVALUE)?;
 
         let last_written = self
             .db
@@ -502,11 +531,13 @@ impl Store {
         }
 
         self.db
-            .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff])?;
+            .delete_range_cf(&cf_accounts_fkv, &last_written, vec![0xff].as_ref())?;
+        self.db
+            .delete_range_cf(&cf_storage_fkv, &last_written, vec![0xff].as_ref())?;
 
         loop {
             let root = self
-                .read_sync(CF_TRIE_NODES, [])?
+                .read_sync(CF_ACCOUNT_TRIE_NODES, [])?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
@@ -528,37 +559,37 @@ impl Store {
 
             let mut ctr = 0;
             let mut batch = WriteBatch::default();
-            let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
+            let mut account_iter = self.open_direct_state_trie(state_root)?.into_iter();
             if last_written_account > Nibbles::default() {
-                iter.advance(last_written_account.to_bytes())?;
+                account_iter.advance(last_written_account.to_bytes())?;
             }
-            let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
-                let Node::Leaf(node) = node else {
+            let res = account_iter.try_for_each(|(path, account_node)| -> Result<(), StoreError> {
+                let Node::Leaf(node) = account_node else {
                     return Ok(());
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
                 batch.put_cf(&cf_misc, "last_written", path.as_ref());
-                batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
+                batch.put_cf(&cf_accounts_fkv, path.as_ref(), node.value);
                 ctr += 1;
                 if ctr > 10_000 {
                     self.db.write(std::mem::take(&mut batch))?;
                 }
 
-                let mut iter_inner = self
+                let mut storage_iter = self
                     .open_direct_storage_trie(account_hash, account_state.storage_root)?
                     .into_iter();
                 if last_written_storage > Nibbles::default() {
-                    iter_inner.advance(last_written_storage.to_bytes())?;
+                    storage_iter.advance(last_written_storage.to_bytes())?;
                     last_written_storage = Nibbles::default();
                 }
-                iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
-                    let Node::Leaf(node) = node else {
+                storage_iter.try_for_each(|(path, storage_node)| -> Result<(), StoreError> {
+                    let Node::Leaf(node) = storage_node else {
                         return Ok(());
                     };
                     let key = apply_prefix(Some(account_hash), path);
                     batch.put_cf(&cf_misc, "last_written", key.as_ref());
-                    batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
+                    batch.put_cf(&cf_storage_fkv, key.as_ref(), node.value);
                     ctr += 1;
                     if ctr > 10_000 {
                         self.db.write(std::mem::take(&mut batch))?;
@@ -647,8 +678,8 @@ impl StoreEngine for Store {
             ] = open_cfs(
                 &db,
                 [
-                    CF_TRIE_NODES,
-                    CF_FLATKEYVALUE,
+                    CF_ACCOUNT_TRIE_NODES,
+                    CF_ACCOUNT_FLATKEYVALUE,
                     CF_RECEIPTS,
                     CF_ACCOUNT_CODES,
                     CF_BLOCK_NUMBERS,
@@ -1301,7 +1332,12 @@ impl StoreEngine for Store {
         storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let db = Box::new(RocksDBTrieDB::new(
+            self.db.clone(),
+            CF_STORAGE_TRIE_NODES,
+            CF_STORAGE_FLATKEYVALUE,
+            None,
+        )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: self.trie_cache.clone(),
@@ -1312,7 +1348,12 @@ impl StoreEngine for Store {
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let db = Box::new(RocksDBTrieDB::new(
+            self.db.clone(),
+            CF_ACCOUNT_TRIE_NODES,
+            CF_ACCOUNT_FLATKEYVALUE,
+            None,
+        )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: self.trie_cache.clone(),
@@ -1329,21 +1370,27 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
+            CF_STORAGE_FLATKEYVALUE,
             Some(hashed_address),
         )?);
         Ok(Trie::open(db, storage_root))
     }
 
     fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let db = Box::new(RocksDBTrieDB::new(
+            self.db.clone(),
+            CF_ACCOUNT_TRIE_NODES,
+            CF_STORAGE_FLATKEYVALUE,
+            None,
+        )?);
         Ok(Trie::open(db, state_root))
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_ACCOUNT_TRIE_NODES,
             None,
         )?);
         let wrap_db = Box::new(TrieWrapper {
@@ -1363,7 +1410,7 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_ACCOUNT_TRIE_NODES,
             None,
         )?);
         let wrap_db = Box::new(TrieWrapper {
@@ -1634,7 +1681,7 @@ impl StoreEngine for Store {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
-            let cf = db.cf_handle(CF_TRIE_NODES).ok_or_else(|| {
+            let cf = db.cf_handle(CF_ACCOUNT_TRIE_NODES).ok_or_else(|| {
                 StoreError::Custom("Column family not found: CF_TRIE_NODES".to_string())
             })?;
 
