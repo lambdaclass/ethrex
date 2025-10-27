@@ -1567,13 +1567,16 @@ async fn insert_storages(
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
 
+    info!(thread_count, "Before we start the scope");
     scope(|scope| {
+        info!("During the scope");
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
             let sender = sender.clone();
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
             if counter >= thread_count - 1 {
+                info!("We have spawned as many producing tasks as we can");
                 let _ = receiver.recv();
                 counter -= 1;
             }
