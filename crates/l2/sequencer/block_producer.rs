@@ -203,8 +203,7 @@ impl BlockProducer {
 
         let account_updates_list = self
             .store
-            .apply_account_updates_batch(block.header.parent_hash, &account_updates)
-            .await?
+            .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let transactions_count = block.body.transactions.len();
