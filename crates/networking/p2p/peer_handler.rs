@@ -190,8 +190,6 @@ impl PeerHandler {
             .current_step
             .set(CurrentStepValue::DownloadingHeaders);
 
-        let initial_downloaded_headers = METRICS.downloaded_headers.load(Ordering::Relaxed);
-
         let mut ret = Vec::<BlockHeader>::new();
 
         let mut sync_head_number = 0_u64;
@@ -251,9 +249,6 @@ impl PeerHandler {
         METRICS
             .sync_head_block
             .store(sync_head_number, Ordering::Relaxed);
-        METRICS
-            .headers_to_download
-            .store(sync_head_number + 1, Ordering::Relaxed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = sync_head_number + 1 - start;
@@ -307,9 +302,7 @@ impl PeerHandler {
 
                 downloaded_count += headers.len() as u64;
 
-                METRICS
-                    .downloaded_headers
-                    .fetch_add(headers.len() as u64, Ordering::Relaxed);
+                METRICS.downloaded_headers.inc_by(headers.len() as u64);
 
                 let batch_show = downloaded_count / 10_000;
 
@@ -392,11 +385,6 @@ impl PeerHandler {
                     })
             });
         }
-
-        METRICS.downloaded_headers.store(
-            initial_downloaded_headers + downloaded_count,
-            Ordering::Relaxed,
-        );
 
         let elapsed = start_time.elapsed().unwrap_or_default();
 
