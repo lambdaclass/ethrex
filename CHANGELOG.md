@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-27
+
+- Reusing FindNode message per lookup loop instead of randomizing the key for each message. [#5047](https://github.com/lambdaclass/ethrex/pull/5047)
+
 ### 2025-10-22
 
 - Fetch nodes in batches during merkelization [#4990](https://github.com/lambdaclass/ethrex/pull/4990)
