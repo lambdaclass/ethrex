@@ -90,59 +90,57 @@ impl StoreEngine for Store {
         let mut store = self.inner()?;
 
         // Store trie updates
+        let mut trie = TrieLayerCache::clone(&store.trie_cache);
+        let parent = update_batch
+            .blocks
+            .first()
+            .ok_or(StoreError::UpdateBatchNoBlocks)?
+            .header
+            .parent_hash;
+
+        let pre_state_root = store
+            .headers
+            .get(&parent)
+            .map(|header| header.state_root)
+            .unwrap_or_default();
+
+        let last_state_root = update_batch
+            .blocks
+            .last()
+            .ok_or(StoreError::UpdateBatchNoBlocks)?
+            .header
+            .state_root;
+
         {
-            let mut trie = TrieLayerCache::clone(&store.trie_cache);
-            let parent = update_batch
-                .blocks
-                .first()
-                .ok_or(StoreError::UpdateBatchNoBlocks)?
-                .header
-                .parent_hash;
+            let mut state_trie = store
+                .state_trie_nodes
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
 
-            let pre_state_root = store
-                .headers
-                .get(&parent)
-                .map(|header| header.state_root)
-                .unwrap_or_default();
-
-            let last_state_root = update_batch
-                .blocks
-                .last()
-                .ok_or(StoreError::UpdateBatchNoBlocks)?
-                .header
-                .state_root;
-
-            {
-                let mut state_trie = store
-                    .state_trie_nodes
-                    .lock()
-                    .map_err(|_| StoreError::LockError)?;
-
-                if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
-                    let nodes = trie.commit(root).unwrap_or_default();
-                    for (key, value) in nodes {
-                        if value.is_empty() {
-                            state_trie.remove(&key);
-                        } else {
-                            state_trie.insert(key, value);
-                        }
+            if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
+                let nodes = trie.commit(root).unwrap_or_default();
+                for (key, value) in nodes {
+                    if value.is_empty() {
+                        state_trie.remove(&key);
+                    } else {
+                        state_trie.insert(key, value);
                     }
                 }
             }
-
-            let key_values = update_batch
-                .storage_updates
-                .into_iter()
-                .flat_map(|(account_hash, nodes)| {
-                    nodes
-                        .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                })
-                .chain(update_batch.account_updates)
-                .collect();
-            trie.put_batch(pre_state_root, last_state_root, key_values);
-            store.trie_cache = Arc::new(trie);
         }
+
+        let key_values = update_batch
+            .storage_updates
+            .into_iter()
+            .flat_map(|(account_hash, nodes)| {
+                nodes
+                    .into_iter()
+                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+            })
+            .chain(update_batch.account_updates)
+            .collect();
+        trie.put_batch(pre_state_root, last_state_root, key_values);
+        store.trie_cache = Arc::new(trie);
 
         for block in update_batch.blocks {
             // store block
