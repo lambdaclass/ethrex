@@ -27,6 +27,7 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
 use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
+use url::Url;
 
 #[allow(clippy::too_many_arguments)]
 async fn init_rpc_api(
@@ -273,10 +274,11 @@ pub async fn init_l2(
         l2_sequencer_cfg,
         cancellation_token.clone(),
         #[cfg(feature = "metrics")]
-        format!(
+        Url::parse(&format!(
             "http://{}:{}",
             opts.node_opts.http_addr, opts.node_opts.http_port
-        ),
+        ))
+        .map_err(|err| eyre::eyre!("Failed to parse L2 RPC URL: {err}"))?,
     )
     .into_future();
 
