@@ -14,7 +14,7 @@ CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
 OS = $(shell uname)
 ifeq ($(OS), Darwin)
-	DATA_PATH = $(HOME)/Library/Application\ Support
+	DATA_PATH = $(HOME)/Library/Application Support
 else
 	DATA_PATH = $(HOME)/.local/share
 endif
@@ -47,10 +47,10 @@ help: ## Display help for the makefile.
 	@grep -E '^[%a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 create_datadir: ## Create the data folder for the network. If NETWORK environment variable is not provided, mainnet will be used as default.
-	mkdir -p $(DATA_PATH)/$(NETWORK)_data
+	mkdir -p "$(DATA_PATH)/$(NETWORK)_data"
 
 gen-jwt: create_datadir ## Create the jwt for a given network. NETWORK environment variable required.
-	openssl rand -hex 32 | tr -d "\n" | tee $(DATA_PATH)/$(NETWORK)_data/jwt.hex
+	openssl rand -hex 32 | tr -d "\n" | tee "$(DATA_PATH)/$(NETWORK)_data/jwt.hex"
 
 sync: create_datadir ## Run the sync for a given network. SYNC_BLOCK_NUM environment variable required (for block to start from).  If NETWORK environment variable is not provided, mainnet will be used as default. EVM can also be set to select the evm to use.
 ifndef SYNC_BLOCK_NUM
@@ -95,21 +95,21 @@ flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flame
 		--p2p.port 30303\
 		--discovery.port 30303 \
 		--network $(NETWORK) \
-		--datadir $(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM) \
-		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
+		--datadir "$(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM)" \
+		--authrpc.jwtsecret "$(DATA_PATH)/${NETWORK}_data/jwt.hex" \
 		$(BOOTNODES_FLAG) \
 
 flamegraph-%: ## Run flamegraph on either mainnet, sepolia, holesky or hoodi network. For example, to run the flamgraph on hoodi, use `flamegraph-hoodi`
 	$(MAKE) flamegraph-inner NETWORK=$*
 
 backup-db: ## Back-up the store db. EVM and NETWORK environment variables need to be provided to select which DB to back up. If NETWORK environment variable is not provided, mainnet will be used as default.
-	mkdir -p $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
+	mkdir -p "$(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)"
 ifeq ($(OS), Darwin)
-	rsync -ah --progress $(DATA_PATH)/$(NETWORK)_data/ethrex/$(EVM)/mdbx.* $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
-	rsync -ah --progress ./logs/ethrex-sync-$(NETWORK)-$(EVM).log $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)/ethrex-sync-$(NETWORK)-$(EVM).log
+	rsync -ah --progress "$(DATA_PATH)/$(NETWORK)_data/ethrex/$(EVM)/mdbx.*" "$(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)"
+	rsync -ah --progress ./logs/ethrex-sync-$(NETWORK)-$(EVM).log "$(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)/ethrex-sync-$(NETWORK)-$(EVM).log"
 else
-	rsync -ah --info=progress2 $(DATA_PATH)/$(NETWORK)_data/ethrex/$(EVM)/mdbx.* $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
-	rsync -ah --info=progress2 ./logs/ethrex-sync-$(NETWORK)-$(EVM).log $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)/ethrex-sync-$(NETWORK)-$(EVM).log
+	rsync -ah --info=progress2 "$(DATA_PATH)/$(NETWORK)_data/ethrex/$(EVM)/mdbx.*" "$(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)"
+	rsync -ah --info=progress2 ./logs/ethrex-sync-$(NETWORK)-$(EVM).log "$(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)/ethrex-sync-$(NETWORK)-$(EVM).log"
 endif
 
 import-with-metrics: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
@@ -160,7 +160,7 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 	lighthouse bn \
 		--network $(NETWORK) \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt $(DATA_PATH)/${NETWORK}_data/jwt.hex \
+		--execution-jwt "$(DATA_PATH)/${NETWORK}_data/jwt.hex" \
 		--checkpoint-sync-url $(CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
@@ -168,7 +168,7 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 		--metrics \
 		--metrics-address 0.0.0.0 \
 		--metrics-port 5054 \
-		--datadir $(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_$(EVM) \
+		--datadir "$(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_$(EVM)" \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT)
 
 start-ethrex: ## Start ethrex for the network given by NETWORK.
@@ -179,10 +179,11 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--p2p.port 30303\
     		--discovery.port 30303 \
     		--metrics \
+    		--log.level debug \
     		--metrics.port 3701 \
     		--network $(NETWORK) \
     		--datadir "$(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM)" \
-    		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
+    		--authrpc.jwtsecret "$(DATA_PATH)/${NETWORK}_data/jwt.hex" \
     		$(BOOTNODES_FLAG) \
 
 SERVER_SYNC_BRANCH ?= main
