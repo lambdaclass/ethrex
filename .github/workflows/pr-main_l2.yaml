@@ -29,13 +29,12 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -227,7 +226,7 @@ jobs:
       - name: Deploy contracts
         run: |
           #
-          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries 
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
           # in the contract_deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
@@ -316,14 +315,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-docker, build-docker-l2]
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -460,7 +456,7 @@ jobs:
       - name: Start L1 & Deploy contracts
         run: |
           #
-          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries 
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
           # in the contract_deployer service in crates/l2/docker-compose.yaml
           #
           touch cmd/.env
@@ -489,14 +485,12 @@ jobs:
     name: Integration Test - L2 Dev
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
