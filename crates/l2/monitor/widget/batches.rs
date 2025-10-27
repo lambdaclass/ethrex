@@ -2,7 +2,7 @@ use ethrex_common::{
     Address, H256,
     types::{Fork, batch::Batch},
 };
-use ethrex_l2_sdk::{get_last_committed_batch, get_l1_active_fork};
+use ethrex_l2_sdk::{get_l1_active_fork, get_last_committed_batch};
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use ratatui::{

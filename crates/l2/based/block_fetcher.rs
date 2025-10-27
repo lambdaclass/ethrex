@@ -13,9 +13,7 @@ use ethrex_l2_common::{
     privileged_transactions::compute_privileged_transactions_hash,
     state_diff::prepare_state_diff,
 };
-use ethrex_l2_sdk::{
-    get_last_committed_batch, get_last_fetched_l1_block, get_l1_active_fork,
-};
+use ethrex_l2_sdk::{get_l1_active_fork, get_last_committed_batch, get_last_fetched_l1_block};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
