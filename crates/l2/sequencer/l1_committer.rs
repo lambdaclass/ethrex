@@ -595,9 +595,10 @@ impl L1Committer {
                 ..
             } = &batch.blobs_bundle;
 
-            let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
-                .await
-                .map_err(CommitterError::EthClientError)?;
+            // let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
+            //     .await
+            //     .map_err(CommitterError::EthClientError)?;
+            let fork = Fork::Prague;
             let proof_count = if fork < Fork::Osaka {
                 1
             } else {
