@@ -491,6 +491,16 @@ fn pay_fee_token(vm: &mut VM<'_>, receiver: Address, amount: U256) -> Result<(),
     call_fee_token_contract(vm, PAY_FEE_SELECTOR, receiver, amount)
 }
 
+/// Executes a call to the fee token contract for fee-related operations.
+///
+/// - This function is only called when locking the fees, refunding unspent gas, and paying the fees to the vaults.
+/// - Disable checks as we want to simulate the transaction and get only the updates of the contract storage slots.
+/// - This simulation makes a transaction with the calldata provided in `data`, this will be used to call the `payFee` and `lockFee` functions.
+///     `lockFee(payer, max_gas_cost)` - locks upfront gas cost from sender
+///     `payFee(receiver, amount)` - pays coinbase, vaults, or refunds sender
+/// - Uses `COMMON_BRIDGE_L2_ADDRESS` as origin to restrict access. No user can change this address.
+/// - Creates a new VM with cloned database; only fee token storage is synced back.
+/// - Uses the same contract address as the one set in the transaction.
 fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     let fee_token = vm
         .env
@@ -502,7 +512,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     let mut db_clone = vm.db.clone(); // expensive
     let origin = COMMON_BRIDGE_L2_ADDRESS; // We set the common bridge to restrict access to the fee token contract
     let nonce = db_clone.get_account(origin)?.info.nonce;
-    let tx_check_balance = EIP1559Transaction {
+    let fee_updates_tx = EIP1559Transaction {
         // we are simulating the transaction
         chain_id: vm.env.chain_id.as_u64(),
         nonce,
@@ -514,7 +524,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         data,
         ..Default::default()
     };
-    let tx_check_balance = Transaction::EIP1559Transaction(tx_check_balance);
+    let tx_check_balance = Transaction::EIP1559Transaction(fee_updates_tx);
     let mut env_clone = vm.env.clone();
     // Disable fee checks and update fields
     env_clone.base_fee_per_gas = U256::zero();
