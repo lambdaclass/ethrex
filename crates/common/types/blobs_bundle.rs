@@ -137,6 +137,10 @@ impl BlobsBundle {
             return Err(BlobsBundleError::BlobBundleEmptyError);
         }
 
+        if self.version == 0 && fork >= Fork::Osaka || self.version != 0 && fork < Fork::Osaka {
+            return Err(BlobsBundleError::InvalidBlobVersionForFork);
+        }
+
         // Check if the blob versioned hashes and blobs bundle content length mismatch
         if blob_count != self.commitments.len()
             || (self.version == 0 && blob_count != self.proofs.len())
@@ -248,6 +252,8 @@ pub enum BlobsBundleError {
     BlobToCommitmentAndProofError,
     #[error("Max blobs per block exceeded")]
     MaxBlobsExceeded,
+    #[error("Invalid blob version for the current fork")]
+    InvalidBlobVersionForFork,
     #[cfg(feature = "c-kzg")]
     #[error("KZG related error: {0}")]
     Kzg(#[from] ethrex_crypto::kzg::KzgError),
@@ -297,6 +303,80 @@ mod tests {
         };
 
         assert!(matches!(
+            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn transaction_with_valid_blobs_should_pass_on_osaka() {
+        let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
+            .into_iter()
+            .map(|data| {
+                crate::types::blobs_bundle::blob_from_bytes(data.into())
+                    .expect("Failed to create blob")
+            })
+            .collect();
+
+        let blobs_bundle =
+            crate::types::BlobsBundle::create_from_blobs(&blobs, crate::types::Fork::Osaka)
+                .expect("Failed to create blobs bundle");
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let tx = crate::types::transaction::EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
+            blob_versioned_hashes,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            blobs_bundle.validate(&tx, crate::types::Fork::Osaka),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn transaction_with_invalid_fork_should_fail() {
+        let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
+            .into_iter()
+            .map(|data| {
+                crate::types::blobs_bundle::blob_from_bytes(data.into())
+                    .expect("Failed to create blob")
+            })
+            .collect();
+
+        let blobs_bundle =
+            crate::types::BlobsBundle::create_from_blobs(&blobs, crate::types::Fork::Osaka)
+                .expect("Failed to create blobs bundle");
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let tx = crate::types::transaction::EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
+            blob_versioned_hashes,
+            ..Default::default()
+        };
+
+        assert!(!matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
             Ok(())
         ));
