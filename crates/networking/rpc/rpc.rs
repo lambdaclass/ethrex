@@ -216,7 +216,7 @@ pub fn start_block_executor(
         while let Some((notify, block)) = block_receiver.blocking_recv() {
             let _ = notify
                 .send(blockchain.add_block(block))
-                .inspect_err(|_| ::tracing::error!("failed to notify caller"));
+                .inspect_err(|_| tracing::error!("failed to notify caller"));
         }
     });
     block_worker_channel
