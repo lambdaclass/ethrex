@@ -29,6 +29,24 @@ impl NodeRef {
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
                 Ok(Some(Node::decode(&data[..len as usize])?))
             }
+            NodeRef::Hash(_) => db
+                .get(path)?
+                .filter(|rlp| !rlp.is_empty())
+                .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                .transpose(),
+        }
+    }
+
+    pub fn get_node_checked(
+        &self,
+        db: &dyn TrieDB,
+        path: Nibbles,
+    ) -> Result<Option<Node>, TrieError> {
+        match *self {
+            NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
+            NodeRef::Hash(NodeHash::Inline((data, len))) => {
+                Ok(Some(Node::decode(&data[..len as usize])?))
+            }
             NodeRef::Hash(hash) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
