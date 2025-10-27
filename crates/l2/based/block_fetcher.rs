@@ -14,7 +14,7 @@ use ethrex_l2_common::{
     state_diff::prepare_state_diff,
 };
 use ethrex_l2_sdk::{
-    get_last_committed_batch, get_last_fetched_l1_block, is_osaka_activated_on_l1,
+    get_last_committed_batch, get_last_fetched_l1_block, get_l1_active_fork,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
@@ -392,7 +392,7 @@ impl BlockFetcher {
         )
         .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
-        let fork = is_osaka_activated_on_l1(&self.eth_client, self.osaka_activation_time)
+        let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
             .await
             .map_err(BlockFetcherError::EthClientError)?;
         let (blobs_bundle, _) = generate_blobs_bundle(&state_diff, fork)

@@ -32,8 +32,8 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, get_last_committed_batch,
-    is_osaka_activated_on_l1, send_tx_bump_gas_exponential_backoff,
+    build_generic_tx, calldata::encode_calldata, get_l1_active_fork, get_last_committed_batch,
+    send_tx_bump_gas_exponential_backoff,
 };
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
@@ -221,7 +221,7 @@ impl L1Committer {
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
-        let fork = is_osaka_activated_on_l1(&self.eth_client, self.osaka_activation_time)
+        let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
             .await
             .map_err(CommitterError::EthClientError)?;
         let batch = match self.rollup_store.get_batch(batch_to_commit, fork).await? {
@@ -475,7 +475,7 @@ impl L1Committer {
                     &acc_privileged_txs,
                     acc_account_updates.clone().into_values().collect(),
                 )?;
-                let fork = is_osaka_activated_on_l1(&self.eth_client, self.osaka_activation_time)
+                let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
                     .await
                     .map_err(CommitterError::EthClientError)?;
                 generate_blobs_bundle(&state_diff, fork)
@@ -595,7 +595,7 @@ impl L1Committer {
                 ..
             } = &batch.blobs_bundle;
 
-            let fork = is_osaka_activated_on_l1(&self.eth_client, self.osaka_activation_time)
+            let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
                 .await
                 .map_err(CommitterError::EthClientError)?;
             let proof_count = if fork < Fork::Osaka {

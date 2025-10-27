@@ -670,7 +670,7 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         TxType::EIP4844 => {
-            let fork = is_osaka_activated_on_l1(client, None).await?;
+            let fork = get_l1_active_fork(client, None).await?;
             let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, fork)?;
             tx.tx
                 .sign_inplace(signer)
@@ -983,7 +983,7 @@ pub async fn get_pending_privileged_transactions(
 }
 
 // TODO: This is a work around for now, issue: https://github.com/lambdaclass/ethrex/issues/4828
-pub async fn is_osaka_activated_on_l1(
+pub async fn get_l1_active_fork(
     client: &EthClient,
     activation_time: Option<u64>,
 ) -> Result<Fork, EthClientError> {

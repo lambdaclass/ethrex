@@ -2,7 +2,7 @@ use ethrex_common::{
     Address, H256,
     types::{Fork, batch::Batch},
 };
-use ethrex_l2_sdk::{get_last_committed_batch, is_osaka_activated_on_l1};
+use ethrex_l2_sdk::{get_last_committed_batch, get_l1_active_fork};
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use ratatui::{
@@ -65,7 +65,7 @@ impl BatchesTable {
         .await?;
         new_latest_batches.truncate(BATCH_WINDOW_SIZE);
 
-        let fork = is_osaka_activated_on_l1(eth_client, osaka_activation_time)
+        let fork = get_l1_active_fork(eth_client, osaka_activation_time)
             .await
             .map_err(MonitorError::EthClientError)?;
 
@@ -130,7 +130,7 @@ impl BatchesTable {
                     .map_err(|_| MonitorError::BatchWindow)?,
             ),
         );
-        let fork = is_osaka_activated_on_l1(eth_client, osaka_activation_time)
+        let fork = get_l1_active_fork(eth_client, osaka_activation_time)
             .await
             .map_err(MonitorError::EthClientError)?;
 
