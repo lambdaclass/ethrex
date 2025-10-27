@@ -203,8 +203,7 @@ impl BlockProducer {
 
         let account_updates_list = self
             .store
-            .apply_account_updates_batch(block.header.parent_hash, &account_updates)
-            .await?
+            .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let transactions_count = block.body.transactions.len();
@@ -246,7 +245,10 @@ impl BlockProducer {
             return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
         };
 
-        let fee_config = *l2_config.fee_config.read().await;
+        let fee_config = *l2_config
+            .fee_config
+            .read()
+            .map_err(|_| BlockProducerError::Custom("Fee config lock was poisoned".to_string()))?;
 
         self.rollup_store
             .store_fee_config_by_block(block_number, fee_config)

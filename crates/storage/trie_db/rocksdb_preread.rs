@@ -4,7 +4,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 
 use crate::{
@@ -20,7 +20,7 @@ pub struct RocksDBPreRead {
     /// Pre-read data
     cache: HashMap<Vec<u8>, Vec<u8>>,
     last_computed_flatkeyvalue: Vec<u8>,
-    tlc: Arc<RwLock<TrieLayerCache>>,
+    tlc: Arc<TrieLayerCache>,
     state_root: H256,
 }
 
@@ -56,7 +56,7 @@ impl RocksDBPreRead {
     pub fn new(
         db: Arc<DBWithThreadMode<MultiThreaded>>,
         updates: &[AccountUpdate],
-        tlc: Arc<RwLock<TrieLayerCache>>,
+        tlc: Arc<TrieLayerCache>,
         state_root: H256,
     ) -> Result<Self, TrieError> {
         // Verify column family exists
@@ -133,18 +133,16 @@ impl RocksDBPreRead {
                 results.push((key, vec![]));
             }
         }
-        let tlc_lock = tlc.write().map_err(|_| TrieError::LockError)?;
         let cache: HashMap<_, _> = results
             .into_par_iter()
             .map(|(key, value)| {
-                if let Some(tlc_value) = tlc_lock.get(state_root, &key) {
+                if let Some(tlc_value) = tlc.get(state_root, &key) {
                     (key, tlc_value)
                 } else {
                     (key, value)
                 }
             })
             .collect();
-        drop(tlc_lock);
 
         drop(cf_misc);
         drop(cf_nodes);
@@ -186,8 +184,7 @@ impl TrieDB for RocksDBPreReadTrieDB {
         if let Some(value) = self.inner.cache.get(key.as_ref()) {
             return Ok(Some(value.clone()));
         }
-        let tlc = self.inner.tlc.read().map_err(|_| TrieError::LockError)?;
-        if let Some(value) = tlc.get(self.inner.state_root, key.as_ref()) {
+        if let Some(value) = self.inner.tlc.get(self.inner.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
 

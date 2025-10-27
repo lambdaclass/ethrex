@@ -376,13 +376,7 @@ impl NodeRecord {
         Ok(record)
     }
 
-    pub fn update_seq(&mut self, signer: &SecretKey) -> Result<(), NodeError> {
-        self.seq += 1;
-        self.sign_record(signer)?;
-        Ok(())
-    }
-
-    fn sign_record(&mut self, signer: &SecretKey) -> Result<H512, NodeError> {
+    fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
         let digest = &self.get_signature_digest();
         let msg = secp256k1::Message::from_digest_slice(digest)
             .map_err(|_| NodeError::SignatureError("Invalid message digest".into()))?;

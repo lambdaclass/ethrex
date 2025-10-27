@@ -48,8 +48,7 @@ pub async fn build_payload(
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context =
-        PayloadBuildContext::new(payload, store, blockchain.options.r#type.clone()).await?;
+    let mut context = PayloadBuildContext::new(payload, store, &blockchain.options.r#type)?;
 
     fill_transactions(
         blockchain.clone(),
@@ -59,7 +58,7 @@ pub async fn build_payload(
         block_gas_limit,
     )
     .await?;
-    blockchain.finalize_payload(&mut context).await?;
+    blockchain.finalize_payload(&mut context)?;
 
     let interval = Instant::now().duration_since(since).as_millis();
     // TODO: expose as a proper metric

@@ -432,7 +432,6 @@ impl Command {
                             current_state_root,
                             &account_updates.into_values().collect::<Vec<_>>(),
                         )
-                        .await
                         .map_err(|e| format!("Error applying account updates: {e}"))
                         .unwrap();
 
