@@ -4,7 +4,10 @@ use std::fmt::Debug;
 
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
+    types::{
+        AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig,
+        l2_to_l2_message::L2toL2Message,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -147,6 +150,11 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<(), RollupStoreError>;
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
+
+    async fn get_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError>;
 
     async fn store_prover_input_by_batch_and_version(
         &self,

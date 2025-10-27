@@ -4,7 +4,10 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
+    types::{
+        AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig,
+        l2_to_l2_message::L2toL2Message,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -28,7 +31,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 17] = [
+const DB_SCHEMA: [&str; 18] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -46,6 +49,7 @@ const DB_SCHEMA: [&str; 17] = [
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_prover_input (batch INT, prover_version TEXT, prover_input BLOB, PRIMARY KEY (batch, prover_version))",
     "CREATE TABLE fee_config (block_number INT PRIMARY KEY, fee_config BLOB)",
+    "CREATE TABLE l2_to_l2_messages (batch INT, idx INT, message BLOB, PRIMARY KEY (batch, idx))",
 ];
 
 impl SQLStore {
@@ -303,6 +307,27 @@ impl SQLStore {
         )];
 
         self.execute_in_tx(queries, db_tx).await
+    }
+
+    async fn store_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+        messages: Vec<L2toL2Message>,
+        db_tx: Option<&Transaction>,
+    ) -> Result<(), RollupStoreError> {
+        let mut queries = Vec::with_capacity(messages.len());
+
+        for (idx, message) in messages.iter().enumerate() {
+            let idx = u64::try_from(idx)
+                .map_err(|_| RollupStoreError::Custom("Message index out of range".to_string()))?;
+            queries.push((
+                "INSERT INTO l2_to_l2_messages (batch, idx, message) VALUES (?1, ?2, ?3)",
+                libsql::params!(batch_number, idx, bincode::serialize(message)?).into_params()?,
+            ))
+        }
+
+        self.execute_in_tx(queries, db_tx).await?;
+        Ok(())
     }
 }
 
@@ -668,10 +693,12 @@ impl StoreEngineRollup for SQLStore {
             .await?;
         self.store_message_hashes_by_batch_in_tx(
             batch.number,
-            batch.message_hashes,
+            batch.l1_message_hashes,
             Some(&transaction),
         )
         .await?;
+        self.store_l2_to_l2_messages(batch.number, batch.l2_to_l2_messages, Some(&transaction))
+            .await?;
         self.store_privileged_transactions_hash_by_batch_number_in_tx(
             batch.number,
             batch.privileged_transactions_hash,
@@ -807,6 +834,26 @@ impl StoreEngineRollup for SQLStore {
             .await?
             .map(|row| read_from_row_int(&row, 0))
             .transpose()
+    }
+
+    async fn get_l2_to_l2_messages(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<L2toL2Message>>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT message FROM l2_to_l2_messages WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+
+        let mut messages = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let val = read_from_row_blob(&row, 0)?;
+            messages.push(bincode::deserialize(&val)?);
+        }
+
+        Ok(Some(messages))
     }
 
     async fn store_prover_input_by_batch_and_version(
@@ -955,6 +1002,8 @@ mod tests {
                 ("batch_prover_input", "batch") => "INT",
                 ("batch_prover_input", "prover_version") => "TEXT",
                 ("batch_prover_input", "prover_input") => "BLOB",
+                ("l2_to_l2_messages", "idx") => "INT",
+                ("l2_to_l2_messages", "message") => "BLOB",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",

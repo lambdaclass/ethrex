@@ -87,11 +87,11 @@ interface ICommonBridge {
     /// @notice Method to retrieve the merkle root of the withdrawal logs of a
     /// given block.
     /// @dev This method is used by the L2 OnChainOperator at the verify stage.
-    /// @param blockNumber the block number in L2 where the withdrawal logs were
+    /// @param batchNumber the batch number in L2 where the withdrawal logs were
     /// emitted.
     /// @return the merkle root of the withdrawal logs of the given block.
     function getWithdrawalLogsMerkleRoot(
-        uint256 blockNumber
+        uint256 batchNumber
     ) external view returns (bytes32);
 
     /// @notice Publishes the L2 withdrawals on L1.
@@ -121,11 +121,11 @@ interface ICommonBridge {
     /// @param withdrawalProof the merkle path to the withdrawal log.
     /// @param withdrawalLogIndex the index of the message log in the block.
     /// This is the index of the withdraw transaction relative to the block's messages.
-    /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
+    /// @param withdrawalBatchNumber the batch number where the withdrawal log
     /// was emitted.
     function claimWithdrawal(
         uint256 claimedAmount,
-        uint256 l2WithdrawalBatchNumber,
+        uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) external;
@@ -136,16 +136,28 @@ interface ICommonBridge {
     /// @param claimedAmount the amount that will be claimed.
     /// @param withdrawalProof the merkle path to the withdrawal log.
     /// @param withdrawalLogIndex the index of the message log in the batch.
-    /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
+    /// @param withdrawalBatchNumber the batch number where the withdrawal log
     /// was emitted.
     function claimWithdrawalERC20(
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,
-        uint256 l2WithdrawalBatchNumber,
+        uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) external;
+
+    /// @notice Sends a message to another chain via shared bridge router.
+    /// @dev This method should only be called by the OnChainProposer.
+    /// @param dstChainId The ID of the destination chain.
+    /// @param message The message details to send.
+    function sendMessage(uint256 dstChainId, SendValues memory message) external;
+
+    /// @notice Receives a message from another chain via shared bridge router.
+    /// @dev This method should only be called by the shared bridge router, as this
+    /// method will not burn the L2 gas.
+    /// @param message The message details to receive.
+    function receiveMessage(SendValues memory message) external payable;
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines
     function hasExpiredPrivilegedTransactions() external view returns (bool);
