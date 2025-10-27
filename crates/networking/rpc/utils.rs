@@ -342,7 +342,7 @@ pub mod test_utils {
 
     use crate::{
         eth::gas_tip_estimator::GasTipEstimator,
-        rpc::{NodeData, RpcApiContext, start_api},
+        rpc::{NodeData, RpcApiContext, start_api, start_block_executor},
     };
 
     pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
@@ -409,6 +409,7 @@ pub mod test_utils {
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let local_node_record = example_local_node_record();
+        let block_worker_channel = start_block_executor(blockchain.clone());
         RpcApiContext {
             storage,
             blockchain,
@@ -425,6 +426,7 @@ pub mod test_utils {
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler: None,
             gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+            block_worker_channel,
         }
     }
 }

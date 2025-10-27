@@ -7,6 +7,7 @@ use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
+use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
@@ -678,6 +679,20 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
+pub async fn add_block(ctx: &RpcApiContext, block: Block) -> Result<(), ChainError> {
+    let (notify_send, notify_recv) = oneshot::channel();
+    ctx.block_worker_channel
+        .send((notify_send, block))
+        .map_err(|e| {
+            ChainError::Custom(format!(
+                "failed to send block execution request to worker: {e}"
+            ))
+        })?;
+    notify_recv
+        .await
+        .map_err(|e| ChainError::Custom(format!("failed to receive block execution result: {e}")))?
+}
+
 async fn try_execute_payload(
     block: Block,
     context: &RpcApiContext,
@@ -696,7 +711,7 @@ async fn try_execute_payload(
     // Execute and store the block
     info!(%block_hash, %block_number, "Executing payload");
 
-    match context.blockchain.add_block(block).await {
+    match add_block(context, block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             context.syncer.sync_to_head(block_hash);

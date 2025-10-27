@@ -552,7 +552,7 @@ pub async fn regenerate_head_state(
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block(block).await?;
+        blockchain.add_block(block)?;
     }
 
     info!("Finished regenerating state");
