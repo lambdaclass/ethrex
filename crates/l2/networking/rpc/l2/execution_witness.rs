@@ -61,7 +61,10 @@ pub async fn handle_execution_witness(
             .get_fee_config_by_block(block_number)
             .await
             .map_err(|e| RpcErr::Internal(format!("Failed to get fee config {e}")))?
-            .ok_or(RpcErr::Internal(format!("Fee config not found")))?;
+            .ok_or(RpcErr::Internal(format!(
+                "Fee config not found for block {}",
+                block_number
+            )))?;
 
         blocks.push(block);
         fee_configs.push(fee_config);
