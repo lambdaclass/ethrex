@@ -114,9 +114,21 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 # L2
 # ==============================================================================
 
+ifdef SP1
+  SP1? := sp1
+else
+  SP1? :=
+endif
+
+ifdef RISC0
+  RISC0? := risc0
+else
+  RISC0? :=
+endif
+
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
-	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features l2,l2-sql,$(SP1?),$(RISC0?) --manifest-path ../../Cargo.toml -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
