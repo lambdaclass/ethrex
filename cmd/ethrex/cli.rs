@@ -8,8 +8,8 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
-use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, fee_config::FeeConfig};
+use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis};
 use ethrex_p2p::{
     discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
@@ -413,7 +413,7 @@ impl Subcommand {
                 let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
-                    BlockchainType::L2(FeeConfig::default())
+                    BlockchainType::L2(L2Config::default())
                 } else {
                     BlockchainType::L1
                 };
