@@ -43,7 +43,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -365,25 +365,33 @@ impl Blockchain {
         cancel_token: CancellationToken,
     ) -> Result<PayloadBuildResult, ChainError> {
         let start = Instant::now();
-        let self_clone = self.clone();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        let mut res = self_clone.build_payload(payload.clone()).await?;
+        // TODO(#4997): start with an empty block
+        let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
+            let self_clone = self.clone();
+            let building_task =
+                tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
-            if let Some(current_res) = cancel_token
-                .run_until_cancelled(self_clone.build_payload(payload))
-                .await
-            {
-                res = current_res?;
+            // TODO(#5011): this doesn't stop the building task, but only keeps it running in the background,
+            //   which wastes CPU resources.
+            match cancel_token.run_until_cancelled(building_task).await {
+                Some(Ok(current_res)) => {
+                    res = current_res?;
+                }
+                Some(Err(err)) => {
+                    warn!(%err, "Payload-building task panicked");
+                }
+                None => {}
             }
         }
         Ok(res)
     }
 
     /// Completes the payload building process, return the block value
-    pub async fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+    pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -397,7 +405,7 @@ impl Blockchain {
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
         self.extract_requests(&mut context)?;
-        self.finalize_payload(&mut context).await?;
+        self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
 
@@ -625,10 +633,7 @@ impl Blockchain {
         Ok(())
     }
 
-    pub async fn finalize_payload(
-        &self,
-        context: &mut PayloadBuildContext,
-    ) -> Result<(), ChainError> {
+    pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
         let ret_acount_updates_list = self
