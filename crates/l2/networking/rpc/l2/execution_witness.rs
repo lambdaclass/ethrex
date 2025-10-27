@@ -7,6 +7,8 @@ use tracing::debug;
 
 use crate::rpc::RpcApiContext;
 
+/// Copy of the L1 handler for execution witness, but
+/// fetches fee configs from the rollup store, as they can vary from block to block.
 pub async fn handle_execution_witness(
     request: &ExecutionWitnessRequest,
     context: RpcApiContext,
