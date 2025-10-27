@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
 use crate::{Nibbles, Node, Trie, TrieDB, TrieError};
 
@@ -39,7 +39,7 @@ impl TrieDB for TrieLogger {
             && let Ok(decoded) = Node::decode(result)
         {
             let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-            lock.insert(decoded.encode_raw());
+            lock.insert(decoded.encode_to_vec());
         }
         Ok(result)
     }

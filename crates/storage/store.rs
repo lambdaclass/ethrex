@@ -3,22 +3,21 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, apply_prefix};
-use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
-        code_hash,
+        BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
+        Transaction,
     },
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::sync::Arc;
+use std::{collections::hash_map::Entry, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
@@ -57,7 +56,7 @@ pub struct UpdateBatch {
     /// Receipts added per block
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Code updates
-    pub code_updates: Vec<(H256, Bytes)>,
+    pub code_updates: Vec<(H256, Code)>,
 }
 
 type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -66,7 +65,7 @@ pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(Nibbles, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
-    pub code_updates: Vec<(H256, Bytes)>,
+    pub code_updates: Vec<(H256, Code)>,
 }
 
 impl Store {
@@ -312,11 +311,11 @@ impl Store {
         self.engine.get_transaction_location(transaction_hash).await
     }
 
-    pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        self.engine.add_account_code(code_hash, code).await
+    pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
+        self.engine.add_account_code(code).await
     }
 
-    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         self.engine.get_account_code(code_hash)
     }
 
@@ -324,7 +323,7 @@ impl Store {
         &self,
         block_number: BlockNumber,
         address: Address,
-    ) -> Result<Option<Bytes>, StoreError> {
+    ) -> Result<Option<Code>, StoreError> {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -361,7 +360,7 @@ impl Store {
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
     #[instrument(level = "trace", name = "Trie update", skip_all)]
-    pub async fn apply_account_updates_batch(
+    pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
@@ -370,16 +369,16 @@ impl Store {
             return Ok(None);
         };
 
-        Ok(Some(
-            self.apply_account_updates_from_trie_batch(state_trie, account_updates)
-                .await?,
-        ))
+        Ok(Some(self.apply_account_updates_from_trie_batch(
+            state_trie,
+            account_updates,
+        )?))
     }
 
-    pub async fn apply_account_updates_from_trie_batch(
+    pub fn apply_account_updates_from_trie_batch<'a>(
         &self,
         mut state_trie: Trie,
-        account_updates: impl IntoIterator<Item = &AccountUpdate>,
+        account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
@@ -448,61 +447,92 @@ impl Store {
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
         mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
-    ) -> Result<(Trie, HashMap<Address, (TrieWitness, Trie)>), StoreError> {
+    ) -> Result<(HashMap<Address, (TrieWitness, Trie)>, AccountUpdatesList), StoreError> {
+        let mut ret_storage_updates = Vec::new();
+
+        let mut code_updates = Vec::new();
+
         let state_root = state_trie.hash_no_commit();
+
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
+
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(&hashed_address)?;
-            } else {
-                // Add or update AccountState in the trie
-                // Fetch current state or create a new state to be inserted
-                let mut account_state = match state_trie.get(&hashed_address)? {
-                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
-                    None => AccountState::default(),
-                };
-                if let Some(info) = &update.info {
-                    account_state.nonce = info.nonce;
-                    account_state.balance = info.balance;
-                    account_state.code_hash = info.code_hash;
-                    // Store updated code in DB
-                    if let Some(code) = &update.code {
-                        self.add_account_code(info.code_hash, code.clone()).await?;
-                    }
-                }
-                if update.removed_storage {
-                    account_state.storage_root = *EMPTY_TRIE_HASH;
-                }
-                // Store the added storage in the account's storage trie and compute its new root
-                if !update.added_storage.is_empty() {
-                    let (_witness, storage_trie) = match storage_tries.entry(update.address) {
-                        std::collections::hash_map::Entry::Occupied(value) => value.into_mut(),
-                        std::collections::hash_map::Entry::Vacant(vacant) => {
-                            let trie = self.engine.open_storage_trie(
-                                H256::from_slice(&hashed_address),
-                                account_state.storage_root,
-                                state_root,
-                            )?;
-                            vacant.insert(TrieLogger::open_trie(trie))
-                        }
-                    };
 
-                    for (storage_key, storage_value) in &update.added_storage {
-                        let hashed_key = hash_key(storage_key);
-                        if storage_value.is_zero() {
-                            storage_trie.remove(&hashed_key)?;
-                        } else {
-                            storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
-                        }
-                    }
-                    account_state.storage_root = storage_trie.hash_no_commit();
-                }
-                state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+                continue;
             }
+
+            // Add or update AccountState in the trie
+            // Fetch current state or create a new state to be inserted
+            let mut account_state = match state_trie.get(&hashed_address)? {
+                Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                None => AccountState::default(),
+            };
+
+            if update.removed_storage {
+                account_state.storage_root = *EMPTY_TRIE_HASH;
+            }
+
+            if let Some(info) = &update.info {
+                account_state.nonce = info.nonce;
+
+                account_state.balance = info.balance;
+
+                account_state.code_hash = info.code_hash;
+
+                // Store updated code in DB
+                if let Some(code) = &update.code {
+                    code_updates.push((info.code_hash, code.clone()));
+                }
+            }
+
+            // Store the added storage in the account's storage trie and compute its new root
+            if !update.added_storage.is_empty() {
+                let (_witness, storage_trie) = match storage_tries.entry(update.address) {
+                    Entry::Occupied(value) => value.into_mut(),
+                    Entry::Vacant(vacant) => {
+                        let trie = self.engine.open_storage_trie(
+                            H256::from_slice(&hashed_address),
+                            account_state.storage_root,
+                            state_root,
+                        )?;
+                        vacant.insert(TrieLogger::open_trie(trie))
+                    }
+                };
+
+                for (storage_key, storage_value) in &update.added_storage {
+                    let hashed_key = hash_key(storage_key);
+
+                    if storage_value.is_zero() {
+                        storage_trie.remove(&hashed_key)?;
+                    } else {
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    }
+                }
+
+                let (storage_hash, storage_updates) =
+                    storage_trie.collect_changes_since_last_hash();
+
+                account_state.storage_root = storage_hash;
+
+                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+            }
+
+            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        Ok((state_trie, storage_tries))
+        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+
+        let account_updates_list = AccountUpdatesList {
+            state_trie_hash,
+            state_updates,
+            storage_updates: ret_storage_updates,
+            code_updates,
+        };
+
+        Ok((storage_tries, account_updates_list))
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -515,8 +545,9 @@ impl Store {
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
-            let code_hash = code_hash(&account.code);
-            self.add_account_code(code_hash, account.code).await?;
+            let code = Code::from_bytecode(account.code);
+            let code_hash = code.hash;
+            self.add_account_code(code).await?;
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
@@ -1335,7 +1366,7 @@ impl Store {
 
     pub async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
         self.engine.write_account_code_batch(account_codes).await
     }
@@ -1361,6 +1392,10 @@ impl Store {
 
     pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
         self.engine.generate_flatkeyvalue()
+    }
+
+    pub async fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
+        self.engine.create_checkpoint(path.as_ref()).await
     }
 }
 
@@ -1503,7 +1538,7 @@ mod tests {
             })
             .collect();
         accounts.sort_by_key(|a| a.0);
-        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
         for (address, state) in &accounts {
             trie.insert(address.0.to_vec(), state.encode_to_vec())
                 .unwrap();
@@ -1529,13 +1564,13 @@ mod tests {
             .collect();
         slots.sort_by_key(|a| a.0);
         let mut trie = store
-            .open_storage_trie(address, *EMPTY_TRIE_HASH, *EMPTY_TRIE_HASH)
+            .open_direct_storage_trie(address, *EMPTY_TRIE_HASH)
             .unwrap();
         for (slot, value) in &slots {
             trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
         }
         let storage_root = trie.hash().unwrap();
-        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
         trie.insert(
             address.0.to_vec(),
             AccountState {
@@ -1719,13 +1754,10 @@ mod tests {
     }
 
     async fn test_store_account_code(store: Store) {
-        let code_hash = H256::random();
-        let code = Bytes::from("kiwi");
+        let code = Code::from_bytecode(Bytes::from("kiwi"));
+        let code_hash = code.hash;
 
-        store
-            .add_account_code(code_hash, code.clone())
-            .await
-            .unwrap();
+        store.add_account_code(code.clone()).await.unwrap();
 
         let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
 
