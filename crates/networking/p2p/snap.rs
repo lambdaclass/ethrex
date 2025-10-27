@@ -180,6 +180,7 @@ mod tests {
     use ethrex_common::{BigEndianHash, H256, types::AccountState};
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
     use ethrex_storage::EngineType;
+    use ethrex_trie::EMPTY_TRIE_HASH;
 
     use crate::rlpx::snap::AccountStateSlim;
 
@@ -996,7 +997,7 @@ mod tests {
 
         // Create a store and load it up with the accounts
         let store = Store::new("null", EngineType::InMemory).unwrap();
-        let mut state_trie = store.new_state_trie_for_test()?;
+        let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
         for (address, account) in accounts {
             let hashed_address = H256::from_str(address).unwrap().as_bytes().to_vec();
             let account = AccountState::from(AccountStateSlim::decode(&account).unwrap());
