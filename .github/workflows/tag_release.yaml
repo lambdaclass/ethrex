@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   packages: write
+  actions: write
 
 env:
   REGISTRY: ghcr.io
@@ -185,6 +186,7 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+      actions: write
 
     steps:
       - name: Checkout code
