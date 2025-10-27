@@ -246,10 +246,7 @@ impl BlockProducer {
             return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
         };
 
-        let fee_config = *l2_config
-            .fee_config
-            .read()
-            .map_err(|_| BlockProducerError::Custom("Fee config lock was poisoned".to_string()))?;
+        let fee_config = l2_config.get_fee_config();
 
         self.rollup_store
             .store_fee_config_by_block(block_number, fee_config)

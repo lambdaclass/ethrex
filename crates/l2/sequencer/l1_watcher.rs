@@ -359,9 +359,13 @@ impl GenServer for L1Watcher {
                     return CastResponse::NoReply;
                 };
 
-                let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
-                    error!("Fee config lock was poisoned when updating L1 blob base fee");
-                    return CastResponse::NoReply;
+                let mut fee_config_guard = match l2_config.fee_config.write() {
+                    Ok(guard) => guard,
+                    Err(poison) => {
+                        warn!("Fee config lock was poisoned when updating L1 blob base fee");
+                        // Ignore the poison and consume the error.
+                        poison.into_inner()
+                    }
                 };
 
                 let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_mut() else {
