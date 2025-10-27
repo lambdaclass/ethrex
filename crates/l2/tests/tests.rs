@@ -1984,8 +1984,9 @@ async fn test_fee_token(
     rich_wallet_private_key: SecretKey,
     recipient_private_key: SecretKey,
 ) -> Result<FeesDetails> {
+    let test = "test_fee_token";
     let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
-    println!("Rich wallet address: {rich_wallet_address:#x}");
+    println!("{test}: Rich wallet address: {rich_wallet_address:#x}");
 
     let path = Path::new("../../fixtures/contracts/ERC20/");
     compile_contract(path, &path.join("FeeToken.sol"), false, None, &[path])?;
@@ -2004,25 +2005,26 @@ async fn test_fee_token(
         .await?;
     let sender_token_balance_before_transfer =
         test_balance_of(&l2_client, fee_token_address, rich_wallet_address).await;
-    println!("Fee token address: {fee_token_address:#x}");
-    println!("Sender balance before transfer: {sender_balance_before_transfer}");
-    println!("Sender fee balance before transfer: {sender_token_balance_before_transfer}");
+    println!("{test}: Fee token address: {fee_token_address:#x}");
+    println!("{test}: Sender balance before transfer: {sender_balance_before_transfer}");
+    println!("{test}: Sender fee balance before transfer: {sender_token_balance_before_transfer}");
 
     let recipient_address = get_address_from_secret_key(&recipient_private_key).unwrap();
     let recipient_balance_before_transfer = l2_client
         .get_balance(recipient_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    println!("Recipient address: {recipient_address:#x}");
-    println!("Recipient balance before transfer: {recipient_balance_before_transfer}");
+    println!("{test}: Recipient address: {recipient_address:#x}");
+    println!("{test}: Recipient balance before transfer: {recipient_balance_before_transfer}");
 
     let fee_vault = base_fee_vault();
     let fee_vault_address_token_balance_before_transfer =
         test_balance_of(&l2_client, fee_token_address, fee_vault).await;
     println!(
-        "Fee vault address fee token balance before transfer: {fee_vault_address_token_balance_before_transfer}"
+        "{test}: Fee vault address fee token balance before transfer: {fee_vault_address_token_balance_before_transfer}"
     );
 
+    let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(
         &l2_client,
         TxType::FeeToken,
@@ -2031,7 +2033,7 @@ async fn test_fee_token(
         Bytes::new(),
         Overrides {
             fee_token: Some(fee_token_address),
-            value: Some(U256::one()),
+            value: Some(U256::from(value_to_transfer)),
             ..Default::default()
         },
     )
@@ -2045,30 +2047,32 @@ async fn test_fee_token(
     let sender_balance_after_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
-    println!("Sender balance after transfer: {sender_balance_after_transfer}");
+    println!("{test}: Sender balance after transfer: {sender_balance_after_transfer}");
     let recipient_balance_after_transfer = l2_client
         .get_balance(recipient_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
-    println!("Recipient balance after transfer: {recipient_balance_after_transfer}");
+    println!("{test}: Recipient balance after transfer: {recipient_balance_after_transfer}");
 
     assert_eq!(
         sender_balance_after_transfer,
-        sender_balance_before_transfer - 1,
+        sender_balance_before_transfer - 100_000,
         "Sender balance did not decrease"
     );
 
-    println!("Sender balance decrease correctly");
+    println!("{test}: Sender balance decrease correctly");
 
     assert_eq!(
         recipient_balance_after_transfer,
-        recipient_balance_before_transfer + 1,
+        recipient_balance_before_transfer + 100_000,
         "Recipient balance did not increase"
     );
-    println!("Recipient balance increased correctly");
+    println!("{test}: Recipient balance increased correctly");
 
     let sender_token_balance_after_transfer =
         test_balance_of(&l2_client, fee_token_address, rich_wallet_address).await;
-    println!("Sender fee token balance after transfer: {sender_token_balance_after_transfer}");
+    println!(
+        "{test}: Sender fee token balance after transfer: {sender_token_balance_after_transfer}"
+    );
 
     assert!(
         sender_token_balance_after_transfer < sender_token_balance_before_transfer,
@@ -2079,12 +2083,12 @@ async fn test_fee_token(
         let fee_vault_address_token_balance_after_transfer =
             test_balance_of(&l2_client, fee_token_address, fee_vault).await;
         println!(
-            "Fee vault address fee token balance after transfer: {fee_vault_address_token_balance_after_transfer}"
+            "{test}: Fee vault address fee token balance after transfer: {fee_vault_address_token_balance_after_transfer}"
         );
         assert!(
             fee_vault_address_token_balance_after_transfer
                 > fee_vault_address_token_balance_before_transfer,
-            "Fee vault address fee token balance did not increase"
+            "{test}: Fee vault address fee token balance did not increase"
         );
     }
 
