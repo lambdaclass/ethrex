@@ -3,6 +3,7 @@ use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
     Transaction,
 };
+use std::path::Path;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
@@ -377,4 +378,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn clear_fullsync_headers(&self) -> Result<(), StoreError>;
 
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
+
+    async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
 }

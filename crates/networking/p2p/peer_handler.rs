@@ -1542,9 +1542,18 @@ impl PeerHandler {
                     .map(|storage| storage.len())
                     .sum::<usize>();
 
+                // These take into account we downloaded the same thing for different accounts
+                let effective_slots: usize = account_storages
+                    .iter()
+                    .enumerate()
+                    .map(|(i, storages)| {
+                        accounts_by_root_hash[start_index + i].1.len() * storages.len()
+                    })
+                    .sum();
+
                 METRICS
-                    .downloaded_storage_slots
-                    .fetch_add(n_slots as u64, Ordering::Relaxed);
+                    .storage_leaves_downloaded
+                    .inc_by(effective_slots as u64);
 
                 debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(
