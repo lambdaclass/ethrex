@@ -519,8 +519,7 @@ impl L1Committer {
                     .apply_account_updates_batch(
                         potential_batch_block.header.parent_hash,
                         &account_updates,
-                    )
-                    .await?
+                    )?
                     .ok_or(CommitterError::FailedToGetInformationFromStorage(
                         "no account updated".to_owned(),
                     ))?;

@@ -361,7 +361,7 @@ impl Store {
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
     #[instrument(level = "trace", name = "Trie update", skip_all)]
-    pub async fn apply_account_updates_batch(
+    pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
@@ -370,16 +370,16 @@ impl Store {
             return Ok(None);
         };
 
-        Ok(Some(
-            self.apply_account_updates_from_trie_batch(state_trie, account_updates)
-                .await?,
-        ))
+        Ok(Some(self.apply_account_updates_from_trie_batch(
+            state_trie,
+            account_updates,
+        )?))
     }
 
-    pub async fn apply_account_updates_from_trie_batch(
+    pub fn apply_account_updates_from_trie_batch<'a>(
         &self,
         mut state_trie: Trie,
-        account_updates: impl IntoIterator<Item = &AccountUpdate>,
+        account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
