@@ -159,3 +159,49 @@ impl RpcHandler for GetOperatorFee {
         Ok(serde_json::Value::String(operator_fee_hex))
     }
 }
+
+pub struct GetL1BlobBaseFeeRequest {
+    pub block_number: u64,
+}
+
+impl RpcHandler for GetL1BlobBaseFeeRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<GetL1BlobBaseFeeRequest, RpcErr> {
+        let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
+            "No params provided".to_owned(),
+        ))?;
+        if params.len() != 1 {
+            return Err(ethrex_rpc::RpcErr::BadParams(
+                "Expected 1 params".to_owned(),
+            ))?;
+        };
+        // Parse BlockNumber
+        let hex_str = serde_json::from_value::<String>(params[0].clone())
+            .map_err(|e| ethrex_rpc::RpcErr::BadParams(e.to_string()))?;
+
+        // Check that the BlockNumber is 0x prefixed
+        let hex_str = hex_str
+            .strip_prefix("0x")
+            .ok_or(ethrex_rpc::RpcErr::BadHexFormat(0))?;
+
+        // Parse hex string
+        let block_number =
+            u64::from_str_radix(hex_str, 16).map_err(|_| ethrex_rpc::RpcErr::BadHexFormat(0))?;
+
+        Ok(GetL1BlobBaseFeeRequest { block_number })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Requested L1BlobBaseFee for block {}", self.block_number);
+
+        let l1_blob_base_fee = context
+            .rollup_store
+            .get_fee_config_by_block(self.block_number)
+            .await?
+            .and_then(|fc| fc.l1_fee_config)
+            .map(|cfg| cfg.l1_fee_per_blob_gas)
+            .unwrap_or_default();
+
+        serde_json::to_value(l1_blob_base_fee)
+            .map_err(|err| RpcErr::Internal(format!("Failed to serialize L1BlobBaseFee: {}", err)))
+    }
+}

@@ -1,8 +1,5 @@
 use prometheus::{Encoder, HistogramTimer, HistogramVec, TextEncoder, register_histogram_vec};
-use std::{
-    collections::HashMap,
-    sync::{LazyLock, Mutex},
-};
+use std::sync::LazyLock;
 use tracing::{Subscriber, span::Id};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
@@ -23,9 +20,10 @@ fn initialize_histogram_vec() -> HistogramVec {
 // We use this struct to simplify accumulating the time spent doing each task and publishing the metric only when the sync cycle is finished
 // We need to do this because things like database reads and writes are spread out throughout the code, so we need to gather multiple measurements to publish
 #[derive(Default)]
-pub struct FunctionProfilingLayer {
-    function_timers: Mutex<HashMap<Id, HistogramTimer>>,
-}
+pub struct FunctionProfilingLayer;
+
+/// Wrapper around [`HistogramTimer`] to avoid conflicts with other layers
+struct ProfileTimer(HistogramTimer);
 
 impl<S> Layer<S> for FunctionProfilingLayer
 where
@@ -40,14 +38,17 @@ where
             let timer = METRICS_BLOCK_PROCESSING_PROFILE
                 .with_label_values(&[name])
                 .start_timer();
-            let mut timers = self.function_timers.lock().unwrap();
-            timers.insert(id.clone(), timer);
+            // PERF: `extensions_mut` uses a Mutex internally (per span)
+            span.extensions_mut().insert(ProfileTimer(timer));
         }
     }
 
-    fn on_exit(&self, id: &Id, _ctx: Context<'_, S>) {
-        let mut timers = self.function_timers.lock().unwrap();
-        if let Some(timer) = timers.remove(id) {
+    fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
+        let timer = ctx
+            .span(id)
+            // PERF: `extensions_mut` uses a Mutex internally (per span)
+            .and_then(|span| span.extensions_mut().remove::<ProfileTimer>());
+        if let Some(ProfileTimer(timer)) = timer {
             timer.observe_duration();
         }
     }
