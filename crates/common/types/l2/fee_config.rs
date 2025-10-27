@@ -3,7 +3,10 @@ use ethereum_types::Address;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::rkyv_utils::{H160Wrapper, OptionH160Wrapper};
+use crate::{
+    rkyv_utils::{H160Wrapper, OptionH160Wrapper},
+    types::account_diff::{Decoder, DecoderError},
+};
 
 #[derive(
     Serialize, Deserialize, RDeserialize, RSerialize, Archive, Clone, Copy, Debug, Default,
@@ -44,6 +47,8 @@ pub enum FeeConfigError {
     UnsupportedVersion(u8),
     #[error("Invalid fee config type: {0}")]
     InvalidFeeConfigType(u8),
+    #[error("DecoderError error: {0}")]
+    DecoderError(#[from] DecoderError),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -87,7 +92,6 @@ impl FeeConfig {
     pub fn encode(&self) -> Result<Bytes, FeeConfigError> {
         let version = 0u8;
         let mut encoded: Vec<u8> = Vec::new();
-        encoded.push(version);
 
         let mut fee_config_type = 0;
 
@@ -114,10 +118,60 @@ impl FeeConfig {
             encoded.extend(l1_fee_config.l1_fee_per_blob_gas.to_be_bytes());
         }
 
-        let mut result = Vec::with_capacity(1 + encoded.len());
+        let mut result = Vec::with_capacity(1 + 1 + encoded.len());
+        result.extend(version.to_be_bytes());
         result.extend(fee_config_type.to_be_bytes());
         result.extend(encoded);
 
         Ok(Bytes::from(result))
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<(usize, Self), FeeConfigError> {
+        let mut decoder = Decoder::new(bytes);
+
+        let version = decoder.get_u8()?;
+
+        if version != 0 {
+            return Err(FeeConfigError::UnsupportedVersion(version));
+        }
+
+        let fee_config_type = decoder.get_u8()?;
+
+        let base_fee_vault = if FeeConfigType::BaseFeeVault.is_in(fee_config_type) {
+            let address = decoder.get_address()?;
+            Some(address)
+        } else {
+            None
+        };
+
+        let operator_fee_config = if FeeConfigType::OperatorFee.is_in(fee_config_type) {
+            let operator_fee_vault = decoder.get_address()?;
+            let operator_fee_per_gas = decoder.get_u64()?;
+            Some(OperatorFeeConfig {
+                operator_fee_vault,
+                operator_fee_per_gas,
+            })
+        } else {
+            None
+        };
+        let l1_fee_config = if FeeConfigType::L1Fee.is_in(fee_config_type) {
+            let l1_fee_vault = decoder.get_address()?;
+            let l1_fee_per_blob_gas = decoder.get_u64()?;
+            Some(L1FeeConfig {
+                l1_fee_vault,
+                l1_fee_per_blob_gas,
+            })
+        } else {
+            None
+        };
+
+        Ok((
+            decoder.consumed(),
+            FeeConfig {
+                base_fee_vault,
+                operator_fee_config,
+                l1_fee_config,
+            },
+        ))
     }
 }
