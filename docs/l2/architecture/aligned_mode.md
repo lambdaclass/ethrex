@@ -67,7 +67,7 @@ aligned deposit-to-batcher \
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
 ```bash
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- \
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2",sp1 -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network "../../fixtures/genesis/l2.json" \
@@ -107,7 +107,7 @@ lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --e
 ```
 
 ```bash
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --authrpc.jwtsecret <PATH_TO_SECRET> --network <NETWORK>
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- --authrpc.jwtsecret <PATH_TO_SECRET> --network <NETWORK>
 ```
 
 ### 4. Running the Prover
@@ -241,6 +241,8 @@ ETHREX_ALIGNED_MODE=true \
 ETHREX_ALIGNED_BEACON_URL=http://127.0.0.1:58801 \
 ETHREX_ALIGNED_NETWORK=devnet \
 ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
+SP1=true \
+RISC0=true \
 make init-l2
 ```
 
