@@ -29,6 +29,7 @@ use ethrex_levm::{
     vm::VM,
 };
 use std::cmp::min;
+use std::sync::mpsc::Sender;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -53,6 +54,50 @@ impl LEVM {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+
+            cumulative_gas_used += report.gas_used;
+            let receipt = Receipt::new(
+                tx.tx_type(),
+                matches!(report.result, TxResult::Success),
+                cumulative_gas_used,
+                report.logs,
+            );
+
+            receipts.push(receipt);
+        }
+
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
+
+        // TODO: I don't like deciding the behavior based on the VMType here.
+        // TODO2: Revise this, apparently extract_all_requests_levm is not called
+        // in L2 execution, but its implementation behaves differently based on this.
+        let requests = match vm_type {
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L2(_) => Default::default(),
+        };
+
+        Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    pub fn execute_block_pipeline(
+        block: &Block,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        merkleizer: Sender<Vec<AccountUpdate>>,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        Self::prepare_block(block, db, vm_type)?;
+
+        let mut receipts = Vec::new();
+        let mut cumulative_gas_used = 0;
+
+        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })? {
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let transitions = LEVM::get_state_transitions(db)?;
+            merkleizer.send(transitions).expect("send failed");
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(

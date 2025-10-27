@@ -1254,7 +1254,7 @@ pub async fn regenerate_head_state(
         })?;
 
         blockchain
-            .add_block(block)
+            .add_block_pipeline(block)
             .map_err(|err| CommitterError::FailedToCreateCheckpoint(err.to_string()))?;
     }
 

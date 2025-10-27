@@ -15,6 +15,7 @@ use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -74,6 +75,15 @@ impl Evm {
     #[instrument(level = "trace", name = "Block execution", skip_all)]
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         LEVM::execute_block(block, &mut self.db, self.vm_type)
+    }
+
+    #[instrument(level = "trace", name = "Block execution (pipelined)", skip_all)]
+    pub fn execute_block_pipeline(
+        &mut self,
+        block: &Block,
+        merkleizer: Sender<Vec<AccountUpdate>>,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer)
     }
 
     /// Wraps [LEVM::execute_tx].

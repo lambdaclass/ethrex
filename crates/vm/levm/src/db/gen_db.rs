@@ -239,10 +239,11 @@ impl GeneralizedDatabase {
 
             account_updates.push(account_update);
         }
-        self.initial_accounts_state.clear();
-        //TODO: These down below don't need to be cleared every time we get state transitions. Clearing them slows down execution but consumes less memory. #3946
+        std::mem::swap(
+            &mut self.current_accounts_state,
+            &mut self.initial_accounts_state,
+        );
         self.current_accounts_state.clear();
-        self.codes.clear();
         Ok(account_updates)
     }
 }

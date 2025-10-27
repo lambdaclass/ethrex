@@ -11,30 +11,36 @@ use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{
+    EMPTY_TRIE_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS,
+};
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
-    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
+    AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
+    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
+    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::{Nibbles, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
+use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
@@ -167,6 +173,131 @@ impl Blockchain {
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
 
         Ok((execution_result, account_updates))
+    }
+
+    /// Executes a block withing a new vm instance and state
+    fn execute_block_pipeline(
+        &self,
+        block: &Block,
+    ) -> Result<(BlockExecutionResult, AccountUpdatesList), ChainError> {
+        // Validate if it can be the new head and find the parent
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block.clone())?;
+            return Err(ChainError::ParentNotFound);
+        };
+
+        let chain_config = self.storage.get_chain_config();
+
+        // Validate the block pre-execution
+        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let mut vm = self.new_evm(vm_db)?;
+
+        let (execution_result, account_updates_list) = std::thread::scope(|s| {
+            let (tx, rx) = channel();
+            let execution_handle = s.spawn(|| vm.execute_block_pipeline(block, tx));
+            let merkleize_handle = s.spawn(|| -> Result<_, StoreError> {
+                let mut state_trie = self
+                    .storage
+                    .state_trie(parent_header.hash())?
+                    .ok_or(StoreError::MissingStore)?;
+                let mut state_updates;
+                let mut state_trie_hash = H256::default();
+                let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
+                let mut storage_updates_map: FxHashMap<H256, (Trie, FxHashMap<Nibbles, Vec<u8>>)> =
+                    Default::default();
+                let mut code_updates: FxHashMap<H256, Code> = Default::default();
+                for updates in rx {
+                    // Apply the account updates over the last block's state and compute the new state root
+                    for update in updates {
+                        let hashed_address = hash_address(&update.address);
+                        if update.removed {
+                            // Remove account from trie
+                            state_trie.remove(&hashed_address)?;
+                            continue;
+                        }
+                        // Add or update AccountState in the trie
+                        // Fetch current state or create a new state to be inserted
+                        let mut account_state = match state_trie.get(&hashed_address)? {
+                            Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                            None => AccountState::default(),
+                        };
+                        let hashed_address_h256 = H256::from_slice(&hashed_address);
+                        if update.removed_storage {
+                            account_state.storage_root = *EMPTY_TRIE_HASH;
+                            storage_updates_map.remove(&hashed_address_h256);
+                        }
+                        if let Some(info) = update.info {
+                            account_state.nonce = info.nonce;
+                            account_state.balance = info.balance;
+                            account_state.code_hash = info.code_hash;
+                            // Store updated code in DB
+                            if let Some(code) = update.code {
+                                code_updates.insert(info.code_hash, code);
+                            }
+                        }
+                        // Store the added storage in the account's storage trie and compute its new root
+                        if !update.added_storage.is_empty() {
+                            let (storage_trie, storage_updates_map) = storage_updates_map
+                                .entry(hashed_address_h256)
+                                .or_insert_with(|| {
+                                    (
+                                        self.storage
+                                            .open_storage_trie(
+                                                hashed_address_h256,
+                                                account_state.storage_root,
+                                                parent_header.state_root,
+                                            )
+                                            .unwrap(),
+                                        Default::default(),
+                                    )
+                                });
+                            for (storage_key, storage_value) in &update.added_storage {
+                                let hashed_key = hash_key(storage_key);
+                                if storage_value.is_zero() {
+                                    storage_trie.remove(&hashed_key)?;
+                                } else {
+                                    storage_trie
+                                        .insert(hashed_key, storage_value.encode_to_vec())?;
+                                }
+                            }
+                            let (storage_hash, storage_updates) =
+                                storage_trie.collect_changes_since_last_hash();
+                            storage_updates_map.extend(storage_updates);
+                            account_state.storage_root = storage_hash;
+                        }
+                        state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+                    }
+                    (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+                    state_updates_map.extend(state_updates);
+                }
+                state_updates = state_updates_map.into_iter().collect();
+                let storage_updates = storage_updates_map
+                    .into_iter()
+                    .map(|(a, (_, s))| (a, s.into_iter().collect()))
+                    .collect();
+                let code_updates = code_updates.into_iter().collect();
+
+                Ok(AccountUpdatesList {
+                    state_trie_hash,
+                    state_updates,
+                    storage_updates,
+                    code_updates,
+                })
+            });
+            (execution_handle.join(), merkleize_handle.join())
+        });
+        let execution_result = execution_result.unwrap()?;
+        let account_updates_list = account_updates_list.unwrap()?;
+
+        // Validate execution went alright
+        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_receipts_root(&block.header, &execution_result.receipts)?;
+        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+
+        Ok((execution_result, account_updates_list))
     }
 
     /// Executes a block from a given vm instance an does not clear its state
@@ -530,6 +661,37 @@ impl Blockchain {
             .storage
             .apply_account_updates_batch(block.header.parent_hash, &updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
+
+        let (gas_used, gas_limit, block_number, transactions_count) = (
+            block.header.gas_used,
+            block.header.gas_limit,
+            block.header.number,
+            block.body.transactions.len(),
+        );
+
+        let merkleized = Instant::now();
+        let result = self.store_block(block, account_updates_list, res);
+        let stored = Instant::now();
+
+        if self.options.perf_logs_enabled {
+            Self::print_add_block_logs(
+                gas_used,
+                gas_limit,
+                block_number,
+                transactions_count,
+                since,
+                executed,
+                merkleized,
+                stored,
+            );
+        }
+        result
+    }
+
+    pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+        let since = Instant::now();
+        let (res, account_updates_list) = self.execute_block_pipeline(&block)?;
+        let executed = Instant::now();
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
