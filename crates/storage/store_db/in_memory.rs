@@ -14,6 +14,7 @@ use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
     collections::HashMap,
     fmt::Debug,
+    path::Path,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -730,6 +731,12 @@ impl StoreEngine for Store {
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
         // FlatKeyValue currently not supported for the InMemory DB
         // Silently ignoring the request to build the FlatKeyValue is harmless
+        Ok(())
+    }
+
+    async fn create_checkpoint(&self, _path: &Path) -> Result<(), StoreError> {
+        // Checkpoints are not supported for the InMemory DB
+        // Silently ignoring the request to create a checkpoint is harmless
         Ok(())
     }
 }
