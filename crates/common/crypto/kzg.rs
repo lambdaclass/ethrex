@@ -81,28 +81,33 @@ static TRUSTED_SETUP: LazyLock<KZGSettings> = LazyLock::new(|| {
 pub fn verify_cell_kzg_proof_batch_our(
     blobs: &[Blob],
     commitments: &[Commitment],
-    cell_proof: &[Proof],
+    cell_proofs: &[Proof],
 ) -> Result<bool, KzgError> {
     #[cfg(not(feature = "c-kzg"))]
     {
-        let mut cells = Vec::with_capacity(blobs.len());
-        let mut proofs = Vec::with_capacity(blobs.len());
+        type ZG1 = <ZBackend as EcBackend>::G1;
 
+        let mut cells = Vec::with_capacity(blobs.len());
         for bytes in blobs {
             let blob = bytes_to_blob(bytes).unwrap();
+            let mut blob_cells = Vec::with_capacity(CELLS_PER_EXT_BLOB);
             <KZGSettings as DAS<ZBackend>>::compute_cells_and_kzg_proofs(
                 &TRUSTED_SETUP,
-                Some(&mut cells),
-                Some(&mut proofs),
+                Some(&mut blob_cells),
+                None,
                 &blob,
             )
             .unwrap();
+            cells.extend(blob_cells.into_iter());
         }
-        type ZG1 = <ZBackend as EcBackend>::G1;
 
         let commitments: Vec<_> = commitments
             .iter()
             .map(|commitment| ZG1::from_bytes(commitment).unwrap())
+            .collect();
+        let cell_proofs: Vec<_> = cell_proofs
+            .iter()
+            .map(|proof| ZG1::from_bytes(proof).unwrap())
             .collect();
         let cell_indices: Vec<_> = repeat_n(0..CELLS_PER_EXT_BLOB, blobs.len())
             .flatten()
@@ -112,7 +117,7 @@ pub fn verify_cell_kzg_proof_batch_our(
             &commitments,
             &cell_indices,
             &cells,
-            &proofs,
+            &cell_proofs,
         )
         .unwrap());
     }
@@ -137,7 +142,7 @@ pub fn verify_cell_kzg_proof_batch_our(
                 .flatten()
                 .collect::<Vec<_>>(),
             &cells,
-            &cell_proof
+            &cell_proofs
                 .iter()
                 .map(|proof| (*proof).into())
                 .collect::<Vec<_>>(),
