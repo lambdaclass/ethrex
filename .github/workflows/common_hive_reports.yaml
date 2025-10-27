@@ -87,11 +87,11 @@ jobs:
           echo "Invalid job_type input: ${{ inputs.job_type }}. Allowed values are 'trigger' or 'daily'."
           exit 1
 
-      - name: Free Disk Space
-        uses: ./.github/actions/free-disk
-
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8

@@ -29,10 +29,12 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space
-        uses: ./.github/actions/free-disk
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -313,11 +315,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-docker, build-docker-l2]
     steps:
-      - name: Free Disk Space
-        uses: ./.github/actions/free-disk
-
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -483,11 +485,12 @@ jobs:
     name: Integration Test - L2 Dev
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
-      - name: Checkout sources
-        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

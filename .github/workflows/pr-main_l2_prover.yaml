@@ -21,11 +21,12 @@ jobs:
       matrix:
         backend: ["sp1", "risc0"]
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
-      - name: Checkout sources
-        uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 

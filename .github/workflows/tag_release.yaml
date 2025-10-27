@@ -62,12 +62,12 @@ jobs:
             l2_suffix: "-l2"
     runs-on: ${{ matrix.platform }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Free Disk Space
         if: ${{ matrix.os == 'linux' }}
         uses: ./.github/actions/free-disk
-
-      - name: Checkout code
-        uses: actions/checkout@v4
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust

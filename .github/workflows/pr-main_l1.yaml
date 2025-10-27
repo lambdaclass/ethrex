@@ -22,11 +22,12 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
-      - name: Checkout sources
-        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -50,11 +51,12 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
-      - name: Checkout sources
-        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -71,10 +73,11 @@ jobs:
     name: Build Docker
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
-      - uses: actions/checkout@v4
       - id: docker
         name: Build Ethrex Docker Image
         uses: ./.github/actions/build-docker
@@ -260,11 +263,11 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'merge_group' }}
     steps:
-      - name: Free Disk Space
-        uses: ./.github/actions/free-disk
-
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
