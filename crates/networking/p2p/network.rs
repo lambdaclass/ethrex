@@ -13,7 +13,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{Node, NodeRecord},
+    types::Node,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -25,10 +25,7 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
-use tokio::{
-    net::{TcpListener, TcpSocket, UdpSocket},
-    sync::Mutex,
-};
+use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 
@@ -43,7 +40,6 @@ pub struct P2PContext {
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
-    pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
@@ -54,7 +50,6 @@ impl P2PContext {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         local_node: Node,
-        local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
         signer: SecretKey,
         peer_table: PeerTable,
@@ -81,7 +76,6 @@ impl P2PContext {
 
         Ok(P2PContext {
             local_node,
-            local_node_record,
             tracker,
             signer,
             table: peer_table,

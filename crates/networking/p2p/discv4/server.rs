@@ -26,7 +26,7 @@ use spawned_concurrency::{
     },
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{net::UdpSocket, sync::Mutex};
+use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
@@ -76,7 +76,7 @@ pub enum OutMessage {
 #[derive(Debug)]
 pub struct DiscoveryServer {
     local_node: Node,
-    local_node_record: Arc<Mutex<NodeRecord>>,
+    local_node_record: NodeRecord,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
     peer_table: PeerTable,
@@ -92,10 +92,8 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
-        let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer)
-                .expect("Failed to create local node record"),
-        ));
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
+            .expect("Failed to create local node record");
         let mut discovery_server = Self {
             local_node: local_node.clone(),
             local_node_record,
@@ -286,7 +284,7 @@ impl DiscoveryServer {
             udp_port: node.udp_port,
             tcp_port: node.tcp_port,
         };
-        let enr_seq = self.local_node_record.lock().await.seq;
+        let enr_seq = self.local_node_record.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
         ping.encode_with_header(&mut buf, &self.signer);
         let ping_hash: [u8; 32] = buf[..32]
@@ -308,7 +306,7 @@ impl DiscoveryServer {
             tcp_port: node.tcp_port,
         };
 
-        let enr_seq = self.local_node_record.lock().await.seq;
+        let enr_seq = self.local_node_record.seq;
 
         let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
 
@@ -341,7 +339,7 @@ impl DiscoveryServer {
         request_hash: H256,
         from: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        let node_record = self.local_node_record.lock().await;
+        let node_record = &self.local_node_record;
 
         let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.clone()));
 

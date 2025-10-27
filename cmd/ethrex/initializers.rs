@@ -36,7 +36,6 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
@@ -195,7 +194,6 @@ pub async fn init_network(
     network: &Network,
     datadir: &Path,
     local_p2p_node: Node,
-    local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
     peer_handler: PeerHandler,
     store: Store,
@@ -214,7 +212,6 @@ pub async fn init_network(
 
     let context = P2PContext::new(
         local_p2p_node,
-        local_node_record,
         tracker.clone(),
         signer,
         peer_handler.peer_table.clone(),
@@ -402,12 +399,7 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(
-    PathBuf,
-    CancellationToken,
-    PeerTable,
-    Arc<Mutex<NodeRecord>>,
-)> {
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
     let datadir = &opts.datadir;
     init_datadir(datadir);
 
@@ -440,11 +432,7 @@ pub async fn init_l1(
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        datadir,
-        &local_p2p_node,
-        &signer,
-    )));
+    let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
 
     let peer_handler = PeerHandler::new(PeerTable::spawn(opts.target_peers));
 
@@ -457,7 +445,7 @@ pub async fn init_l1(
         &opts,
         peer_handler.clone(),
         local_p2p_node.clone(),
-        local_node_record.lock().await.clone(),
+        local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
@@ -479,7 +467,6 @@ pub async fn init_l1(
             &network,
             datadir,
             local_p2p_node,
-            local_node_record.clone(),
             signer,
             peer_handler.clone(),
             store.clone(),
