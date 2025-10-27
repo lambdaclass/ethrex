@@ -683,10 +683,14 @@ pub async fn add_block(ctx: &RpcApiContext, block: Block) -> Result<(), ChainErr
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
         .send((notify_send, block))
-        .map_err(|e| ChainError::Custom(format!("failed to send message: {e}")))?;
+        .map_err(|e| {
+            ChainError::Custom(format!(
+                "failed to send block execution request to worker: {e}"
+            ))
+        })?;
     notify_recv
         .await
-        .map_err(|e| ChainError::Custom(format!("recv failed: {e}")))?
+        .map_err(|e| ChainError::Custom(format!("failed to receive block execution result: {e}")))?
 }
 
 async fn try_execute_payload(
