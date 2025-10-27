@@ -187,7 +187,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
-    set.spawn(test_custom_fee(
+    set.spawn(test_fee_token(
         l2_client.clone(),
         private_keys.pop().unwrap(),
         private_keys.pop().unwrap(),
@@ -1979,7 +1979,7 @@ async fn test_call_to_contract_with_deposit(
     Ok(())
 }
 
-async fn test_custom_fee(
+async fn test_fee_token(
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
     recipient_private_key: SecretKey,
@@ -1990,13 +1990,12 @@ async fn test_custom_fee(
     let path = Path::new("../../fixtures/contracts/ERC20/");
     compile_contract(path, &path.join("FeeToken.sol"), false, None, &[path])?;
 
-    let custom_fee_token_contract =
-        hex::decode(std::fs::read(path.join("solc_out/FeeToken.bin"))?)?;
+    let fee_token_contract = hex::decode(std::fs::read(path.join("solc_out/FeeToken.bin"))?)?;
     let (fee_token_address, fees_details) = test_deploy(
         &l2_client,
-        &custom_fee_token_contract,
+        &fee_token_contract,
         &rich_wallet_private_key,
-        "test_custom_fee",
+        "test_fee_token",
         dummy_modified_storage_slots(0),
     )
     .await?;
@@ -2026,12 +2025,12 @@ async fn test_custom_fee(
 
     let mut generic_tx = build_generic_tx(
         &l2_client,
-        TxType::CustomFee,
+        TxType::FeeToken,
         recipient_address,
         rich_wallet_address,
         Bytes::new(),
         Overrides {
-            custom_fee_token: Some(fee_token_address),
+            fee_token: Some(fee_token_address),
             value: Some(U256::one()),
             ..Default::default()
         },
@@ -2076,7 +2075,7 @@ async fn test_custom_fee(
         "Sender fee token balance did not decrease"
     );
 
-    if std::env::var("INTEGRATION_TEST_CUSTOM_FEE_TX_FEE_VAULT_CHECK").is_ok() {
+    if std::env::var("INTEGRATION_TEST_FEE_TOKEN_TX_FEE_VAULT_CHECK").is_ok() {
         let fee_vault_address_token_balance_after_transfer =
             test_balance_of(&l2_client, fee_token_address, fee_vault).await;
         println!(

@@ -19,7 +19,7 @@ The roadmap below outlines the remaining work required to achieve this milestone
 | Shared Bridge              | Direct bridging between multiple L2s to improve UX and avoid L1 costs.                                                                                                                                                           | Planned      |
 | Custom Native Token        | Define a native token (non-ETH) for gas, staking, incentives, and governance. Fully integrated into fee mechanics and bridging.                                                                                                      | Planned  |
 | Validiums & DACs           | Enhance Validium mode with Data Availability Committees.                                                                                                                                       | Planned      |
-| Gas & Fees   | Set up a custom fee model to price deposits or any forced-included transaction, including data availability costs.                                                                                                                                                | Planned  |
+| Gas & Fees   | Set up a fee token model to price deposits or any forced-included transaction, including data availability costs.                                                                                                                                                | Planned  |
 
 ---
 

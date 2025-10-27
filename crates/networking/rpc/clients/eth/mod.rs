@@ -65,7 +65,7 @@ pub struct Overrides {
     pub max_fee_per_gas: Option<u64>,
     pub max_priority_fee_per_gas: Option<u64>,
     pub access_list: Vec<(Address, Vec<H256>)>,
-    pub custom_fee_token: Option<Address>,
+    pub fee_token: Option<Address>,
     pub gas_price_per_blob: Option<U256>,
     pub block: Option<BlockIdentifier>,
     pub blobs_bundle: Option<BlobsBundle>,

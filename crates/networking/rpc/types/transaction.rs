@@ -2,8 +2,8 @@ use crate::utils::RpcErr;
 use ethrex_common::{
     Address, H256, serde_utils,
     types::{
-        BlockHash, BlockNumber, CustomFeeTransaction, EIP1559Transaction, EIP2930Transaction,
-        EIP7702Transaction, LegacyTransaction, PrivilegedL2Transaction, Transaction,
+        BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
+        FeeTokenTransaction, LegacyTransaction, PrivilegedL2Transaction, Transaction,
         WrappedEIP4844Transaction,
     },
 };
@@ -54,7 +54,7 @@ pub enum SendRawTransactionRequest {
     EIP4844(WrappedEIP4844Transaction),
     EIP7702(EIP7702Transaction),
     PrivilegedL2(PrivilegedL2Transaction),
-    CustomFee(CustomFeeTransaction),
+    FeeToken(FeeTokenTransaction),
 }
 
 impl SendRawTransactionRequest {
@@ -68,7 +68,7 @@ impl SendRawTransactionRequest {
             SendRawTransactionRequest::PrivilegedL2(t) => {
                 Transaction::PrivilegedL2Transaction(t.clone())
             }
-            SendRawTransactionRequest::CustomFee(t) => Transaction::CustomFeeTransaction(t.clone()),
+            SendRawTransactionRequest::FeeToken(t) => Transaction::FeeTokenTransaction(t.clone()),
         }
     }
 
@@ -100,9 +100,9 @@ impl SendRawTransactionRequest {
                     0x4 => {
                         EIP7702Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP7702)
                     }
-                    // CustomFeeTransaction
-                    0x7d => CustomFeeTransaction::decode(tx_bytes)
-                        .map(SendRawTransactionRequest::CustomFee),
+                    // FeeTokenTransaction
+                    0x7d => FeeTokenTransaction::decode(tx_bytes)
+                        .map(SendRawTransactionRequest::FeeToken),
                     // PrivilegedL2Transaction
                     0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::PrivilegedL2),

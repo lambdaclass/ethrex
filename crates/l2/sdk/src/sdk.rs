@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
-use ethrex_common::types::CustomFeeTransaction;
+use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
@@ -678,8 +678,8 @@ pub async fn send_generic_transaction(
 
             tx.encode(&mut encoded_tx);
         }
-        TxType::CustomFee => {
-            let tx: CustomFeeTransaction = generic_tx.try_into()?;
+        TxType::FeeToken => {
+            let tx: FeeTokenTransaction = generic_tx.try_into()?;
             let signed_tx = tx
                 .sign(signer)
                 .await
@@ -824,16 +824,16 @@ pub async fn build_generic_tx(
     overrides: Overrides,
 ) -> Result<GenericTransaction, EthClientError> {
     match r#type {
-        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged | TxType::CustomFee => {}
+        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged | TxType::FeeToken => {}
         TxType::EIP2930 | TxType::EIP7702 | TxType::Legacy => {
             return Err(EthClientError::Custom(
                 "Unsupported tx type in build_generic_tx".to_owned(),
             ));
         }
     }
-    if overrides.custom_fee_token.is_none() && r#type == TxType::CustomFee {
+    if overrides.fee_token.is_none() && r#type == TxType::FeeToken {
         return Err(EthClientError::Custom(
-            "custom_fee_token must be set for CustomFee tx type".to_owned(),
+            "fee_token must be set for FeeToken tx type".to_owned(),
         ));
     };
     let mut tx = GenericTransaction {
@@ -861,7 +861,7 @@ pub async fn build_generic_tx(
             .iter()
             .map(AccessListEntry::from)
             .collect(),
-        custom_fee_token: overrides.custom_fee_token,
+        fee_token: overrides.fee_token,
         from,
         ..Default::default()
     };

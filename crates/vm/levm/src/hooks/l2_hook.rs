@@ -52,8 +52,8 @@ impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
             return prepare_execution_privileged(vm);
-        } else if vm.env.custom_fee_token.is_some() {
-            prepare_execution_custom_fee(vm)?;
+        } else if vm.env.fee_token.is_some() {
+            prepare_execution_fee_token(vm)?;
         } else {
             DefaultHook.prepare_execution(vm)?;
         }
@@ -84,7 +84,7 @@ impl Hook for L2Hook {
                 ctx_result,
                 &self.fee_config,
                 &mut self.pre_execution_backup,
-                vm.env.custom_fee_token.is_some(),
+                vm.env.fee_token.is_some(),
             )?;
         }
 
@@ -97,7 +97,7 @@ fn finalize_non_privileged_execution(
     ctx_result: &mut ContextResult,
     fee_config: &FeeConfig,
     pre_execution_backup: &mut CallFrameBackup,
-    use_custom_fee_token: bool,
+    use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
     if !ctx_result.is_success() {
         undo_value_transfer(vm)?;
@@ -136,17 +136,17 @@ fn finalize_non_privileged_execution(
 
     delete_self_destruct_accounts(vm)?;
 
-    if use_custom_fee_token {
-        pay_to_l1_fee_vault_custom_fee(vm, l1_gas, fee_config.l1_fee_config)?;
+    if use_fee_token {
+        pay_to_l1_fee_vault_fee_token(vm, l1_gas, fee_config.l1_fee_config)?;
     } else {
         pay_to_l1_fee_vault(vm, l1_gas, fee_config.l1_fee_config)?;
     }
 
-    if use_custom_fee_token {
-        refund_sender_custom_fee(vm, ctx_result, gas_refunded, total_gas)?;
-        pay_coinbase_custom_fee(vm, actual_gas_used, &fee_config.operator_fee_config)?;
-        pay_to_fee_vault_custom_fee(vm, actual_gas_used, fee_config.base_fee_vault)?;
-        pay_operator_fee_custom_fee(vm, actual_gas_used, &fee_config.operator_fee_config)?;
+    if use_fee_token {
+        refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas)?;
+        pay_coinbase_fee_token(vm, actual_gas_used, &fee_config.operator_fee_config)?;
+        pay_to_fee_vault_fee_token(vm, actual_gas_used, fee_config.base_fee_vault)?;
+        pay_operator_fee_fee_token(vm, actual_gas_used, &fee_config.operator_fee_config)?;
     } else {
         refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
         pay_coinbase_l2(vm, actual_gas_used, &fee_config.operator_fee_config)?;
@@ -349,7 +349,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     default_hook::set_bytecode_and_code_address(vm)
 }
 
-fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
+fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
@@ -372,13 +372,11 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         .checked_mul(vm.env.gas_limit.into())
         .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
-    // TODO: validate sender balance for custom fee token
-
     // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
-    // NOT CHECKED: the blob price does not matter, custom fee transactions do not support blobs
+    // NOT CHECKED: the blob price does not matter, fee token transactions do not support blobs
 
     // (3) INSUFFICIENT_ACCOUNT_FUNDS
-    deduct_caller_custom_token(vm, gaslimit_price_product)?;
+    deduct_caller_fee_token(vm, gaslimit_price_product)?;
 
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
     validate_sufficient_max_fee_per_gas(vm)?;
@@ -425,10 +423,10 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     validate_gas_allowance(vm)?;
 
     // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
-    // NOT CHECKED: custom fee transactions are not type 3
+    // NOT CHECKED: fee token transactions are not type 3
 
     // Transaction is type 4 if authorization_list is Some
-    // NOT CHECKED: custom fee transactions are not type 4
+    // NOT CHECKED: fee token transactions are not type 4
 
     transfer_value(vm)?;
 
@@ -436,7 +434,7 @@ fn prepare_execution_custom_fee(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     Ok(())
 }
 
-pub fn deduct_caller_custom_token(
+pub fn deduct_caller_fee_token(
     vm: &mut VM<'_>,
     gas_limit_price_product: U256,
 ) -> Result<(), VMError> {
@@ -448,7 +446,7 @@ pub fn deduct_caller_custom_token(
     vm.decrease_account_balance(sender_address, value)
         .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
-    // Then, deduct the gas cost in the custom fee token by locking it in the fee collector
+    // Then, deduct the gas cost in the fee token by locking it in the fee collector
     lock_fee_token(vm, sender_address, gas_limit_price_product)?;
 
     Ok(())
@@ -485,7 +483,7 @@ fn pay_fee_token(vm: &mut VM<'_>, receiver: Address, amount: U256) -> Result<(),
 fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     let fee_token = vm
         .env
-        .custom_fee_token
+        .fee_token
         .ok_or(VMError::Internal(InternalError::Custom(
             "No fee token address provided, this is a bug".to_owned(),
         )))?;
@@ -512,7 +510,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     env_clone.block_excess_blob_gas = None;
     env_clone.gas_price = U256::zero();
     env_clone.origin = origin;
-    env_clone.custom_fee_token = None;
+    env_clone.fee_token = None;
     env_clone.gas_limit = 21000 * 100;
 
     let mut new_vm = VM::new(
@@ -549,7 +547,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     Ok(())
 }
 
-fn refund_sender_custom_fee(
+fn refund_sender_fee_token(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
@@ -578,7 +576,7 @@ fn refund_sender_custom_fee(
     Ok(())
 }
 
-fn pay_coinbase_custom_fee(
+fn pay_coinbase_fee_token(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
     operator_fee_config: &Option<OperatorFeeConfig>,
@@ -592,7 +590,7 @@ fn pay_coinbase_custom_fee(
     pay_fee_token(vm, vm.env.coinbase, coinbase_fee)
 }
 
-fn pay_to_fee_vault_custom_fee(
+fn pay_to_fee_vault_fee_token(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
     fee_vault: Option<Address>,
@@ -607,7 +605,7 @@ fn pay_to_fee_vault_custom_fee(
     pay_fee_token(vm, target, base_fee)
 }
 
-fn pay_operator_fee_custom_fee(
+fn pay_operator_fee_fee_token(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
     operator_fee_config: &Option<OperatorFeeConfig>,
@@ -691,7 +689,7 @@ fn pay_to_l1_fee_vault(
     Ok(())
 }
 
-fn pay_to_l1_fee_vault_custom_fee(
+fn pay_to_l1_fee_vault_fee_token(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
     l1_fee_config: Option<L1FeeConfig>,

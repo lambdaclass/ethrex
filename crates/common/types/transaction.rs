@@ -38,7 +38,7 @@ pub enum Transaction {
     EIP4844Transaction(EIP4844Transaction),
     EIP7702Transaction(EIP7702Transaction),
     PrivilegedL2Transaction(PrivilegedL2Transaction),
-    CustomFeeTransaction(CustomFeeTransaction),
+    FeeTokenTransaction(FeeTokenTransaction),
 }
 
 /// The same as a Transaction enum, only that blob transactions are in wrapped format, including
@@ -103,7 +103,7 @@ impl RLPDecode for P2PTransaction {
                 // EIP7702
                 0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::EIP7702Transaction(tx), rem)),
-                // TODO: CustomFee - Do we want to include them here for P2P as well?
+                // TODO: FeeToken - Do we want to include them here for P2P as well?
                 // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::PrivilegedL2Transaction(tx), rem)),
@@ -312,7 +312,7 @@ pub enum TxType {
     EIP1559 = 0x02,
     EIP4844 = 0x03,
     EIP7702 = 0x04,
-    CustomFee = 0x7d,
+    FeeToken = 0x7d,
     // We take the same approach as Optimism to define the privileged tx prefix
     // https://github.com/ethereum-optimism/specs/blob/c6903a3b2cad575653e1f5ef472debb573d83805/specs/protocol/deposits.md#the-deposited-transaction-type
     Privileged = 0x7e,
@@ -326,7 +326,7 @@ impl From<TxType> for u8 {
             TxType::EIP1559 => 0x02,
             TxType::EIP4844 => 0x03,
             TxType::EIP7702 => 0x04,
-            TxType::CustomFee => 0x7d,
+            TxType::FeeToken => 0x7d,
             TxType::Privileged => 0x7e,
         }
     }
@@ -341,7 +341,7 @@ impl Display for TxType {
             TxType::EIP4844 => write!(f, "EIP4844"),
             TxType::EIP7702 => write!(f, "EIP7702"),
             TxType::Privileged => write!(f, "Privileged"),
-            TxType::CustomFee => write!(f, "CustomFee"),
+            TxType::FeeToken => write!(f, "FeeToken"),
         }
     }
 }
@@ -354,7 +354,7 @@ impl Transaction {
             Transaction::EIP1559Transaction(_) => TxType::EIP1559,
             Transaction::EIP4844Transaction(_) => TxType::EIP4844,
             Transaction::EIP7702Transaction(_) => TxType::EIP7702,
-            Transaction::CustomFeeTransaction(_) => TxType::CustomFee,
+            Transaction::FeeTokenTransaction(_) => TxType::FeeToken,
             Transaction::PrivilegedL2Transaction(_) => TxType::Privileged,
         }
     }
@@ -378,7 +378,7 @@ impl Transaction {
             TxType::EIP1559 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP4844 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP7702 => self.calc_effective_gas_price(base_fee_per_gas),
-            TxType::CustomFee => self.calc_effective_gas_price(base_fee_per_gas),
+            TxType::FeeToken => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::Privileged => Some(self.gas_price()),
         }
     }
@@ -390,7 +390,7 @@ impl Transaction {
             TxType::EIP1559 => U256::from(self.max_fee_per_gas()?),
             TxType::EIP4844 => U256::from(self.max_fee_per_gas()?),
             TxType::EIP7702 => U256::from(self.max_fee_per_gas()?),
-            TxType::CustomFee => U256::from(self.max_fee_per_gas()?),
+            TxType::FeeToken => U256::from(self.max_fee_per_gas()?),
             TxType::Privileged => self.gas_price(),
         };
 
@@ -400,9 +400,9 @@ impl Transaction {
         ))
     }
 
-    pub fn custom_fee_token(&self) -> Option<Address> {
-        if let Transaction::CustomFeeTransaction(tx) = self {
-            Some(tx.custom_fee_token)
+    pub fn fee_token(&self) -> Option<Address> {
+        if let Transaction::FeeTokenTransaction(tx) = self {
+            Some(tx.fee_token)
         } else {
             None
         }
@@ -450,9 +450,9 @@ impl RLPDecode for Transaction {
                 // EIP7702
                 0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (Transaction::EIP7702Transaction(tx), rem)),
-                // CustomFee
-                0x7d => CustomFeeTransaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (Transaction::CustomFeeTransaction(tx), rem)),
+                // FeeToken
+                0x7d => FeeTokenTransaction::decode_unfinished(tx_encoding)
+                    .map(|(tx, rem)| (Transaction::FeeTokenTransaction(tx), rem)),
                 // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (Transaction::PrivilegedL2Transaction(tx), rem)),
@@ -635,7 +635,7 @@ impl RLPEncode for PrivilegedL2Transaction {
     }
 }
 
-impl RLPEncode for CustomFeeTransaction {
+impl RLPEncode for FeeTokenTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
@@ -647,7 +647,7 @@ impl RLPEncode for CustomFeeTransaction {
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
-            .encode_field(&self.custom_fee_token)
+            .encode_field(&self.fee_token)
             .encode_field(&self.signature_y_parity)
             .encode_field(&self.signature_r)
             .encode_field(&self.signature_s)
@@ -664,7 +664,7 @@ impl PayloadRLPEncode for Transaction {
             Transaction::EIP4844Transaction(tx) => tx.encode_payload(buf),
             Transaction::EIP7702Transaction(tx) => tx.encode_payload(buf),
             Transaction::PrivilegedL2Transaction(tx) => tx.encode_payload(buf),
-            Transaction::CustomFeeTransaction(tx) => tx.encode_payload(buf),
+            Transaction::FeeTokenTransaction(tx) => tx.encode_payload(buf),
         }
     }
 }
@@ -765,7 +765,7 @@ impl PayloadRLPEncode for PrivilegedL2Transaction {
     }
 }
 
-impl PayloadRLPEncode for CustomFeeTransaction {
+impl PayloadRLPEncode for FeeTokenTransaction {
     fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
@@ -777,7 +777,7 @@ impl PayloadRLPEncode for CustomFeeTransaction {
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
-            .encode_field(&self.custom_fee_token)
+            .encode_field(&self.fee_token)
             .finish();
     }
 }
@@ -996,8 +996,8 @@ impl RLPDecode for PrivilegedL2Transaction {
     }
 }
 
-impl RLPDecode for CustomFeeTransaction {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(CustomFeeTransaction, &[u8]), RLPDecodeError> {
+impl RLPDecode for FeeTokenTransaction {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(FeeTokenTransaction, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (chain_id, decoder) = decoder.decode_field("chain_id")?;
         let (nonce, decoder) = decoder.decode_field("nonce")?;
@@ -1009,13 +1009,13 @@ impl RLPDecode for CustomFeeTransaction {
         let (value, decoder) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
-        let (custom_fee_token, decoder) = decoder.decode_field("custom_fee_token")?;
+        let (fee_token, decoder) = decoder.decode_field("fee_token")?;
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
         let (signature_r, decoder) = decoder.decode_field("signature_r")?;
         let (signature_s, decoder) = decoder.decode_field("signature_s")?;
         let inner_hash = OnceCell::new();
 
-        let tx = CustomFeeTransaction {
+        let tx = FeeTokenTransaction {
             chain_id,
             nonce,
             max_priority_fee_per_gas,
@@ -1025,7 +1025,7 @@ impl RLPDecode for CustomFeeTransaction {
             value,
             data,
             access_list,
-            custom_fee_token,
+            fee_token,
             signature_y_parity,
             signature_r,
             signature_s,
@@ -1150,7 +1150,7 @@ impl Transaction {
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
-            Transaction::CustomFeeTransaction(tx) => {
+            Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
                 Encoder::new(&mut buf)
                     .encode_field(&tx.chain_id)
@@ -1162,7 +1162,7 @@ impl Transaction {
                     .encode_field(&tx.value)
                     .encode_field(&tx.data)
                     .encode_field(&tx.access_list)
-                    .encode_field(&tx.custom_fee_token)
+                    .encode_field(&tx.fee_token)
                     .finish();
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
@@ -1181,7 +1181,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => tx.gas_limit,
             Transaction::EIP4844Transaction(tx) => tx.gas,
             Transaction::PrivilegedL2Transaction(tx) => tx.gas_limit,
-            Transaction::CustomFeeTransaction(tx) => tx.gas_limit,
+            Transaction::FeeTokenTransaction(tx) => tx.gas_limit,
         }
     }
 
@@ -1194,7 +1194,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
-            Transaction::CustomFeeTransaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::FeeTokenTransaction(tx) => U256::from(tx.max_fee_per_gas),
         }
     }
 
@@ -1206,7 +1206,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => TxKind::Call(tx.to),
             Transaction::EIP7702Transaction(tx) => TxKind::Call(tx.to),
             Transaction::PrivilegedL2Transaction(tx) => tx.to.clone(),
-            Transaction::CustomFeeTransaction(tx) => tx.to.clone(),
+            Transaction::FeeTokenTransaction(tx) => tx.to.clone(),
         }
     }
 
@@ -1218,7 +1218,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.value,
             Transaction::EIP7702Transaction(tx) => tx.value,
             Transaction::PrivilegedL2Transaction(tx) => tx.value,
-            Transaction::CustomFeeTransaction(tx) => tx.value,
+            Transaction::FeeTokenTransaction(tx) => tx.value,
         }
     }
 
@@ -1230,7 +1230,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::EIP7702Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_priority_fee_per_gas),
-            Transaction::CustomFeeTransaction(tx) => Some(tx.max_priority_fee_per_gas),
+            Transaction::FeeTokenTransaction(tx) => Some(tx.max_priority_fee_per_gas),
         }
     }
 
@@ -1242,7 +1242,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => Some(tx.chain_id),
             Transaction::EIP7702Transaction(tx) => Some(tx.chain_id),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.chain_id),
-            Transaction::CustomFeeTransaction(tx) => Some(tx.chain_id),
+            Transaction::FeeTokenTransaction(tx) => Some(tx.chain_id),
         }
     }
 
@@ -1255,7 +1255,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => &tx.access_list,
             Transaction::EIP7702Transaction(tx) => &tx.access_list,
             Transaction::PrivilegedL2Transaction(tx) => &tx.access_list,
-            Transaction::CustomFeeTransaction(tx) => &tx.access_list,
+            Transaction::FeeTokenTransaction(tx) => &tx.access_list,
         }
     }
     pub fn authorization_list(&self) -> Option<&AuthorizationList> {
@@ -1266,7 +1266,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(_) => None,
             Transaction::EIP7702Transaction(tx) => Some(&tx.authorization_list),
             Transaction::PrivilegedL2Transaction(_) => None,
-            Transaction::CustomFeeTransaction(_) => None,
+            Transaction::FeeTokenTransaction(_) => None,
         }
     }
 
@@ -1278,7 +1278,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.nonce,
             Transaction::EIP7702Transaction(tx) => tx.nonce,
             Transaction::PrivilegedL2Transaction(tx) => tx.nonce,
-            Transaction::CustomFeeTransaction(tx) => tx.nonce,
+            Transaction::FeeTokenTransaction(tx) => tx.nonce,
         }
     }
 
@@ -1290,7 +1290,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => &tx.data,
             Transaction::EIP7702Transaction(tx) => &tx.data,
             Transaction::PrivilegedL2Transaction(tx) => &tx.data,
-            Transaction::CustomFeeTransaction(tx) => &tx.data,
+            Transaction::FeeTokenTransaction(tx) => &tx.data,
         }
     }
 
@@ -1302,7 +1302,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.blob_versioned_hashes.clone(),
             Transaction::EIP7702Transaction(_) => Vec::new(),
             Transaction::PrivilegedL2Transaction(_) => Vec::new(),
-            Transaction::CustomFeeTransaction(_) => Vec::new(),
+            Transaction::FeeTokenTransaction(_) => Vec::new(),
         }
     }
 
@@ -1314,7 +1314,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => Some(tx.max_fee_per_blob_gas),
             Transaction::EIP7702Transaction(_) => None,
             Transaction::PrivilegedL2Transaction(_) => None,
-            Transaction::CustomFeeTransaction(_) => None,
+            Transaction::FeeTokenTransaction(_) => None,
         }
     }
 
@@ -1326,7 +1326,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(_) => false,
             Transaction::EIP7702Transaction(_) => false,
             Transaction::PrivilegedL2Transaction(t) => matches!(t.to, TxKind::Create),
-            Transaction::CustomFeeTransaction(t) => matches!(t.to, TxKind::Create),
+            Transaction::FeeTokenTransaction(t) => matches!(t.to, TxKind::Create),
         }
     }
 
@@ -1342,7 +1342,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::EIP7702Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_fee_per_gas),
-            Transaction::CustomFeeTransaction(tx) => Some(tx.max_fee_per_gas),
+            Transaction::FeeTokenTransaction(tx) => Some(tx.max_fee_per_gas),
         }
     }
 
@@ -1361,7 +1361,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => &tx.inner_hash,
             Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
             Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
-            Transaction::CustomFeeTransaction(tx) => &tx.inner_hash,
+            Transaction::FeeTokenTransaction(tx) => &tx.inner_hash,
         };
 
         *inner_hash.get_or_init(|| self.compute_hash())
@@ -1440,7 +1440,7 @@ impl TxType {
             0x02 => Some(Self::EIP1559),
             0x03 => Some(Self::EIP4844),
             0x04 => Some(Self::EIP7702),
-            0x7d => Some(Self::CustomFee),
+            0x7d => Some(Self::FeeToken),
             0x7e => Some(Self::Privileged),
             _ => None,
         }
@@ -1480,7 +1480,7 @@ impl PrivilegedL2Transaction {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
-pub struct CustomFeeTransaction {
+pub struct FeeTokenTransaction {
     pub chain_id: u64,
     pub nonce: u64,
     pub max_priority_fee_per_gas: u64,
@@ -1494,7 +1494,7 @@ pub struct CustomFeeTransaction {
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
-    pub custom_fee_token: Address,
+    pub fee_token: Address,
     pub signature_y_parity: bool,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
@@ -1542,9 +1542,9 @@ mod canonic_encoding {
                         // EIP7702
                         0x4 => EIP7702Transaction::decode(tx_bytes)
                             .map(Transaction::EIP7702Transaction),
-                        // CustomFeeTransaction
-                        0x7d => CustomFeeTransaction::decode(tx_bytes)
-                            .map(Transaction::CustomFeeTransaction),
+                        // FeeTokenTransaction
+                        0x7d => FeeTokenTransaction::decode(tx_bytes)
+                            .map(Transaction::FeeTokenTransaction),
                         // PrivilegedL2Transaction
                         0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                             .map(Transaction::PrivilegedL2Transaction),
@@ -1575,7 +1575,7 @@ mod canonic_encoding {
                 Transaction::EIP1559Transaction(t) => t.encode(buf),
                 Transaction::EIP4844Transaction(t) => t.encode(buf),
                 Transaction::EIP7702Transaction(t) => t.encode(buf),
-                Transaction::CustomFeeTransaction(t) => t.encode(buf),
+                Transaction::FeeTokenTransaction(t) => t.encode(buf),
                 Transaction::PrivilegedL2Transaction(t) => t.encode(buf),
             };
         }
@@ -1995,13 +1995,13 @@ mod serde_impl {
         }
     }
 
-    impl Serialize for CustomFeeTransaction {
+    impl Serialize for FeeTokenTransaction {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {
-            let mut struct_serializer = serializer.serialize_struct("CustomFeeTransaction", 15)?;
-            struct_serializer.serialize_field("type", &TxType::CustomFee)?;
+            let mut struct_serializer = serializer.serialize_struct("FeeTokenTransaction", 15)?;
+            struct_serializer.serialize_field("type", &TxType::FeeToken)?;
             struct_serializer.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
             struct_serializer.serialize_field("to", &self.to)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
@@ -2023,8 +2023,7 @@ mod serde_impl {
                     .map(AccessListEntry::from)
                     .collect::<Vec<_>>(),
             )?;
-            struct_serializer
-                .serialize_field("customFeeToken", &format!("{:#x}", self.custom_fee_token))?;
+            struct_serializer.serialize_field("feeToken", &format!("{:#x}", self.fee_token))?;
             struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             struct_serializer
                 .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity as u8))?;
@@ -2095,11 +2094,11 @@ mod serde_impl {
                 .map_err(|e| {
                     serde::de::Error::custom(format!("Couldn't Deserialize Privileged: {e}"))
                 }),
-                TxType::CustomFee => {
-                    CustomFeeTransaction::deserialize(serde::de::value::MapDeserializer::new(iter))
-                        .map(Transaction::CustomFeeTransaction)
+                TxType::FeeToken => {
+                    FeeTokenTransaction::deserialize(serde::de::value::MapDeserializer::new(iter))
+                        .map(Transaction::FeeTokenTransaction)
                         .map_err(|e| {
-                            serde::de::Error::custom(format!("Couldn't Deserialize CustomFee {e}"))
+                            serde::de::Error::custom(format!("Couldn't Deserialize FeeToken {e}"))
                         })
                 }
             }
@@ -2349,14 +2348,14 @@ mod serde_impl {
         }
     }
 
-    impl<'de> Deserialize<'de> for CustomFeeTransaction {
+    impl<'de> Deserialize<'de> for FeeTokenTransaction {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
             D: serde::Deserializer<'de>,
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
-            Ok(CustomFeeTransaction {
+            Ok(FeeTokenTransaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
                 nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
                 max_priority_fee_per_gas: deserialize_field::<U256, D>(
@@ -2373,7 +2372,7 @@ mod serde_impl {
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
-                custom_fee_token: deserialize_field::<Address, D>(&mut map, "customFeeToken")?,
+                fee_token: deserialize_field::<Address, D>(&mut map, "FeeToken")?,
                 signature_y_parity: u8::from_str_radix(
                     deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
@@ -2393,8 +2392,8 @@ mod serde_impl {
         InvalidTxType(TxType),
         #[error("Blob bundle error: {0}")]
         BlobBundleError(#[from] BlobsBundleError),
-        #[error("Missing custom fee token address")]
-        MissingCustomFeeToken,
+        #[error("Missing fee token address")]
+        MissingFeeToken,
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -2423,7 +2422,7 @@ mod serde_impl {
         #[serde(default)]
         pub access_list: Vec<AccessListEntry>,
         #[serde(default)]
-        pub custom_fee_token: Option<Address>,
+        pub fee_token: Option<Address>,
         #[serde(default)]
         pub authorization_list: Option<Vec<AuthorizationTupleEntry>>,
         #[serde(default)]
@@ -2490,7 +2489,7 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
-                custom_fee_token: None,
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
@@ -2545,7 +2544,7 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
-                custom_fee_token: None,
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: value.blob_versioned_hashes,
                 blobs: vec![],
@@ -2628,7 +2627,7 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
-                custom_fee_token: None,
+                fee_token: None,
                 authorization_list: Some(
                     value
                         .authorization_list
@@ -2662,7 +2661,7 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
-                custom_fee_token: None,
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
@@ -2699,10 +2698,10 @@ mod serde_impl {
         }
     }
 
-    impl From<CustomFeeTransaction> for GenericTransaction {
-        fn from(value: CustomFeeTransaction) -> Self {
+    impl From<FeeTokenTransaction> for GenericTransaction {
+        fn from(value: FeeTokenTransaction) -> Self {
             Self {
-                r#type: TxType::CustomFee,
+                r#type: TxType::FeeToken,
                 nonce: Some(value.nonce),
                 to: value.to,
                 gas: Some(value.gas_limit),
@@ -2717,7 +2716,7 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
-                custom_fee_token: Some(value.custom_fee_token),
+                fee_token: Some(value.fee_token),
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
@@ -2727,11 +2726,11 @@ mod serde_impl {
         }
     }
 
-    impl TryFrom<GenericTransaction> for CustomFeeTransaction {
+    impl TryFrom<GenericTransaction> for FeeTokenTransaction {
         type Error = GenericTransactionError;
 
         fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
-            if value.r#type != TxType::CustomFee {
+            if value.r#type != TxType::FeeToken {
                 return Err(GenericTransactionError::InvalidTxType(value.r#type));
             }
 
@@ -2748,9 +2747,9 @@ mod serde_impl {
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
-                custom_fee_token: value
-                    .custom_fee_token
-                    .ok_or(GenericTransactionError::MissingCustomFeeToken)?,
+                fee_token: value
+                    .fee_token
+                    .ok_or(GenericTransactionError::MissingFeeToken)?,
                 chain_id: value.chain_id.unwrap_or_default(),
                 ..Default::default()
             })
@@ -2771,7 +2770,7 @@ mod serde_impl {
                 max_fee_per_gas: None,
                 max_fee_per_blob_gas: None,
                 access_list: vec![],
-                custom_fee_token: None,
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
@@ -2802,7 +2801,7 @@ mod serde_impl {
                         storage_keys,
                     })
                     .collect(),
-                custom_fee_token: None,
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
@@ -2821,7 +2820,7 @@ mod serde_impl {
                 Transaction::EIP4844Transaction(tx) => tx.into(),
                 Transaction::EIP7702Transaction(tx) => tx.into(),
                 Transaction::PrivilegedL2Transaction(tx) => tx.into(),
-                Transaction::CustomFeeTransaction(tx) => tx.into(),
+                Transaction::FeeTokenTransaction(tx) => tx.into(),
             }
         }
     }
@@ -3155,7 +3154,7 @@ mod tests {
                 ),
                 storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             }],
-            custom_fee_token: None,
+            fee_token: None,
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
             chain_id: Default::default(),
@@ -3209,7 +3208,7 @@ mod tests {
                 ),
                 storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             }],
-            custom_fee_token: None,
+            fee_token: None,
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
             chain_id: Default::default(),
