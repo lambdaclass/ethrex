@@ -424,7 +424,7 @@ impl L1Committer {
 
                 let vm_db =
                     StoreVmDatabase::new(self.store.clone(), block_to_commit.header.parent_hash);
-                let mut vm = self.blockchain.new_evm(vm_db)?;
+                let mut vm = self.blockchain.new_evm(vm_db).await?;
                 vm.execute_block(&block_to_commit)?;
                 vm.get_state_transitions()?
             };
@@ -569,7 +569,7 @@ impl L1Committer {
 
         let batch_witness = self
             .blockchain
-            .generate_witness_for_blocks(&blocks)
+            .generate_witness_for_blocks_with_fee_configs(&blocks, Some(&fee_configs))
             .await
             .map_err(CommitterError::FailedToGenerateBatchWitness)?;
 
@@ -812,6 +812,11 @@ impl GenServer for L1Committer {
 
             // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
             if current_last_committed_batch > self.last_committed_batch {
+                info!(
+                    l1_batch = current_last_committed_batch,
+                    last_batch_registered = self.last_committed_batch,
+                    "Committer was not aware of new L1 committed batches, updating internal state accordingly"
+                );
                 self.last_committed_batch = current_last_committed_batch;
                 self.last_committed_batch_timestamp = current_time;
                 self.schedule_commit(self.committer_wake_up_ms, handle.clone());
@@ -821,6 +826,14 @@ impl GenServer for L1Committer {
             let commit_time: u128 = self.commit_time_ms.into();
             let should_send_commitment =
                 current_time - self.last_committed_batch_timestamp > commit_time;
+
+            debug!(
+                last_committed_batch_at = self.last_committed_batch_timestamp,
+                will_send_commitment = should_send_commitment,
+                last_committed_batch = self.last_committed_batch,
+                "Committer woke up"
+            );
+
             #[expect(clippy::collapsible_if)]
             if should_send_commitment {
                 if self
@@ -834,7 +847,7 @@ impl GenServer for L1Committer {
                 }
             }
         }
-        self.schedule_commit(self.commit_time_ms, handle.clone());
+        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
         CastResponse::NoReply
     }
 
