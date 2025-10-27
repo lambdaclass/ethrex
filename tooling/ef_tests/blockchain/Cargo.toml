@@ -35,6 +35,3 @@ stateless = []
 [[test]]
 name = "all"
 harness = false
-
-[lints]
-workspace = true
