@@ -132,6 +132,8 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
 	--eth.rpc-url ${L1_RPC_URL} \
+	--osaka-activation-time 1761677592 \
+	--no-monitor \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
 	--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
 	--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \

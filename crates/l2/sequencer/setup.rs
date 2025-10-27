@@ -85,7 +85,7 @@ pub async fn register_tdx_key(
     let signer = Signer::Local(LocalSigner::new(*private_key));
 
     let verify_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, &signer).await?;
+        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, &signer, None).await?;
 
     info!("Registered TDX key with transaction hash {verify_tx_hash:#x}");
     Ok(())

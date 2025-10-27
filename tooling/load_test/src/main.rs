@@ -138,7 +138,7 @@ async fn claim_erc20_balances(
             )
             .await
             .unwrap();
-            let tx_hash = send_generic_transaction(&client, claim_tx, &account)
+            let tx_hash = send_generic_transaction(&client, claim_tx, &account, None)
                 .await
                 .unwrap();
             wait_for_transaction_receipt(tx_hash, &client, RETRIES).await
@@ -243,7 +243,7 @@ async fn load_test(
                 .await?;
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
-                let _sent = send_generic_transaction(&client, tx, &account).await?;
+                let _sent = send_generic_transaction(&client, tx, &account, None).await?;
             }
             println!("{tx_amount} transactions have been sent for {encoded_src}",);
             Ok::<(), EthClientError>(())

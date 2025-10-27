@@ -96,5 +96,5 @@ pub async fn send_l1_to_l2_tx(
 
     let signer = LocalSigner::new(*sender_private_key).into();
 
-    send_generic_transaction(eth_client, l1_to_l2_tx, &signer).await
+    send_generic_transaction(eth_client, l1_to_l2_tx, &signer, None).await
 }

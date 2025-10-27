@@ -738,8 +738,13 @@ impl L1Committer {
             .map_err(CommitterError::from)?
         };
 
-        let commit_tx_hash =
-            send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
+        let commit_tx_hash = send_tx_bump_gas_exponential_backoff(
+            &self.eth_client,
+            tx,
+            &self.signer,
+            self.osaka_activation_time,
+        )
+        .await?;
 
         metrics!(
             let commit_tx_receipt = self
