@@ -35,9 +35,9 @@ use mempool::Mempool;
 use payload::PayloadOrTask;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
-use tokio::sync::{Mutex as TokioMutex, RwLock};
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
@@ -156,7 +156,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = self.new_evm(vm_db).await?;
+        let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
@@ -565,7 +565,7 @@ impl Blockchain {
             first_block_header.parent_hash,
             block_hash_cache,
         );
-        let mut vm = self.new_evm(vm_db).await.map_err(|e| (e.into(), None))?;
+        let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
@@ -942,14 +942,8 @@ impl Blockchain {
         Ok(result)
     }
 
-    pub async fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-        let evm = match &self.options.r#type {
-            BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2(l2_config) => {
-                Evm::new_for_l2(vm_db, *l2_config.fee_config.read().await)?
-            }
-        };
-        Ok(evm)
+    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+        new_evm(&self.options.r#type, vm_db)
     }
 
     /// Get the current fork of the chain, based on the latest block's timestamp
@@ -962,6 +956,20 @@ impl Blockchain {
             .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
         Ok(chain_config.fork(latest_block.timestamp))
     }
+}
+
+pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+    let evm = match blockchain_type {
+        BlockchainType::L1 => Evm::new_for_l1(vm_db),
+        BlockchainType::L2(l2_config) => {
+            let fee_config = *l2_config
+                .fee_config
+                .read()
+                .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
+            Evm::new_for_l2(vm_db, fee_config)?
+        }
+    };
+    Ok(evm)
 }
 
 pub fn validate_requests_hash(

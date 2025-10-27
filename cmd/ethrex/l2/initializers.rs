@@ -171,7 +171,7 @@ pub async fn init_l2(
     // We wrap fee_config in an Arc<RwLock> to let the watcher
     // update the L1 fee periodically.
     let l2_config = L2Config {
-        fee_config: Arc::new(tokio::sync::RwLock::new(fee_config)),
+        fee_config: Arc::new(std::sync::RwLock::new(fee_config)),
     };
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
