@@ -70,9 +70,13 @@ impl From<kzg_rs::KzgError> for KzgError {
 
 static TRUSTED_SETUP_STRING: &str = include_str!("./kzg_trusted_setup.txt");
 static TRUSTED_SETUP: LazyLock<KZGSettings> = LazyLock::new(|| {
+    dbg!("loading trusted setup string");
     let (g1_monomial_bytes, g1_lagrange_bytes, g2_monomial_bytes) =
         load_trusted_setup_string(TRUSTED_SETUP_STRING).unwrap();
-    load_trusted_setup_rust(&g1_monomial_bytes, &g1_lagrange_bytes, &g2_monomial_bytes).unwrap()
+    dbg!("loading trusted setup rust");
+    let t = load_trusted_setup_rust(&g1_monomial_bytes, &g1_lagrange_bytes, &g2_monomial_bytes).unwrap();
+    dbg!("loaded trusted setup");
+    t
 });
 
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
@@ -85,12 +89,16 @@ pub fn verify_cell_kzg_proof_batch_our(
 ) -> Result<bool, KzgError> {
     #[cfg(not(feature = "c-kzg"))]
     {
+        dbg!("starting cell verification");
         type ZG1 = <ZBackend as EcBackend>::G1;
 
         let mut cells = Vec::with_capacity(blobs.len());
         for bytes in blobs {
+            dbg!("convert bytes to blob");
             let blob = bytes_to_blob(bytes).unwrap();
+            dbg!("init blob_cells vec");
             let mut blob_cells = Vec::with_capacity(CELLS_PER_EXT_BLOB);
+            dbg!("compute cells");
             <KZGSettings as DAS<ZBackend>>::compute_cells_and_kzg_proofs(
                 &TRUSTED_SETUP,
                 Some(&mut blob_cells),
@@ -98,20 +106,25 @@ pub fn verify_cell_kzg_proof_batch_our(
                 &blob,
             )
             .unwrap();
+            dbg!("cells extend");
             cells.extend(blob_cells.into_iter());
         }
 
+        dbg!("convert commitments");
         let commitments: Vec<_> = commitments
             .iter()
             .map(|commitment| ZG1::from_bytes(commitment).unwrap())
             .collect();
+        dbg!("convert cell_proofs");
         let cell_proofs: Vec<_> = cell_proofs
             .iter()
             .map(|proof| ZG1::from_bytes(proof).unwrap())
             .collect();
+        dbg!("convert cell_dincies");
         let cell_indices: Vec<_> = repeat_n(0..CELLS_PER_EXT_BLOB, blobs.len())
             .flatten()
             .collect();
+        dbg!("verify_cell_kzg_proof_batch");
         return Ok(<KZGSettings as DAS<ZBackend>>::verify_cell_kzg_proof_batch(
             &TRUSTED_SETUP,
             &commitments,
