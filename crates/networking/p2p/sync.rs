@@ -1558,9 +1558,11 @@ async fn insert_storages(
 
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
-    let thread_count = std::thread::available_parallelism()
-        .map(|num| num.into())
-        .unwrap_or(8);
+    // TODO: Affinity breaks available_parallelism, let's test it with 8 for now
+    let thread_count = 8;
+    //std::thread::available_parallelism()
+    //  .map(|num| num.into())
+    //.unwrap_or(8);
 
     let (buffer_sender, buffer_receiver) = bounded::<Vec<(Nibbles, Node)>>(BUFFER_COUNT as usize);
     for _ in 0..BUFFER_COUNT {
