@@ -78,21 +78,13 @@ impl Hook for L2Hook {
             // Even if privileged transactions themselves can't create
             // They can call contracts that use CREATE/CREATE2
             default_hook::delete_self_destruct_accounts(vm)?;
-        } else if vm.env.custom_fee_token.is_some() {
-            finalize_non_privileged_execution(
-                vm,
-                ctx_result,
-                &self.fee_config,
-                &mut self.pre_execution_backup,
-                true,
-            )?;
         } else {
             finalize_non_privileged_execution(
                 vm,
                 ctx_result,
                 &self.fee_config,
                 &mut self.pre_execution_backup,
-                false,
+                vm.env.custom_fee_token.is_some(),
             )?;
         }
 
