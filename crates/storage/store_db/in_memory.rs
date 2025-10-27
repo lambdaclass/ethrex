@@ -90,7 +90,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
         // Store trie updates
@@ -249,7 +249,7 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.inner()?.pending_blocks.insert(block.hash(), block);
         Ok(())
     }

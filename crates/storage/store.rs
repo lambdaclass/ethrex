@@ -69,8 +69,8 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        self.engine.apply_updates(update_batch).await
+    pub fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        self.engine.apply_updates(update_batch)
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
@@ -254,9 +254,9 @@ impl Store {
         self.engine.get_block_bodies_by_hash(hashes).await
     }
 
-    pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         info!("Adding block to pending: {}", block.hash());
-        self.engine.add_pending_block(block).await
+        self.engine.add_pending_block(block)
     }
 
     pub async fn get_pending_block(

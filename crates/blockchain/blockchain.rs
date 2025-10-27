@@ -139,14 +139,14 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    async fn execute_block(
+    fn execute_block(
         &self,
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
+            self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
         };
 
@@ -388,8 +388,7 @@ impl Blockchain {
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), account_updates_list, execution_result)
-                .await?;
+            self.store_block(block.clone(), account_updates_list, execution_result)?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -499,7 +498,7 @@ impl Blockchain {
         })
     }
 
-    pub async fn store_block(
+    pub fn store_block(
         &self,
         block: Block,
         account_updates_list: AccountUpdatesList,
@@ -518,13 +517,12 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
-            .await
             .map_err(|e| e.into())
     }
 
-    pub async fn add_block(&self, block: Block) -> Result<(), ChainError> {
+    pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(&block).await?;
+        let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root
@@ -541,7 +539,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res).await;
+        let result = self.store_block(block, account_updates_list, res);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -727,7 +725,6 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
-            .await
             .map_err(|e| (e.into(), None))?;
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
