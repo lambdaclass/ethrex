@@ -6,16 +6,16 @@ use crate::{
     store::STATE_TRIE_SEGMENTS,
     trie_db::layering::{TrieLayerCache, TrieWrapper},
 };
-use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
     collections::HashMap,
     fmt::Debug,
-    sync::{Arc, Mutex, MutexGuard, RwLock},
+    path::Path,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 // NOTE: we use a different commit threshold than rocksdb since tests
@@ -35,11 +35,11 @@ pub struct StoreInner {
     bodies: HashMap<BlockHash, BlockBody>,
     headers: HashMap<BlockHash, BlockHeader>,
     // Maps code hashes to code
-    account_codes: HashMap<H256, Bytes>,
+    account_codes: HashMap<H256, Code>,
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    trie_cache: Arc<RwLock<TrieLayerCache>>,
+    trie_cache: Arc<TrieLayerCache>,
     // Contains account trie nodes
     state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -91,31 +91,28 @@ impl StoreEngine for Store {
         let mut store = self.inner()?;
 
         // Store trie updates
+        let mut trie = TrieLayerCache::clone(&store.trie_cache);
+        let parent = update_batch
+            .blocks
+            .first()
+            .ok_or(StoreError::UpdateBatchNoBlocks)?
+            .header
+            .parent_hash;
+
+        let pre_state_root = store
+            .headers
+            .get(&parent)
+            .map(|header| header.state_root)
+            .unwrap_or_default();
+
+        let last_state_root = update_batch
+            .blocks
+            .last()
+            .ok_or(StoreError::UpdateBatchNoBlocks)?
+            .header
+            .state_root;
+
         {
-            let mut trie = store
-                .trie_cache
-                .write()
-                .map_err(|_| StoreError::LockError)?;
-            let parent = update_batch
-                .blocks
-                .first()
-                .ok_or(StoreError::UpdateBatchNoBlocks)?
-                .header
-                .parent_hash;
-
-            let pre_state_root = store
-                .headers
-                .get(&parent)
-                .map(|header| header.state_root)
-                .unwrap_or_default();
-
-            let last_state_root = update_batch
-                .blocks
-                .last()
-                .ok_or(StoreError::UpdateBatchNoBlocks)?
-                .header
-                .state_root;
-
             let mut state_trie = store
                 .state_trie_nodes
                 .lock()
@@ -131,18 +128,20 @@ impl StoreEngine for Store {
                     }
                 }
             }
-            let key_values = update_batch
-                .storage_updates
-                .into_iter()
-                .flat_map(|(account_hash, nodes)| {
-                    nodes
-                        .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                })
-                .chain(update_batch.account_updates)
-                .collect();
-            trie.put_batch(pre_state_root, last_state_root, key_values);
         }
+
+        let key_values = update_batch
+            .storage_updates
+            .into_iter()
+            .flat_map(|(account_hash, nodes)| {
+                nodes
+                    .into_iter()
+                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+            })
+            .chain(update_batch.account_updates)
+            .collect();
+        trie.put_batch(pre_state_root, last_state_root, key_values);
+        store.trie_cache = Arc::new(trie);
 
         for block in update_batch.blocks {
             // store block
@@ -373,12 +372,12 @@ impl StoreEngine for Store {
             .cloned())
     }
 
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        self.inner()?.account_codes.insert(code_hash, code);
+    async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
+        self.inner()?.account_codes.insert(code.hash, code);
         Ok(())
     }
 
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         Ok(self.inner()?.account_codes.get(&code_hash).cloned())
     }
 
@@ -687,7 +686,7 @@ impl StoreEngine for Store {
 
     async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
@@ -732,6 +731,12 @@ impl StoreEngine for Store {
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
         // FlatKeyValue currently not supported for the InMemory DB
         // Silently ignoring the request to build the FlatKeyValue is harmless
+        Ok(())
+    }
+
+    async fn create_checkpoint(&self, _path: &Path) -> Result<(), StoreError> {
+        // Checkpoints are not supported for the InMemory DB
+        // Silently ignoring the request to create a checkpoint is harmless
         Ok(())
     }
 }
