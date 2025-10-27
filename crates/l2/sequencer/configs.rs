@@ -23,7 +23,8 @@ pub struct SequencerConfig {
 pub struct BlockProducerConfig {
     pub block_time_ms: u64,
     pub coinbase_address: Address,
-    pub fee_vault_address: Option<Address>,
+    pub base_fee_vault_address: Option<Address>,
+    pub operator_fee_vault_address: Option<Address>,
     pub elasticity_multiplier: u64,
     pub block_gas_limit: u64,
 }
@@ -56,6 +57,7 @@ pub struct L1WatcherConfig {
     pub check_interval_ms: u64,
     pub max_block_step: U256,
     pub watcher_block_delay: u64,
+    pub l1_blob_base_fee_update_interval: u64,
 }
 
 #[derive(Clone, Debug)]

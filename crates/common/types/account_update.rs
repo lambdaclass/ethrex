@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::{Address, H256, U256, types::AccountInfo};
-use bytes::Bytes;
+use crate::{
+    Address, H256, U256,
+    types::{AccountInfo, Code},
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -9,7 +11,7 @@ pub struct AccountUpdate {
     pub address: Address,
     pub removed: bool,
     pub info: Option<AccountInfo>,
-    pub code: Option<Bytes>,
+    pub code: Option<Code>,
     pub added_storage: BTreeMap<H256, U256>,
     /// If account was destroyed and then modified we need this for removing its storage but not the entire account.
     pub removed_storage: bool,
