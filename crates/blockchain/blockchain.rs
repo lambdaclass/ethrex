@@ -210,13 +210,13 @@ impl Blockchain {
 
         // Later on, we need to access block hashes by number. To avoid needing
         // to apply fork choice for each block, we cache them here.
-        let mut block_hashes: BTreeMap<u64, H256> = blocks
+        let mut block_hashes_map: BTreeMap<u64, H256> = blocks
             .iter()
             .cloned()
             .map(|block| (block.header.number, block.hash()))
             .collect();
 
-        block_hashes.insert(
+        block_hashes_map.insert(
             first_block_header.number.saturating_sub(1),
             first_block_header.parent_hash,
         );
@@ -404,7 +404,7 @@ impl Blockchain {
             let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
                 self.storage
                     .state_trie(
-                        block_hashes
+                        block_hashes_map
                             .get(&block.header.number)
                             .ok_or(ChainError::WitnessGeneration(
                                 "Block hash not found for witness generation".to_string(),
@@ -465,7 +465,7 @@ impl Blockchain {
         let mut block_headers_bytes = Vec::new();
 
         for block_number in first_needed_block_number..=last_needed_block_number {
-            let hash = block_hashes
+            let hash = block_hashes_map
                 .get(&block_number)
                 .ok_or(ChainError::WitnessGeneration(format!(
                     "Failed to get block {block_number} hash"
