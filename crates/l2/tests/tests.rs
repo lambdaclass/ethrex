@@ -1997,6 +1997,7 @@ async fn test_custom_fee(
         &custom_fee_token_contract,
         &rich_wallet_private_key,
         "test_custom_fee",
+        dummy_modified_storage_slots(0),
     )
     .await?;
     let sender_balance_before_transfer = l2_client
