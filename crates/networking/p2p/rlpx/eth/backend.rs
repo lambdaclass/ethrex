@@ -10,7 +10,7 @@ pub async fn validate_status<ST: StatusMessage>(
     storage: &Store,
     eth_capability: &Capability,
 ) -> Result<(), PeerConnectionError> {
-    let chain_config = storage.get_chain_config()?;
+    let chain_config = storage.get_chain_config();
 
     // These blocks must always be available
     let genesis_header = storage
@@ -83,7 +83,7 @@ mod tests {
     async fn test_validate_status() {
         // Setup
         // TODO we should have this setup exported to some test_utils module and use from there
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let file = File::open("../../../fixtures/genesis/execution-api.json")
             .expect("Failed to open genesis file");

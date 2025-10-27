@@ -186,7 +186,7 @@ impl BlockProducer {
 
         // Blockchain stores block
         let block = payload_build_result.payload;
-        let chain_config = self.store.get_chain_config()?;
+        let chain_config = self.store.get_chain_config();
         validate_block(
             &block,
             &head_header,

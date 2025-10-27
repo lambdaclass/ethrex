@@ -24,10 +24,7 @@ impl RpcHandler for ChainId {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested chain id");
-        let chain_spec = context
-            .storage
-            .get_chain_config()
-            .map_err(|error| RpcErr::Internal(error.to_string()))?;
+        let chain_spec = context.storage.get_chain_config();
         serde_json::to_value(format!("{:#x}", chain_spec.chain_id))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -99,7 +96,7 @@ impl RpcHandler for Config {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let chain_config = context.storage.get_chain_config()?;
+        let chain_config = context.storage.get_chain_config();
         let Some(latest_block) = context
             .storage
             .get_block_by_number(context.storage.get_latest_block_number().await?)
@@ -143,7 +140,7 @@ async fn get_config_for_fork(
     fork: Fork,
     context: &RpcApiContext,
 ) -> Result<EthConfigObject, RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
+    let chain_config = context.storage.get_chain_config();
     let activation_time = chain_config.get_activation_timestamp_for_fork(fork);
     let genesis_header = context
         .storage

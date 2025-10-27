@@ -76,7 +76,7 @@ impl RLPxMessage for StatusMessage68 {
 
 impl StatusMessage68 {
     pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
-        let chain_config = storage.get_chain_config()?;
+        let chain_config = storage.get_chain_config();
         let total_difficulty =
             U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
         let network_id = chain_config.chain_id;

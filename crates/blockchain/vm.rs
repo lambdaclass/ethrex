@@ -97,9 +97,7 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.store
-            .get_chain_config()
-            .map_err(|e| EvmError::DB(e.to_string()))
+        Ok(self.store.get_chain_config())
     }
 
     #[instrument(level = "trace", name = "Account code read", skip_all)]
