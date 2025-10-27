@@ -26,7 +26,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::SecretKey;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
-use tokio::{sync::Mutex, task::JoinSet};
+use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
@@ -205,11 +205,7 @@ pub async fn init_l2(
 
     let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
-    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        &datadir,
-        &local_p2p_node,
-        &signer,
-    )));
+    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
     let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
 
@@ -224,7 +220,7 @@ pub async fn init_l2(
         &opts,
         peer_handler.peer_table.clone(),
         local_p2p_node.clone(),
-        local_node_record.lock().await.clone(),
+        local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
@@ -255,7 +251,6 @@ pub async fn init_l2(
             &network,
             &datadir,
             local_p2p_node,
-            local_node_record.clone(),
             signer,
             peer_handler.clone(),
             store.clone(),
@@ -314,11 +309,7 @@ pub async fn init_l2(
     let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(
-        peer_handler.peer_table,
-        local_node_record.lock().await.clone(),
-    )
-    .await;
+    let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
     store_node_config_file(node_config, node_config_path).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
