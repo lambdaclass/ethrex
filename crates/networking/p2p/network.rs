@@ -95,7 +95,6 @@ impl P2PContext {
         })
     }
     pub async fn dummy(peer_table: PeerTable) -> P2PContext {
-        use ethrex_blockchain::BlockchainOptions;
         use ethrex_storage::EngineType;
 
         let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
