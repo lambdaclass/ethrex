@@ -15,6 +15,7 @@ pub struct MetricsBlocks {
     block_building_ms: IntGauge,
     block_building_base_fee: IntGauge,
     gas_used: Gauge,
+    transaction_count: IntGauge,
     execution_ms: IntGauge,
     merkle_ms: IntGauge,
     store_ms: IntGauge,
@@ -86,7 +87,16 @@ impl MetricsBlocks {
                 "Keeps track of the execution time spent in block storage in miliseconds",
             )
             .unwrap(),
+            transaction_count: IntGauge::new(
+                "transaction_count",
+                "Keeps track of transaction count in a block",
+            )
+            .unwrap(),
         }
+    }
+
+    pub fn set_transaction_count(&self, transaction_count: i64) {
+        self.transaction_count.set(transaction_count);
     }
 
     pub fn set_execution_ms(&self, execution_ms: i64) {
@@ -163,6 +173,8 @@ impl MetricsBlocks {
         r.register(Box::new(self.execution_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.merkle_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.transaction_count.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
