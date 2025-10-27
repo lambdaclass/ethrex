@@ -107,7 +107,7 @@ impl Blockchain {
             parent_hash,
             block_hash_cache,
         );
-        let mut vm = self.new_evm(vm_db).await?;
+        let mut vm = self.new_evm(vm_db)?;
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
             vm.rerun_block(block, None)?;

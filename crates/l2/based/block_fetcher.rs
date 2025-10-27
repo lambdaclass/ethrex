@@ -358,7 +358,7 @@ impl BlockFetcher {
         let mut acc_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
         for block in batch {
             let vm_db = StoreVmDatabase::new(self.store.clone(), block.header.parent_hash);
-            let mut vm = self.blockchain.new_evm(vm_db).await?;
+            let mut vm = self.blockchain.new_evm(vm_db)?;
             vm.execute_block(block)
                 .map_err(BlockFetcherError::EvmError)?;
             let account_updates = vm
