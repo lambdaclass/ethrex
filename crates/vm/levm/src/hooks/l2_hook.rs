@@ -133,22 +133,31 @@ fn finalize_non_privileged_execution(
 
     delete_self_destruct_accounts(vm)?;
 
-    if use_fee_token {
-        pay_to_l1_fee_vault_fee_token(vm, l1_gas, fee_config.l1_fee_config)?;
-    } else {
-        pay_to_l1_fee_vault(vm, l1_gas, fee_config.l1_fee_config)?;
+    if let Some(l1_fee_config) = fee_config.l1_fee_config {
+        pay_to_l1_fee_vault(vm, l1_gas, l1_fee_config, use_fee_token)?;
     }
 
     if use_fee_token {
         refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas)?;
-        pay_coinbase_fee_token(vm, actual_gas_used, &fee_config.operator_fee_config)?;
-        pay_to_fee_vault_fee_token(vm, actual_gas_used, fee_config.base_fee_vault)?;
-        pay_operator_fee_fee_token(vm, actual_gas_used, &fee_config.operator_fee_config)?;
     } else {
         refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
-        pay_coinbase_l2(vm, actual_gas_used, &fee_config.operator_fee_config)?;
-        pay_base_fee_vault(vm, actual_gas_used, fee_config.base_fee_vault)?;
-        pay_operator_fee(vm, actual_gas_used, &fee_config.operator_fee_config)?;
+    }
+
+    pay_coinbase_l2(
+        vm,
+        actual_gas_used,
+        &fee_config.operator_fee_config,
+        use_fee_token,
+    )?;
+
+    if let Some(base_fee_vault) = fee_config.base_fee_vault {
+        pay_base_fee_vault(vm, actual_gas_used, base_fee_vault, use_fee_token)?;
+    } else if use_fee_token {
+        pay_base_fee_vault(vm, actual_gas_used, Address::zero(), use_fee_token)?;
+    }
+
+    if let Some(operator_fee_config) = fee_config.operator_fee_config {
+        pay_operator_fee(vm, actual_gas_used, operator_fee_config, use_fee_token)?;
     }
 
     ctx_result.gas_used = total_gas;
@@ -181,8 +190,9 @@ fn pay_coinbase_l2(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
     operator_fee_config: &Option<OperatorFeeConfig>,
+    use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
-    if operator_fee_config.is_none() {
+    if operator_fee_config.is_none() && !use_fee_token {
         // No operator fee configured, operator fee is not paid
         return pay_coinbase(vm, gas_to_pay);
     }
@@ -193,7 +203,11 @@ fn pay_coinbase_l2(
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    if use_fee_token {
+        pay_fee_token(vm, vm.env.coinbase, coinbase_fee)?;
+    } else {
+        vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    }
 
     Ok(())
 }
@@ -229,34 +243,34 @@ fn compute_operator_fee_amount(
 fn pay_base_fee_vault(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
-    base_fee_vault: Option<Address>,
+    base_fee_vault: Address,
+    use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
-    let Some(base_fee_vault) = base_fee_vault else {
-        // No base fee vault configured, base fee is effectively burned
-        return Ok(());
-    };
-
     let base_fee = U256::from(gas_to_pay)
         .checked_mul(vm.env.base_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    vm.increase_account_balance(base_fee_vault, base_fee)?;
+    if use_fee_token {
+        pay_fee_token(vm, base_fee_vault, base_fee)?;
+    } else {
+        vm.increase_account_balance(base_fee_vault, base_fee)?;
+    }
     Ok(())
 }
 
 fn pay_operator_fee(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
-    operator_fee_config: &Option<OperatorFeeConfig>,
+    operator_fee_config: OperatorFeeConfig,
+    use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
-    let Some(fee_config) = operator_fee_config else {
-        // No operator fee configured, operator fee is not paid
-        return Ok(());
-    };
+    let operator_fee = compute_operator_fee_amount(gas_to_pay, &operator_fee_config)?;
 
-    let operator_fee = compute_operator_fee_amount(gas_to_pay, fee_config)?;
-
-    vm.increase_account_balance(fee_config.operator_fee_vault, operator_fee)?;
+    if use_fee_token {
+        pay_fee_token(vm, operator_fee_config.operator_fee_vault, operator_fee)?;
+    } else {
+        vm.increase_account_balance(operator_fee_config.operator_fee_vault, operator_fee)?;
+    }
     Ok(())
 }
 
@@ -573,49 +587,6 @@ fn refund_sender_fee_token(
     Ok(())
 }
 
-fn pay_coinbase_fee_token(
-    vm: &mut VM<'_>,
-    gas_to_pay: u64,
-    operator_fee_config: &Option<OperatorFeeConfig>,
-) -> Result<(), VMError> {
-    let priority_fee_per_gas = compute_priority_fee_per_gas(vm, operator_fee_config)?;
-
-    let coinbase_fee = U256::from(gas_to_pay)
-        .checked_mul(priority_fee_per_gas)
-        .ok_or(InternalError::Overflow)?;
-
-    pay_fee_token(vm, vm.env.coinbase, coinbase_fee)
-}
-
-fn pay_to_fee_vault_fee_token(
-    vm: &mut VM<'_>,
-    gas_to_pay: u64,
-    fee_vault: Option<Address>,
-) -> Result<(), crate::errors::VMError> {
-    let base_fee = U256::from(gas_to_pay)
-        .checked_mul(vm.env.base_fee_per_gas)
-        .ok_or(InternalError::Overflow)?;
-
-    // When no vault is configured fees are burned via the zero address.
-    let target = fee_vault.unwrap_or_else(Address::zero);
-
-    pay_fee_token(vm, target, base_fee)
-}
-
-fn pay_operator_fee_fee_token(
-    vm: &mut VM<'_>,
-    gas_to_pay: u64,
-    operator_fee_config: &Option<OperatorFeeConfig>,
-) -> Result<(), crate::errors::VMError> {
-    let Some(fee_config) = operator_fee_config else {
-        // No operator fee configured, operator fee is not paid
-        return Ok(());
-    };
-
-    let operator_fee = compute_operator_fee_amount(gas_to_pay, fee_config)?;
-
-    pay_fee_token(vm, fee_config.operator_fee_vault, operator_fee)
-}
 fn calculate_l1_fee(
     fee_config: &L1FeeConfig,
     account_diffs_size: u64,
@@ -669,36 +640,18 @@ fn calculate_l1_fee_gas(
 fn pay_to_l1_fee_vault(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
-    l1_fee_config: Option<L1FeeConfig>,
+    l1_fee_config: L1FeeConfig,
+    use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
-    let Some(fee_config) = l1_fee_config else {
-        // No l1 fee configured, l1 fee is not paid
-        return Ok(());
-    };
-
     let l1_fee = U256::from(gas_to_pay)
         .checked_mul(vm.env.gas_price)
         .ok_or(InternalError::Overflow)?;
 
-    vm.increase_account_balance(fee_config.l1_fee_vault, l1_fee)
-        .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
-
+    if use_fee_token {
+        pay_fee_token(vm, l1_fee_config.l1_fee_vault, l1_fee)?;
+    } else {
+        vm.increase_account_balance(l1_fee_config.l1_fee_vault, l1_fee)
+            .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+    }
     Ok(())
-}
-
-fn pay_to_l1_fee_vault_fee_token(
-    vm: &mut VM<'_>,
-    gas_to_pay: u64,
-    l1_fee_config: Option<L1FeeConfig>,
-) -> Result<(), crate::errors::VMError> {
-    let Some(fee_config) = l1_fee_config else {
-        // No l1 fee configured, l1 fee is not paid
-        return Ok(());
-    };
-
-    let l1_fee = U256::from(gas_to_pay)
-        .checked_mul(vm.env.gas_price)
-        .ok_or(InternalError::Overflow)?;
-
-    pay_fee_token(vm, fee_config.l1_fee_vault, l1_fee)
 }
