@@ -1584,6 +1584,7 @@ async fn insert_storages(
             let pool_clone = pool.clone();
             let mut iter = snapshot.raw_iterator();
             let task = Box::new(move || {
+                info!("We are a task and we spawned");
                 let mut buffer: [u8; 64] = [0_u8; 64];
                 buffer[..32].copy_from_slice(&account_hash.0);
                 iter.seek(buffer);

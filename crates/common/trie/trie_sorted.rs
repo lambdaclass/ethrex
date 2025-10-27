@@ -6,7 +6,7 @@ use crossbeam::channel::{Receiver, Sender, bounded};
 use ethereum_types::H256;
 use ethrex_threadpool::ThreadPool;
 use std::{sync::Arc, thread::scope};
-use tracing::debug;
+use tracing::{debug, info};
 
 #[derive(Debug, Default, Clone)]
 struct StackElement {
@@ -174,6 +174,7 @@ where
             scope.execute_priority(Box::new(move || {
                 let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
             }));
+            info!("we are waiting for a new buffer");
             nodes_to_write = buffer_receiver
                 .recv()
                 .expect("This channel shouldn't close");
