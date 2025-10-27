@@ -98,10 +98,8 @@ impl P2PContext {
         use ethrex_blockchain::BlockchainOptions;
         use ethrex_storage::EngineType;
 
-        let blockchain_opts = BlockchainOptions::default();
         let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
-        let blockchain: Arc<Blockchain> =
-            Arc::new(Blockchain::new(storage.clone(), blockchain_opts));
+        let blockchain: Arc<Blockchain> = Arc::new(Blockchain::default_with_store(storage.clone()));
         let local_node = Node::from_enode_url(
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
