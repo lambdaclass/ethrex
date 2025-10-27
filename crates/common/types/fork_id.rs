@@ -650,7 +650,7 @@ mod tests {
                 is_valid: true,
             },
         ];
-        assert_test_cases(test_cases, genesis.config, genesis_hash.clone());
+        assert_test_cases(test_cases, genesis.config, genesis_hash);
     }
 
     #[test]

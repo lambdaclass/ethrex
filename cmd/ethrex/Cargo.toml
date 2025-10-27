@@ -122,3 +122,6 @@ ethrex-common = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 genesis-tool = { path = "../../tooling/genesis", optional = true }
 thiserror = { workspace = true, optional = true }
+
+[lints]
+workspace = true

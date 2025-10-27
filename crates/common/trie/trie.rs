@@ -1173,7 +1173,7 @@ mod test {
         cita_trie.insert(a.clone(), a.clone()).unwrap();
         cita_trie.insert(b.clone(), b.clone()).unwrap();
         trie.insert(a.clone(), a.clone()).unwrap();
-        trie.insert(b.clone(), b.clone()).unwrap();
+        trie.insert(b.clone(), b).unwrap();
         trie.remove(&a).unwrap();
         cita_trie.remove(&a).unwrap();
         let _ = cita_trie.root();

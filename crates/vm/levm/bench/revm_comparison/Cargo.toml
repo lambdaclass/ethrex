@@ -29,3 +29,6 @@ path = "src/compile.rs"
 [[bin]]
 name = "benchmark"
 path = "src/benchmark.rs"
+
+[lints]
+workspace = true

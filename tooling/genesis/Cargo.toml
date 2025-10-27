@@ -16,3 +16,6 @@ path = "./src/lib.rs"
 [[bin]]
 name = "genesis-sorter"
 path = "./src/genesis.rs"
+
+[lints]
+workspace = true

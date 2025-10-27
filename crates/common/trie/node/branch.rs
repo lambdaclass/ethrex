@@ -425,7 +425,7 @@ mod test {
 
         let new_node = node
             .clone()
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(trie.db.as_ref(), path, value.clone().into())
             .unwrap();
 
         let new_node = match new_node {

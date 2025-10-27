@@ -41,3 +41,6 @@ c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 
 [lib]
 path = "./src/lib.rs"
+
+[lints]
+workspace = true
