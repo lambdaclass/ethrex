@@ -2024,6 +2024,20 @@ async fn test_fee_token(
         "{test}: Fee vault address fee token balance before transfer: {fee_vault_address_token_balance_before_transfer}"
     );
 
+    let operator_fee_vault = operator_fee_vault();
+    let operator_fee_vault_token_balance_before_transfer =
+        test_balance_of(&l2_client, fee_token_address, operator_fee_vault).await;
+    println!(
+        "{test}: Operator fee vault address fee token balance before transfer: {operator_fee_vault_token_balance_before_transfer}"
+    );
+
+    let l1_fee_vault = l1_fee_vault();
+    let l1_fee_vault_token_balance_before_transfer =
+        test_balance_of(&l2_client, fee_token_address, l1_fee_vault).await;
+    println!(
+        "{test}: L1 fee vault address fee token balance before transfer: {l1_fee_vault_token_balance_before_transfer}"
+    );
+
     let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(
         &l2_client,
@@ -2085,10 +2099,31 @@ async fn test_fee_token(
         println!(
             "{test}: Fee vault address fee token balance after transfer: {fee_vault_address_token_balance_after_transfer}"
         );
+        let operator_fee_vault_address_token_balance_after_transfer =
+            test_balance_of(&l2_client, fee_token_address, operator_fee_vault).await;
+        println!(
+            "{test}: Operator fee vault address fee token balance after transfer: {operator_fee_vault_address_token_balance_after_transfer}"
+        );
+        let l1_fee_vault_address_token_balance_after_transfer =
+            test_balance_of(&l2_client, fee_token_address, l1_fee_vault).await;
+        println!(
+            "{test}: L1 fee vault address fee token balance after transfer: {l1_fee_vault_address_token_balance_after_transfer}"
+        );
+
         assert!(
             fee_vault_address_token_balance_after_transfer
                 > fee_vault_address_token_balance_before_transfer,
             "{test}: Fee vault address fee token balance did not increase"
+        );
+        assert!(
+            operator_fee_vault_address_token_balance_after_transfer
+                > operator_fee_vault_token_balance_before_transfer,
+            "{test}: Operator fee vault address fee token balance did not increase"
+        );
+        assert!(
+            l1_fee_vault_address_token_balance_after_transfer
+                > l1_fee_vault_token_balance_before_transfer,
+            "{test}: L1 fee vault address fee token balance did not increase"
         );
     }
 
