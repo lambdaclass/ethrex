@@ -700,15 +700,12 @@ impl Store {
             .clone();
         let mut trie_mut = (*trie).clone();
         trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+        let trie = Arc::new(trie_mut);
+        *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
         // Update finished, signal block processing.
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
         // Phase 2: update disk layer.
-        let trie = trie_cache
-            .lock()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
         let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
             // Nothing to commit to disk, move on.
             return Ok(());
