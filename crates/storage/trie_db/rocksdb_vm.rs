@@ -6,10 +6,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::{Nibbles, TrieError};
 use ethrex_vm::{EvmError, VmDatabase};
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 use tracing::instrument;
 
 use crate::{
@@ -27,7 +24,6 @@ pub struct RocksDBVM {
     store: Store,
     header: BlockHeader,
     chain_config_cache: OnceLock<ChainConfig>,
-    cache: HashMap<Address, Option<AccountState>>,
     last_computed_flatkeyvalue: Nibbles,
     trie_cache: Arc<TrieLayerCache>,
 }
@@ -55,7 +51,6 @@ impl RocksDBVM {
             store,
             header,
             chain_config_cache: OnceLock::new(),
-            cache: HashMap::new(),
             last_computed_flatkeyvalue,
             trie_cache,
         })
@@ -101,9 +96,6 @@ fn nibbles_for_slot(address: Address, key: H256) -> Nibbles {
 impl VmDatabase for RocksDBVM {
     #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-        if let Some(value) = self.cache.get(&address) {
-            return Ok(value.clone());
-        }
         let hashed_account = nibbles_for_account(address);
         // deoptimized path
         if hashed_account > self.last_computed_flatkeyvalue {
