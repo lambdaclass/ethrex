@@ -52,6 +52,3 @@ harness = false
 [profile.release-with-debug]
 inherits = "release"
 debug = 2
-
-[lints]
-workspace = true
