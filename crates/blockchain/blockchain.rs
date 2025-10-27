@@ -212,7 +212,6 @@ impl Blockchain {
         // to apply fork choice for each block, we cache them here.
         let mut block_hashes_map: BTreeMap<u64, H256> = blocks
             .iter()
-            .cloned()
             .map(|block| (block.header.number, block.hash()))
             .collect();
 

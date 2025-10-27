@@ -25,9 +25,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: What version are we actually running
-        run: /usr/bin/git log -1 --format=%H
-        
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
@@ -43,14 +40,7 @@ jobs:
 
       - name: Run cargo clippy
         run: |
-          rustup show
-
-      - name: Run cargo clippy version
-        run: |
-          cargo clippy -- -D warnings --version
-
-      - name: Run cargo clippy
-        run: cargo clippy -- -D warnings
+          cargo clippy -- -D warnings
 
       - name: Run cargo fmt
         run: |
