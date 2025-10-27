@@ -46,6 +46,3 @@ c-kzg = { git = "https://github.com/risc0/c-kzg-4844", tag = "c-kzg/v2.1.1-riscz
 
 [features]
 l2 = ["guest_program/l2"]
-
-[lints]
-workspace = true
