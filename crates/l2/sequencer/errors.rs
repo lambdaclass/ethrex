@@ -201,12 +201,12 @@ pub enum BlockProducerError {
     Custom(String),
     #[error("Failed to parse withdrawal: {0}")]
     FailedToParseWithdrawal(#[from] UtilsError),
-    #[error("Failed to encode AccountStateDiff: {0}")]
-    FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
     #[error("Internal Error: {0}")]
     InternalError(#[from] GenServerError),
+    #[error("EthClientError error: {0}")]
+    EthClientError(#[from] EthClientError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -225,7 +225,7 @@ pub enum CommitterError {
     FailedToRetrieveDataFromStorage,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
-    #[error("Committer failed to get information from storage")]
+    #[error("Committer failed to get information from storage: {0}")]
     FailedToGetInformationFromStorage(String),
     #[error("Committer failed to encode state diff: {0}")]
     FailedToEncodeStateDiff(#[from] StateDiffError),
@@ -265,6 +265,12 @@ pub enum CommitterError {
     Unreachable(String),
     #[error("Failed to generate batch witness: {0}")]
     FailedToGenerateBatchWitness(#[source] ChainError),
+    #[error("Failed to create checkpoint: {0}")]
+    FailedToCreateCheckpoint(String),
+    #[error("Failed to process blobs: {0}")]
+    ChainError(#[from] ChainError),
+    #[error("Failed due to invalid fork choice: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
 }
 
 #[derive(Debug, thiserror::Error)]
