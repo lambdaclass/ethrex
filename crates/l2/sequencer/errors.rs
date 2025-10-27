@@ -121,6 +121,8 @@ pub enum ProofCoordinatorError {
     MissingTDXPrivateKey,
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
+    #[error("Missing prover input for batch {0} (version {1})")]
+    MissingBatchProverInput(u64, String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -199,12 +201,12 @@ pub enum BlockProducerError {
     Custom(String),
     #[error("Failed to parse withdrawal: {0}")]
     FailedToParseWithdrawal(#[from] UtilsError),
-    #[error("Failed to encode AccountStateDiff: {0}")]
-    FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
     #[error("Internal Error: {0}")]
     InternalError(#[from] GenServerError),
+    #[error("EthClientError error: {0}")]
+    EthClientError(#[from] EthClientError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -261,6 +263,8 @@ pub enum CommitterError {
     UnexpectedError(String),
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
+    #[error("Failed to generate batch witness: {0}")]
+    FailedToGenerateBatchWitness(#[source] ChainError),
 }
 
 #[derive(Debug, thiserror::Error)]

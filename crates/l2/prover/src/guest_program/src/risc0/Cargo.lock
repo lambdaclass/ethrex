@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -1148,7 +1148,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1174,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "c-kzg",
  "thiserror",
@@ -1182,7 +1182,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1193,18 +1193,22 @@ dependencies = [
  "ethrex-vm",
  "k256",
  "lambdaworks-crypto",
+ "rkyv",
+ "secp256k1",
  "serde",
+ "serde_with",
  "sha3",
  "thiserror",
 ]
 
 [[package]]
 name = "ethrex-levm"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff",
+ "bitvec",
  "bls12_381",
  "bytes",
  "datatest-stable",
@@ -1229,7 +1233,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1240,7 +1244,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1253,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1264,6 +1268,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "rustc-hash",
  "serde",
  "serde_json",
  "sha3",
@@ -1280,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1301,7 +1306,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -1517,7 +1522,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
@@ -2815,6 +2820,12 @@ name = "rustc-demangle"
 version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56f7d92ca342cea22a06f2121d944b4fd82af56988c270852495420f961d4ace"
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustc-hex"

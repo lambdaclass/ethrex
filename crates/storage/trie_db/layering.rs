@@ -1,12 +1,13 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use rustc_hash::FxHashMap;
+use std::{sync::Arc, sync::RwLock};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
 #[derive(Debug)]
 struct TrieLayer {
-    nodes: HashMap<Vec<u8>, Vec<u8>>,
+    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
@@ -16,7 +17,7 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: HashMap<H256, TrieLayer>,
+    layers: FxHashMap<H256, TrieLayer>,
 }
 
 impl TrieLayerCache {
@@ -74,7 +75,7 @@ impl TrieLayerCache {
             .or_insert_with(|| {
                 self.last_id += 1;
                 TrieLayer {
-                    nodes: HashMap::new(),
+                    nodes: FxHashMap::default(),
                     parent,
                     id: self.last_id,
                 }
@@ -122,6 +123,10 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
 }
 
 impl TrieDB for TrieWrapper {
+    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        let key = apply_prefix(self.prefix, key);
+        self.db.flatkeyvalue_computed(key)
+    }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
         if let Some(value) = self

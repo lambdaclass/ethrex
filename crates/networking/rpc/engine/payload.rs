@@ -571,6 +571,11 @@ async fn validate_ancestors(
         .get_latest_valid_ancestor(block.header.parent_hash)
         .await?
     {
+        // Invalidate child too
+        context
+            .storage
+            .set_latest_valid_ancestor(block.header.hash(), latest_valid_hash)
+            .await?;
         return Ok(Some(PayloadStatus::invalid_with(
             latest_valid_hash,
             "Parent header has been previously invalidated.".into(),
@@ -599,7 +604,7 @@ async fn handle_new_payload_v1_v2(
     let latest_valid_hash = block.header.parent_hash;
 
     if context.syncer.sync_mode() == SyncMode::Snap {
-        warn!("Snap sync in progress, skipping new payload validation");
+        debug!("Snap sync in progress, skipping new payload validation");
         return Ok(PayloadStatus::syncing());
     }
 
@@ -778,7 +783,10 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
 }
 
 async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
-    debug!("Requested payload with id: {:#018x}", payload_id);
+    info!(
+        id = %format!("{:#018x}", payload_id),
+        "Requested payload with"
+    );
     let (blobs_bundle, requests, block_value, block) = {
         let PayloadBuildResult {
             blobs_bundle,

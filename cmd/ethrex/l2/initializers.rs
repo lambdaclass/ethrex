@@ -1,14 +1,14 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store,
+    get_network, get_signer, init_blockchain, init_network, init_store, regenerate_head_state,
 };
-use crate::l2::L2Options;
+use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
-use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
+use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
 use ethrex_p2p::{
@@ -156,18 +156,33 @@ pub async fn init_l2(
     let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
+    let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
+    let l1_fee_config = get_l1_fee_config(&opts.sequencer_opts);
+
     let fee_config = FeeConfig {
-        fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
-        ..Default::default()
+        base_fee_vault: opts
+            .sequencer_opts
+            .block_producer_opts
+            .base_fee_vault_address,
+        operator_fee_config,
+        l1_fee_config,
+    };
+
+    // We wrap fee_config in an Arc<RwLock> to let the watcher
+    // update the L1 fee periodically.
+    let l2_config = L2Config {
+        fee_config: Arc::new(tokio::sync::RwLock::new(fee_config)),
     };
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
         max_mempool_size: opts.node_opts.mempool_max_size,
-        r#type: BlockchainType::L2(fee_config),
+        r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
+
+    regenerate_head_state(&store, &blockchain).await?;
 
     let signer = get_signer(&datadir);
 
@@ -287,4 +302,45 @@ pub async fn init_l2(
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
     Ok(())
+}
+
+pub fn get_l1_fee_config(sequencer_opts: &SequencerOptions) -> Option<L1FeeConfig> {
+    if sequencer_opts.based {
+        // If based is enabled, skip L1 fee configuration
+        return None;
+    }
+
+    sequencer_opts
+        .block_producer_opts
+        .l1_fee_vault_address
+        .map(|addr| L1FeeConfig {
+            l1_fee_vault: addr,
+            l1_fee_per_blob_gas: 0, // This is set by the L1 watcher
+        })
+}
+
+pub async fn get_operator_fee_config(
+    sequencer_opts: &SequencerOptions,
+) -> eyre::Result<Option<OperatorFeeConfig>> {
+    if sequencer_opts.based {
+        // If based is enabled, skip operator fee configuration
+        return Ok(None);
+    }
+
+    let fee = sequencer_opts.block_producer_opts.operator_fee_per_gas;
+
+    let address = sequencer_opts
+        .block_producer_opts
+        .operator_fee_vault_address;
+
+    let operator_fee_config =
+        if let (Some(operator_fee_vault), Some(operator_fee_per_gas)) = (address, fee) {
+            Some(OperatorFeeConfig {
+                operator_fee_vault,
+                operator_fee_per_gas,
+            })
+        } else {
+            None
+        };
+    Ok(operator_fee_config)
 }

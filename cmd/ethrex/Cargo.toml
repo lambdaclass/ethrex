@@ -127,26 +127,6 @@ l2 = [
 l2-sql = ["ethrex-storage-rollup/sql"]
 gpu = ["ethrex-prover/gpu"]
 
-[dev-dependencies]
-criterion = { version = "0.5.1", features = [
-  "html_reports",
-  "async_futures",
-  "async_tokio",
-] }
-secp256k1.workspace = true
-tempfile.workspace = true
-ethrex-l2-rpc.workspace = true
-
-[[bench]]
-path = "./bench/import_blocks_benchmark.rs"
-name = "import_blocks_benchmark"
-harness = false
-
-[[bench]]
-path = "./bench/build_block_benchmark.rs"
-name = "build_block_benchmark"
-harness = false
-
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
 ethrex-sdk = { workspace = true, optional = true }
