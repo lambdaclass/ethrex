@@ -91,7 +91,8 @@ impl RocksDBPreRead {
                 let mut prefixes = HashSet::new();
                 let addr = hash_address(&update.address);
                 let addr_nib = Nibbles::from_bytes(&addr);
-                let size_heuristic = if update.added_storage.len() > PREFETCH_DEPTH_BIG_COUNT {
+                // heuristic for trie depth
+                let prefetch_depth = if update.added_storage.len() > PREFETCH_DEPTH_BIG_COUNT {
                     PREFETCH_DEPTH_STORAGE_BIG
                 } else {
                     PREFETCH_DEPTH_STORAGE
@@ -103,7 +104,7 @@ impl RocksDBPreRead {
                         &mut prefixes,
                         key_nib,
                         Some(addr_nib.clone()),
-                        size_heuristic,
+                        prefetch_depth,
                     );
                 }
                 insert_prefixes(&mut prefixes, addr_nib, None, PREFETCH_DEPTH_ACCOUNT);
@@ -136,8 +137,8 @@ impl RocksDBPreRead {
         let cache: HashMap<_, _> = results
             .into_par_iter()
             .map(|(key, value)| {
-                if let Some(value) = tlc_lock.get(state_root, &key) {
-                    (key, value)
+                if let Some(tlc_value) = tlc_lock.get(state_root, &key) {
+                    (key, tlc_value)
                 } else {
                     (key, value)
                 }
