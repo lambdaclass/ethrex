@@ -20,7 +20,6 @@ use rocksdb::{
 };
 use std::{
     collections::HashSet,
-    mem::take,
     path::Path,
     sync::{
         Arc, Mutex,
@@ -756,7 +755,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_updates(&self, mut update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
@@ -801,10 +800,11 @@ impl StoreEngine for Store {
             let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatch::default();
 
-            let (account_updates, storage_updates) = (
-                take(&mut update_batch.account_updates),
-                take(&mut update_batch.storage_updates),
-            );
+            let UpdateBatch {
+                account_updates,
+                storage_updates,
+                ..
+            } = update_batch;
 
             // Capacity one ensures sender just notifies and goes on
             let (notify_tx, notify_rx) = sync_channel(1);
