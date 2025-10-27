@@ -37,7 +37,9 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xff,
 ]);
 
+// lockFee(address payer, uint256 amount) public onlyFeeCollector
 const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
+// payFee(address receiver, uint256 amount) public onlyFeeCollector
 const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
 
 pub struct L2Hook {
@@ -89,6 +91,9 @@ impl Hook for L2Hook {
     }
 }
 
+/// Finalizes the execution of a non-privileged L2 transaction.
+/// This will be execute the standard checks and requirements as the one defined in the specs or add standard L2 configs applied to general txs.
+/// We can set to pay the fees with an ERC20 token instead of ETH.
 fn finalize_non_privileged_execution(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
@@ -186,6 +191,9 @@ fn validate_sufficient_max_fee_per_gas_l2(
     Ok(())
 }
 
+/// Pays the coinbase the priority fee per gas for the gas used.
+/// If an operator fee config is provided, the priority fee is reduced by the operator fee per gas.
+/// If use_fee_token is true, the fee is paid using the fee token contract.
 fn pay_coinbase_l2(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
@@ -212,6 +220,8 @@ fn pay_coinbase_l2(
     Ok(())
 }
 
+/// Computes the priority fee per gas to be paid to the coinbase.
+/// If an operator fee config is provided, the priority fee is reduced by the operator fee per gas.
 fn compute_priority_fee_per_gas(
     vm: &VM<'_>,
     operator_fee_config: &Option<OperatorFeeConfig>,
@@ -231,15 +241,9 @@ fn compute_priority_fee_per_gas(
     }
 }
 
-fn compute_operator_fee_amount(
-    gas_to_pay: u64,
-    fee_config: &OperatorFeeConfig,
-) -> Result<U256, InternalError> {
-    U256::from(gas_to_pay)
-        .checked_mul(U256::from(fee_config.operator_fee_per_gas))
-        .ok_or(InternalError::Overflow)
-}
-
+/// Pays the base fee to the base fee vault for the gas used.
+/// This is calculated as gas_used * base_fee_per_gas.
+/// If use_fee_token is true, the fee is paid using the fee token contract.
 fn pay_base_fee_vault(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
@@ -258,13 +262,18 @@ fn pay_base_fee_vault(
     Ok(())
 }
 
+/// Pays the operator fee to the operator fee vault for the gas used.
+/// This is calculated as gas_used * operator_fee_per_gas.
+/// If use_fee_token is true, the fee is paid using the fee token contract.
 fn pay_operator_fee(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
     operator_fee_config: OperatorFeeConfig,
     use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
-    let operator_fee = compute_operator_fee_amount(gas_to_pay, &operator_fee_config)?;
+    let operator_fee = U256::from(gas_to_pay)
+        .checked_mul(U256::from(operator_fee_config.operator_fee_per_gas))
+        .ok_or(InternalError::Overflow)?;
 
     if use_fee_token {
         pay_fee_token(vm, operator_fee_config.operator_fee_vault, operator_fee)?;
@@ -274,6 +283,9 @@ fn pay_operator_fee(
     Ok(())
 }
 
+/// Prepares the execution of a privileged transaction.
+/// This includes skipping certain checks and validations that are not applicable to privileged transactions.
+/// See the comments for details.
 fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
     let sender_address = vm.env.origin;
     let sender_balance = vm.db.get_account(sender_address)?.info.balance;
@@ -360,6 +372,9 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     default_hook::set_bytecode_and_code_address(vm)
 }
 
+/// Prepares the execution of a fee token transaction.
+/// Similar to default_hook preparation but allows paying fees with ERC20 tokens.
+/// Maintains separation between L1 and L2 functionality.
 fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
@@ -445,6 +460,9 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     Ok(())
 }
 
+/// Deducts the caller's balance in the fee token for the upfront gas cost.
+/// This is calculated as gas_limit * gas_price.
+/// This is done through a call to the fee token contract's lockFee function.
 pub fn deduct_caller_fee_token(
     vm: &mut VM<'_>,
     gas_limit_price_product: U256,
@@ -463,6 +481,8 @@ pub fn deduct_caller_fee_token(
     Ok(())
 }
 
+/// Helper function to encode the calldata for the fee token contract calls.
+/// <function>(address,uint256)
 fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> Bytes {
     let mut data = Vec::with_capacity(4 + 32 + 32);
     data.extend_from_slice(&selector);
@@ -472,23 +492,17 @@ fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> B
     data.into()
 }
 
-fn call_fee_token_contract(
-    vm: &mut VM<'_>,
-    selector: [u8; 4],
-    address: Address,
-    amount: U256,
-) -> Result<(), VMError> {
-    transfer_fee_token(vm, encode_fee_token_call(selector, address, amount))
-}
-
+/// Locks the fee token amount from the payer's balance.
 fn lock_fee_token(vm: &mut VM<'_>, payer: Address, amount: U256) -> Result<(), VMError> {
-    // lockFee(address payer, uint256 amount) internal onlyFeeCollector
-    call_fee_token_contract(vm, LOCK_FEE_SELECTOR, payer, amount)
+    transfer_fee_token(vm, encode_fee_token_call(LOCK_FEE_SELECTOR, payer, amount))
 }
 
+/// Pays the fee token amount to the receiver's balance.
 fn pay_fee_token(vm: &mut VM<'_>, receiver: Address, amount: U256) -> Result<(), VMError> {
-    // payFee(address receiver, uint256 amount) internal onlyFeeCollector
-    call_fee_token_contract(vm, PAY_FEE_SELECTOR, receiver, amount)
+    transfer_fee_token(
+        vm,
+        encode_fee_token_call(PAY_FEE_SELECTOR, receiver, amount),
+    )
 }
 
 /// Executes a call to the fee token contract for fee-related operations.
@@ -496,8 +510,8 @@ fn pay_fee_token(vm: &mut VM<'_>, receiver: Address, amount: U256) -> Result<(),
 /// - This function is only called when locking the fees, refunding unspent gas, and paying the fees to the vaults.
 /// - Disable checks as we want to simulate the transaction and get only the updates of the contract storage slots.
 /// - This simulation makes a transaction with the calldata provided in `data`, this will be used to call the `payFee` and `lockFee` functions.
-///     `lockFee(payer, max_gas_cost)` - locks upfront gas cost from sender
-///     `payFee(receiver, amount)` - pays coinbase, vaults, or refunds sender
+///   `lockFee(payer, max_gas_cost)` - locks upfront gas cost from sender
+///   `payFee(receiver, amount)` - pays coinbase, vaults, or refunds sender
 /// - Uses `COMMON_BRIDGE_L2_ADDRESS` as origin to restrict access. No user can change this address.
 /// - Creates a new VM with cloned database; only fee token storage is synced back.
 /// - Uses the same contract address as the one set in the transaction.
@@ -568,6 +582,9 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     Ok(())
 }
 
+/// Refunds the sender the unspent gas in fee tokens.
+/// Works similarly to refund_sender but uses the fee token contract
+/// But we don't want to be mixing L2 logic inside the default hook.
 fn refund_sender_fee_token(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
@@ -597,6 +614,9 @@ fn refund_sender_fee_token(
     Ok(())
 }
 
+/// Calculates the L1 fee based on the account diffs size and the L1 fee config.
+/// This is done according to the formula:
+/// L1 Fee = (L1 Fee per Blob Gas * GAS_PER_BLOB / SAFE_BYTES_PER_BLOB) * account_diffs_size
 fn calculate_l1_fee(
     fee_config: &L1FeeConfig,
     account_diffs_size: u64,
@@ -618,6 +638,8 @@ fn calculate_l1_fee(
     Ok(l1_fee)
 }
 
+/// Calculates the L1 fee gas based on the account diffs size and the L1 fee config.
+/// Returns 0 if no L1 fee config is provided.
 fn calculate_l1_fee_gas(
     vm: &mut VM<'_>,
     pre_execution_backup: CallFrameBackup,
@@ -647,6 +669,8 @@ fn calculate_l1_fee_gas(
     Ok(l1_fee_gas.try_into().map_err(|_| InternalError::Overflow)?)
 }
 
+/// Pays the L1 fee to the L1 fee vault for the gas used.
+/// This is calculated as gas_to_pay * gas_price.
 fn pay_to_l1_fee_vault(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
