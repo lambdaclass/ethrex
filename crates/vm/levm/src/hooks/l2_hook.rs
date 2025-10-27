@@ -79,79 +79,92 @@ impl Hook for L2Hook {
             // They can call contracts that use CREATE/CREATE2
             default_hook::delete_self_destruct_accounts(vm)?;
         } else if vm.env.custom_fee_token.is_some() {
-            finalize_execution_custom_fee(
+            finalize_non_privileged_execution(
                 vm,
                 ctx_result,
                 &self.fee_config,
                 &mut self.pre_execution_backup,
+                true,
             )?;
         } else {
-            if !ctx_result.is_success() {
-                undo_value_transfer(vm)?;
-            }
-
-            let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
-            let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
-
-            // Different from L1:
-
-            let mut l1_gas = calculate_l1_fee_gas(
+            finalize_non_privileged_execution(
                 vm,
-                std::mem::take(&mut self.pre_execution_backup),
-                &self.fee_config.l1_fee_config,
+                ctx_result,
+                &self.fee_config,
+                &mut self.pre_execution_backup,
+                false,
             )?;
-
-            let mut total_gas = actual_gas_used
-                .checked_add(l1_gas)
-                .ok_or(InternalError::Overflow)?;
-
-            // Check that sender has enough gas to pay the l1 fee
-            if total_gas > vm.current_call_frame.gas_limit {
-                // Not enough gas to pay l1 fee, force revert
-
-                // Restore VM state to before execution
-                vm.substate.revert_backup();
-                vm.restore_cache_state()?;
-
-                undo_value_transfer(vm)?;
-
-                ctx_result.result = crate::errors::TxResult::Revert(
-                    TxValidationError::InsufficientMaxFeePerGas.into(),
-                );
-                ctx_result.gas_used = vm.current_call_frame.gas_limit;
-                ctx_result.output = Bytes::new();
-                // Set l1_gas to use all remaining gas
-                l1_gas = vm
-                    .current_call_frame
-                    .gas_limit
-                    .saturating_sub(actual_gas_used);
-
-                total_gas = vm.current_call_frame.gas_limit
-            }
-
-            delete_self_destruct_accounts(vm)?;
-
-            // L1 fee is paid to the L1 fee vault
-            pay_to_l1_fee_vault(vm, l1_gas, self.fee_config.l1_fee_config)?;
-
-            refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
-
-            // We pay to coinbase after the l1_fee to avoid charging the diff to every transaction
-            pay_coinbase_l2(vm, actual_gas_used, &self.fee_config.operator_fee_config)?;
-
-            // Base fee is not burned
-            pay_base_fee_vault(vm, actual_gas_used, self.fee_config.base_fee_vault)?;
-
-            // Operator fee is paid to the chain operator
-            pay_operator_fee(vm, actual_gas_used, &self.fee_config.operator_fee_config)?;
-
-            ctx_result.gas_used = total_gas;
-
-            return Ok(());
         }
 
         Ok(())
     }
+}
+
+fn finalize_non_privileged_execution(
+    vm: &mut VM<'_>,
+    ctx_result: &mut ContextResult,
+    fee_config: &FeeConfig,
+    pre_execution_backup: &mut CallFrameBackup,
+    use_custom_fee_token: bool,
+) -> Result<(), crate::errors::VMError> {
+    if !ctx_result.is_success() {
+        undo_value_transfer(vm)?;
+    }
+
+    let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
+    let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+
+    let mut l1_gas = calculate_l1_fee_gas(
+        vm,
+        std::mem::take(pre_execution_backup),
+        &fee_config.l1_fee_config,
+    )?;
+
+    let mut total_gas = actual_gas_used
+        .checked_add(l1_gas)
+        .ok_or(InternalError::Overflow)?;
+
+    if total_gas > vm.current_call_frame.gas_limit {
+        vm.substate.revert_backup();
+        vm.restore_cache_state()?;
+
+        undo_value_transfer(vm)?;
+
+        ctx_result.result =
+            crate::errors::TxResult::Revert(TxValidationError::InsufficientMaxFeePerGas.into());
+        ctx_result.gas_used = vm.current_call_frame.gas_limit;
+        ctx_result.output = Bytes::new();
+
+        l1_gas = vm
+            .current_call_frame
+            .gas_limit
+            .saturating_sub(actual_gas_used);
+        total_gas = vm.current_call_frame.gas_limit;
+    }
+
+    delete_self_destruct_accounts(vm)?;
+
+    if use_custom_fee_token {
+        pay_to_l1_fee_vault_custom_fee(vm, l1_gas, fee_config.l1_fee_config)?;
+    } else {
+        pay_to_l1_fee_vault(vm, l1_gas, fee_config.l1_fee_config)?;
+    }
+
+    if use_custom_fee_token {
+        refund_sender_custom_fee(vm, ctx_result, gas_refunded, total_gas)?;
+        pay_coinbase_custom_fee(vm, actual_gas_used, &fee_config.operator_fee_config)?;
+        pay_to_fee_vault_custom_fee(vm, actual_gas_used, fee_config.base_fee_vault)?;
+        pay_operator_fee_custom_fee(vm, actual_gas_used, &fee_config.operator_fee_config)?;
+    } else {
+        refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
+        pay_coinbase_l2(vm, actual_gas_used, &fee_config.operator_fee_config)?;
+        pay_base_fee_vault(vm, actual_gas_used, fee_config.base_fee_vault)?;
+        pay_operator_fee(vm, actual_gas_used, &fee_config.operator_fee_config)?;
+    }
+
+    ctx_result.gas_used = total_gas;
+
+    Ok(())
 }
 
 fn validate_sufficient_max_fee_per_gas_l2(
@@ -542,65 +555,6 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         .insert(fee_token, initial_state_fee_token);
 
     Ok(())
-}
-
-fn finalize_execution_custom_fee(
-    vm: &mut VM<'_>,
-    ctx_result: &mut ContextResult,
-    fee_vault: &FeeConfig,
-    pre_execution_backup: &mut CallFrameBackup,
-) -> Result<(), crate::errors::VMError> {
-    if !ctx_result.is_success() {
-        undo_value_transfer(vm)?;
-    }
-
-    let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
-    let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
-
-    let mut l1_gas = calculate_l1_fee_gas(
-        vm,
-        std::mem::take(pre_execution_backup),
-        &fee_vault.l1_fee_config,
-    )?;
-
-    let mut total_gas = actual_gas_used
-        .checked_add(l1_gas)
-        .ok_or(InternalError::Overflow)?;
-
-    // Check that sender has enough gas to pay the l1 fee
-    if total_gas > vm.current_call_frame.gas_limit {
-        // Not enough gas to pay l1 fee, force revert
-
-        // Restore VM state to before execution
-        vm.substate.revert_backup();
-        vm.restore_cache_state()?;
-
-        undo_value_transfer(vm)?;
-
-        ctx_result.result =
-            crate::errors::TxResult::Revert(TxValidationError::InsufficientMaxFeePerGas.into());
-        ctx_result.gas_used = vm.current_call_frame.gas_limit;
-        ctx_result.output = Bytes::new();
-        // Set l1_gas to use all remaining gas
-        l1_gas = vm
-            .current_call_frame
-            .gas_limit
-            .saturating_sub(actual_gas_used);
-
-        total_gas = vm.current_call_frame.gas_limit
-    }
-
-    delete_self_destruct_accounts(vm)?;
-
-    pay_to_l1_fee_vault_custom_fee(vm, l1_gas, fee_vault.l1_fee_config)?;
-
-    refund_sender_custom_fee(vm, ctx_result, gas_refunded, total_gas)?;
-
-    pay_coinbase_custom_fee(vm, actual_gas_used, &fee_vault.operator_fee_config)?;
-
-    pay_to_fee_vault_custom_fee(vm, actual_gas_used, fee_vault.base_fee_vault)?;
-
-    pay_operator_fee_custom_fee(vm, actual_gas_used, &fee_vault.operator_fee_config)
 }
 
 fn refund_sender_custom_fee(
