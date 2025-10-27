@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use ethereum_types::Address;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -33,4 +34,90 @@ pub struct L1FeeConfig {
     #[rkyv(with=H160Wrapper)]
     pub l1_fee_vault: Address,
     pub l1_fee_per_blob_gas: u64,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FeeConfigError {
+    #[error("Encoding error: {0}")]
+    EncodingError(String),
+    #[error("Unsupported version: {0}")]
+    UnsupportedVersion(u8),
+    #[error("Invalid fee config type: {0}")]
+    InvalidFeeConfigType(u8),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FeeConfigType {
+    BaseFeeVault = 1,
+    OperatorFee = 2,
+    L1Fee = 4,
+}
+
+impl TryFrom<u8> for FeeConfigType {
+    type Error = FeeConfigError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(FeeConfigType::BaseFeeVault),
+            2 => Ok(FeeConfigType::OperatorFee),
+            4 => Ok(FeeConfigType::L1Fee),
+            _ => Err(FeeConfigError::InvalidFeeConfigType(value)),
+        }
+    }
+}
+
+impl From<FeeConfigType> for u8 {
+    fn from(value: FeeConfigType) -> Self {
+        match value {
+            FeeConfigType::BaseFeeVault => 1,
+            FeeConfigType::OperatorFee => 2,
+            FeeConfigType::L1Fee => 4,
+        }
+    }
+}
+
+impl FeeConfigType {
+    // Checks if the type is present in the given value
+    pub fn is_in(&self, value: u8) -> bool {
+        value & u8::from(*self) == u8::from(*self)
+    }
+}
+
+impl FeeConfig {
+    pub fn encode(&self) -> Result<Bytes, FeeConfigError> {
+        let version = 0u8;
+        let mut encoded: Vec<u8> = Vec::new();
+        encoded.push(version);
+
+        let mut fee_config_type = 0;
+
+        if let Some(base_fee_vault) = self.base_fee_vault {
+            // base fee vault is set
+            let base_fee_vault_type: u8 = FeeConfigType::BaseFeeVault.into();
+            fee_config_type += base_fee_vault_type;
+            encoded.extend_from_slice(&base_fee_vault.0);
+        }
+
+        if let Some(operator_fee_config) = self.operator_fee_config {
+            // base fee vault is set
+            let base_fee_vault_type: u8 = FeeConfigType::OperatorFee.into();
+            fee_config_type += base_fee_vault_type;
+            encoded.extend_from_slice(&operator_fee_config.operator_fee_vault.0);
+            encoded.extend(operator_fee_config.operator_fee_per_gas.to_be_bytes());
+        }
+
+        if let Some(l1_fee_config) = self.l1_fee_config {
+            // base fee vault is set
+            let l1_fee_type: u8 = FeeConfigType::L1Fee.into();
+            fee_config_type += l1_fee_type;
+            encoded.extend_from_slice(&l1_fee_config.l1_fee_vault.0);
+            encoded.extend(l1_fee_config.l1_fee_per_blob_gas.to_be_bytes());
+        }
+
+        let mut result = Vec::with_capacity(1 + encoded.len());
+        result.extend(fee_config_type.to_be_bytes());
+        result.extend(encoded);
+
+        Ok(Bytes::from(result))
+    }
 }
