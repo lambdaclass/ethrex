@@ -2,12 +2,11 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, Block, BlockHeader, ChainConfig, TxKind},
+    types::{AccountState, BlockHeader, ChainConfig},
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::{Nibbles, TrieError};
 use ethrex_vm::{EvmError, VmDatabase};
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::HashMap, sync::OnceLock};
 use tracing::instrument;
 
@@ -16,7 +15,7 @@ use crate::{
     apply_prefix,
     error::StoreError,
     hash_address, hash_key,
-    store_db::rocksdb::{CF_CHAIN_DATA, CF_FLATKEYVALUE, CF_TRIE_NODES, Store},
+    store_db::rocksdb::{CF_CHAIN_DATA, CF_FLATKEYVALUE, CF_MISC_VALUES, Store},
     utils::ChainDataIndex,
 };
 
@@ -26,87 +25,30 @@ pub struct RocksDBVM {
     header: BlockHeader,
     chain_config_cache: OnceLock<ChainConfig>,
     cache: HashMap<Address, Option<AccountState>>,
+    last_computed_flatkeyvalue: Nibbles,
 }
 
 impl RocksDBVM {
-    pub fn new(store: Store, header: BlockHeader, block: &Block) -> Result<Self, StoreError> {
-        let mut vm = Self {
+    pub fn new(store: Store, header: BlockHeader) -> Result<Self, StoreError> {
+        let cf_misc = store
+            .db
+            .cf_handle(CF_MISC_VALUES)
+            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
+        let last_computed_flatkeyvalue = store
+            .db
+            .get_cf(&cf_misc, "last_written")
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Error reading last_written: {e}")))?
+            .map(|v| Nibbles::from_hex(v.to_vec()))
+            .unwrap_or_default();
+        drop(cf_misc);
+
+        Ok(Self {
             store,
             header,
             chain_config_cache: OnceLock::new(),
             cache: HashMap::new(),
-        };
-        vm.warm(block)?;
-        Ok(vm)
-    }
-    #[instrument(level = "trace", name = "Account prefetch", skip_all)]
-    fn warm(&mut self, block: &Block) -> Result<(), StoreError> {
-        let tlc_lock = self
-            .store
-            .trie_cache
-            .write()
-            .map_err(|_| StoreError::LockError)?;
-        let accounts: Vec<_> = block
-            .body
-            .transactions
-            .par_iter()
-            .flat_map(|tx| {
-                let mut addresses: Vec<_> = tx
-                    .access_list()
-                    .into_iter()
-                    .map(|(k, _)| k.clone())
-                    .collect();
-                if let TxKind::Call(to) = tx.to() {
-                    addresses.push(to);
-                }
-                if let Ok(sender) = tx.sender() {
-                    addresses.push(sender);
-                }
-                addresses
-            })
-            .map(|address| {
-                let key = nibbles_for_account(address);
-                (address, tlc_lock.get(self.header.state_root, key))
-            })
-            .collect();
-        drop(tlc_lock);
-        let mut fkv_reads = Vec::with_capacity(accounts.len());
-        for (account, value) in accounts {
-            match value {
-                Some(value) => {
-                    let decoded = if value.is_empty() {
-                        None
-                    } else {
-                        Some(AccountState::decode(&value)?)
-                    };
-                    self.cache.insert(account, decoded);
-                }
-                None => fkv_reads.push(account),
-            }
-        }
-        fkv_reads.sort();
-        let fkv_reads_nibs: Vec<_> = fkv_reads
-            .iter()
-            .map(|address| nibbles_for_account(*address))
-            .collect();
-        let cf: std::sync::Arc<rocksdb::BoundColumnFamily<'_>> = self
-            .store
-            .db
-            .cf_handle(CF_FLATKEYVALUE)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
-        let fkv_results = self
-            .store
-            .db
-            .batched_multi_get_cf(&cf, &fkv_reads_nibs, true);
-        for (result, account) in fkv_results.into_iter().zip(fkv_reads) {
-            if let Some(value) = result? {
-                let decoded = AccountState::decode(&value)?;
-                self.cache.insert(account, Some(decoded));
-            } else {
-                self.cache.insert(account, None);
-            }
-        }
-        Ok(())
+            last_computed_flatkeyvalue,
+        })
     }
     fn get_fkv<T: RLPDecode>(&self, key: Nibbles) -> Result<Option<T>, TrieError> {
         let tlc = self
@@ -158,13 +100,54 @@ impl VmDatabase for RocksDBVM {
         if let Some(value) = self.cache.get(&address) {
             return Ok(value.clone());
         }
-        self.get_fkv(nibbles_for_account(address))
+        let hashed_account = nibbles_for_account(address);
+        // deoptimized path
+        if hashed_account > self.last_computed_flatkeyvalue {
+            let trie = self
+                .store
+                .open_state_trie(self.header.state_root)
+                .map_err(|e| EvmError::DB(e.to_string()))?;
+            let Some(accountrlp) = trie
+                .get(&hashed_account.to_bytes())
+                .map_err(|e| EvmError::DB(e.to_string()))?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(
+                AccountState::decode(&accountrlp).map_err(|e| EvmError::DB(e.to_string()))?,
+            ));
+        }
+        self.get_fkv(hashed_account)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        self.get_fkv(nibbles_for_slot(address, key))
+        let hashed_storage = nibbles_for_slot(address, key);
+        // deoptimized path
+        if hashed_storage > self.last_computed_flatkeyvalue {
+            let Some(account) = self.get_account_state(address)? else {
+                return Ok(None);
+            };
+            let trie = self
+                .store
+                .open_storage_trie(
+                    H256::from_slice(&hash_address(&address)),
+                    account.storage_root,
+                    self.header.state_root,
+                )
+                .map_err(|e| EvmError::DB(e.to_string()))?;
+            let Some(storagerlp) = trie
+                .get(&hash_key(&key))
+                .map_err(|e| EvmError::DB(e.to_string()))?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(
+                U256::decode(&storagerlp).map_err(|e| EvmError::DB(e.to_string()))?,
+            ));
+        }
+        self.get_fkv(hashed_storage)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
@@ -187,7 +170,7 @@ impl VmDatabase for RocksDBVM {
                 break;
             };
             if block_number > header.number {
-                return Err(EvmError::DB(format!("Block hash in the future")));
+                return Err(EvmError::DB("Block hash in the future".to_string()));
             }
             if header.number == block_number {
                 return Ok(current);
@@ -218,7 +201,7 @@ impl VmDatabase for RocksDBVM {
         {
             let chain_config: ChainConfig = serde_json::from_slice(&value)
                 .map_err(|e| EvmError::DB(format!("chain data invalid: {e}")))?;
-            let _ = self.chain_config_cache.set(chain_config.clone());
+            let _ = self.chain_config_cache.set(chain_config);
             return Ok(chain_config);
         }
         Err(EvmError::DB("missing chain config".to_string()))

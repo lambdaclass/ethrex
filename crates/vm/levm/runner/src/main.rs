@@ -1,7 +1,6 @@
 use bytes::Bytes;
 use clap::Parser;
 use env_logger::Env;
-use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{Account, LegacyTransaction, Transaction},
@@ -14,7 +13,7 @@ use ethrex_levm::{
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{Store, trie_db::generic_vm::StoreVmDatabase};
 use ethrex_vm::DynVmDatabase;
 use log::{debug, error, info};
 use num_bigint::BigUint;

@@ -3,7 +3,7 @@ use ethereum_types::H256;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
-use ethrex_vm::{DynVmDatabase, VmDatabase};
+use ethrex_vm::DynVmDatabase;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
@@ -379,8 +379,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 
-    fn vm_db(&self, parent_header: BlockHeader, block: &Block) -> Result<DynVmDatabase, StoreError> {
-        todo!()
+    fn vm_db(&self, _parent_header: BlockHeader) -> Option<Result<DynVmDatabase, StoreError>> {
+        None
     }
-
 }

@@ -8,7 +8,7 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -39,7 +39,7 @@ use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{Store, trie_db::generic_vm::StoreVmDatabase};
 use ethrex_storage_rollup::StoreRollup;
 use serde::Serialize;
 use std::{

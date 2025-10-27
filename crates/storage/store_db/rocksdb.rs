@@ -1729,16 +1729,11 @@ impl StoreEngine for Store {
             .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
     }
 
-    fn vm_db(
-        &self,
-        parent_header: BlockHeader,
-        block: &Block,
-    ) -> Result<DynVmDatabase, StoreError> {
-        Ok(Box::new(RocksDBVM::new(
-            self.clone(),
-            parent_header,
-            block,
-        )?))
+    fn vm_db(&self, parent_header: BlockHeader) -> Option<Result<DynVmDatabase, StoreError>> {
+        match RocksDBVM::new(self.clone(), parent_header) {
+            Ok(vm_db) => Some(Ok(Box::new(vm_db))),
+            Err(err) => Some(Err(err)),
+        }
     }
 }
 

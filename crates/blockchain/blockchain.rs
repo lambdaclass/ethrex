@@ -5,7 +5,6 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 pub mod tracing;
-pub mod vm;
 
 use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
@@ -26,6 +25,7 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::trie_db::generic_vm::StoreVmDatabase;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
@@ -39,8 +39,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
-
-use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
@@ -149,10 +147,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let mut vm = self.new_evm_from_db(self.storage.vm_db(parent_header, &block)?)?;
-
-        //let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        //let mut vm = self.new_evm(vm_db)?;
+        let mut vm = self.new_evm_from_db(self.storage.vm_db(parent_header)?)?;
 
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
