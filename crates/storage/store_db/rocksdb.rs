@@ -701,7 +701,7 @@ impl Store {
         let mut trie_mut = (*trie).clone();
         trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
-        // Update finished, signal block production.
+        // Update finished, signal block processing.
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
         // Phase 2: update disk layer.
