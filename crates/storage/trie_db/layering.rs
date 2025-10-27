@@ -1,11 +1,12 @@
 use ethrex_common::H256;
-use std::{collections::HashMap, sync::Arc};
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: Arc<HashMap<Vec<u8>, Vec<u8>>>,
+    nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
 }
@@ -15,7 +16,7 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: HashMap<H256, Arc<TrieLayer>>,
+    layers: FxHashMap<H256, Arc<TrieLayer>>,
 }
 
 impl TrieLayerCache {
@@ -69,7 +70,7 @@ impl TrieLayerCache {
             return;
         }
 
-        let nodes: HashMap<Vec<u8>, Vec<u8>> = key_values
+        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, node)| (path.into_vec(), node))
             .collect();
