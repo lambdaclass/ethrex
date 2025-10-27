@@ -87,11 +87,8 @@ jobs:
           echo "Invalid job_type input: ${{ inputs.job_type }}. Allowed values are 'trigger' or 'daily'."
           exit 1
 
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Checkout sources
         uses: actions/checkout@v4

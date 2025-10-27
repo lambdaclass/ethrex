@@ -22,11 +22,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -53,11 +50,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -77,11 +71,8 @@ jobs:
     name: Build Docker
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - uses: actions/checkout@v4
       - id: docker
@@ -269,11 +260,8 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'merge_group' }}
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Checkout sources
         uses: actions/checkout@v4
