@@ -216,8 +216,18 @@ impl DiscoveryServer {
     }
 
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
+        // Sending the same FindNode message to all contacts to optimize message creation and encoding
+        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+        let random_priv_key = SecretKey::new(&mut OsRng);
+        let random_pub_key = public_key_from_signing_key(&random_priv_key);
+        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
+        let mut buf = BytesMut::new();
+        msg.encode_with_header(&mut buf, &self.signer);
+
         for contact in self.peer_table.get_contacts_for_lookup().await? {
-            if self.send_find_node(&contact.node).await.is_err() {
+            if self.udp_socket.send_to(&buf, &contact.node.udp_addr()).await.inspect_err(
+                |e| error!(sending = ?msg, addr = ?&contact.node.udp_addr(), err=?e, "Error sending message"),
+            ).is_err() {
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
                     .await?;
@@ -305,20 +315,6 @@ impl DiscoveryServer {
         self.send(pong, node.udp_addr()).await?;
 
         debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
-
-        Ok(())
-    }
-
-    async fn send_find_node(&self, node: &Node) -> Result<(), DiscoveryServerError> {
-        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
-
-        let random_priv_key = SecretKey::new(&mut OsRng);
-        let random_pub_key = public_key_from_signing_key(&random_priv_key);
-
-        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
-        self.send(msg, node.udp_addr()).await?;
-
-        debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
