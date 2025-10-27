@@ -178,7 +178,7 @@ impl L1ProofVerifier {
                 }
 
                 let verification_data = self.verification_data(prover_type, public_inputs)?;
-
+                let commitment = H256(verification_data.commitment());
                 if let Some((merkle_root, merkle_path)) =
                     self.check_proof_aggregation(verification_data).await?
                 {
@@ -186,6 +186,7 @@ impl L1ProofVerifier {
                         ?batch_number,
                         ?prover_type,
                         merkle_root = %format_args!("{merkle_root:#x}"),
+                        commitment = %format_args!("{commitment:#x}"),
                         "Proof aggregated by Aligned"
                     );
                     aggregated_proofs_for_batch.insert(prover_type, merkle_path);
