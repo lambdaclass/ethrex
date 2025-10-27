@@ -45,7 +45,7 @@ use ethrex_rpc::{
 use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::BlockExecutionResult;
+use ethrex_vm::{BlockExecutionResult, Evm};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -495,12 +495,15 @@ impl L1Committer {
                     potential_batch_block.header.parent_hash,
                 );
 
-                // There's no specific reason to prefer a blockchain instance
-                // here, we just need one to create the EVM. We just use the
-                // current checkpoint blockchain just in case.
-                // The important thing here is to use the correct vm_db, which
-                // must be created from the checkpoint store.
-                let mut vm = one_time_checkpoint_blockchain.new_evm(vm_db).await?;
+                let fee_config = self
+                    .rollup_store
+                    .get_fee_config_by_block(block_to_commit_number)
+                    .await?
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "Failed to get fee config for re-execution".to_owned(),
+                    ))?;
+
+                let mut vm = Evm::new_for_l2(vm_db, fee_config)?;
 
                 vm.execute_block(&potential_batch_block)?;
 
