@@ -2055,7 +2055,7 @@ async fn test_fee_token(
 
     assert_eq!(
         sender_balance_after_transfer,
-        sender_balance_before_transfer - 100_000,
+        sender_balance_before_transfer - value_to_transfer,
         "Sender balance did not decrease"
     );
 
@@ -2063,7 +2063,7 @@ async fn test_fee_token(
 
     assert_eq!(
         recipient_balance_after_transfer,
-        recipient_balance_before_transfer + 100_000,
+        recipient_balance_before_transfer + value_to_transfer,
         "Recipient balance did not increase"
     );
     println!("{test}: Recipient balance increased correctly");
