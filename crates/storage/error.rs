@@ -5,6 +5,10 @@ use thiserror::Error;
 // TODO improve errors
 #[derive(Debug, Error)]
 pub enum StoreError {
+    #[error("Unsupported DB version: found {found}, expected {expected}")]
+    UnsupportedDbVersion { found: u64, expected: u64 },
+    #[error("Failed to open file at path: {0}")]
+    OpenFileError(#[from] std::io::Error),
     #[error("DecodeError")]
     DecodeError,
     #[cfg(feature = "rocksdb")]

@@ -42,6 +42,8 @@ use std::fmt::Debug;
 // TODO: use finalized hash to determine when to commit
 const COMMIT_THRESHOLD: usize = 128;
 
+const CURRENT_DB_VERSION: u64 = 1;
+
 /// Canonical block hashes column family: [`u8;_`] => [`Vec<u8>`]
 /// - [`u8;_`] = `block_number.to_le_bytes()`
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
@@ -132,6 +134,8 @@ pub struct Store {
 
 impl Store {
     pub fn new(path: &Path) -> Result<Self, StoreError> {
+        ensure_correct_db_version(path)?;
+
         let mut db_options = Options::default();
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
@@ -1782,4 +1786,23 @@ fn open_cfs<'a, const N: usize>(
     handles
         .try_into()
         .map_err(|_| StoreError::Custom("Unexpected number of column families".to_string()))
+}
+
+/// Check the current DB version against the expected version
+fn ensure_correct_db_version(path: &Path) -> Result<(), StoreError> {
+    let version_file_path = path.join("db.version");
+    if !version_file_path.exists() {
+        std::fs::write(version_file_path, CURRENT_DB_VERSION.to_string())?;
+        return Ok(());
+    }
+    let contents = std::fs::read_to_string(version_file_path)?;
+    let found: u64 = contents
+        .parse()
+        .map_err(|_| StoreError::Custom("Invalid DB version format".to_string()))?;
+
+    if found != CURRENT_DB_VERSION {
+        let expected = CURRENT_DB_VERSION;
+        return Err(StoreError::UnsupportedDbVersion { found, expected });
+    }
+    Ok(())
 }
