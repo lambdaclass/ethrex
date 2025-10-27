@@ -1,4 +1,5 @@
 use crate::l2::batch::{BatchNumberRequest, GetBatchByBatchNumberRequest};
+use crate::l2::execution_witness::handle_execution_witness;
 use crate::l2::fees::{
     GetBaseFeeVaultAddress, GetL1BlobBaseFeeRequest, GetOperatorFee, GetOperatorFeeVaultAddress,
 };
@@ -14,6 +15,7 @@ use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
+use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
 use ethrex_rpc::{
     GasTipEstimator, NodeData, RpcRequestWrapper,
     types::transaction::SendRawTransactionRequest,
@@ -204,6 +206,12 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
                 ));
             }
             SendRawTransactionRequest::call(req, context.l1_ctx)
+                .await
+                .map_err(RpcErr::L1RpcErr)
+        }
+        "debug_executionWitness" => {
+            let request = ExecutionWitnessRequest::parse(&req.params)?;
+            handle_execution_witness(&request, context)
                 .await
                 .map_err(RpcErr::L1RpcErr)
         }
