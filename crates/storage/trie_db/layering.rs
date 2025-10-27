@@ -65,14 +65,15 @@ impl TrieLayerCache {
             return;
         }
         if self.layers.contains_key(&state_root) {
+            tracing::warn!("tried to insert a state_root that's already inserted");
             return;
         }
 
-        let nodes = HashMap::from_iter(
-            key_values
-                .into_iter()
-                .map(|(path, node)| (path.into_vec(), node)),
-        );
+        let nodes: HashMap<Vec<u8>, Vec<u8>> = key_values
+            .into_iter()
+            .map(|(path, node)| (path.into_vec(), node))
+            .collect();
+
         self.last_id += 1;
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
