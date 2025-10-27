@@ -15,6 +15,9 @@ pub struct MetricsBlocks {
     block_building_ms: IntGauge,
     block_building_base_fee: IntGauge,
     gas_used: Gauge,
+    execution_ms: IntGauge,
+    merkle_ms: IntGauge,
+    store_ms: IntGauge,
     /// Keeps track of the head block number
     head_height: IntGauge,
 }
@@ -68,7 +71,34 @@ impl MetricsBlocks {
                 "Keeps track of the block number for the head of the chain",
             )
             .unwrap(),
+            execution_ms: IntGauge::new(
+                "execution_ms",
+                "Keeps track of the execution time spent in block execution in miliseconds",
+            )
+            .unwrap(),
+            merkle_ms: IntGauge::new(
+                "merkle_ms",
+                "Keeps track of the execution time spent in block merkelization in miliseconds",
+            )
+            .unwrap(),
+            store_ms: IntGauge::new(
+                "store_ms",
+                "Keeps track of the execution time spent in block storage in miliseconds",
+            )
+            .unwrap(),
         }
+    }
+
+    pub fn set_execution_ms(&self, execution_ms: i64) {
+        self.execution_ms.set(execution_ms);
+    }
+
+    pub fn set_merkle_ms(&self, merkle_ms: i64) {
+        self.merkle_ms.set(merkle_ms);
+    }
+
+    pub fn set_store_ms(&self, store_ms: i64) {
+        self.store_ms.set(store_ms);
     }
 
     pub fn set_latest_block_gas_limit(&self, gas_limit: f64) {
@@ -127,6 +157,12 @@ impl MetricsBlocks {
         r.register(Box::new(self.block_building_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.head_height.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.store_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.execution_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.merkle_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
