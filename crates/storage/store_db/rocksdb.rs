@@ -873,7 +873,7 @@ impl StoreEngine for Store {
             wait_for_new_layer
                 .recv()
                 .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
-            // After top-level is addded, we can make the rest of the changes visible.
+            // After top-level is added, we can make the rest of the changes visible.
             db.write(batch)
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
         })
