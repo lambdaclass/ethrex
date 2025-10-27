@@ -44,6 +44,10 @@ jobs:
         run: |
           rustup show
 
+      - name: Run cargo clippy version
+        run: |
+          cargo clippy -- -D warnings --version
+
       - name: Run cargo clippy
         run: cargo clippy -- -D warnings
 
