@@ -2372,7 +2372,7 @@ mod serde_impl {
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
-                fee_token: deserialize_field::<Address, D>(&mut map, "FeeToken")?,
+                fee_token: deserialize_field::<Address, D>(&mut map, "feeToken")?,
                 signature_y_parity: u8::from_str_radix(
                     deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
