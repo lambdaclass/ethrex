@@ -529,8 +529,7 @@ impl Blockchain {
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
             .storage
-            .apply_account_updates_batch(block.header.parent_hash, &updates)
-            .await?
+            .apply_account_updates_batch(block.header.parent_hash, &updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
@@ -706,7 +705,6 @@ impl Blockchain {
         let account_updates_list = self
             .storage
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
-            .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
