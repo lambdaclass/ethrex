@@ -70,10 +70,7 @@ pub struct L2Config {
 impl L2Config {
     pub fn get_fee_config(&self) -> FeeConfig {
         // NOTE: this lock is acquired without chance to panic, so it shouldn't be poisoned
-        self.fee_config
-            .read()
-            .expect("lock can't be poisoned")
-            .clone()
+        *self.fee_config.read().expect("lock can't be poisoned")
     }
 }
 

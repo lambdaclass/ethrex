@@ -223,7 +223,7 @@ impl PayloadBuildContext {
     pub fn new(
         payload: Block,
         storage: &Store,
-        blockchain_type: BlockchainType,
+        blockchain_type: &BlockchainType,
     ) -> Result<Self, EvmError> {
         let config = storage
             .get_chain_config()
@@ -237,7 +237,7 @@ impl PayloadBuildContext {
         );
 
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
-        let vm = new_evm(&blockchain_type, vm_db)?;
+        let vm = new_evm(blockchain_type, vm_db)?;
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -389,8 +389,7 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context =
-            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
+        let mut context = PayloadBuildContext::new(payload, &self.storage, &self.options.r#type)?;
 
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
