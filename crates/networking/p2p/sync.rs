@@ -187,6 +187,11 @@ impl Syncer {
             .get_block_number(current_head)
             .await?
             .ok_or(SyncError::BlockNumber(current_head))?;
+
+        METRICS
+            .headers_to_download
+            .store(current_head_number, Ordering::Relaxed);
+
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
@@ -1088,6 +1093,9 @@ pub async fn update_pivot(
         // Reward peer
         peers.peer_table.record_success(&peer_id).await?;
         info!("Succesfully updated pivot");
+        METRICS
+            .headers_to_download
+            .store(pivot.number, Ordering::Relaxed);
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
             .await?

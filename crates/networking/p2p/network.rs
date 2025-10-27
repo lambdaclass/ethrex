@@ -192,7 +192,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
             // Headers metrics
-            let headers_to_download = METRICS.headers_to_download.get();
+            let headers_to_download = METRICS.headers_to_download.load(Ordering::Relaxed);
             let headers_downloaded = METRICS.downloaded_headers.get();
             let headers_remaining = headers_to_download.saturating_sub(headers_downloaded);
             let headers_download_progress = if headers_to_download == 0 {
