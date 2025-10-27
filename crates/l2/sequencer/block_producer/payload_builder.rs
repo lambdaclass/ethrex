@@ -114,7 +114,7 @@ pub async fn fill_transactions(
     let safe_bytes_per_blob: u64 = SAFE_BYTES_PER_BLOB.try_into()?;
     let mut privileged_tx_count = 0;
 
-    let chain_config = store.get_chain_config()?;
+    let chain_config = store.get_chain_config();
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions

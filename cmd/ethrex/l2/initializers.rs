@@ -394,7 +394,7 @@ async fn initialize_checkpoint(
     let engine_type = EngineType::InMemory;
 
     let checkpoint_store = {
-        let checkpoint_store_inner = Store::new(path, engine_type)?;
+        let mut checkpoint_store_inner = Store::new(path, engine_type)?;
 
         checkpoint_store_inner
             .add_initial_state(genesis.clone())

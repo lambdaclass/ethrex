@@ -150,7 +150,7 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let chain_config = self.storage.get_chain_config()?;
+        let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
@@ -476,7 +476,7 @@ impl Blockchain {
             block_headers_bytes.push(header.encode_to_vec());
         }
 
-        let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
+        let chain_config = self.storage.get_chain_config();
 
         let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
 
@@ -628,10 +628,7 @@ impl Blockchain {
             return Err((ChainError::Custom("First block not found".into()), None));
         };
 
-        let chain_config: ChainConfig = self
-            .storage
-            .get_chain_config()
-            .map_err(|e| (e.into(), None))?;
+        let chain_config: ChainConfig = self.storage.get_chain_config();
 
         // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
@@ -881,7 +878,7 @@ impl Blockchain {
             .storage
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
-        let config = self.storage.get_chain_config()?;
+        let config = self.storage.get_chain_config();
 
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
@@ -1024,7 +1021,7 @@ impl Blockchain {
 
     /// Get the current fork of the chain, based on the latest block's timestamp
     pub async fn current_fork(&self) -> Result<Fork, StoreError> {
-        let chain_config = self.storage.get_chain_config()?;
+        let chain_config = self.storage.get_chain_config();
         let latest_block_number = self.storage.get_latest_block_number().await?;
         let latest_block = self
             .storage

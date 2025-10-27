@@ -10,7 +10,7 @@ pub async fn validate_status<ST: StatusMessage>(
     storage: &Store,
     eth_capability: &Capability,
 ) -> Result<(), PeerConnectionError> {
-    let chain_config = storage.get_chain_config()?;
+    let chain_config = storage.get_chain_config();
 
     // These blocks must always be available
     let genesis_header = storage
