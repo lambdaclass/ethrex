@@ -47,6 +47,7 @@ impl HiveResult {
             "sync" => ("Sync", "Node Syncing"),
             "eest/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
             "eest/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
+            "eest/execute-blobs" => ("EVM - Execute Blobs", "Execute Blobs"),
             other => {
                 eprintln!("Warn: Unknown suite: {other}. Skipping");
                 ("", "")
