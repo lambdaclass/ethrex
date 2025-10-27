@@ -1,9 +1,8 @@
 use crate::Store;
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, BlockHash, BlockNumber, ChainConfig},
+    types::{AccountState, BlockHash, BlockNumber, ChainConfig, Code},
 };
 use ethrex_vm::{EvmError, VmDatabase};
 use std::{cmp::Ordering, collections::HashMap};
@@ -104,9 +103,9 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     #[instrument(level = "trace", name = "Account code read", skip_all)]
-    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
-            return Ok(Bytes::new());
+            return Ok(Code::default());
         }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),

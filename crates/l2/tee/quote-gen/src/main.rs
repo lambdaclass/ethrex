@@ -3,7 +3,7 @@ mod sender;
 use configfs_tsm::create_tdx_quote;
 use ethrex_common::Bytes;
 use ethrex_common::utils::keccak;
-use ethrex_l2::sequencer::proof_coordinator::get_commit_hash;
+use ethrex_l2::sequencer::utils::get_git_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
@@ -82,7 +82,7 @@ async fn setup(private_key: &SecretKey) -> Result<(), String> {
 #[tokio::main]
 async fn main() {
     let (private_key, _) = generate_keypair(&mut rand::rngs::OsRng);
-    let commit_hash = get_commit_hash();
+    let commit_hash = get_git_commit_hash();
     while let Err(err) = setup(&private_key).await {
         println!("Error sending quote: {}", err);
         sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;

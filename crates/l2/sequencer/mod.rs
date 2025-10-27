@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerState;
@@ -8,6 +9,7 @@ use crate::sequencer::errors::SequencerError;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::Genesis;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -36,6 +38,7 @@ pub mod errors;
 pub mod setup;
 pub mod utils;
 
+#[expect(clippy::too_many_arguments)]
 pub async fn start_l2(
     store: Store,
     rollup_store: StoreRollup,
@@ -43,6 +46,10 @@ pub async fn start_l2(
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
     #[cfg(feature = "metrics")] l2_url: String,
+    initial_checkpoint_store: Store,
+    initial_checkpoint_blockchain: Arc<Blockchain>,
+    genesis: Genesis,
+    checkpoints_dir: PathBuf,
 ) -> Result<(), errors::SequencerError> {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
@@ -104,16 +111,18 @@ pub async fn start_l2(
         rollup_store.clone(),
         cfg.clone(),
         shared_state.clone(),
+        initial_checkpoint_store,
+        initial_checkpoint_blockchain,
+        genesis,
+        checkpoints_dir,
     )
     .await
     .inspect_err(|err| {
         error!("Error starting Committer: {err}");
     });
     let _ = ProofCoordinator::spawn(
-        store.clone(),
         rollup_store.clone(),
         cfg.clone(),
-        blockchain.clone(),
         needed_proof_types.clone(),
     )
     .await

@@ -30,7 +30,7 @@ use ethrex_common::{
     BigEndianHash, H256, U256,
     types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
@@ -1308,7 +1308,14 @@ impl PeerHandler {
                 for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                     for account in accounts {
                         if !accounts_done.contains_key(account) {
-                            accounts_done.insert(*account, vec![]);
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(account)
+                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+
+                            if old_intervals.is_empty() {
+                                accounts_done.insert(*account, vec![]);
+                            }
                         }
                     }
                 }
@@ -1535,9 +1542,18 @@ impl PeerHandler {
                     .map(|storage| storage.len())
                     .sum::<usize>();
 
+                // These take into account we downloaded the same thing for different accounts
+                let effective_slots: usize = account_storages
+                    .iter()
+                    .enumerate()
+                    .map(|(i, storages)| {
+                        accounts_by_root_hash[start_index + i].1.len() * storages.len()
+                    })
+                    .sum();
+
                 METRICS
-                    .downloaded_storage_slots
-                    .fetch_add(n_slots as u64, Ordering::Relaxed);
+                    .storage_leaves_downloaded
+                    .inc_by(effective_slots as u64);
 
                 debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(
@@ -1851,7 +1867,7 @@ impl PeerHandler {
             Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
                 .nodes
                 .iter()
-                .map(|node| Node::decode_raw(node))
+                .map(|node| Node::decode(node))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| {
                     RequestStateTrieNodesError::RequestError(PeerConnectionError::RLPDecodeError(e))
@@ -2045,8 +2061,6 @@ pub enum PeerHandlerError {
     ReceiveMessageFromPeer(H256),
     #[error("Timeout while waiting for message from peer {0}")]
     ReceiveMessageFromPeerTimeout(H256),
-    #[error("No peers available")]
-    NoPeers,
     #[error("Received invalid headers")]
     InvalidHeaders,
     #[error("Storage Full")]

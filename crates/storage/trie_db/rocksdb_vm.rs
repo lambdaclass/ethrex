@@ -1,13 +1,15 @@
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, BlockHeader, ChainConfig},
+    types::{AccountState, BlockHeader, ChainConfig, Code},
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::{Nibbles, TrieError};
 use ethrex_vm::{EvmError, VmDatabase};
-use std::{collections::HashMap, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+};
 use tracing::instrument;
 
 use crate::{
@@ -16,6 +18,7 @@ use crate::{
     error::StoreError,
     hash_address, hash_key,
     store_db::rocksdb::{CF_CHAIN_DATA, CF_FLATKEYVALUE, CF_MISC_VALUES, Store},
+    trie_db::layering::TrieLayerCache,
     utils::ChainDataIndex,
 };
 
@@ -26,6 +29,7 @@ pub struct RocksDBVM {
     chain_config_cache: OnceLock<ChainConfig>,
     cache: HashMap<Address, Option<AccountState>>,
     last_computed_flatkeyvalue: Nibbles,
+    trie_cache: Arc<TrieLayerCache>,
 }
 
 impl RocksDBVM {
@@ -42,27 +46,27 @@ impl RocksDBVM {
             .unwrap_or_default();
         drop(cf_misc);
 
+        let trie_cache = store
+            .trie_cache
+            .lock()
+            .map_err(|_| TrieError::LockError)?
+            .clone();
         Ok(Self {
             store,
             header,
             chain_config_cache: OnceLock::new(),
             cache: HashMap::new(),
             last_computed_flatkeyvalue,
+            trie_cache,
         })
     }
     fn get_fkv<T: RLPDecode>(&self, key: Nibbles) -> Result<Option<T>, TrieError> {
-        let tlc = self
-            .store
-            .trie_cache
-            .read()
-            .map_err(|_| TrieError::LockError)?;
-        if let Some(value) = tlc.get(self.header.state_root, key.clone()) {
+        if let Some(value) = self.trie_cache.get(self.header.state_root, key.clone()) {
             if value.is_empty() {
                 return Ok(None);
             }
             return Ok(Some(T::decode(&value)?));
         }
-        drop(tlc);
         let cf = self
             .store
             .db
@@ -208,9 +212,9 @@ impl VmDatabase for RocksDBVM {
     }
 
     #[instrument(level = "trace", name = "Account code read", skip_all)]
-    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
-            return Ok(Bytes::new());
+            return Ok(Code::default());
         }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),
