@@ -3,7 +3,7 @@ use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::{Arc, RwLock},
 };
 
@@ -85,7 +85,7 @@ impl RocksDBPreRead {
                 addr_nib.as_ref().to_vec()
             })
             .collect();
-        let mut reads: Vec<_> = updates
+        let reads: BTreeSet<_> = updates
             .par_iter()
             .flat_map_iter(|update| {
                 let mut prefixes = HashSet::new();
@@ -111,7 +111,7 @@ impl RocksDBPreRead {
             })
             .collect();
         fkv_reads.sort();
-        reads.sort();
+        let reads: Vec<_> = reads.into_iter().collect();
 
         let account_results = db.batched_multi_get_cf(&cf_nodes, &reads, true);
         let fkv_results = db.batched_multi_get_cf(&cf_flatkeyvalue, &fkv_reads, true);
