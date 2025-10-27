@@ -1588,7 +1588,7 @@ mod tests {
         }
     }
 
-    async fn test_genesis_block(store: Store) {
+    async fn test_genesis_block(mut store: Store) {
         const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
         const GENESIS_HIVE: &str = include_str!("../../fixtures/genesis/hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
@@ -1811,7 +1811,7 @@ mod tests {
         assert_eq!(pending_block_number, stored_pending_block_number);
     }
 
-    async fn test_chain_config_storage(store: Store) {
+    async fn test_chain_config_storage(mut store: Store) {
         let chain_config = example_chain_config();
         store.set_chain_config(&chain_config).await.unwrap();
         let retrieved_chain_config = store.get_chain_config();
