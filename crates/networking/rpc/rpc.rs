@@ -209,10 +209,6 @@ pub fn start_block_executor(
     let (block_worker_channel, mut block_receiver) =
         unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
     std::thread::spawn(move || {
-        let cores = core_affinity::get_core_ids().unwrap_or_default();
-        if let Some(core_id) = cores.get(2) {
-            core_affinity::set_for_current(*core_id);
-        }
         while let Some((notify, block)) = block_receiver.blocking_recv() {
             let _ = notify
                 .send(blockchain.add_block(block))

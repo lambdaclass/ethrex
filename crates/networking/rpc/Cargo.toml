@@ -9,7 +9,6 @@ documentation.workspace = true
 
 [dependencies]
 axum = { features = ["ws"], workspace = true }
-core_affinity.workspace = true
 tower-http.workspace = true
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"

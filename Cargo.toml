@@ -82,7 +82,6 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
 
 async-trait = "0.1.88"
-core_affinity = "0.8.3"
 ethereum-types = { version = "0.15.1", features = ["serialize"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
