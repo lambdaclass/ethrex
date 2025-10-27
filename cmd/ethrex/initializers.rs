@@ -442,7 +442,7 @@ pub async fn init_l1(
         blockchain.clone(),
         get_client_version(),
         #[cfg(feature = "l2")]
-        based_context,
+        None,
         opts.tx_broadcasting_time_interval,
     )
     .await
