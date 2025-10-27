@@ -48,8 +48,6 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
 
-use crate::fork_choice::apply_fork_choice;
-
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
@@ -209,6 +207,19 @@ impl Blockchain {
                 "Empty block batch".to_string(),
             ))?
             .header;
+
+        // Later on, we need to access block hashes by number. To avoid needing
+        // to apply fork choice for each block, we cache them here.
+        let mut block_hashes: BTreeMap<u64, H256> = blocks
+            .iter()
+            .cloned()
+            .map(|block| (block.header.number, block.hash()))
+            .collect();
+
+        block_hashes.insert(
+            first_block_header.number.saturating_sub(1),
+            first_block_header.parent_hash,
+        );
 
         // Get state at previous block
         let trie = self
@@ -380,28 +391,6 @@ impl Blockchain {
             self.store_block(block.clone(), account_updates_list, execution_result)
                 .await?;
 
-            // Here we compute the hash from the header because we don't
-            // want to initialize the block hash.
-            let block_hash = block.header.compute_block_hash();
-
-            // Later in this function we query the batch block headers by number,
-            // to do so, they need to be marked as canonical.
-            // Only users that have the state previous to the first batch block
-            // need this step.
-            if self
-                .storage
-                .get_block_header(block.header.number)?
-                .is_none()
-            {
-                apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
-                    .await
-                    .map_err(|e| {
-                        ChainError::WitnessGeneration(format!(
-                            "Failed to apply fork choice after witness generation: {e}"
-                        ))
-                    })?;
-            }
-
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
                     ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
@@ -414,7 +403,14 @@ impl Blockchain {
 
             let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
                 self.storage
-                    .state_trie(block_hash)
+                    .state_trie(
+                        block_hashes
+                            .get(&block.header.number)
+                            .ok_or(ChainError::WitnessGeneration(
+                                "Block hash not found for witness generation".to_string(),
+                            ))?
+                            .to_owned(),
+                    )
                     .map_err(|_| ChainError::ParentStateNotFound)?
                     .ok_or(ChainError::ParentStateNotFound)?,
             );
@@ -469,7 +465,12 @@ impl Blockchain {
         let mut block_headers_bytes = Vec::new();
 
         for block_number in first_needed_block_number..=last_needed_block_number {
-            let header = self.storage.get_block_header(block_number)?.ok_or(
+            let hash = block_hashes
+                .get(&block_number)
+                .ok_or(ChainError::WitnessGeneration(format!(
+                    "Failed to get block {block_number} hash"
+                )))?;
+            let header = self.storage.get_block_header_by_hash(*hash)?.ok_or(
                 ChainError::WitnessGeneration(format!("Failed to get block {block_number} header")),
             )?;
             block_headers_bytes.push(header.encode_to_vec());
