@@ -3526,7 +3526,6 @@ dependencies = [
  "bytes",
  "clap 4.5.48",
  "clap_complete",
- "core_affinity",
  "directories 5.0.1",
  "ethrex-blockchain",
  "ethrex-common 5.0.0",

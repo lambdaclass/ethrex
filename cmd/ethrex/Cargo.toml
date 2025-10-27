@@ -31,7 +31,6 @@ tikv-jemallocator = { version = "0.6.0", optional = true, features = [
   "unprefixed_malloc_on_supported_platforms",
 ] }
 bytes.workspace = true
-core_affinity.workspace = true
 hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
