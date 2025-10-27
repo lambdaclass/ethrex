@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
     call_frame::CallFrameBackup,
     constants::POST_OSAKA_GAS_LIMIT_CAP,
@@ -12,7 +10,6 @@ use crate::{
             undo_value_transfer, validate_gas_allowance, validate_init_code_size,
             validate_min_gas_limit, validate_sender, validate_sufficient_max_fee_per_gas,
         },
-        empty_hook::EmptyHook,
         hook::Hook,
     },
     opcodes::Opcode,
@@ -520,7 +517,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
     )?;
-    new_vm.hooks = vec![Rc::new(RefCell::new(EmptyHook))];
+    new_vm.hooks = vec![];
     set_bytecode_and_code_address(&mut new_vm)?;
     let execution_result = new_vm.execute()?;
     if !execution_result.is_success() {
