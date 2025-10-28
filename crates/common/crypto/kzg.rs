@@ -50,7 +50,7 @@ const _: () = {
 pub fn warm_up_trusted_setup() {
     #[cfg(feature = "c-kzg")]
     {
-        let _ = c_kzg::ethereum_kzg_settings(8);
+        std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
     }
 }
 
@@ -156,13 +156,36 @@ pub fn verify_blob_kzg_proof(
 ) -> Result<bool, KzgError> {
     #[cfg(feature = "c-kzg")]
     {
-        c_kzg::KzgSettings::verify_blob_kzg_proof(
-            c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
-            &blob.into(),
-            &commitment.into(),
-            &proof.into(),
-        )
-        .map_err(KzgError::from)
+        let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+        c_kzg_settings
+            .verify_blob_kzg_proof(&blob.into(), &commitment.into(), &proof.into())
+            .map_err(KzgError::from)
+    }
+}
+
+#[cfg(feature = "c-kzg")]
+pub fn verify_kzg_proof_batch(
+    blobs: &[Blob],
+    commitments: &[Commitment],
+    cell_proof: &[Proof],
+) -> Result<bool, KzgError> {
+    {
+        // perf note: c_kzg::Blob is repr C maybe a unsafe transmute improves perf if the collect were deemed costly
+        let blobs: Vec<_> = blobs.iter().map(|x| c_kzg::Blob::new(*x)).collect();
+        let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+        c_kzg_settings
+            .verify_blob_kzg_proof_batch(
+                &blobs,
+                &commitments
+                    .iter()
+                    .map(|x| c_kzg::Bytes48::new(*x))
+                    .collect::<Vec<_>>(),
+                &cell_proof
+                    .iter()
+                    .map(|proof| (*proof).into())
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(KzgError::from)
     }
     #[cfg(not(feature = "c-kzg"))]
     {
@@ -209,14 +232,15 @@ pub fn verify_kzg_proof(
 ) -> Result<bool, KzgError> {
     #[cfg(feature = "c-kzg")]
     {
-        c_kzg::KzgSettings::verify_kzg_proof(
-            c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
-            &commitment_bytes.into(),
-            &z.into(),
-            &y.into(),
-            &proof_bytes.into(),
-        )
-        .map_err(KzgError::from)
+        let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+        c_kzg_settings
+            .verify_kzg_proof(
+                &commitment_bytes.into(),
+                &z.into(),
+                &y.into(),
+                &proof_bytes.into(),
+            )
+            .map_err(KzgError::from)
     }
     #[cfg(not(feature = "c-kzg"))]
     {
@@ -257,12 +281,8 @@ pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proo
         &blob,
     )?;
     let commitment_bytes = commitment.to_bytes();
-
-    let proof = c_kzg::KzgSettings::compute_blob_kzg_proof(
-        c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
-        &blob,
-        &commitment_bytes,
-    )?;
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+    let proof = c_kzg_settings.compute_blob_kzg_proof(&blob, &commitment_bytes)?;
 
     let proof_bytes = proof.to_bytes();
 

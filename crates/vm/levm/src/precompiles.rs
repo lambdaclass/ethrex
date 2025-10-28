@@ -982,6 +982,8 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
 #[cfg(not(feature = "sp1"))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+    use lambdaworks_math::errors::PairingError;
+
     type Fq = BN254FieldElement;
     type Fq2 = BN254TwistCurveFieldElement;
     type LambdaworksG1 = BN254Curve;
@@ -1024,18 +1026,11 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
             LambdaworksG2::create_point_from_affine(g2_x, g2_y)
                 .map_err(|_| PrecompileError::InvalidPoint)?
         };
-        if !g2.is_in_subgroup() {
-            return Err(PrecompileError::PointNotInSubgroup.into());
-        }
-
-        if g1.is_neutral_element() || g2.is_neutral_element() {
-            continue;
-        }
         valid_batch.push((g1, g2));
     }
     let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
     let result = BN254AtePairing::compute_batch(&valid_batch_refs)
-        .map_err(|_| PrecompileError::BN254AtePairingError)?;
+        .map_err(|PairingError::PointNotInSubgroup| PrecompileError::PointNotInSubgroup)?;
 
     Ok(result == QuadraticExtensionFieldElement::one())
 }
