@@ -698,8 +698,9 @@ impl Store {
             .lock()
             .map_err(|_| StoreError::LockError)?
             .clone();
+        let parent_bloom = trie.get_bloom(parent_state_root).expect("bloom");
         let mut trie_mut = (*trie).clone();
-        trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+        trie_mut.put_batch(parent_state_root, parent_bloom, child_state_root, new_layer);
         let trie = Arc::new(trie_mut);
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
         // Update finished, signal block processing.
