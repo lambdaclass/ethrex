@@ -609,16 +609,12 @@ impl L1Committer {
                 .cloned()
                 .ok_or_else(|| CommitterError::MissingBlob(batch.number))?;
 
-            if proofs.len() != proof_count {
-                return Err(CommitterError::MissingBlob(batch.number));
-            }
-
-            let proof = proofs
-                .iter()
-                .rev()
-                .take(proof_count)
-                .cloned()
-                .collect::<Vec<_>>();
+            let proof = if proofs.len() != proof_count {
+                BlobsBundle::create_from_blobs(blobs, Fork::Prague)?.proofs[0];
+                //return Err(CommitterError::MissingBlob(batch.number));
+            } else {
+                proofs[0]
+            };
 
             (commitment, proof)
         };
