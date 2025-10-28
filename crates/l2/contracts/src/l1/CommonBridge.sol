@@ -207,10 +207,6 @@ contract CommonBridge is
     function deposit(
         address l2Recipient
     ) public payable override whenNotPaused {
-        _deposit(l2Recipient);
-    }
-
-    function _deposit(address l2Recipient) private {
         deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintETH,
@@ -226,7 +222,7 @@ contract CommonBridge is
     }
 
     receive() external payable whenNotPaused {
-        _deposit(msg.sender);
+        deposit(msg.sender);
     }
 
     function depositERC20(
