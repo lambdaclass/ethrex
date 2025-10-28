@@ -230,7 +230,7 @@ impl Blockchain {
                         let hashed_address_h256 = H256::from_slice(&hashed_address);
                         if update.removed_storage {
                             account_state.storage_root = *EMPTY_TRIE_HASH;
-                            storage_updates_map.remove(&hashed_address_h256);
+                            // storage_updates_map.remove(&hashed_address_h256);
                         }
                         if let Some(info) = update.info {
                             account_state.nonce = info.nonce;
