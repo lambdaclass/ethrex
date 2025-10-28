@@ -96,7 +96,6 @@ jemalloc_profiling = [
 ]
 sync-test = ["ethrex-p2p/sync-test"]
 
-sp1 = ["ethrex-prover/sp1"]
 l1 = [
   "ethrex-blockchain/l1",
   "ethrex-common/l1",
@@ -109,13 +108,15 @@ l1 = [
 ]
 l2 = [
   "ethrex-l2",
-  "ethrex-l2-common",
-  "ethrex-l2-rpc",
-  "ethrex-sdk",
+  "ethrex-l2-common/l1",
+  "ethrex-l2-rpc/l1",
+  "ethrex-sdk/l1",
   "ethrex-p2p/l2",
+  "ethrex-p2p/l1",
   "ethrex-config/l2",
   "ethrex-prover/l2",
-  "ethrex-storage-rollup",
+  "ethrex-prover/l1",
+  "ethrex-storage-rollup/l1",
   "dep:tui-logger",
   "dep:bytes",
   "dep:genesis-tool",

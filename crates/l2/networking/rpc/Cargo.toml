@@ -45,6 +45,7 @@ default = ["l1"]
 
 l1 = [
     "ethrex-common/l1",
+    "ethrex-l2-common/l1",
     "ethrex-blockchain/l1",
     "ethrex-p2p/l1",
     "ethrex-storage/l1",

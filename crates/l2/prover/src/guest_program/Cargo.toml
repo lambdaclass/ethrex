@@ -76,6 +76,7 @@ kzg-rs = [
 l1 = [
     "ethrex-vm/l1",
     "ethrex-common/l1",
+    "ethrex-l2-common/l1",
     "ethrex-blockchain/l1",
     "ethrex-crypto/l1",
 ]

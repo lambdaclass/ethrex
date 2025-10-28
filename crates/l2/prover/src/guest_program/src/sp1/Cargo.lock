@@ -1009,7 +1009,6 @@ dependencies = [
  "k256",
  "lambdaworks-crypto",
  "rkyv",
- "secp256k1",
  "serde",
  "serde_with",
  "sha3",
@@ -3644,8 +3643,3 @@ dependencies = [
  "rkyv",
  "sp1-zkvm",
 ]
-
-[[patch.unused]]
-name = "secp256k1"
-version = "0.30.0"
-source = "git+https://github.com/sp1-patches/rust-secp256k1?tag=patch-0.30.0-sp1-5.0.0#04d87db04bcc2dc5dd8e1ab3f046cc655440d07a"
