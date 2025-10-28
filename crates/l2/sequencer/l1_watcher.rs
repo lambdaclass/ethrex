@@ -215,11 +215,7 @@ impl L1Watcher {
                 .try_into()
                 .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
 
-            let chain_id = self
-                .store
-                .get_chain_config()
-                .map_err(|e| L1WatcherError::FailedToRetrieveChainConfig(e.to_string()))?
-                .chain_id;
+            let chain_id = self.store.get_chain_config().chain_id;
 
             let mint_transaction = privileged_transaction_data
                 .into_tx(&self.eth_client, chain_id, gas_price)
