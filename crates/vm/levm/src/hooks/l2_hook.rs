@@ -2,16 +2,7 @@ use crate::{
     call_frame::CallFrameBackup,
     constants::POST_OSAKA_GAS_LIMIT_CAP,
     errors::{ContextResult, InternalError, TxValidationError, VMError},
-    hooks::{
-        DefaultHook,
-        default_hook::{
-            self, compute_actual_gas_used, compute_gas_refunded, delete_self_destruct_accounts,
-            pay_coinbase, refund_sender, set_bytecode_and_code_address, transfer_value,
-            undo_value_transfer, validate_gas_allowance, validate_init_code_size,
-            validate_min_gas_limit, validate_sender, validate_sufficient_max_fee_per_gas,
-        },
-        hook::Hook,
-    },
+    hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
     tracing::LevmCallTracer,
     utils::get_account_diffs_in_tx,
@@ -102,11 +93,12 @@ fn finalize_non_privileged_execution(
     use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
     if !ctx_result.is_success() {
-        undo_value_transfer(vm)?;
+        default_hook::undo_value_transfer(vm)?;
     }
 
-    let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
-    let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+    let gas_refunded: u64 = default_hook::compute_gas_refunded(vm, ctx_result)?;
+    let actual_gas_used =
+        default_hook::compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
 
     let mut l1_gas = calculate_l1_fee_gas(
         vm,
@@ -122,7 +114,7 @@ fn finalize_non_privileged_execution(
         vm.substate.revert_backup();
         vm.restore_cache_state()?;
 
-        undo_value_transfer(vm)?;
+        default_hook::undo_value_transfer(vm)?;
 
         ctx_result.result =
             crate::errors::TxResult::Revert(TxValidationError::InsufficientMaxFeePerGas.into());
@@ -136,7 +128,7 @@ fn finalize_non_privileged_execution(
         total_gas = vm.current_call_frame.gas_limit;
     }
 
-    delete_self_destruct_accounts(vm)?;
+    default_hook::delete_self_destruct_accounts(vm)?;
 
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
         pay_to_l1_fee_vault(vm, l1_gas, l1_fee_config, use_fee_token)?;
@@ -145,7 +137,7 @@ fn finalize_non_privileged_execution(
     if use_fee_token {
         refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas)?;
     } else {
-        refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
+        default_hook::refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
     }
 
     pay_coinbase_l2(
@@ -202,7 +194,7 @@ fn pay_coinbase_l2(
 ) -> Result<(), crate::errors::VMError> {
     if operator_fee_config.is_none() && !use_fee_token {
         // No operator fee configured, operator fee is not paid
-        return pay_coinbase(vm, gas_to_pay);
+        return default_hook::pay_coinbase(vm, gas_to_pay);
     }
 
     let priority_fee_per_gas = compute_priority_fee_per_gas(vm, operator_fee_config)?;
@@ -380,7 +372,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
     if vm.env.config.fork >= Fork::Prague {
-        validate_min_gas_limit(vm)?;
+        default_hook::validate_min_gas_limit(vm)?;
         if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
             return Err(VMError::TxValidation(
                 TxValidationError::TxMaxGasLimitExceeded {
@@ -405,11 +397,11 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     deduct_caller_fee_token(vm, gaslimit_price_product)?;
 
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
-    validate_sufficient_max_fee_per_gas(vm)?;
+    default_hook::validate_sufficient_max_fee_per_gas(vm)?;
 
     // (5) INITCODE_SIZE_EXCEEDED
     if vm.is_create()? {
-        validate_init_code_size(vm)?;
+        default_hook::validate_init_code_size(vm)?;
     }
 
     // (6) INTRINSIC_GAS_TOO_LOW
@@ -443,10 +435,10 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
 
     // (9) SENDER_NOT_EOA
     let code = vm.db.get_code(sender_info.code_hash)?;
-    validate_sender(sender_address, &code.bytecode)?;
+    default_hook::validate_sender(sender_address, &code.bytecode)?;
 
     // (10) GAS_ALLOWANCE_EXCEEDED
-    validate_gas_allowance(vm)?;
+    default_hook::validate_gas_allowance(vm)?;
 
     // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
     // NOT CHECKED: fee token transactions are not type 3
@@ -454,9 +446,9 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // Transaction is type 4 if authorization_list is Some
     // NOT CHECKED: fee token transactions are not type 4
 
-    transfer_value(vm)?;
+    default_hook::transfer_value(vm)?;
 
-    set_bytecode_and_code_address(vm)?;
+    default_hook::set_bytecode_and_code_address(vm)?;
     Ok(())
 }
 
@@ -556,7 +548,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         VMType::L2(Default::default()),
     )?;
     new_vm.hooks = vec![];
-    set_bytecode_and_code_address(&mut new_vm)?;
+    default_hook::set_bytecode_and_code_address(&mut new_vm)?;
     let execution_result = new_vm.execute()?;
     if !execution_result.is_success() {
         return Err(VMError::TxValidation(
