@@ -344,9 +344,10 @@ impl PeerTable {
     }
 
     /// Get all contacts available for lookup
-    pub async fn get_contacts_for_lookup(&mut self) -> Result<Vec<Contact>, PeerTableError> {
-        match self.handle.call(CallMessage::GetContactsForLookup).await? {
-            OutMessage::Contacts(contacts) => Ok(contacts),
+    pub async fn get_contact_for_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
+        match self.handle.call(CallMessage::GetContactForLookup).await? {
+            OutMessage::Contact(contact) => Ok(Some(contact)),
+            OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
     }
@@ -631,12 +632,14 @@ impl PeerTableServer {
         None
     }
 
-    fn get_contacts_for_lookup(&mut self) -> Vec<Contact> {
+    fn get_contact_for_lookup(&mut self) -> Option<Contact> {
         self.contacts
             .values()
             .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
+            .collect::<Vec<_>>()
+            .choose(&mut rand::rngs::OsRng)
             .cloned()
-            .collect()
+            .cloned()
     }
 
     fn get_contacts_to_revalidate(&mut self, revalidation_interval: Duration) -> Vec<Contact> {
@@ -843,7 +846,7 @@ enum CallMessage {
     TargetPeersReached,
     GetContactsToInitiate(usize),
     GetContactToInitiate,
-    GetContactsForLookup,
+    GetContactForLookup,
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
     GetScore { node_id: H256 },
@@ -925,9 +928,10 @@ impl GenServer for PeerTableServer {
                 self.get_contact_to_initiate()
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
-            CallMessage::GetContactsForLookup => {
-                CallResponse::Reply(Self::OutMsg::Contacts(self.get_contacts_for_lookup()))
-            }
+            CallMessage::GetContactForLookup => CallResponse::Reply(
+                self.get_contact_for_lookup()
+                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
+            ),
             CallMessage::GetContactsToRevalidate(revalidation_interval) => CallResponse::Reply(
                 Self::OutMsg::Contacts(self.get_contacts_to_revalidate(revalidation_interval)),
             ),

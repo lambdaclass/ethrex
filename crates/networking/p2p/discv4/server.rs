@@ -39,8 +39,9 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_secs(5);
-const LOOKUP_INTERVAL: Duration = Duration::from_secs(5 * 60); // 5 minutes
+const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(1000); // 100 per second
+const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
+const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +66,7 @@ pub enum InMessage {
     Revalidate,
     Lookup,
     Prune,
+    ChangeFindNodeMessage,
     Shutdown,
 }
 
@@ -80,6 +82,7 @@ pub struct DiscoveryServer {
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
     peer_table: PeerTable,
+    find_node_message: BytesMut,
 }
 
 impl DiscoveryServer {
@@ -100,6 +103,7 @@ impl DiscoveryServer {
             signer,
             udp_socket,
             peer_table: peer_table.clone(),
+            find_node_message: Self::random_message(&signer),
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -202,6 +206,17 @@ impl DiscoveryServer {
         Ok(())
     }
 
+    fn random_message(signer: &SecretKey) -> BytesMut {
+        // Storing a FindNode message to send to all contacts to optimize message creation and encoding
+        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+        let random_priv_key = SecretKey::new(&mut OsRng);
+        let random_pub_key = public_key_from_signing_key(&random_priv_key);
+        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
+        let mut buf = BytesMut::new();
+        msg.encode_with_header(&mut buf, signer);
+        buf
+    }
+
     async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
         for contact in self
             .peer_table
@@ -214,17 +229,9 @@ impl DiscoveryServer {
     }
 
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
-        // Sending the same FindNode message to all contacts to optimize message creation and encoding
-        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
-        let random_priv_key = SecretKey::new(&mut OsRng);
-        let random_pub_key = public_key_from_signing_key(&random_priv_key);
-        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
-        let mut buf = BytesMut::new();
-        msg.encode_with_header(&mut buf, &self.signer);
-
-        for contact in self.peer_table.get_contacts_for_lookup().await? {
-            if self.udp_socket.send_to(&buf, &contact.node.udp_addr()).await.inspect_err(
-                |e| error!(sending = ?msg, addr = ?&contact.node.udp_addr(), err=?e, "Error sending message"),
+        if let Some(contact) = self.peer_table.get_contact_for_lookup().await? {
+            if self.udp_socket.send_to(&self.find_node_message, &contact.node.udp_addr()).await.inspect_err(
+                |e| error!(sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message"),
             ).is_err() {
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
@@ -505,8 +512,12 @@ impl GenServer for DiscoveryServer {
             InMessage::Revalidate,
         );
         send_interval(PRUNE_INTERVAL, handle.clone(), InMessage::Prune);
+        send_interval(
+            CHANGE_FIND_NODE_MESSAGE_INTERVAL,
+            handle.clone(),
+            InMessage::ChangeFindNodeMessage,
+        );
         let _ = handle.clone().cast(InMessage::Lookup).await;
-
         send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
 
         Ok(Success(self))
@@ -547,6 +558,9 @@ impl GenServer for DiscoveryServer {
                     .prune()
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
+            }
+            Self::CastMsg::ChangeFindNodeMessage => {
+                self.find_node_message = Self::random_message(&self.signer);
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }
