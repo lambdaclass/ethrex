@@ -105,7 +105,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
-        blob_proofs,
+        blob_proof,
     } = input;
 
     let chain_id = execution_witness.chain_config.chain_id;
@@ -118,7 +118,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             elasticity_multiplier,
             _fee_configs,
             blob_commitment,
-            blob_proofs,
+            blob_proof,
             chain_id,
         );
     }
@@ -162,7 +162,7 @@ pub fn stateless_validation_l2(
     elasticity_multiplier: u64,
     fee_configs: Option<Vec<FeeConfig>>,
     blob_commitment: Commitment,
-    blob_proof: Vec<Proof>,
+    blob_proof: Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let initial_db = execution_witness.clone();
@@ -195,7 +195,7 @@ pub fn stateless_validation_l2(
         )?;
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
-    let validium = (blob_commitment, &blob_proof) == ([0; 48], &vec![[0; 48]]);
+    let validium = (blob_commitment, &blob_proof) == ([0; 48], &[0; 48]);
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
@@ -467,22 +467,14 @@ fn compute_l1messages_and_privileged_transactions_digests(
 fn verify_blob(
     state_diff: StateDiff,
     commitment: Commitment,
-    proof: Vec<Proof>,
+    proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
-    use ethrex_crypto::kzg::{verify_blob_kzg_proof, verify_cell_kzg_proof_batch};
+    use ethrex_crypto::kzg::verify_blob_kzg_proof;
 
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
 
-    let proof_is_valid = if proof.len() == 1 {
-        // Prior to Osaka type proof
-        verify_blob_kzg_proof(blob_data, commitment, proof[0])?
-    } else {
-        // Osaka type proof
-        verify_cell_kzg_proof_batch(&[blob_data], &[commitment], &proof)?
-    };
-
-    if !proof_is_valid {
+    if !verify_blob_kzg_proof(blob_data, commitment, proof)? {
         return Err(StatelessExecutionError::InvalidBlobProof);
     }
 

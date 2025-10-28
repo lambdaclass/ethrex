@@ -14,9 +14,9 @@ use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
-        CELLS_PER_EXT_BLOB, Fork, Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch,
-        blobs_bundle, fake_exponential_checked,
+        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork,
+        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle,
+        fake_exponential_checked,
     },
 };
 use ethrex_l2_common::{
@@ -707,37 +707,42 @@ impl L1Committer {
         // we are generating the BlobsBundle with BlobsBundle::default which
         // sets the commitments and proofs to empty vectors.
         let (blob_commitment, blob_proof) = if self.validium {
-            ([0; 48], vec![[0; 48]])
+            ([0; 48], [0; 48])
         } else {
             let BlobsBundle {
                 commitments,
                 proofs,
+                blobs,
                 ..
             } = &batch.blobs_bundle;
 
             let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
                 .await
                 .map_err(CommitterError::EthClientError)?;
-            let proof_count = if l1_fork < Fork::Osaka {
-                1
-            } else {
-                CELLS_PER_EXT_BLOB
-            };
+
             let commitment = commitments
                 .last()
                 .cloned()
                 .ok_or_else(|| CommitterError::MissingBlob(batch.number))?;
 
-            if proofs.len() != proof_count {
-                return Err(CommitterError::MissingBlob(batch.number));
-            }
-
-            let proof = proofs
-                .iter()
-                .rev()
-                .take(proof_count)
-                .cloned()
-                .collect::<Vec<_>>();
+            // The prover takes a single proof even for Osaka type proofs, so if
+            // the committer generated Osaka type proofs (cell proofs), we need
+            // to create a BlobsBundle from the blobs specifying a pre-Osaka
+            // fork to get a single proof for the entire blob.
+            // If we are pre-Osaka, we already have a single proof in the
+            // previously generated bundle
+            let proof = if l1_fork < Fork::Osaka {
+                proofs
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| CommitterError::MissingBlob(batch.number))?
+            } else {
+                BlobsBundle::create_from_blobs(blobs, Some(0))?
+                    .proofs
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| CommitterError::MissingBlob(batch.number))?
+            };
 
             (commitment, proof)
         };
@@ -747,7 +752,7 @@ impl L1Committer {
             execution_witness: batch_witness,
             elasticity_multiplier: self.elasticity_multiplier,
             blob_commitment,
-            blob_proofs: blob_proof,
+            blob_proof,
             fee_configs,
         };
 
