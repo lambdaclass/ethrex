@@ -237,14 +237,16 @@ impl Node {
             Node::Extension(n) => n.remove(db, path),
             Node::Leaf(n) => n.remove(path),
         }?;
-        match new_root {
+
+        let is_trie_empty = match new_root {
             Some(NodeRemoveResult::New(new_root)) => {
                 *self = new_root;
-                Ok((false, value))
+                false
             }
-            Some(NodeRemoveResult::Mutated) => Ok((false, value)),
-            None => Ok((true, value)),
-        }
+            Some(NodeRemoveResult::Mutated) => false,
+            None => true,
+        };
+        Ok((is_trie_empty, value))
     }
 
     /// Traverses own subtrie until reaching the node containing `path`
