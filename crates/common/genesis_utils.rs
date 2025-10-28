@@ -1,6 +1,5 @@
-use ethrex_common::types::Genesis;
+use crate::types::Genesis;
 use serde_json::{Map, Value};
-use std::fs::{self, read_dir};
 use std::path::Path;
 
 fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value>, String> {
@@ -136,29 +135,4 @@ pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String
             path.display()
         )
     })
-}
-pub fn main() -> Result<(), String> {
-    let genesis_files = read_dir("../../fixtures/genesis").unwrap();
-    for file in genesis_files {
-        let file = file.unwrap();
-        let path = file.path();
-        let file_name = path.file_name().unwrap();
-        let is_genesis_file = file_name.to_string_lossy().contains("genesis")
-            && file_name.to_string_lossy().contains(".json");
-        if is_genesis_file {
-            println!(
-                "Formating genesis file: {}",
-                path.file_name().unwrap().to_string_lossy()
-            );
-            let genesis_file = fs::read(&path).unwrap();
-            let current_genesis: Genesis = serde_json::from_slice(&genesis_file).map_err(|_e| {
-                format!(
-                    "File {} is not a valid genesis json",
-                    path.to_string_lossy()
-                )
-            })?;
-            write_genesis_as_json(current_genesis, &path).unwrap();
-        }
-    }
-    Ok(())
 }

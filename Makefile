@@ -14,19 +14,19 @@ lint-l1:
 
 lint-l2:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
-		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
+		--workspace --exclude ethrex-prover --exclude guest_program \
 		--release -- -D warnings
 
 lint-gpu:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
-		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
+		--workspace --exclude ethrex-prover --exclude guest_program \
 		--release -- -D warnings
 
 lint: lint-l1 lint-l2 ## 🧹 Linter check
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ethrex-l2 -F l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --workspace
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
