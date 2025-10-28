@@ -592,6 +592,7 @@ impl L1Committer {
             let BlobsBundle {
                 commitments,
                 proofs,
+                blobs,
                 ..
             } = &batch.blobs_bundle;
 
@@ -610,13 +611,13 @@ impl L1Committer {
                 .ok_or_else(|| CommitterError::MissingBlob(batch.number))?;
 
             let proof = if proofs.len() != proof_count {
-                BlobsBundle::create_from_blobs(blobs, Fork::Prague)?.proofs[0];
+                BlobsBundle::create_from_blobs(blobs, Fork::Prague)?.proofs[0]
                 //return Err(CommitterError::MissingBlob(batch.number));
             } else {
                 proofs[0]
             };
 
-            (commitment, proof)
+            (commitment, vec![proof])
         };
 
         let prover_input = ProverInputData {
