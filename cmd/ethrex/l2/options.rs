@@ -345,7 +345,7 @@ pub struct EthOptions {
         long,
         value_name = "UINT64",
         env = "ETHREX_OSAKA_ACTIVATION_TIME",
-        help = "Block timestamp at which the Osaka fork activates. If not set, it will assume Osaka is already active."
+        help = "Block timestamp at which the Osaka fork is activated on L1. If not set, it will assume Osaka is already active."
     )]
     pub osaka_activation_time: Option<u64>,
 }
