@@ -124,6 +124,11 @@ impl LEVM {
             VMType::L2(_) => Default::default(),
         };
 
+        let transitions = LEVM::get_state_transitions_tx(db)?;
+        merkleizer
+            .send(transitions)
+            .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
+
         Ok(BlockExecutionResult { receipts, requests })
     }
 
