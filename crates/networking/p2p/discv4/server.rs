@@ -454,7 +454,7 @@ impl DiscoveryServer {
                 debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
                 Err(DiscoveryServerError::InvalidContact)
             }
-            PeerTableOutMessage::ValidContact(contact) => Ok(contact),
+            PeerTableOutMessage::Contact(contact) => Ok(contact),
             _ => unreachable!(),
         }
     }

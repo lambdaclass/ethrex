@@ -26,18 +26,15 @@ pub struct RLPxInitiator {
 
     /// The target number of RLPx connections to reach.
     target_peers: u64,
-    /// The rate at which to try new connections.
-    new_connections_per_lookup: usize,
 }
 
 impl RLPxInitiator {
     pub fn new(context: P2PContext) -> Self {
         Self {
             context,
-            initial_lookup_interval: Duration::from_secs(3),
+            initial_lookup_interval: Duration::from_millis(100),
             lookup_interval: Duration::from_secs(5 * 60),
             target_peers: 50,
-            new_connections_per_lookup: 5000,
         }
     }
 
@@ -48,18 +45,31 @@ impl RLPxInitiator {
         let _ = server.cast(InMessage::LookForPeers).await;
     }
 
+    // async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
+    //     debug!("Looking for peers");
+    //     if !self.context.table.target_peers_reached().await? {
+    //         let contacts = self
+    //             .context
+    //             .table
+    //             .get_contacts_to_initiate(self.new_connections_per_lookup)
+    //             .await?;
+    //         for contact in contacts {
+    //             PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
+    //             METRICS.record_new_rlpx_conn_attempt().await;
+    //         }
+    //     } else {
+    //         debug!("Target peer connections reached, no need to initiate new connections.");
+    //     }
+    //     Ok(())
+    // }
+
     async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
         debug!("Looking for peers");
         if !self.context.table.target_peers_reached().await? {
-            let contacts = self
-                .context
-                .table
-                .get_contacts_to_initiate(self.new_connections_per_lookup)
-                .await?;
-            for contact in contacts {
+            if let Some(contact) = self.context.table.get_contact_to_initiate().await? {
                 PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
                 METRICS.record_new_rlpx_conn_attempt().await;
-            }
+            };
         } else {
             debug!("Target peer connections reached, no need to initiate new connections.");
         }
