@@ -1,5 +1,8 @@
 #[cfg(feature = "l2")]
 use crate::rlpx::l2::l2_connection::P2PBasedContext;
+#[cfg(not(feature = "l2"))]
+#[derive(Clone, Debug)]
+pub struct P2PBasedContext;
 use crate::{
     discv4::{
         peer_table::{PeerData, PeerTable},
@@ -56,7 +59,7 @@ impl P2PContext {
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
-        #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
+        based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
@@ -73,6 +76,9 @@ impl P2PContext {
         .inspect_err(|e| {
             error!("Failed to start Tx Broadcaster: {e}");
         })?;
+
+        #[cfg(not(feature = "l2"))]
+        let _ = &based_context;
 
         Ok(P2PContext {
             local_node,
