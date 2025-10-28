@@ -210,13 +210,15 @@ impl Blockchain {
                 let mut storage_updates_map: FxHashMap<H256, (Trie, FxHashMap<Nibbles, Vec<u8>>)> =
                     Default::default();
                 let mut code_updates: FxHashMap<H256, Code> = Default::default();
-                info!("Starting rx loop");
+                debug!("Starting rx loop");
                 for updates in rx {
-                    info!("Recv'd {} updates", updates.len());
+                    debug!("Recv'd {} updates", updates.len());
                     // Apply the account updates over the last block's state and compute the new state root
                     for update in updates {
                         let hashed_address = hash_address(&update.address);
+                        debug!("Update cycle for {}", hex::encode(&hashed_address));
                         if update.removed {
+                            debug!("Removed");
                             // Remove account from trie
                             state_trie.remove(&hashed_address)?;
                             continue;
@@ -224,49 +226,74 @@ impl Blockchain {
                         // Add or update AccountState in the trie
                         // Fetch current state or create a new state to be inserted
                         let mut account_state = match state_trie.get(&hashed_address)? {
-                            Some(encoded_state) => AccountState::decode(&encoded_state)?,
-                            None => AccountState::default(),
+                            Some(encoded_state) => {
+                                debug!("Found");
+                                AccountState::decode(&encoded_state)?
+                            }
+                            None => {
+                                debug!("Created");
+                                AccountState::default()
+                            }
                         };
                         let hashed_address_h256 = H256::from_slice(&hashed_address);
                         if update.removed_storage {
+                            debug!("Removed storage");
                             account_state.storage_root = *EMPTY_TRIE_HASH;
-                            // storage_updates_map.remove(&hashed_address_h256);
+                            storage_updates_map.remove(&hashed_address_h256);
                         }
                         if let Some(info) = update.info {
+                            debug!(
+                                nonce = info.nonce,
+                                balance = hex::encode(info.balance.to_big_endian()),
+                                code_hash = hex::encode(info.code_hash),
+                                "With info"
+                            );
                             account_state.nonce = info.nonce;
                             account_state.balance = info.balance;
                             account_state.code_hash = info.code_hash;
                             // Store updated code in DB
                             if let Some(code) = update.code {
+                                debug!("Updated code");
                                 code_updates.insert(info.code_hash, code);
                             }
                         }
                         // Store the added storage in the account's storage trie and compute its new root
                         if !update.added_storage.is_empty() {
+                            debug!(count = update.added_storage.len(), "With storages");
                             let (storage_trie, storage_updates_map) =
                                 match storage_updates_map.entry(hashed_address_h256) {
-                                    Entry::Occupied(occupied) => occupied,
-                                    Entry::Vacant(vacant) => vacant.insert_entry((
-                                        self.storage.open_storage_trie(
-                                            hashed_address_h256,
-                                            account_state.storage_root,
-                                            parent_header.state_root,
-                                        )?,
-                                        Default::default(),
-                                    )),
+                                    Entry::Occupied(occupied) => {
+                                        debug!("Already open");
+                                        occupied
+                                    }
+                                    Entry::Vacant(vacant) => {
+                                        debug!("Opening");
+                                        vacant.insert_entry((
+                                            self.storage.open_storage_trie(
+                                                hashed_address_h256,
+                                                account_state.storage_root,
+                                                parent_header.state_root,
+                                            )?,
+                                            Default::default(),
+                                        ))
+                                    }
                                 }
                                 .into_mut();
                             for (storage_key, storage_value) in &update.added_storage {
                                 let hashed_key = hash_key(storage_key);
                                 if storage_value.is_zero() {
+                                    debug!(slot = hex::encode(&hashed_key), "Removing");
                                     storage_trie.remove(&hashed_key)?;
                                 } else {
+                                    debug!(slot = hex::encode(&hashed_key), "Inserting");
                                     storage_trie
                                         .insert(hashed_key, storage_value.encode_to_vec())?;
                                 }
                             }
+                            debug!("Collecting changes");
                             let (storage_hash, storage_updates) =
                                 storage_trie.collect_changes_since_last_hash();
+                            debug!("Changes collected");
                             storage_updates_map.extend(storage_updates);
                             account_state.storage_root = storage_hash;
                         }
@@ -275,7 +302,7 @@ impl Blockchain {
                     (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
                     state_updates_map.extend(state_updates);
                 }
-                info!("Finished rx loop");
+                debug!("Finished rx loop");
                 state_updates = state_updates_map.into_iter().collect();
                 let storage_updates = storage_updates_map
                     .into_iter()

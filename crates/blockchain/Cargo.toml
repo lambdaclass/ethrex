@@ -19,6 +19,7 @@ thiserror.workspace = true
 sha3.workspace = true
 tracing.workspace = true
 bytes.workspace = true
+hex.workspace = true
 rustc-hash.workspace = true
 tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
