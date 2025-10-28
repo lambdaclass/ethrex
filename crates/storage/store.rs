@@ -255,7 +255,6 @@ impl Store {
     }
 
     pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        info!("Adding block to pending: {}", block.hash());
         self.engine.add_pending_block(block)
     }
 
@@ -263,7 +262,6 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<Block>, StoreError> {
-        info!("get pending: {}", block_hash);
         self.engine.get_pending_block(block_hash).await
     }
 
