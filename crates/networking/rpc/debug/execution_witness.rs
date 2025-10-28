@@ -133,19 +133,11 @@ impl RpcHandler for ExecutionWitnessRequest {
         }
 
         let mut blocks = Vec::new();
-        let mut block_headers = Vec::new();
         for block_number in from_block_number..=to_block_number {
             let header = context
                 .storage
                 .get_block_header(block_number)?
                 .ok_or(RpcErr::Internal("Could not get block header".to_string()))?;
-            let parent_header = context
-                .storage
-                .get_block_header_by_hash(header.parent_hash)?
-                .ok_or(RpcErr::Internal(
-                    "Could not get parent block header".to_string(),
-                ))?;
-            block_headers.push(parent_header);
             let block = context
                 .storage
                 .get_block_by_hash(header.hash())
