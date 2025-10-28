@@ -255,7 +255,8 @@ impl Node {
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
-            "{0}({1}:{2})",
+            "{0} #{1}({2}:{3})",
+            self.client_name(),
             self.node_id(),
             self.ip,
             self.tcp_port
