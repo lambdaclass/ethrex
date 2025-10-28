@@ -155,7 +155,7 @@ mod tests {
     use ethrex_trie::Nibbles;
     use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
     use tempfile::TempDir;
-    use crate::store_db::rocksdb::{CF_ACCOUNT_FLATKEYVALUE, CF_MISC_VALUES};
+    use crate::store_db::rocksdb::CF_MISC_VALUES;
 
     #[test]
     fn test_trie_db_basic_operations() {

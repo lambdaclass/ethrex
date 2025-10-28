@@ -783,12 +783,10 @@ impl Store {
                 } else {
                     &cf_storage_flatkeyvalue
                 }
+            } else if is_account {
+                &cf_accounts_trie_nodes
             } else {
-                if is_account {
-                    &cf_accounts_trie_nodes
-                } else {
-                    &cf_storage_trie_nodes
-                }
+                &cf_storage_trie_nodes
             };
             if value.is_empty() {
                 batch.delete_cf(cf, key);
