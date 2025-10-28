@@ -743,7 +743,7 @@ impl L1Committer {
             execution_witness: batch_witness,
             elasticity_multiplier: self.elasticity_multiplier,
             blob_commitment,
-            blob_proof,
+            blob_proofs: blob_proof,
             fee_configs,
         };
 

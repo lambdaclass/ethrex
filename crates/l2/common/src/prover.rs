@@ -17,7 +17,7 @@ pub struct ProverInputData {
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
     #[serde_as(as = "Vec<[_; 48]>")]
-    pub blob_proof: Vec<blobs_bundle::Proof>,
+    pub blob_proofs: Vec<blobs_bundle::Proof>,
     pub fee_configs: Vec<FeeConfig>,
 }
 
