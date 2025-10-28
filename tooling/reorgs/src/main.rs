@@ -132,7 +132,7 @@ async fn snap_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
         .send_contract_deploy(&signer, contract_deploy_bytecode)
         .await;
 
-    // Set another storage slot in the contract in node1
+    // Set a storage slot in the contract in node1
     let calldata0 = [slot_key0.to_big_endian(), slot_value0.to_big_endian()]
         .concat()
         .into();
