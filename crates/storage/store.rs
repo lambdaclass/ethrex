@@ -32,6 +32,12 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 pub struct Store {
     pub engine: Arc<dyn StoreEngine>,
     pub chain_config: ChainConfig,
+    /// Keeps the latest canonical block hash
+    /// It's wrapped in an ArcSwap to allow for cheap lock-free reads with infrequent writes
+    /// Reading an out-of-date value is acceptable, since it's only used as:
+    /// - a cache of the (frequently requested) header
+    /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
+    /// - sync-related operations, which must be idempotent in order to handle reorgs
     pub latest_block_header: Arc<ArcSwap<BlockHeader>>,
 }
 
@@ -214,7 +220,7 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
         // FIXME (#4353)
-        let latest = (*self.latest_block_header.load_full()).clone();
+        let latest = self.latest_block_header.load_full();
         if block_number == latest.number {
             // The latest may not be marked as canonical yet
             return self.engine.get_block_body_by_hash(latest.hash()).await;
@@ -621,6 +627,7 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
+        // The cache can't be empty
         if let Some(number) = self.engine.get_latest_block_number().await? {
             self.latest_block_header.store(Arc::new(
                 self.engine
