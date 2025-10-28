@@ -69,7 +69,12 @@ kzg-rs = [
     "guest_program/kzg-rs",
 ]
 
-l1 = ["ethrex-vm/l1", "ethrex-common/l1", "ethrex-blockchain/l1"]
+l1 = [
+    "ethrex-vm/l1",
+    "ethrex-common/l1",
+    "ethrex-blockchain/l1",
+    "ethrex-l2-common/l1",
+]
 sp1 = [
     "ethrex-vm/sp1",
     "ethrex-common/sp1",

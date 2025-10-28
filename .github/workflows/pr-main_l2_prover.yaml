@@ -52,11 +52,11 @@ jobs:
 
       - name: Check ${{ matrix.backend }} backend
         run: |
-          cargo check -r -p ethrex-prover -F ${{ matrix.backend }}
+          cargo check -r -p ethrex-prover --no-default-features -F l2,${{ matrix.backend }}
 
       - name: Clippy ${{ matrix.backend }} backend
         run: |
-          cargo clippy -r -p ethrex-prover --all-targets -F ${{ matrix.backend }}
+          cargo clippy -r -p ethrex-prover --all-targets --no-default-features -F l2,${{ matrix.backend }}
 
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |

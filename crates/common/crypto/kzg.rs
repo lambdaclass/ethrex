@@ -161,6 +161,19 @@ pub fn verify_blob_kzg_proof(
             .verify_blob_kzg_proof(&blob.into(), &commitment.into(), &proof.into())
             .map_err(KzgError::from)
     }
+    #[cfg(not(feature = "c-kzg"))]
+    {
+        #[cfg(feature = "kzg-rs")]
+        {
+            kzg_rs::KzgProof::verify_blob_kzg_proof(
+                kzg_rs::Blob(blob),
+                &kzg_rs::Bytes48(commitment),
+                &kzg_rs::Bytes48(proof),
+                &kzg_rs::get_kzg_settings(),
+            )
+            .map_err(KzgError::from)
+        }
+    }
 }
 
 #[cfg(feature = "c-kzg")]

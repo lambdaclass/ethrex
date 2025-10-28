@@ -101,7 +101,8 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blocks,
         execution_witness,
         elasticity_multiplier,
-        fee_configs: _fee_configs,
+        #[cfg(feature = "l2")]
+            fee_configs: _fee_configs,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
