@@ -280,6 +280,7 @@ jobs:
         run: |
           if  [ "${{ matrix.based }}" = true ]; then
             export INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true
+            export INTEGRATION_TEST_SKIP_FEE_VAULTS_CHECK=true
           fi
           sudo chmod -R a+rw crates/l2
           cd crates/l2
