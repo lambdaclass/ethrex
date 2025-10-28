@@ -51,6 +51,7 @@ pub enum P2PTransaction {
     EIP4844TransactionWithBlobs(WrappedEIP4844Transaction),
     EIP7702Transaction(EIP7702Transaction),
     PrivilegedL2Transaction(PrivilegedL2Transaction),
+    FeeTokenTransaction(FeeTokenTransaction),
 }
 
 impl TryInto<Transaction> for P2PTransaction {
@@ -103,7 +104,9 @@ impl RLPDecode for P2PTransaction {
                 // EIP7702
                 0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::EIP7702Transaction(tx), rem)),
-                // TODO: FeeToken - Do we want to include them here for P2P as well?
+                // FeeToken
+                0x7d => FeeTokenTransaction::decode_unfinished(tx_encoding)
+                    .map(|(tx, rem)| (P2PTransaction::FeeTokenTransaction(tx), rem)),
                 // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::PrivilegedL2Transaction(tx), rem)),
@@ -1601,6 +1604,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
                 P2PTransaction::EIP7702Transaction(_) => TxType::EIP7702,
                 P2PTransaction::PrivilegedL2Transaction(_) => TxType::Privileged,
+                P2PTransaction::FeeTokenTransaction(_) => TxType::FeeToken,
             }
         }
 
@@ -1617,6 +1621,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP4844TransactionWithBlobs(t) => t.encode(buf),
                 P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
                 P2PTransaction::PrivilegedL2Transaction(t) => t.encode(buf),
+                P2PTransaction::FeeTokenTransaction(t) => t.encode(buf),
             };
         }
 
@@ -1645,6 +1650,9 @@ mod canonic_encoding {
                 }
                 P2PTransaction::PrivilegedL2Transaction(t) => {
                     Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::FeeTokenTransaction(t) => {
+                    Transaction::FeeTokenTransaction(t.clone()).compute_hash()
                 }
             }
         }
