@@ -292,6 +292,13 @@ pub async fn send_tx_hashes(
             let tx_count = tx_chunk.len();
             let mut txs_to_send = Vec::with_capacity(tx_count);
             for tx in tx_chunk {
+                if tx.is_privileged() {
+                    debug!(
+                        peer=%format!("{:#x}", peer_id),
+                        "Not sending privileged transaction hash to peer",
+                    );
+                    continue;
+                }
                 txs_to_send.push((**tx).clone());
             }
             let hashes_message = Message::NewPooledTransactionHashes(

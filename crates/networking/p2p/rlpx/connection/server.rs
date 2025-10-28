@@ -934,8 +934,7 @@ async fn handle_incoming_message(
                     // Reject blob transactions in L2 mode
                     #[cfg(feature = "l2")]
                     if is_l2_mode
-                        && (matches!(tx, Transaction::EIP4844Transaction(_))
-                            || matches!(tx, Transaction::PrivilegedL2Transaction(_)))
+                        && (matches!(tx, Transaction::EIP4844Transaction(_)) || tx.is_privileged())
                     {
                         let tx_type = tx.tx_type();
                         debug!(peer=%state.node, "Rejecting transaction in L2 mode - {tx_type} transactions are not broadcasted in L2");

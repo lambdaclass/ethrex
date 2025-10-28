@@ -295,10 +295,10 @@ impl PooledTransactions {
                     continue;
                 }
             } else {
-                if matches!(tx, P2PTransaction::PrivilegedL2Transaction(_)) && is_l2_mode {
+                if matches!(tx, P2PTransaction::PrivilegedL2Transaction(_)) {
                     debug!(
                         peer=%node,
-                        "Rejecting privileged L2 transaction in L2 mode - privileged L2 transactions are not broadcasted",
+                        "Rejecting privileged - privileged L2 transactions are not broadcasted",
                     );
                     continue;
                 }
