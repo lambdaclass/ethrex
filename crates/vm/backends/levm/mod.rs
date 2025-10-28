@@ -97,7 +97,9 @@ impl LEVM {
         })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
             let transitions = LEVM::get_state_transitions(db)?;
-            merkleizer.send(transitions).expect("send failed");
+            merkleizer
+                .send(transitions)
+                .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
