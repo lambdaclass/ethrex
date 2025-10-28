@@ -933,8 +933,12 @@ async fn handle_incoming_message(
                 for tx in &txs.transactions {
                     // Reject blob transactions in L2 mode
                     #[cfg(feature = "l2")]
-                    if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
-                        debug!(peer=%state.node, "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2");
+                    if is_l2_mode
+                        && (matches!(tx, Transaction::EIP4844Transaction(_))
+                            || matches!(tx, Transaction::PrivilegedL2Transaction(_)))
+                    {
+                        let tx_type = tx.tx_type();
+                        debug!(peer=%state.node, "Rejecting transaction in L2 mode - {tx_type} transactions are not broadcasted in L2");
                         continue;
                     }
 
