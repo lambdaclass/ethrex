@@ -239,11 +239,9 @@ impl GeneralizedDatabase {
 
             account_updates.push(account_update);
         }
-        std::mem::swap(
-            &mut self.current_accounts_state,
-            &mut self.initial_accounts_state,
-        );
+        self.initial_accounts_state.clear();
         self.current_accounts_state.clear();
+        self.codes.clear();
         Ok(account_updates)
     }
 }
