@@ -1,4 +1,6 @@
 use aligned_sdk::common::types::Network;
+use ethrex_common::types::Block;
+use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, types::TxType};
 use ethrex_l2_common::prover::ProverType;
@@ -11,8 +13,11 @@ use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides},
 };
+use ethrex_storage::Store;
+use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use rand::Rng;
+use reqwest::Url;
 use std::time::{Duration, SystemTime};
 use std::{str::FromStr, time::UNIX_EPOCH};
 use tokio::time::sleep;
@@ -79,7 +84,7 @@ pub async fn send_verify_tx(
 }
 
 pub async fn get_needed_proof_types(
-    rpc_urls: Vec<String>,
+    rpc_urls: Vec<Url>,
     on_chain_proposer_address: Address,
 ) -> Result<Vec<ProverType>, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
@@ -158,4 +163,57 @@ where
         .await?;
 
     Ok(is_up_to_date)
+}
+
+pub async fn fetch_blocks_with_respective_fee_configs<E>(
+    batch_number: u64,
+    store: &Store,
+    rollup_store: &StoreRollup,
+) -> Result<(Vec<Block>, Vec<FeeConfig>), E>
+where
+    E: From<StoreError> + From<RollupStoreError>,
+{
+    let batch_blocks = rollup_store
+        .get_block_numbers_by_batch(batch_number)
+        .await?
+        .ok_or(RollupStoreError::Custom(
+            "failed to retrieve data from storage".to_string(),
+        ))?;
+
+    let mut blocks = Vec::new();
+    let mut fee_configs = vec![];
+
+    for block_number in batch_blocks {
+        let block_header = store
+            .get_block_header(block_number)?
+            .ok_or(StoreError::Custom(
+                "failed to retrieve data from storage".to_string(),
+            ))?;
+
+        let block_body = store
+            .get_block_body(block_number)
+            .await?
+            .ok_or(StoreError::Custom(
+                "failed to retrieve data from storage".to_string(),
+            ))?;
+
+        let block = Block::new(block_header, block_body);
+
+        blocks.push(block);
+
+        // Fetch the L1 fee config for this block
+        let fee_config = rollup_store
+            .get_fee_config_by_block(block_number)
+            .await?
+            .ok_or(RollupStoreError::Custom("Fee config not found".to_string()))?;
+
+        fee_configs.push(fee_config);
+    }
+
+    Ok((blocks, fee_configs))
+}
+
+/// Returns the git commit hash of the current build.
+pub fn get_git_commit_hash() -> String {
+    env!("VERGEN_GIT_SHA").to_string()
 }

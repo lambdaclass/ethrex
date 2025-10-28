@@ -162,7 +162,8 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .block_producer_opts
                     .coinbase_address
                     .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
-                fee_vault_address: opts.block_producer_opts.fee_vault_address,
+                base_fee_vault_address: opts.block_producer_opts.base_fee_vault_address,
+                operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
                 block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
@@ -197,6 +198,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
+                l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -289,7 +291,7 @@ pub struct EthOptions {
         help_heading = "Eth options",
         num_args = 1..
     )]
-    pub rpc_url: Vec<String>,
+    pub rpc_url: Vec<Url>,
     #[arg(
         long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -343,7 +345,9 @@ pub struct EthOptions {
 impl Default for EthOptions {
     fn default() -> Self {
         Self {
-            rpc_url: vec!["http://localhost:8545".to_string()],
+            rpc_url: vec![
+                Url::parse("http://localhost:8545").expect("Unreachable error. URL is hardcoded"),
+            ],
             maximum_allowed_max_fee_per_gas: 10000000000,
             maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
@@ -398,6 +402,14 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub watcher_block_delay: u64,
+    #[arg(
+        long = "watcher.l1-fee-update-interval-ms",
+        value_name = "ADDRESS",
+        default_value = "60000",
+        env = "ETHREX_WATCHER_L1_FEE_UPDATE_INTERVAL_MS",
+        help_heading = "Block producer options"
+    )]
+    pub l1_fee_update_interval_ms: u64,
 }
 
 impl Default for WatcherOptions {
@@ -407,6 +419,7 @@ impl Default for WatcherOptions {
             watch_interval_ms: 1000,
             max_block_step: 5000,
             watcher_block_delay: 0,
+            l1_fee_update_interval_ms: 60000,
         }
     }
 }
@@ -437,12 +450,36 @@ pub struct BlockProducerOptions {
     )]
     pub coinbase_address: Option<Address>,
     #[arg(
-        long = "block-producer.fee-vault-address",
+        long = "block-producer.base-fee-vault-address",
         value_name = "ADDRESS",
-        env = "ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS",
+        env = "ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS",
         help_heading = "Block producer options"
     )]
-    pub fee_vault_address: Option<Address>,
+    pub base_fee_vault_address: Option<Address>,
+    #[arg(
+        long = "block-producer.operator-fee-vault-address",
+        value_name = "ADDRESS",
+        requires = "operator_fee_per_gas",
+        env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS",
+        help_heading = "Block producer options"
+    )]
+    pub operator_fee_vault_address: Option<Address>,
+    #[arg(
+        long = "block-producer.operator-fee-per-gas",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS",
+        requires = "operator_fee_vault_address",
+        help_heading = "Block producer options",
+        help = "Fee that the operator will receive for each unit of gas consumed in a block."
+    )]
+    pub operator_fee_per_gas: Option<u64>,
+    #[arg(
+        long = "block-producer.l1-fee-vault-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS",
+        help_heading = "Block producer options"
+    )]
+    pub l1_fee_vault_address: Option<Address>,
     #[arg(
         long,
         default_value = "2",
@@ -471,7 +508,10 @@ impl Default for BlockProducerOptions {
                     .parse()
                     .unwrap(),
             ),
-            fee_vault_address: None,
+            base_fee_vault_address: None,
+            operator_fee_vault_address: None,
+            operator_fee_per_gas: None,
+            l1_fee_vault_address: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }

@@ -198,8 +198,6 @@ pub enum PrecompileError {
     PointNotInTheCurve,
     #[error("The point is not in the subgroup")]
     PointNotInSubgroup,
-    #[error("BN254 ate pairing error")]
-    BN254AtePairingError,
     #[error("The G1 point is not in the curve")]
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
