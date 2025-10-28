@@ -26,6 +26,7 @@ fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value
         "shanghaiTime",
         "cancunTime",
         "pragueTime",
+        "osakaTime",
         "verkleTime",
         "ethash",
         "depositContractAddress",
