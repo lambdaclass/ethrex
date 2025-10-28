@@ -1,4 +1,4 @@
-use crate::{error::StoreError, store};
+use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
