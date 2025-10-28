@@ -167,7 +167,7 @@ impl L1Committer {
         checkpoints_dir: PathBuf,
     ) -> Result<Self, CommitterError> {
         let eth_client = EthClient::new_with_config(
-            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_config.rpc_url.clone(),
             eth_config.max_number_of_retries,
             eth_config.backoff_factor,
             eth_config.min_retry_delay,

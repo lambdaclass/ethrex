@@ -170,17 +170,10 @@ impl BlobsBundle {
             }
         } else {
             // Validate the blobs with the commitments and proofs
-            for ((blob, commitment), proof) in self
-                .blobs
-                .iter()
-                .zip(self.commitments.iter())
-                .zip(self.proofs.iter())
-            {
-                use ethrex_crypto::kzg::verify_blob_kzg_proof;
+            use ethrex_crypto::kzg::verify_kzg_proof_batch;
 
-                if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
-                    return Err(BlobsBundleError::BlobToCommitmentAndProofError);
-                }
+            if !verify_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
+                return Err(BlobsBundleError::BlobToCommitmentAndProofError);
             }
         }
 
