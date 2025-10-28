@@ -15,7 +15,8 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork,
-        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
+        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle,
+        fake_exponential_checked,
     },
 };
 use ethrex_l2_common::{
@@ -730,13 +731,13 @@ impl L1Committer {
             // fork to get a single proof for the entire blob.
             // If we are pre-Osaka, we already have a single proof in the
             // previously generated bundle
-            let proof = if fork < Fork::Osaka {
+            let proof = if l1_fork < Fork::Osaka {
                 proofs
                     .first()
                     .cloned()
                     .ok_or_else(|| CommitterError::MissingBlob(batch.number))?
             } else {
-                BlobsBundle::create_from_blobs(blobs, Fork::Prague)?
+                BlobsBundle::create_from_blobs(blobs, Some(0))?
                     .proofs
                     .first()
                     .cloned()

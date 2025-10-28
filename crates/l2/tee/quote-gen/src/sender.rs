@@ -32,7 +32,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
                     #[cfg(feature = "l2")]
                     blob_commitment: input.blob_commitment,
                     #[cfg(feature = "l2")]
-                    blob_proofs: input.blob_proofs,
+                    blob_proof: input.blob_proof,
                     fee_configs: Some(input.fee_configs),
                 },
             )),
