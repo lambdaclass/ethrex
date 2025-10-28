@@ -263,8 +263,6 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // We round up because of the accounts whose slots get downloaded and then not used
             let storage_leaves_inserted_percentage =
                 (storage_leaves_inserted_percentage * 10.0).round() / 10.0;
-            let storage_leaves_pending =
-                storage_leaves_downloaded.saturating_sub(storage_leaves_inserted);
             let storage_leaves_time = format_duration({
                 let end_time = METRICS
                     .storage_tries_download_end_time
@@ -361,7 +359,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
 P2P Snap Sync | elapsed {elapsed} | peers {peer_number} | step {current_step} | head {current_header_hash:x}
   headers : {headers_downloaded}/{headers_to_download} ({headers_download_progress}), remaining {headers_remaining}
   accounts: downloaded {account_leaves_downloaded} @ {account_leaves_time} | inserted {account_leaves_inserted} ({account_leaves_inserted_percentage:.1}%) in {account_leaves_inserted_time} | pending {account_leaves_pending}
-  storage : downloaded {storage_leaves_downloaded} @ {storage_leaves_time} | inserted {storage_leaves_inserted} ({storage_leaves_inserted_percentage:.1}%) in {storage_leaves_inserted_time} | pending {storage_leaves_pending}
+  storage : downloaded {storage_leaves_downloaded} @ {storage_leaves_time} | inserted {storage_leaves_inserted} ({storage_leaves_inserted_percentage:.1}%) in {storage_leaves_inserted_time}
   healing : accounts {healed_accounts}, storages {healed_storages}, elapsed {heal_time}, throttle {heal_current_throttle}
   bytecodes: downloaded {bytecodes_downloaded} in {bytecodes_download_time}"#
             );
