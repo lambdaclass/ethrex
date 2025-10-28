@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-28
+
+- Use RocksDB-specific backend for the VM [#5073](https://github.com/lambdaclass/ethrex/pull/5073)
+
 ### 2025-10-27
 
 - Run "engine_newPayload" block execution in a dedicated worker thread. [#5051](https://github.com/lambdaclass/ethrex/pull/5051)
