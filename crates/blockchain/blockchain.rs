@@ -198,8 +198,8 @@ impl Blockchain {
 
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
             let (tx, rx) = channel();
-            let execution_handle = s.spawn(|| vm.execute_block_pipeline(block, tx));
-            let merkleize_handle = s.spawn(|| -> Result<_, StoreError> {
+            let execution_handle = s.spawn(move || vm.execute_block_pipeline(block, tx));
+            let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
                 let mut state_trie = self
                     .storage
                     .state_trie(parent_header.hash())?
@@ -210,7 +210,9 @@ impl Blockchain {
                 let mut storage_updates_map: FxHashMap<H256, (Trie, FxHashMap<Nibbles, Vec<u8>>)> =
                     Default::default();
                 let mut code_updates: FxHashMap<H256, Code> = Default::default();
+                info!("Starting rx loop");
                 for updates in rx {
+                    info!("Recv'd {} updates", updates.len());
                     // Apply the account updates over the last block's state and compute the new state root
                     for update in updates {
                         let hashed_address = hash_address(&update.address);
@@ -273,6 +275,7 @@ impl Blockchain {
                     (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
                     state_updates_map.extend(state_updates);
                 }
+                info!("Finished rx loop");
                 state_updates = state_updates_map.into_iter().collect();
                 let storage_updates = storage_updates_map
                     .into_iter()
