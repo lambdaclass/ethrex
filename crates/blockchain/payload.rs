@@ -11,9 +11,10 @@ use ethrex_common::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+        ChainConfig, INITIAL_BASE_FEE, MempoolTransaction, Receipt, Transaction, TxType,
+        Withdrawal, bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -154,7 +155,7 @@ pub fn create_payload(
             gas_limit,
             parent_block.gas_limit,
             parent_block.gas_used,
-            parent_block.base_fee_per_gas.unwrap_or_default(),
+            parent_block.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
             args.elasticity_multiplier,
         ),
         withdrawals_root: chain_config
