@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethereum_types::Address;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -89,7 +88,7 @@ impl FeeConfigType {
 }
 
 impl FeeConfig {
-    pub fn encode(&self) -> Result<Bytes, FeeConfigError> {
+    pub fn to_vec(&self) -> Vec<u8> {
         let version = 0u8;
         let mut encoded: Vec<u8> = Vec::new();
 
@@ -123,7 +122,7 @@ impl FeeConfig {
         result.extend(fee_config_type.to_be_bytes());
         result.extend(encoded);
 
-        Ok(Bytes::from(result))
+        result
     }
 
     pub fn decode(bytes: &[u8]) -> Result<(usize, Self), FeeConfigError> {

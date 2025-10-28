@@ -1,6 +1,7 @@
 use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
+use ethrex_common::types::BlobsBundle;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H160, H256, U256,
@@ -11,7 +12,6 @@ use ethrex_common::{
 use ethrex_l2_common::{
     l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
     privileged_transactions::compute_privileged_transactions_hash,
-    state_diff::prepare_state_diff,
 };
 use ethrex_l2_sdk::{get_last_committed_batch, get_last_fetched_l1_block};
 use ethrex_rlp::decode::RLPDecode;
@@ -28,7 +28,7 @@ use tracing::{debug, error, info};
 use crate::{
     SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::{l1_committer::generate_blobs_bundle, utils::node_is_up_to_date},
+    sequencer::utils::node_is_up_to_date,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -375,21 +375,8 @@ impl BlockFetcher {
             }
         }
 
-        let parent_block_hash = first_block.header.parent_hash;
-
-        let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
-
-        let state_diff = prepare_state_diff(
-            last_block.header.clone(),
-            &parent_db,
-            &messages,
-            &privileged_transactions,
-            acc_account_updates.into_values().collect(),
-        )
-        .map_err(|_| BlockFetcherError::BlobBundleError)?;
-
-        let (blobs_bundle, _) =
-            generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
+        // Based don't use blobs
+        let blobs_bundle = BlobsBundle::default();
 
         Ok(Batch {
             number: batch_number.as_u64(),

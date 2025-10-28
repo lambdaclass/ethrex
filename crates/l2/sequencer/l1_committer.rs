@@ -10,12 +10,13 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Genesis,
+        BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Genesis,
         MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
+        fee_config::FeeConfig,
     },
 };
 use ethrex_l2_common::{
@@ -27,7 +28,6 @@ use ethrex_l2_common::{
         get_block_privileged_transactions,
     },
     prover::ProverInputData,
-    state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{
@@ -45,10 +45,9 @@ use ethrex_rpc::{
 use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{BlockExecutionResult, Evm};
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs::remove_dir_all,
     path::{Path, PathBuf},
     sync::Arc,
@@ -376,11 +375,13 @@ impl L1Committer {
 
         let mut acc_messages = vec![];
         let mut acc_privileged_txs = vec![];
-        let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         let mut message_hashes = vec![];
         let mut privileged_transactions_hashes = vec![];
         let mut new_state_root = H256::default();
         let mut acc_gas_used = 0_u64;
+
+        let mut acc_blocks = vec![];
+        let mut acc_fee_configs = vec![];
 
         #[cfg(feature = "metrics")]
         let mut tx_count = 0_u64;
@@ -389,7 +390,7 @@ impl L1Committer {
         #[cfg(feature = "metrics")]
         let mut batch_gas_used = 0_u64;
 
-        info!("Preparing state diff from block {first_block_of_batch}, {batch_number}");
+        info!("Preparing batch from block {first_block_of_batch}, {batch_number}");
 
         let one_time_checkpoint_path = self
             .checkpoints_dir
@@ -402,7 +403,7 @@ impl L1Committer {
         // struct, but we need to create a one-time copy of it because
         // we still need to use the current checkpoint store later for witness
         // generation.
-        let (one_time_checkpoint_store, one_time_checkpoint_blockchain) = self
+        let (one_time_checkpoint_store, _) = self
             .create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
             .await?;
 
@@ -475,93 +476,9 @@ impl L1Committer {
             let messages = get_block_l1_messages(&receipts);
             let privileged_transactions = get_block_privileged_transactions(&txs);
 
-            // Get block account updates.
-            let account_updates = if let Some(account_updates) = self
-                .rollup_store
-                .get_account_updates_by_block_number(block_to_commit_number)
-                .await?
-            {
-                account_updates
-            } else {
-                warn!(
-                    "Could not find execution cache result for block {}, falling back to re-execution",
-                    last_added_block_number + 1
-                );
-
-                // Here we use the checkpoint store because we need the previous
-                // state available (i.e. not pruned) for re-execution.
-                let vm_db = StoreVmDatabase::new(
-                    one_time_checkpoint_store.clone(),
-                    potential_batch_block.header.parent_hash,
-                );
-
-                let fee_config = self
-                    .rollup_store
-                    .get_fee_config_by_block(block_to_commit_number)
-                    .await?
-                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "Failed to get fee config for re-execution".to_owned(),
-                    ))?;
-
-                let mut vm = Evm::new_for_l2(vm_db, fee_config)?;
-
-                vm.execute_block(&potential_batch_block)?;
-
-                vm.get_state_transitions()?
-            };
-
-            // The checkpoint store's state corresponds to the parent state of
-            // the first block of the batch. Therefore, we need to apply the
-            // account updates of each block as we go, to be able to continue
-            // re-executing the next blocks in the batch.
-            {
-                let account_updates_list = one_time_checkpoint_store
-                    .apply_account_updates_batch(
-                        potential_batch_block.header.parent_hash,
-                        &account_updates,
-                    )?
-                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "no account updated".to_owned(),
-                    ))?;
-
-                one_time_checkpoint_blockchain
-                    .store_block(
-                        potential_batch_block.clone(),
-                        account_updates_list,
-                        BlockExecutionResult {
-                            receipts,
-                            requests: vec![],
-                        },
-                    )
-                    .await?;
-            }
-
             // Accumulate block data with the rest of the batch.
             acc_messages.extend(messages.clone());
             acc_privileged_txs.extend(privileged_transactions.clone());
-            for account in account_updates {
-                let address = account.address;
-                if let Some(existing) = acc_account_updates.get_mut(&address) {
-                    existing.merge(account);
-                } else {
-                    acc_account_updates.insert(address, account);
-                }
-            }
-
-            // It is safe to retrieve this from the main store because blocks
-            // are available there. What's not available is the state
-            let parent_block_hash = self
-                .store
-                .get_block_header(first_block_of_batch)?
-                .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                    "Failed to get_block_header() of the last added block".to_owned(),
-                ))?
-                .parent_hash;
-
-            // Again, here the VM database should be instantiated from the checkpoint
-            // store to have access to the previous state
-            let parent_db =
-                StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_block_hash);
 
             let acc_privileged_txs_len: u64 = acc_privileged_txs.len().try_into()?;
             if acc_privileged_txs_len > PRIVILEGED_TX_BUDGET {
@@ -573,15 +490,19 @@ impl L1Committer {
             }
 
             let result = if !self.validium {
-                // Prepare current state diff.
-                let state_diff: StateDiff = prepare_state_diff(
-                    potential_batch_block.header.clone(),
-                    &parent_db,
-                    &acc_messages,
-                    &acc_privileged_txs,
-                    acc_account_updates.clone().into_values().collect(),
-                )?;
-                generate_blobs_bundle(&state_diff)
+                // Prepare blob
+                let fee_config = self
+                    .rollup_store
+                    .get_fee_config_by_block(block_to_commit_number)
+                    .await?
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "Failed to get fee config for re-execution".to_owned(),
+                    ))?;
+
+                acc_blocks.push(potential_batch_block.clone());
+                acc_fee_configs.push(fee_config);
+
+                generate_blobs_bundle(&acc_blocks, &acc_fee_configs)
             } else {
                 Ok((BlobsBundle::default(), 0_usize))
             };
@@ -1104,13 +1025,26 @@ impl GenServer for L1Committer {
 
 /// Generate the blob bundle necessary for the EIP-4844 transaction.
 pub fn generate_blobs_bundle(
-    state_diff: &StateDiff,
+    blocks: &[Block],
+    fee_configs: &[FeeConfig],
 ) -> Result<(BlobsBundle, usize), CommitterError> {
-    let blob_data = state_diff.encode().map_err(CommitterError::from)?;
+    let len: u64 = blocks.len().try_into()?;
+    let mut blob_data = Vec::new();
+
+    blob_data.extend(len.to_le_bytes());
+
+    for block in blocks {
+        blob_data.extend(block.encode_to_vec());
+    }
+
+    for fee_config in fee_configs {
+        blob_data.extend(fee_config.to_vec());
+    }
 
     let blob_size = blob_data.len();
 
-    let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
+    let blob =
+        blobs_bundle::blob_from_bytes(Bytes::from(blob_data)).map_err(CommitterError::from)?;
 
     Ok((
         BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)?,
