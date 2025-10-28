@@ -188,10 +188,6 @@ impl Syncer {
             .await?
             .ok_or(SyncError::BlockNumber(current_head))?;
 
-        METRICS
-            .headers_to_download
-            .store(current_head_number, Ordering::Relaxed);
-
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
