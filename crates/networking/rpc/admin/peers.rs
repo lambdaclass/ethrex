@@ -1,18 +1,14 @@
+use crate::utils::RpcRequest;
 use crate::{rpc::RpcApiContext, utils::RpcErr};
 use core::net::SocketAddr;
 use ethrex_common::H256;
 use ethrex_p2p::{
     discv4::peer_table::PeerData,
-    rlpx::{
-        initiator::{InMessage, RLPxInitiator},
-        p2p::Capability,
-    },
+    rlpx::{initiator::InMessage, p2p::Capability},
     types::Node,
 };
 use serde::Serialize;
 use serde_json::Value;
-use spawned_concurrency::tasks::GenServerHandle;
-
 /// Serializable peer data returned by the node's rpc
 #[derive(Serialize)]
 pub struct RpcPeer {
@@ -96,11 +92,9 @@ pub async fn peers(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
         .collect::<Vec<_>>();
     Ok(serde_json::to_value(peers)?)
 }
-use crate::utils::RpcRequest;
-pub async fn add_peers(
-    request: &RpcRequest,
-    mut server: GenServerHandle<RLPxInitiator>,
-) -> Result<Value, RpcErr> {
+
+pub async fn add_peers(context: &mut RpcApiContext, request: &RpcRequest) -> Result<Value, RpcErr> {
+    let mut server = context.peer_handler.initiator.clone();
     let params = request
         .params
         .clone()
@@ -118,9 +112,26 @@ pub async fn add_peers(
 
     let node = Node::from_enode_url(url).map_err(|error| RpcErr::BadParams(error.to_string()))?;
 
-    match server.cast(InMessage::Initiate { node }).await {
+    match server
+        .cast(InMessage::Initiate { node: node.clone() })
+        .await
+    {
         Err(_) => Ok(serde_json::to_value(false)?),
-        Ok(_) => Ok(serde_json::to_value(true)?),
+        Ok(_) => {
+            if context
+                .peer_handler
+                .read_connected_peers()
+                .await
+                .into_iter()
+                .map(|peer| peer.node.enode_url())
+                .collect::<Vec<_>>()
+                .contains(&node.enode_url())
+            {
+                Ok(serde_json::to_value(true)?)
+            } else {
+                Ok(serde_json::to_value(false)?)
+            }
+        }
     }
 }
 
