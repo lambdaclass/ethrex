@@ -60,10 +60,16 @@ def parse_args():
         "--network", type=str, default="hoodi", help="Network variable (default: hoodi)"
     )
     parser.add_argument(
-        "--branch",
+        "--from_branch",
         type=str,
         default="main",
-        help="Branch variable (default: main)",
+        help="Branch variable for the initial state (default: main)",
+    )
+    parser.add_argument(
+        "--to_branch",
+        type=str,
+        default="main",
+        help="Branch variable for the ending state (default: main)",
     )
     parser.add_argument(
         "--logs_file",
@@ -188,7 +194,8 @@ def get_variables(args):
     if args.debug_assert:
         variables["DEBUG_ASSERT"] = "1"
     variables["SERVER_SYNC_NETWORK"] = args.network
-    variables["SERVER_SYNC_BRANCH"] = args.branch
+    variables["SERVER_SYNC_BRANCH"] = args.from_branch
+    variables["SERVER_SYNC_TO_BRANCH"] = args.to_branch
 
     return variables
 
