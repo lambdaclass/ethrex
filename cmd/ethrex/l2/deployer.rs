@@ -521,7 +521,7 @@ pub async fn deploy_l1_contracts(
 
     let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
 
-    initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
+    initialize_contracts(contract_addresses.clone(), &eth_client, &opts, &signer).await?;
 
     if opts.deposit_rich {
         let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
@@ -531,7 +531,7 @@ pub async fn deploy_l1_contracts(
             });
     }
 
-    write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
+    write_contract_addresses_to_env(contract_addresses.clone(), opts.env_file_path)?;
     info!("Deployer binary finished successfully");
     Ok(contract_addresses)
 }
