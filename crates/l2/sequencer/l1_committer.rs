@@ -524,16 +524,14 @@ impl L1Committer {
                         "no account updated".to_owned(),
                     ))?;
 
-                one_time_checkpoint_blockchain
-                    .store_block(
-                        potential_batch_block.clone(),
-                        account_updates_list,
-                        BlockExecutionResult {
-                            receipts,
-                            requests: vec![],
-                        },
-                    )
-                    .await?;
+                one_time_checkpoint_blockchain.store_block(
+                    potential_batch_block.clone(),
+                    account_updates_list,
+                    BlockExecutionResult {
+                        receipts,
+                        requests: vec![],
+                    },
+                )?;
             }
 
             // Accumulate block data with the rest of the batch.
@@ -791,7 +789,7 @@ impl L1Committer {
         let engine_type = EngineType::InMemory;
 
         let checkpoint_store = {
-            let checkpoint_store_inner = Store::new(path, engine_type)?;
+            let mut checkpoint_store_inner = Store::new(path, engine_type)?;
 
             checkpoint_store_inner
                 .add_initial_state(self.genesis.clone())
@@ -1257,7 +1255,6 @@ pub async fn regenerate_head_state(
 
         blockchain
             .add_block(block)
-            .await
             .map_err(|err| CommitterError::FailedToCreateCheckpoint(err.to_string()))?;
     }
 
