@@ -289,6 +289,9 @@ def main():
 
         for key, value in variables.items():
             command.append(f"{key}={value}")
+        subprocess.run(
+            ["git", "checkout", "tooling/server-check-db"], check=True
+        )
         success = execution_loop(
             command, logs_file, args, hostname, payload, block_production_payload, args.debug_assert
         )
