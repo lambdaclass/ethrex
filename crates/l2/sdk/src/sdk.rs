@@ -142,7 +142,7 @@ pub async fn transfer(
     .await?;
 
     let signer = LocalSigner::new(*private_key).into();
-    send_generic_transaction(client, tx, &signer, None).await
+    send_generic_transaction(client, tx, &signer).await
 }
 
 pub async fn deposit_through_transfer(
@@ -190,7 +190,7 @@ pub async fn withdraw(
 
     let signer = LocalSigner::new(from_pk).into();
 
-    send_generic_transaction(proposer_client, withdraw_transaction, &signer, None).await
+    send_generic_transaction(proposer_client, withdraw_transaction, &signer).await
 }
 
 pub async fn claim_withdraw(
@@ -239,7 +239,7 @@ pub async fn claim_withdraw(
 
     let signer = LocalSigner::new(from_pk).into();
 
-    send_generic_transaction(eth_client, claim_tx, &signer, None).await
+    send_generic_transaction(eth_client, claim_tx, &signer).await
 }
 
 pub async fn claim_erc20withdraw(
@@ -290,7 +290,7 @@ pub async fn claim_erc20withdraw(
     )
     .await?;
 
-    send_generic_transaction(eth_client, claim_tx, from_signer, None).await
+    send_generic_transaction(eth_client, claim_tx, from_signer).await
 }
 
 pub async fn deposit_erc20(
@@ -329,7 +329,7 @@ pub async fn deposit_erc20(
 
     deposit_tx.gas = deposit_tx.gas.map(|gas| gas * 2); // tx reverts in some cases otherwise
 
-    send_generic_transaction(eth_client, deposit_tx, from_signer, None).await
+    send_generic_transaction(eth_client, deposit_tx, from_signer).await
 }
 
 pub fn secret_key_deserializer<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>
@@ -406,7 +406,7 @@ pub async fn create_deploy(
         deploy_overrides,
     )
     .await?;
-    let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer, None).await?;
+    let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
 
     let nonce = client
         .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
@@ -549,7 +549,7 @@ async fn create2_deploy(
     .await?;
 
     let deploy_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer, None).await?;
+        send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer).await?;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
 
@@ -603,7 +603,7 @@ pub async fn initialize_contract(
     .await?;
 
     let initialize_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, initialize_tx, initializer, None).await?;
+        send_tx_bump_gas_exponential_backoff(eth_client, initialize_tx, initializer).await?;
 
     Ok(initialize_tx_hash)
 }
@@ -627,7 +627,7 @@ pub async fn call_contract(
     )
     .await?;
 
-    let tx_hash = send_generic_transaction(client, tx, signer, None).await?;
+    let tx_hash = send_generic_transaction(client, tx, signer).await?;
 
     wait_for_transaction_receipt(tx_hash, client, 100).await?;
     Ok(tx_hash)
@@ -657,9 +657,6 @@ pub async fn send_generic_transaction(
     client: &EthClient,
     generic_tx: GenericTransaction,
     signer: &Signer,
-    // Osaka activation time is optional, if None, the client will assume Osaka is active.
-    // This is only used for EIP4844 transactions.
-    osaka_activation_time: Option<u64>,
 ) -> Result<H256, EthClientError> {
     let mut encoded_tx = vec![generic_tx.r#type.into()];
     match generic_tx.r#type {
@@ -673,8 +670,7 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         TxType::EIP4844 => {
-            let l1_fork = get_l1_active_fork(client, osaka_activation_time).await?;
-            let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, l1_fork)?;
+            let mut tx: WrappedEIP4844Transaction = generic_tx.try_into()?;
             tx.tx
                 .sign_inplace(signer)
                 .await
@@ -695,7 +691,6 @@ pub async fn send_tx_bump_gas_exponential_backoff(
     client: &EthClient,
     mut tx: GenericTransaction,
     signer: &Signer,
-    osaka_activation_time: Option<u64>,
 ) -> Result<H256, EthClientError> {
     let mut number_of_retries = 0;
 
@@ -734,15 +729,14 @@ pub async fn send_tx_bump_gas_exponential_backoff(
                 "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
             );
         }
-        let Ok(tx_hash) =
-            send_generic_transaction(client, tx.clone(), signer, osaka_activation_time)
-                .await
-                .inspect_err(|e| {
-                    error!(
-                        "Error sending generic transaction {e} attempts [{number_of_retries}/{}]",
-                        client.max_number_of_retries
-                    );
-                })
+        let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer)
+            .await
+            .inspect_err(|e| {
+                error!(
+                    "Error sending generic transaction {e} attempts [{number_of_retries}/{}]",
+                    client.max_number_of_retries
+                );
+            })
         else {
             bump_gas_generic_tx(&mut tx, 30);
             number_of_retries += 1;
@@ -853,6 +847,7 @@ pub async fn build_generic_tx(
             .map(AccessListEntry::from)
             .collect(),
         from,
+        wrapper_version: overrides.wrapper_version,
         ..Default::default()
     };
     tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();

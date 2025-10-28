@@ -69,6 +69,7 @@ pub struct Overrides {
     pub gas_price_per_blob: Option<U256>,
     pub block: Option<BlockIdentifier>,
     pub blobs_bundle: Option<BlobsBundle>,
+    pub wrapper_version: Option<u8>,
 }
 
 pub const MAX_NUMBER_OF_RETRIES: u64 = 10;

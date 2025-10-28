@@ -954,6 +954,7 @@ impl L1Committer {
                     max_fee_per_gas: Some(gas_price),
                     max_priority_fee_per_gas: Some(gas_price),
                     blobs_bundle: Some(batch.blobs_bundle.clone()),
+                    wrapper_version: Some(batch.blobs_bundle.version),
                     ..Default::default()
                 },
             )
@@ -978,13 +979,8 @@ impl L1Committer {
             .map_err(CommitterError::from)?
         };
 
-        let commit_tx_hash = send_tx_bump_gas_exponential_backoff(
-            &self.eth_client,
-            tx,
-            &self.signer,
-            self.osaka_activation_time,
-        )
-        .await?;
+        let commit_tx_hash =
+            send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
 
         metrics!(
             let commit_tx_receipt = self
@@ -1143,9 +1139,11 @@ pub fn generate_blobs_bundle(
     let blob_size = blob_data.len();
 
     let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
+    let wrapper_version = if fork <= Fork::Prague { None } else { Some(1) };
 
     Ok((
-        BlobsBundle::create_from_blobs(&vec![blob], fork).map_err(CommitterError::from)?,
+        BlobsBundle::create_from_blobs(&vec![blob], wrapper_version)
+            .map_err(CommitterError::from)?,
         blob_size,
     ))
 }

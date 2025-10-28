@@ -912,8 +912,7 @@ async fn initialize_contracts(
                 Overrides::default(),
             )
             .await?;
-            let accept_tx_hash =
-                send_generic_transaction(eth_client, accept_tx, &signer, None).await?;
+            let accept_tx_hash = send_generic_transaction(eth_client, accept_tx, &signer).await?;
 
             wait_for_transaction_receipt(accept_tx_hash, eth_client, 100).await?;
 
@@ -1026,7 +1025,7 @@ async fn make_deposits(
                 Default::default(),
             )
             .await?;
-            if let Err(e) = send_generic_transaction(eth_client, mint_tx, &signer, None).await {
+            if let Err(e) = send_generic_transaction(eth_client, mint_tx, &signer).await {
                 error!(address =? signer.address(), "Failed to mint {e}");
                 continue;
             }
@@ -1051,7 +1050,7 @@ async fn make_deposits(
                 },
             )
             .await?;
-            if let Err(e) = send_generic_transaction(eth_client, approve_tx, &signer, None).await {
+            if let Err(e) = send_generic_transaction(eth_client, approve_tx, &signer).await {
                 error!(address =? signer.address(), "Failed to approve {e}");
                 continue;
             }
@@ -1096,7 +1095,7 @@ async fn make_deposits(
         )
         .await?;
 
-        match send_generic_transaction(eth_client, build, &signer, None).await {
+        match send_generic_transaction(eth_client, build, &signer).await {
             Ok(hash) => {
                 info!(
                     address =? signer.address(),

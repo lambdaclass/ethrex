@@ -1094,9 +1094,7 @@ async fn test_send(
     .await
     .with_context(|| format!("Failed to build tx for {test}"))?;
     tx.gas = tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
-    let tx_hash = send_generic_transaction(client, tx, &signer, None)
-        .await
-        .unwrap();
+    let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
         .with_context(|| format!("Failed to get receipt for {test}"))
@@ -1203,7 +1201,6 @@ async fn test_deposit(
         l1_client,
         generic_tx,
         &(LocalSigner::new(*rich_wallet_private_key).into()),
-        None,
     )
     .await?;
 
