@@ -29,13 +29,12 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -284,6 +283,7 @@ jobs:
             export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
             export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
             export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
+            export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
           fi
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
@@ -311,14 +311,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-docker, build-docker-l2]
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -393,6 +390,7 @@ jobs:
           ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
           ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
           ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000 \
+          ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec \
           ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
           docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
 
@@ -480,14 +478,12 @@ jobs:
     name: Integration Test - L2 Dev
     runs-on: ubuntu-latest
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

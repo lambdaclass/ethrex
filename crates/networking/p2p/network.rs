@@ -13,7 +13,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{Node, NodeRecord},
+    types::Node,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -25,10 +25,7 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
-use tokio::{
-    net::{TcpListener, TcpSocket, UdpSocket},
-    sync::Mutex,
-};
+use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 
@@ -43,7 +40,6 @@ pub struct P2PContext {
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
-    pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
@@ -54,7 +50,6 @@ impl P2PContext {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         local_node: Node,
-        local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
         signer: SecretKey,
         peer_table: PeerTable,
@@ -81,7 +76,6 @@ impl P2PContext {
 
         Ok(P2PContext {
             local_node,
-            local_node_record,
             tracker,
             signer,
             table: peer_table,
@@ -162,7 +156,10 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
         SocketAddr::V4(_) => TcpSocket::new_v4(),
         SocketAddr::V6(_) => TcpSocket::new_v6(),
     }?;
+    tcp_socket.set_reuseport(true).ok();
+    tcp_socket.set_reuseaddr(true).ok();
     tcp_socket.bind(tcp_addr)?;
+
     tcp_socket.listen(50)
 }
 
@@ -255,11 +252,16 @@ pub async fn periodically_show_peer_stats_during_syncing(
             });
 
             // Storage leaves metrics
-            let storage_leaves_downloaded =
-                METRICS.downloaded_storage_slots.load(Ordering::Relaxed);
-            let storage_accounts_inserted = METRICS.storage_tries_state_roots_computed.get();
-            let storage_accounts = METRICS.storage_accounts_initial.load(Ordering::Relaxed);
-            let storage_accounts_healed = METRICS.storage_accounts_healed.load(Ordering::Relaxed);
+            let storage_leaves_downloaded = METRICS.storage_leaves_downloaded.get();
+            let storage_leaves_inserted_percentage = if storage_leaves_downloaded != 0 {
+                METRICS.storage_leaves_inserted.get() as f64 / storage_leaves_downloaded as f64
+                    * 100.0
+            } else {
+                0.0
+            };
+            // We round up because of the accounts whose slots get downloaded and then not used
+            let storage_leaves_inserted_percentage =
+                (storage_leaves_inserted_percentage * 10.0).round() / 10.0;
             let storage_leaves_time = format_duration({
                 let end_time = METRICS
                     .storage_tries_download_end_time
@@ -324,9 +326,9 @@ pub async fn periodically_show_peer_stats_during_syncing(
                 .load(Ordering::Relaxed);
             let heal_current_throttle =
                 if METRICS.healing_empty_try_recv.load(Ordering::Relaxed) == 0 {
-                    "\x1b[31mDatabase\x1b[0m"
+                    "Database"
                 } else {
-                    "\x1b[32mPeers\x1b[0m"
+                    "Peers"
                 };
 
             // Bytecode metrics
@@ -361,8 +363,8 @@ Current Header Hash: {current_header_hash:x}
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
 account leaves insertion: {account_leaves_inserted_percentage:.2}%, elapsed: {account_leaves_inserted_time}
-storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initially accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed}
-storage leaves insertion: {storage_accounts_inserted}, {storage_leaves_inserted_time}
+storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}
+storage leaves insertion: {storage_leaves_inserted_percentage:.2}%, elapsed: {storage_leaves_inserted_time}
 healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
 bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_download_time})"
             );
