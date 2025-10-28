@@ -292,10 +292,10 @@ impl Blockchain {
             });
             (execution_handle.join(), merkleize_handle.join())
         });
-        let execution_result = execution_result
-            .map_err(|_| StoreError::Custom("execution thread panicked".to_string()))??;
         let account_updates_list = account_updates_list
             .map_err(|_| StoreError::Custom("merklization thread panicked".to_string()))??;
+        let execution_result = execution_result
+            .map_err(|_| StoreError::Custom("execution thread panicked".to_string()))??;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
