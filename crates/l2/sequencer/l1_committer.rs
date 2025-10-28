@@ -395,6 +395,14 @@ impl L1Committer {
             .checkpoints_dir
             .join(format!("temp_checkpoint_batch_{batch_number}"));
 
+        if one_time_checkpoint_path.exists() {
+            remove_dir_all(&one_time_checkpoint_path).map_err(|e| {
+                CommitterError::FailedToCreateCheckpoint(format!(
+                    "Failed to remove existing one-time checkpoint directory {one_time_checkpoint_path:?}: {e}"
+                ))
+            })?;
+        }
+
         // For re-execution we need to use a checkpoint to the previous state
         // (i.e. checkpoint of the state to the latest block from the previous
         // batch, or the state of the genesis if this is the first batch).
