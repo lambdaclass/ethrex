@@ -290,12 +290,19 @@ impl Blockchain {
                     code_updates,
                 })
             });
-            (execution_handle.join(), merkleize_handle.join())
+            (
+                execution_handle.join().unwrap_or_else(|_| {
+                    Err(EvmError::Custom("execution thread panicked".to_string()))
+                }),
+                merkleize_handle.join().unwrap_or_else(|_| {
+                    Err(StoreError::Custom(
+                        "merklization thread panicked".to_string(),
+                    ))
+                }),
+            )
         });
-        let account_updates_list = account_updates_list
-            .map_err(|_| StoreError::Custom("merklization thread panicked".to_string()))??;
-        let execution_result = execution_result
-            .map_err(|_| StoreError::Custom("execution thread panicked".to_string()))??;
+        let account_updates_list = account_updates_list?;
+        let execution_result = execution_result?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
