@@ -61,7 +61,7 @@ impl NodeHash {
         }
     }
 
-    /// Returns a reference the finalized hash, hashing `self` if it's `NodeHash::Inline`, and storing the result by
+    /// Returns a reference to the finalized hash, hashing `self` if it's `NodeHash::Inline`, and storing the result by
     /// changing it to the `NodeHash::Hashed` variant.
     pub fn finalize_mut(&mut self) -> &H256 {
         if let NodeHash::Inline(_) = self {
