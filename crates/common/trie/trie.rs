@@ -416,14 +416,14 @@ impl Trie {
         fn get_node_inner(
             db: &dyn TrieDB,
             current_path: Nibbles,
-            node: Arc<Node>,
+            node: &Node,
             mut partial_path: Nibbles,
         ) -> Result<Vec<u8>, TrieError> {
             // If we reached the end of the partial path, return the current node
             if partial_path.is_empty() {
                 return Ok(node.encode_to_vec());
             }
-            match &*node {
+            match node {
                 Node::Branch(branch_node) => match partial_path.next_choice() {
                     Some(idx) => {
                         let child_ref = &branch_node.choices[idx];
@@ -439,7 +439,7 @@ impl Trie {
                                         ),
                                     ))
                                 })?;
-                            get_node_inner(db, child_path, child_node, partial_path)
+                            get_node_inner(db, child_path, &child_node, partial_path)
                         } else {
                             Ok(vec![])
                         }
@@ -471,7 +471,7 @@ impl Trie {
                                     ),
                                 ))
                             })?;
-                        get_node_inner(db, child_path, child_node, partial_path)
+                        get_node_inner(db, child_path, &child_node, partial_path)
                     } else {
                         Ok(vec![])
                     }
@@ -482,10 +482,11 @@ impl Trie {
 
         // Fetch node
         if self.root.is_valid() {
+            let root_node = self.get_root_node(Default::default())?;
             get_node_inner(
                 self.db.as_ref(),
                 Default::default(),
-                self.get_root_node(Default::default())?,
+                &root_node,
                 partial_path,
             )
         } else {
