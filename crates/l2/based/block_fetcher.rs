@@ -119,7 +119,7 @@ impl BlockFetcher {
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
             last_l1_block_fetched,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
-            osaka_activation_time: cfg.based.block_fetcher.osaka_activation_time,
+            osaka_activation_time: cfg.eth.osaka_activation_time,
         })
     }
 

@@ -38,7 +38,6 @@ pub struct CommitterConfig {
     pub arbitrary_base_blob_gas_price: u64,
     pub validium: bool,
     pub signer: Signer,
-    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +49,7 @@ pub struct EthConfig {
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
     pub max_retry_delay: u64,
+    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -89,7 +89,6 @@ pub struct StateUpdaterConfig {
 pub struct BlockFetcherConfig {
     pub fetch_interval_ms: u64,
     pub fetch_block_step: u64,
-    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -109,8 +108,6 @@ pub struct MonitorConfig {
     pub tick_rate: u64,
     /// height in lines of the batch widget
     pub batch_widget_height: Option<u16>,
-    /// Timestamp at which the Osaka fork activates. If not set, it will assume Osaka is already active.
-    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]

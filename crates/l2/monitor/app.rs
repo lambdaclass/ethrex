@@ -217,7 +217,7 @@ impl EthrexMonitorWidget {
             rollup_store,
             last_scroll: Instant::now(),
             overview_selected_widget: 0,
-            osaka_activation_time: cfg.monitor.osaka_activation_time,
+            osaka_activation_time: cfg.eth.osaka_activation_time,
         };
         monitor_widget.selected_table().selected(true);
         monitor_widget.on_tick().await?;
