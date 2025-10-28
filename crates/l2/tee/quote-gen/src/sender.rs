@@ -22,6 +22,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
         ProofData::BatchResponse {
             batch_number,
             input,
+            ..
         } => match (batch_number, input) {
             (Some(batch_number), Some(input)) => Ok((
                 batch_number,
@@ -33,7 +34,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
                     blob_commitment: input.blob_commitment,
                     #[cfg(feature = "l2")]
                     blob_proof: input.blob_proof,
-                    fee_config: Some(input.fee_config),
+                    fee_configs: Some(input.fee_configs),
                 },
             )),
             _ => Err("No blocks to prove.".to_owned()),

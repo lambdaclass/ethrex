@@ -1,4 +1,4 @@
-use ethrex_rlp::structs::Encoder;
+use ethrex_rlp::encode::RLPEncode;
 
 use crate::{ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash};
 
@@ -115,22 +115,12 @@ impl LeafNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(&self.encode_raw())
-    }
-
-    /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        Encoder::new(&mut buf)
-            .encode_bytes(&self.partial.encode_compact())
-            .encode_bytes(&self.value)
-            .finish();
-        buf
+        NodeHash::from_encoded(&self.encode_to_vec())
     }
 
     /// Encodes the node and appends it to `node_path` if the encoded node is 32 or more bytes long
     pub fn get_path(&self, node_path: &mut Vec<Vec<u8>>) -> Result<(), TrieError> {
-        let encoded = self.encode_raw();
+        let encoded = self.encode_to_vec();
         if encoded.len() >= 32 {
             node_path.push(encoded);
         }
@@ -140,6 +130,8 @@ impl LeafNode {
 
 #[cfg(test)]
 mod test {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+
     use super::*;
     use crate::{Trie, pmt_node};
 
@@ -321,7 +313,7 @@ mod test {
             b"a comparatively long value".to_vec(),
         )
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 
     #[test]
@@ -331,7 +323,7 @@ mod test {
             vec![0x12, 0x34, 0x56, 0x78],
         )
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 
     #[test]
@@ -341,6 +333,6 @@ mod test {
             vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 20],
         )
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 }
