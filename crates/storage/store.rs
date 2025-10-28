@@ -79,6 +79,8 @@ pub enum EngineType {
     InMemory,
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    #[cfg(feature = "fjall")]
+    Fjall,
 }
 
 pub struct UpdateBatch {
@@ -217,6 +219,10 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self::from_engine(Arc::new(StoreEngine::new(Arc::new(
                 RocksDBBackend::open(path)?,
+            ))?)),
+            #[cfg(feature = "fjall")]
+            EngineType::Fjall => Self::from_engine(Arc::new(StoreEngine::new(Arc::new(
+                FjallBackend::open(path)?,
             ))?)),
             EngineType::InMemory => Self::from_engine(Arc::new(StoreEngine::new(Arc::new(
                 InMemoryBackend::open()?,
@@ -1918,6 +1924,12 @@ mod tests {
     #[tokio::test]
     async fn test_rocksdb_store() {
         test_store_suite(EngineType::RocksDB).await;
+    }
+
+    #[cfg(feature = "fjall")]
+    #[tokio::test]
+    async fn test_fjall_store() {
+        test_store_suite(EngineType::Fjall).await;
     }
 
     // Creates an empty store, runs the test and then removes the store (if needed)
