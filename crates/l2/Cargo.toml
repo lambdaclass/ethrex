@@ -81,7 +81,7 @@ panic = "deny"
 
 [features]
 default = ["l2", "l1"]
-
+rocksdb = []
 metrics = ["ethrex-blockchain/metrics"]
 
 l2 = ["guest_program/l2"]

@@ -26,7 +26,7 @@ use spawned_concurrency::{
     },
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{net::UdpSocket, sync::Mutex};
+use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
@@ -76,7 +76,7 @@ pub enum OutMessage {
 #[derive(Debug)]
 pub struct DiscoveryServer {
     local_node: Node,
-    local_node_record: Arc<Mutex<NodeRecord>>,
+    local_node_record: NodeRecord,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
     peer_table: PeerTable,
@@ -92,10 +92,8 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
-        let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer)
-                .expect("Failed to create local node record"),
-        ));
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
+            .expect("Failed to create local node record");
         let mut discovery_server = Self {
             local_node: local_node.clone(),
             local_node_record,
@@ -216,8 +214,18 @@ impl DiscoveryServer {
     }
 
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
+        // Sending the same FindNode message to all contacts to optimize message creation and encoding
+        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+        let random_priv_key = SecretKey::new(&mut OsRng);
+        let random_pub_key = public_key_from_signing_key(&random_priv_key);
+        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
+        let mut buf = BytesMut::new();
+        msg.encode_with_header(&mut buf, &self.signer);
+
         for contact in self.peer_table.get_contacts_for_lookup().await? {
-            if self.send_find_node(&contact.node).await.is_err() {
+            if self.udp_socket.send_to(&buf, &contact.node.udp_addr()).await.inspect_err(
+                |e| error!(sending = ?msg, addr = ?&contact.node.udp_addr(), err=?e, "Error sending message"),
+            ).is_err() {
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
                     .await?;
@@ -276,7 +284,7 @@ impl DiscoveryServer {
             udp_port: node.udp_port,
             tcp_port: node.tcp_port,
         };
-        let enr_seq = self.local_node_record.lock().await.seq;
+        let enr_seq = self.local_node_record.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
         ping.encode_with_header(&mut buf, &self.signer);
         let ping_hash: [u8; 32] = buf[..32]
@@ -298,27 +306,13 @@ impl DiscoveryServer {
             tcp_port: node.tcp_port,
         };
 
-        let enr_seq = self.local_node_record.lock().await.seq;
+        let enr_seq = self.local_node_record.seq;
 
         let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
 
         self.send(pong, node.udp_addr()).await?;
 
         debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
-
-        Ok(())
-    }
-
-    async fn send_find_node(&self, node: &Node) -> Result<(), DiscoveryServerError> {
-        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
-
-        let random_priv_key = SecretKey::new(&mut OsRng);
-        let random_pub_key = public_key_from_signing_key(&random_priv_key);
-
-        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
-        self.send(msg, node.udp_addr()).await?;
-
-        debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -345,7 +339,7 @@ impl DiscoveryServer {
         request_hash: H256,
         from: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        let node_record = self.local_node_record.lock().await;
+        let node_record = &self.local_node_record;
 
         let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.clone()));
 
