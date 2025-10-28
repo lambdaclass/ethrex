@@ -32,4 +32,4 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     extra_hosts:
-      - "host.docker.internal:host-gateway" 
+      - "host.docker.internal:host-gateway"
