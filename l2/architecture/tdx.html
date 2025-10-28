@@ -280,11 +280,11 @@ This is analogous to <a href="https://uapi-group.org/specifications/specs/linux_
 <h3 id="imagenix"><a class="header" href="#imagenix">image.nix</a></h3>
 <p>Exports an image that uses <a href="https://uapi-group.org/specifications/specs/unified_kernel_image/">UKI</a> and <a href="https://source.android.com/docs/security/features/verifiedboot/dm-verity?hl=en">dm-verity</a> to generate an image where changing any component changes the hash of the bootloader (the UKI image), which is measured by the BIOS.</p>
 <h2 id="running"><a class="header" href="#running">Running</a></h2>
-<p>You can enable the prover by setting <code>ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true</code>.</p>
+<p>You can enable the prover by setting <code>ETHREX_L2_TDX=true</code>.</p>
 <p>For development purposes, you can use the flag <code>ETHREX_TDX_DEV_MODE=true</code> to disable quote verification. This allows you to run the quote generator even without having TDX-capable hardware.</p>
 <p>Ensure the proof coordinator is reachable at 172.17.0.1. You can bring up the network by first starting the L2 components:</p>
 <pre><code class="language-sh">// cd crates/l2
-make init ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true PROOF_COORDINATOR_ADDRESS=0.0.0.0
+make init ETHREX_L2_TDX=true PROOF_COORDINATOR_ADDRESS=0.0.0.0
 </code></pre>
 <p>And in another terminal, running the VM:</p>
 <pre><code class="language-sh">// cd crates/l2
