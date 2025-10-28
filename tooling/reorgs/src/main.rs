@@ -145,6 +145,7 @@ async fn snap_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
         .into();
     node1.send_call(&signer, contract_address, calldata1).await;
 
+    // Extend the chain until we go past the snap-sync threshold
     base_chain = node1.extend_chain(base_chain, 1000).await;
 
     let node0 = simulator.start_snapsync_node().await;
