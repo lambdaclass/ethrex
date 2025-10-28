@@ -2515,18 +2515,18 @@
           "text": "",
           "value": ""
         },
-        "definition": "label_values({__name__=~\"(eth_con_beacon_slot)\", name=~\"$network\"},instance) or label_values(gigagas,instance)",
+        "definition": "label_values(eth_con_spec_config_name{name=~\"$network\"},instance)",
         "includeAll": true,
         "multi": true,
         "name": "instance",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values({__name__=~\"(eth_con_beacon_slot)\", name=~\"$network\"},instance) or label_values(gigagas,instance)",
+          "query": "label_values(eth_con_spec_config_name{name=~\"$network\"},instance)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
-        "regex": "/^(?<text>[^:]+)(?::\\d+)?$/",
+        "regex": "",
         "type": "query"
       },
       {
