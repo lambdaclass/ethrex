@@ -19,6 +19,7 @@ ethrex-l2-rpc.workspace = true
 eyre.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures = "0.3"
+url.workspace = true
 
 [lints]
 workspace = true
