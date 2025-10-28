@@ -245,9 +245,12 @@ impl Blockchain {
         let mut used_trie_nodes = Vec::new();
 
         // Store the root node in case the block is empty and the witness does not record any nodes
-        let root_node = trie.root_node().map_err(|_| {
-            ChainError::WitnessGeneration("Failed to get root state node".to_string())
-        })?;
+        let root_node = trie
+            .root
+            .get_node(trie.db(), Default::default())
+            .map_err(|_| {
+                ChainError::WitnessGeneration("Failed to get root state node".to_string())
+            })?;
 
         let mut block_hashes = HashMap::new();
         let mut codes = Vec::new();
