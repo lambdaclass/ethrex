@@ -187,7 +187,6 @@ impl Syncer {
             .get_block_number(current_head)
             .await?
             .ok_or(SyncError::BlockNumber(current_head))?;
-
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
