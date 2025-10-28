@@ -238,14 +238,10 @@ impl Node {
             Node::Leaf(n) => n.remove(path),
         }?;
 
-        let is_trie_empty = match new_root {
-            Some(NodeRemoveResult::New(new_root)) => {
-                *self = new_root;
-                false
-            }
-            Some(NodeRemoveResult::Mutated) => false,
-            None => true,
-        };
+        let is_trie_empty = new_root.is_none();
+        if let Some(NodeRemoveResult::New(new_root)) = new_root {
+            *self = new_root;
+        }
         Ok((is_trie_empty, value))
     }
 
