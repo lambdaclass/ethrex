@@ -245,7 +245,7 @@ impl GeneralizedDatabase {
         Ok(account_updates)
     }
 
-    pub fn get_state_transitions_immutable(&self) -> Result<Vec<AccountUpdate>, VMError> {
+    pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in self.current_accounts_state.iter() {
             if new_state_account.is_unmodified() {
@@ -334,6 +334,11 @@ impl GeneralizedDatabase {
             };
 
             account_updates.push(account_update);
+            self.initial_accounts_state.extend(
+                self.current_accounts_state
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone())),
+            );
         }
         Ok(account_updates)
     }

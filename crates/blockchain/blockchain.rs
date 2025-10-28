@@ -216,9 +216,9 @@ impl Blockchain {
                     debug!("Recv'd {} updates", updates.len());
                     // Apply the account updates over the last block's state and compute the new state root
                     for update in updates {
-                        if !known_changes.contains(&update) {
-                            continue;
-                        }
+                        // if !known_changes.contains(&update) {
+                        //     continue;
+                        // }
 
                         let hashed_address = hash_address(&update.address);
                         debug!("Update cycle for {}", hex::encode(&hashed_address));
@@ -304,7 +304,7 @@ impl Blockchain {
                         }
                         debug!("Inserting account updates");
                         state_trie.insert(hashed_address, account_state.encode_to_vec())?;
-                        known_changes.insert(update);
+                        // known_changes.insert(update);
                     }
                     debug!("Collecting account changes");
                     (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
