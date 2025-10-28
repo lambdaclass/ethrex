@@ -67,7 +67,7 @@ aligned deposit-to-batcher \
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
 ```bash
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2",sp1 -- \
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,sp1" -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network "../../fixtures/genesis/l2.json" \
