@@ -345,10 +345,7 @@ impl Command {
                                     "Transaction {:#x} not found",
                                     log.transaction_hash
                                 ))?;
-                            l2_blob_hashes.extend(tx.blob_versioned_hashes.ok_or_eyre(format!(
-                                "Blobs not found in transaction {:#x}",
-                                log.transaction_hash
-                            ))?);
+                            l2_blob_hashes.extend(tx.tx.blob_versioned_hashes());
                         }
 
                         // Get blobs from block's slot and only keep L2 commitment's blobs
@@ -432,7 +429,6 @@ impl Command {
 
                     let account_updates_list = store
                         .apply_account_updates_from_trie_batch(trie, account_updates.values())
-                        .await
                         .map_err(|e| format!("Error applying account updates: {e}"))
                         .unwrap();
 

@@ -1,37 +1,3 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
-
-use ethrex_blockchain::Blockchain;
-use ethrex_common::types::MempoolTransaction;
-#[cfg(feature = "l2")]
-use ethrex_common::types::Transaction;
-use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::TrieError;
-use futures::{SinkExt as _, Stream, stream::SplitSink};
-use rand::random;
-use secp256k1::{PublicKey, SecretKey};
-use spawned_concurrency::{
-    messages::Unused,
-    tasks::{
-        CastResponse, GenServer, GenServerHandle,
-        InitResult::{self, NoSuccess, Success},
-        send_interval, spawn_listener,
-    },
-};
-use spawned_rt::tasks::BroadcastStream;
-use tokio::{
-    net::TcpStream,
-    sync::{Mutex, broadcast, oneshot},
-    task::{self, Id},
-};
-use tokio_stream::StreamExt;
-use tokio_util::codec::Framed;
-use tracing::{debug, error};
-
 #[cfg(feature = "l2")]
 use crate::rlpx::l2::{
     PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
@@ -41,6 +7,7 @@ use crate::rlpx::l2::{
 };
 use crate::{
     discv4::peer_table::PeerTable,
+    log_peer_debug, log_peer_error, log_peer_trace, log_peer_warn,
     metrics::METRICS,
     network::P2PContext,
     rlpx::{
@@ -61,7 +28,6 @@ use crate::{
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
         snap::TrieNodes,
-        utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
@@ -70,6 +36,38 @@ use crate::{
     tx_broadcaster::{InMessage, TxBroadcaster, send_tx_hashes},
     types::Node,
 };
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::MempoolTransaction;
+#[cfg(feature = "l2")]
+use ethrex_common::types::Transaction;
+use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::TrieError;
+use futures::{SinkExt as _, Stream, stream::SplitSink};
+use rand::random;
+use secp256k1::{PublicKey, SecretKey};
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{
+        CastResponse, GenServer, GenServerHandle,
+        InitResult::{self, NoSuccess, Success},
+        send_interval, spawn_listener,
+    },
+};
+use spawned_rt::tasks::BroadcastStream;
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
+use tokio::{
+    net::TcpStream,
+    sync::{Mutex, broadcast, oneshot},
+    task::{self, Id},
+};
+use tokio_stream::StreamExt;
+use tokio_util::codec::Framed;
+use tracing::{debug, error};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
@@ -265,8 +263,7 @@ impl GenServer for PeerConnectionServer {
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
         match handshake::perform(self.state, eth_version.clone()).await {
             Ok((mut established_state, stream)) => {
-                log_peer_debug(&established_state.node, "Starting RLPx connection");
-
+                log_peer_trace!(&established_state.node, "Starting RLPx connection");
                 if let Err(reason) =
                     initialize_connection(handle, &mut established_state, stream, eth_version).await
                 {
@@ -326,21 +323,21 @@ impl GenServer for PeerConnectionServer {
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message {
                 Self::CastMsg::IncomingMessage(message) => {
-                    log_peer_debug(
+                    log_peer_trace!(
                         &established_state.node,
                         &format!("Received incomming message: {message}"),
                     );
                     handle_incoming_message(established_state, message).await
                 }
                 Self::CastMsg::OutgoingMessage(message) => {
-                    log_peer_debug(
+                    log_peer_trace!(
                         &established_state.node,
                         &format!("Received outgoing request: {message}"),
                     );
                     handle_outgoing_message(established_state, message).await
                 }
                 Self::CastMsg::OutgoingRequest(message, sender) => {
-                    log_peer_debug(
+                    log_peer_trace!(
                         &established_state.node,
                         &format!("Received outgoing request: {message}"),
                     );
@@ -355,7 +352,7 @@ impl GenServer for PeerConnectionServer {
                 Self::CastMsg::RequestTimeout { id } => {
                     // Discard the request from current requests
                     if let Some((msg_type, _)) = established_state.current_requests.remove(&id) {
-                        log_peer_debug(
+                        log_peer_debug!(
                             &established_state.node,
                             &format!("{msg_type}({id}) timeouted."),
                         );
@@ -366,19 +363,19 @@ impl GenServer for PeerConnectionServer {
                     send(established_state, Message::Ping(PingMessage {})).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
-                    log_peer_debug(
+                    log_peer_trace!(
                         &established_state.node,
                         &format!("Received broadcasted message: {msg}"),
                     );
                     handle_broadcast(established_state, (id, msg)).await
                 }
                 Self::CastMsg::BlockRangeUpdate => {
-                    log_peer_debug(&established_state.node, "Block Range Update");
+                    log_peer_trace!(&established_state.node, "Block Range Update");
                     handle_block_range_update(established_state).await
                 }
                 #[cfg(feature = "l2")]
                 Self::CastMsg::L2(msg) if peer_supports_l2 => {
-                    log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
+                    log_peer_trace!(&established_state.node, "Handling cast for L2 msg: {msg:?}");
                     match msg {
                         L2Cast::BatchBroadcast => {
                             l2_connection::send_sealed_batch(established_state).await
@@ -405,28 +402,28 @@ impl GenServer for PeerConnectionServer {
                     | PeerConnectionError::InvalidMessageLength
                     | PeerConnectionError::StateError(_)
                     | PeerConnectionError::InvalidRecoveryId => {
-                        log_peer_debug(&established_state.node, &e.to_string());
+                        log_peer_debug!(&established_state.node, &e.to_string());
                         return CastResponse::Stop;
                     }
                     PeerConnectionError::IoError(e)
                         if e.kind() == std::io::ErrorKind::BrokenPipe =>
                     {
-                        log_peer_error(
+                        log_peer_error!(
                             &established_state.node,
                             "Broken pipe with peer, disconnected",
                         );
                         return CastResponse::Stop;
                     }
                     PeerConnectionError::StoreError(StoreError::Trie(
-                        TrieError::InconsistentTree,
+                        TrieError::InconsistentTree(_),
                     )) => {
                         if established_state.blockchain.is_synced() {
-                            log_peer_error(
+                            log_peer_error!(
                                 &established_state.node,
                                 &format!("Error handling cast message: {e}"),
                             );
                         } else {
-                            log_peer_debug(
+                            log_peer_debug!(
                                 &established_state.node,
                                 &format!("Error handling cast message: {e}"),
                             );
@@ -438,7 +435,7 @@ impl GenServer for PeerConnectionServer {
                             .version
                             .clone()
                             .unwrap_or("-".to_string());
-                        log_peer_debug(
+                        log_peer_debug!(
                             &established_state.node,
                             &format!(
                                 "Error handling cast message: {e}, for client: {} with capabilities {:?}",
@@ -458,7 +455,7 @@ impl GenServer for PeerConnectionServer {
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
         match self.state {
             ConnectionState::Established(mut established_state) => {
-                log_peer_debug(
+                log_peer_trace!(
                     &established_state.node,
                     "Closing connection with established peer",
                 );
@@ -486,7 +483,7 @@ where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
 {
     if state.peer_table.target_peers_reached().await? {
-        log_peer_warn(&state.node, "Reached target peer connections, discarding.");
+        log_peer_debug!(&state.node, "Reached target peer connections, discarding.");
         return Err(PeerConnectionError::TooManyPeers);
     }
     exchange_hello_messages(state, &mut stream).await?;
@@ -516,7 +513,7 @@ where
         )
         .await?;
 
-    log_peer_debug(&state.node, "Peer connection initialized.");
+    log_peer_trace!(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
     send_all_pooled_tx_hashes(state, &mut connection).await?;
@@ -612,7 +609,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
         .as_ref()
         .is_some_and(|eth| eth.version >= 69)
     {
-        log_peer_debug(&state.node, "Sending BlockRangeUpdate");
+        log_peer_trace!(&state.node, "Sending BlockRangeUpdate");
         let update = BlockRangeUpdate::new(&state.storage).await?;
         let lastet_block = update.latest_block;
         send(state, Message::BlockRangeUpdate(update)).await?;
@@ -651,7 +648,7 @@ where
                 )));
             }
         };
-        log_peer_debug(&state.node, "Sending status");
+        log_peer_trace!(&state.node, "Sending status");
         send(state, status).await?;
         // The next immediate message in the ETH protocol is the
         // status, reference here:
@@ -662,11 +659,11 @@ where
         };
         match msg {
             Message::Status68(msg_data) => {
-                log_peer_debug(&state.node, "Received Status(68)");
+                log_peer_trace!(&state.node, "Received Status(68)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Status69(msg_data) => {
-                log_peer_debug(&state.node, "Received Status(69)");
+                log_peer_trace!(&state.node, "Received Status(69)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
@@ -689,7 +686,7 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
     send(state, Message::Disconnect(DisconnectMessage { reason }))
         .await
         .unwrap_or_else(|_| {
-            log_peer_debug(
+            log_peer_debug!(
                 &state.node,
                 &format!("Could not send Disconnect message: ({reason:?})."),
             );
@@ -697,7 +694,7 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
 }
 
 async fn connection_failed(state: &mut Established, error_text: &str, error: &PeerConnectionError) {
-    log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
+    log_peer_debug!(&state.node, &format!("{error_text}: ({error})"));
 
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested
     // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
@@ -710,12 +707,12 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: &Pe
         // already connected, don't discard it
         PeerConnectionError::DisconnectReceived(DisconnectReason::AlreadyConnected)
         | PeerConnectionError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
-            log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
-            log_peer_debug(&state.node, "Peer already connected, don't replace it");
+            log_peer_debug!(&state.node, &format!("{error_text}: ({error})"));
+            log_peer_debug!(&state.node, "Peer already connected, don't replace it");
         }
         _ => {
             let remote_public_key = state.node.public_key;
-            log_peer_debug(
+            log_peer_debug!(
                 &state.node,
                 &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
             );
@@ -772,7 +769,7 @@ where
             let mut negotiated_eth_version = 0;
             let mut negotiated_snap_version = 0;
 
-            log_peer_debug(
+            log_peer_trace!(
                 &state.node,
                 &format!(
                     "Hello message capabilities {:?}",
@@ -869,9 +866,7 @@ async fn handle_incoming_message(
     match message {
         Message::Disconnect(msg_data) => {
             let reason = msg_data.reason();
-
-            log_peer_debug(&state.node, &format!("Received Disconnect: {reason}"));
-
+            log_peer_trace!(&state.node, &format!("Received Disconnect: {reason}"));
             METRICS
                 .record_new_rlpx_conn_disconnection(
                     &state.node.version.clone().unwrap_or("Unknown".to_string()),
@@ -886,7 +881,7 @@ async fn handle_incoming_message(
             return Err(PeerConnectionError::DisconnectReceived(reason));
         }
         Message::Ping(_) => {
-            log_peer_debug(&state.node, "Sending pong message");
+            log_peer_trace!(&state.node, "Sending pong message");
             send(state, Message::Pong(PongMessage {})).await?;
         }
         Message::Pong(_) => {
@@ -915,7 +910,7 @@ async fn handle_incoming_message(
                     // Reject blob transactions in L2 mode
                     #[cfg(feature = "l2")]
                     if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
-                        log_peer_debug(
+                        log_peer_debug!(
                             &state.node,
                             "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
                         );
@@ -923,7 +918,7 @@ async fn handle_incoming_message(
                     }
 
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        log_peer_debug(&state.node, &format!("Error adding transaction: {e}"));
+                        log_peer_debug!(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
                     }
                 }
@@ -970,7 +965,7 @@ async fn handle_incoming_message(
             }
         }
         Message::BlockRangeUpdate(update) => {
-            log_peer_debug(
+            log_peer_trace!(
                 &state.node,
                 &format!(
                     "Block range update: {} to {}",
@@ -979,7 +974,7 @@ async fn handle_incoming_message(
             );
             // We will only validate the incoming update, we may decide to store and use this information in the future
             if let Err(err) = update.validate() {
-                log_peer_warn(
+                log_peer_warn!(
                     &state.node,
                     &format!("disconnected from peer. Reason: {err}"),
                 );
@@ -992,8 +987,10 @@ async fn handle_incoming_message(
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
             let hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
-
             let request = GetPooledTransactions::new(random(), hashes);
+            state
+                .requested_pooled_txs
+                .insert(request.id, new_pooled_transaction_hashes);
             send(state, Message::GetPooledTransactions(request)).await?;
         }
         Message::GetPooledTransactions(msg) => {
@@ -1006,7 +1003,7 @@ async fn handle_incoming_message(
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(requested, fork).await {
-                        log_peer_warn(
+                        log_peer_warn!(
                             &state.node,
                             &format!("disconnected from peer. Reason: {error}"),
                         );
@@ -1084,7 +1081,7 @@ async fn handle_outgoing_message(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
-    log_peer_debug(&state.node, &format!("Sending message {message}"));
+    log_peer_trace!(&state.node, &format!("Sending message {message}"));
     send(state, message).await?;
     Ok(())
 }
@@ -1100,7 +1097,7 @@ async fn handle_outgoing_request(
             .current_requests
             .insert(id, (format!("{message}"), sender))
     });
-    log_peer_debug(&state.node, &format!("Sending request {message}"));
+    log_peer_trace!(&state.node, &format!("Sending request {message}"));
     send(state, message).await?;
     Ok(())
 }
@@ -1117,7 +1114,7 @@ async fn handle_broadcast(
             }
             msg => {
                 let error_message = format!("Non-supported message broadcasted: {msg}");
-                log_peer_error(&state.node, &error_message);
+                log_peer_error!(&state.node, &error_message);
                 return Err(PeerConnectionError::BroadcastError(error_message));
             }
         }

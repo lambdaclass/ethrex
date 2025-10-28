@@ -4,9 +4,9 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
 use libsql::{
     Builder, Connection, Row, Rows, Transaction, Value,
@@ -28,7 +28,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 15] = [
+const DB_SCHEMA: [&str; 17] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -44,6 +44,8 @@ const DB_SCHEMA: [&str; 15] = [
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE batch_prover_input (batch INT, prover_version TEXT, prover_input BLOB, PRIMARY KEY (batch, prover_version))",
+    "CREATE TABLE fee_config (block_number INT PRIMARY KEY, fee_config BLOB)",
 ];
 
 impl SQLStore {
@@ -280,6 +282,27 @@ impl SQLStore {
                 .await?;
         }
         Ok(())
+    }
+
+    async fn store_prover_input_by_batch_and_version_in_tx(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+        db_tx: Option<&Transaction>,
+    ) -> Result<(), RollupStoreError> {
+        let prover_input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&prover_input)
+            .map_err(|e| {
+                RollupStoreError::Custom(format!("Failed to serialize prover input: {e}"))
+            })?
+            .to_vec();
+
+        let queries = vec![(
+            "INSERT OR REPLACE INTO batch_prover_input VALUES (?1, ?2, ?3)",
+            (batch_number, prover_version, prover_input_bytes).into_params()?,
+        )];
+
+        self.execute_in_tx(queries, db_tx).await
     }
 }
 
@@ -580,6 +603,10 @@ impl StoreEngineRollup for SQLStore {
                 "DELETE FROM batch_proofs WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
+            (
+                "DELETE FROM batch_prover_input WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
         ];
         self.execute_in_tx(queries, None).await
     }
@@ -781,6 +808,84 @@ impl StoreEngineRollup for SQLStore {
             .map(|row| read_from_row_int(&row, 0))
             .transpose()
     }
+
+    async fn store_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        self.store_prover_input_by_batch_and_version_in_tx(
+            batch_number,
+            prover_version,
+            prover_input,
+            None,
+        )
+        .await
+    }
+
+    async fn get_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+    ) -> Result<Option<ProverInputData>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT prover_input FROM batch_prover_input WHERE batch = ?1 AND prover_version = ?2",
+                (batch_number, prover_version),
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 0)?;
+
+            let prover_input = rkyv::from_bytes::<ProverInputData, rkyv::rancor::Error>(&vec)
+                .map_err(|e| {
+                    RollupStoreError::Custom(format!(
+                        "Failed to deserialize prover input for batch {batch_number} and version {prover_version}: {e}",
+                    ))
+                })?;
+
+            return Ok(Some(prover_input));
+        }
+        Ok(None)
+    }
+
+    async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        let serialized = bincode::serialize(&fee_config)?;
+        let queries = vec![
+            (
+                "DELETE FROM fee_config WHERE block_number = ?1",
+                vec![block_number].into_params()?,
+            ),
+            (
+                "INSERT INTO fee_config VALUES (?1, ?2)",
+                (block_number, serialized).into_params()?,
+            ),
+        ];
+        self.execute_in_tx(queries, None).await
+    }
+
+    async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT * FROM fee_config WHERE block_number = ?1",
+                vec![block_number],
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 1)?;
+            return Ok(Some(bincode::deserialize(&vec)?));
+        }
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -802,6 +907,7 @@ mod tests {
             "batch_proofs",
             "block_signatures",
             "batch_signatures",
+            "batch_prover_input",
         ];
         let mut attributes = Vec::new();
         for table in tables {
@@ -846,6 +952,9 @@ mod tests {
                 ("block_signatures", "signature") => "BLOB",
                 ("batch_signatures", "batch") => "INT",
                 ("batch_signatures", "signature") => "BLOB",
+                ("batch_prover_input", "batch") => "INT",
+                ("batch_prover_input", "prover_version") => "TEXT",
+                ("batch_prover_input", "prover_input") => "BLOB",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",

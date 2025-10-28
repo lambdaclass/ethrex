@@ -1,6 +1,6 @@
+use crate::log_peer_error;
 use crate::rlpx::connection::server::send;
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
-use crate::rlpx::utils::log_peer_error;
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
 use ethereum_types::Address;
 use ethereum_types::Signature;
@@ -47,7 +47,7 @@ fn broadcast_message(state: &Established, msg: Message) -> Result<(), PeerConnec
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
-            log_peer_error(&state.node, &error_message);
+            log_peer_error!(&state.node, &error_message);
             Err(PeerConnectionError::BroadcastError(error_message))
         }
     }
@@ -158,7 +158,7 @@ pub(crate) fn broadcast_l2_message(
                 .connection_broadcast_send
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
-                    log_peer_error(
+                    log_peer_error!(
                         &state.node,
                         &format!("Could not broadcast l2 message BatchSealed: {e}"),
                     );
@@ -176,7 +176,7 @@ pub(crate) fn broadcast_l2_message(
                 .connection_broadcast_send
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
-                    log_peer_error(
+                    log_peer_error!(
                         &state.node,
                         &format!("Could not broadcast l2 message NewBlock: {e}"),
                     );
@@ -303,7 +303,7 @@ async fn should_process_new_block(
                 PeerConnectionError::InternalError("Recover Address task failed".to_string())
             })?
             .map_err(|e| {
-                log_peer_error(
+                log_peer_error!(
                     &established.node,
                     &format!("Failed to recover lead sequencer: {e}"),
                 );
@@ -352,7 +352,7 @@ async fn should_process_batch_sealed(
     let hash = batch_hash(&msg.batch);
 
     let recovered_lead_sequencer = recover_address(msg.signature, hash).map_err(|e| {
-        log_peer_error(
+        log_peer_error!(
             &established.node,
             &format!("Failed to recover lead sequencer: {e}"),
         );
@@ -393,19 +393,15 @@ async fn process_new_block(
         let block = Arc::<Block>::try_unwrap(block).map_err(|_| {
             PeerConnectionError::InternalError("Failed to take ownership of block".to_string())
         })?;
-        established
-            .blockchain
-            .add_block(block)
-            .await
-            .inspect_err(|e| {
-                log_peer_error(
-                    &established.node,
-                    &format!(
-                        "Error adding new block {} with hash {:?}, error: {e}",
-                        block_number, block_hash
-                    ),
-                );
-            })?;
+        established.blockchain.add_block(block).inspect_err(|e| {
+            log_peer_error!(
+                &established.node,
+                &format!(
+                    "Error adding new block {} with hash {:?}, error: {e}",
+                    block_number, block_hash
+                ),
+            );
+        })?;
 
         apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
             .await
