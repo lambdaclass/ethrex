@@ -249,9 +249,6 @@ impl PeerHandler {
         METRICS
             .sync_head_block
             .store(sync_head_number, Ordering::Relaxed);
-        METRICS
-            .headers_to_download
-            .store(sync_head_number, Ordering::Relaxed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = sync_head_number + 1 - start;

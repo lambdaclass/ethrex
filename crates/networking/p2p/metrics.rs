@@ -61,7 +61,6 @@ pub struct Metrics {
     pub current_step: Arc<CurrentStep>,
 
     // Headers
-    pub headers_to_download: AtomicU64,
     pub downloaded_headers: IntCounter,
     pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
     pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
@@ -689,7 +688,6 @@ impl Default for Metrics {
             current_step: Arc::new(CurrentStep(AtomicU8::new(0))),
 
             // Headers
-            headers_to_download: AtomicU64::new(0),
             downloaded_headers,
             time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
             headers_download_start_time: Arc::new(Mutex::new(None)),

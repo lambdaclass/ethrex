@@ -1089,9 +1089,6 @@ pub async fn update_pivot(
         // Reward peer
         peers.peer_table.record_success(&peer_id).await?;
         info!("Succesfully updated pivot");
-        METRICS
-            .headers_to_download
-            .store(pivot.number, Ordering::Relaxed);
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
             .await?
