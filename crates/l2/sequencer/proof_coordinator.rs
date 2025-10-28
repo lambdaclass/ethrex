@@ -163,7 +163,7 @@ impl ProofCoordinator {
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofCoordinatorError> {
         let eth_client = EthClient::new_with_config(
-            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_config.rpc_url.clone(),
             eth_config.max_number_of_retries,
             eth_config.backoff_factor,
             eth_config.min_retry_delay,
@@ -344,7 +344,6 @@ impl ProofCoordinator {
             );
         } else {
             metrics!(
-                tracing::warn!("getting request timestamp for batch {batch_number}");
                 let mut request_timestamps = self.request_timestamp.lock().await;
                 let request_timestamp = request_timestamps.get(&batch_number).ok_or(
                     ProofCoordinatorError::InternalError(
@@ -357,7 +356,6 @@ impl ProofCoordinator {
                     .as_secs().try_into()
                     .map_err(|_| ProofCoordinatorError::InternalError("failed to convert proving time to i64".to_string()))?;
                 METRICS.set_batch_proving_time(batch_number, proving_time)?;
-                tracing::warn!("removed request timestamp for batch {batch_number}");
                 let _ = request_timestamps.remove(&batch_number);
             );
             // If not, store it
