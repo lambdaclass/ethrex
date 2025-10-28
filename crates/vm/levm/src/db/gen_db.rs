@@ -244,6 +244,99 @@ impl GeneralizedDatabase {
         self.codes.clear();
         Ok(account_updates)
     }
+
+    pub fn get_state_transitions_immutable(&self) -> Result<Vec<AccountUpdate>, VMError> {
+        let mut account_updates: Vec<AccountUpdate> = vec![];
+        for (address, new_state_account) in self.current_accounts_state.iter() {
+            if new_state_account.is_unmodified() {
+                // Skip processing account that we know wasn't mutably accessed during execution
+                continue;
+            }
+            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
+            let initial_state_account =
+                self.initial_accounts_state
+                    .get(address)
+                    .ok_or(VMError::Internal(InternalError::Custom(format!(
+                        "Failed to get account {address} from immutable cache",
+                    ))))?;
+
+            let mut acc_info_updated = false;
+            let mut storage_updated = false;
+
+            // 1. Account Info has been updated if balance, nonce or bytecode changed.
+            if initial_state_account.info.balance != new_state_account.info.balance {
+                acc_info_updated = true;
+            }
+
+            if initial_state_account.info.nonce != new_state_account.info.nonce {
+                acc_info_updated = true;
+            }
+
+            let code =
+                if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                    acc_info_updated = true;
+                    // code should be in `codes`
+                    Some(self.codes.get(&new_state_account.info.code_hash).ok_or(
+                        VMError::Internal(InternalError::Custom(format!(
+                            "Failed to get code for account {address}"
+                        ))),
+                    )?)
+                } else {
+                    None
+                };
+
+            // Account will have only its storage removed if it was Destroyed and then modified
+            // Edge cases that can make this true:
+            //   1. Account was destroyed and created again afterwards.
+            //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
+            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+
+            // 2. Storage has been updated if the current value is different from the one before execution.
+            let mut added_storage = BTreeMap::new();
+
+            for (key, new_value) in &new_state_account.storage {
+                let old_value = if !removed_storage {
+                    initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?
+                } else {
+                    // There's not an "old value" if the contract was destroyed and re-created.
+                    &ZERO_U256
+                };
+
+                if new_value != old_value {
+                    added_storage.insert(*key, *new_value);
+                    storage_updated = true;
+                }
+            }
+
+            let info = if acc_info_updated {
+                Some(new_state_account.info.clone())
+            } else {
+                None
+            };
+
+            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+            // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
+            let was_empty = initial_state_account.is_empty();
+            let removed = new_state_account.is_empty() && !was_empty;
+
+            if !removed && !acc_info_updated && !storage_updated && !removed_storage {
+                // Account hasn't been updated
+                continue;
+            }
+
+            let account_update = AccountUpdate {
+                address: *address,
+                removed,
+                info,
+                code: code.cloned(),
+                added_storage,
+                removed_storage,
+            };
+
+            account_updates.push(account_update);
+        }
+        Ok(account_updates)
+    }
 }
 
 impl<'a> VM<'a> {

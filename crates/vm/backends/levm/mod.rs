@@ -96,7 +96,7 @@ impl LEVM {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-            let transitions = LEVM::get_state_transitions(db)?;
+            let transitions = LEVM::get_state_transitions_immutable(db)?;
             merkleizer
                 .send(transitions)
                 .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
@@ -214,6 +214,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         Ok(db.get_state_transitions()?)
+    }
+
+    pub fn get_state_transitions_immutable(
+        db: &mut GeneralizedDatabase,
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
+        Ok(db.get_state_transitions_immutable()?)
     }
 
     pub fn process_withdrawals(

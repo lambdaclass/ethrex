@@ -19,7 +19,7 @@ use crate::{
     utils::keccak,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
     pub hash: H256,
     pub bytecode: Bytes,
@@ -76,7 +76,7 @@ pub struct Account {
     pub storage: BTreeMap<H256, U256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct AccountInfo {
     pub code_hash: H256,
     pub balance: U256,

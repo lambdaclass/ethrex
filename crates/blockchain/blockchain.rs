@@ -37,7 +37,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -200,6 +200,7 @@ impl Blockchain {
             let (tx, rx) = channel();
             let execution_handle = s.spawn(move || vm.execute_block_pipeline(block, tx));
             let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
+                let mut known_changes: FxHashSet<AccountUpdate> = FxHashSet::default();
                 let mut state_trie = self
                     .storage
                     .state_trie(parent_header.hash())?
@@ -215,6 +216,10 @@ impl Blockchain {
                     debug!("Recv'd {} updates", updates.len());
                     // Apply the account updates over the last block's state and compute the new state root
                     for update in updates {
+                        if !known_changes.contains(&update) {
+                            continue;
+                        }
+
                         let hashed_address = hash_address(&update.address);
                         debug!("Update cycle for {}", hex::encode(&hashed_address));
                         if update.removed {
@@ -241,7 +246,7 @@ impl Blockchain {
                             account_state.storage_root = *EMPTY_TRIE_HASH;
                             storage_updates_map.remove(&hashed_address_h256);
                         }
-                        if let Some(info) = update.info {
+                        if let Some(info) = &update.info {
                             debug!(
                                 nonce = info.nonce,
                                 balance = hex::encode(info.balance.to_big_endian()),
@@ -252,9 +257,9 @@ impl Blockchain {
                             account_state.balance = info.balance;
                             account_state.code_hash = info.code_hash;
                             // Store updated code in DB
-                            if let Some(code) = update.code {
+                            if let Some(code) = &update.code {
                                 debug!("Updated code");
-                                code_updates.insert(info.code_hash, code);
+                                code_updates.insert(info.code_hash, code.clone());
                             }
                         }
                         // Store the added storage in the account's storage trie and compute its new root
@@ -299,6 +304,7 @@ impl Blockchain {
                         }
                         debug!("Inserting account updates");
                         state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+                        known_changes.insert(update);
                     }
                     debug!("Collecting account changes");
                     (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
