@@ -225,7 +225,7 @@ pub enum CommitterError {
     FailedToRetrieveDataFromStorage,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
-    #[error("Committer failed to get information from storage")]
+    #[error("Committer failed to get information from storage: {0}")]
     FailedToGetInformationFromStorage(String),
     #[error("Committer failed to encode state diff: {0}")]
     FailedToEncodeStateDiff(#[from] StateDiffError),
@@ -267,6 +267,12 @@ pub enum CommitterError {
     FailedToGenerateBatchWitness(#[source] ChainError),
     #[error("Missing blob for batch {0}")]
     MissingBlob(u64),
+    #[error("Failed to create checkpoint: {0}")]
+    FailedToCreateCheckpoint(String),
+    #[error("Failed to process blobs: {0}")]
+    ChainError(#[from] ChainError),
+    #[error("Failed due to invalid fork choice: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
 }
 
 #[derive(Debug, thiserror::Error)]

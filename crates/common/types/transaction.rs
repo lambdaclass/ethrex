@@ -1500,9 +1500,9 @@ mod serde_impl {
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
-    use crate::types::{AccessListItem, AuthorizationTuple, BlobsBundleError};
     #[cfg(feature = "c-kzg")]
-    use crate::types::{BYTES_PER_BLOB, Fork};
+    use crate::types::BYTES_PER_BLOB;
+    use crate::types::{AccessListItem, AuthorizationTuple, BlobsBundleError};
 
     use super::*;
 
@@ -2178,6 +2178,7 @@ mod serde_impl {
         pub authorization_list: Option<Vec<AuthorizationTupleEntry>>,
         #[serde(default)]
         pub blob_versioned_hashes: Vec<H256>,
+        pub wrapper_version: Option<u8>,
         #[serde(default, with = "crate::serde_utils::bytes::vec")]
         pub blobs: Vec<Bytes>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -2243,6 +2244,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2297,6 +2299,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: value.blob_versioned_hashes,
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2304,11 +2307,10 @@ mod serde_impl {
     }
 
     #[cfg(feature = "c-kzg")]
-    impl WrappedEIP4844Transaction {
-        pub fn from_generic_tx(
-            value: GenericTransaction,
-            fork: Fork,
-        ) -> Result<Self, GenericTransactionError> {
+    impl TryFrom<GenericTransaction> for WrappedEIP4844Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
             let blobs = value
                 .blobs
                 .iter()
@@ -2320,10 +2322,11 @@ mod serde_impl {
                 })
                 .collect();
 
+            let wrapper_version = value.wrapper_version;
             Ok(Self {
                 tx: value.try_into()?,
-                wrapper_version: if fork > Fork::Prague { Some(1) } else { None },
-                blobs_bundle: BlobsBundle::create_from_blobs(&blobs, fork)?,
+                wrapper_version,
+                blobs_bundle: BlobsBundle::create_from_blobs(&blobs, wrapper_version)?,
             })
         }
     }
@@ -2386,6 +2389,7 @@ mod serde_impl {
                 ),
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2413,6 +2417,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: value.from,
             }
@@ -2463,6 +2468,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: None,
                 input: value.data,
             }
@@ -2493,6 +2499,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 input: value.data,
             }
@@ -2843,6 +2850,7 @@ mod tests {
             }],
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
+            wrapper_version: None,
             chain_id: Default::default(),
             authorization_list: None,
         };
@@ -2896,6 +2904,7 @@ mod tests {
             }],
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
+            wrapper_version: None,
             chain_id: Default::default(),
             authorization_list: None,
         };

@@ -105,13 +105,6 @@ pub struct SequencerOptions {
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
-    #[clap(
-        long,
-        value_name = "UINT64",
-        env = "ETHREX_OSAKA_ACTIVATION_TIME",
-        help = "Block timestamp at which the Osaka fork activates. If not set, it will assume Osaka is already active."
-    )]
-    pub osaka_activation_time: Option<u64>,
 }
 
 pub fn parse_signer(
@@ -185,7 +178,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 signer: committer_signer,
                 validium: opts.validium,
-                osaka_activation_time: opts.osaka_activation_time,
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
@@ -197,6 +189,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 maximum_allowed_max_fee_per_blob_gas: opts
                     .eth_opts
                     .maximum_allowed_max_fee_per_blob_gas,
+                osaka_activation_time: opts.eth_opts.osaka_activation_time,
             },
             l1_watcher: L1WatcherConfig {
                 bridge_address: opts
@@ -232,7 +225,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 block_fetcher: BlockFetcherConfig {
                     fetch_interval_ms: opts.based_opts.block_fetcher.fetch_interval_ms,
                     fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step,
-                    osaka_activation_time: opts.osaka_activation_time,
                 },
             },
             aligned: AlignedConfig {
@@ -249,7 +241,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 enabled: !opts.no_monitor,
                 tick_rate: opts.monitor_opts.tick_rate,
                 batch_widget_height: opts.monitor_opts.batch_widget_height,
-                osaka_activation_time: opts.osaka_activation_time,
             },
             admin_server: AdminConfig {
                 listen_ip: opts.admin_opts.admin_listen_ip,
@@ -301,7 +292,7 @@ pub struct EthOptions {
         help_heading = "Eth options",
         num_args = 1..
     )]
-    pub rpc_url: Vec<String>,
+    pub rpc_url: Vec<Url>,
     #[arg(
         long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -350,18 +341,28 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub max_retry_delay: u64,
+    #[clap(
+        long,
+        value_name = "UINT64",
+        env = "ETHREX_OSAKA_ACTIVATION_TIME",
+        help = "Block timestamp at which the Osaka fork activates. If not set, it will assume Osaka is already active."
+    )]
+    pub osaka_activation_time: Option<u64>,
 }
 
 impl Default for EthOptions {
     fn default() -> Self {
         Self {
-            rpc_url: vec!["http://localhost:8545".to_string()],
+            rpc_url: vec![
+                Url::parse("http://localhost:8545").expect("Unreachable error. URL is hardcoded"),
+            ],
             maximum_allowed_max_fee_per_gas: 10000000000,
             maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
             max_retry_delay: MAX_RETRY_DELAY,
+            osaka_activation_time: None,
         }
     }
 }

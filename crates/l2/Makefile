@@ -45,7 +45,10 @@ L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
 PROOF_COORDINATOR_ADDRESS?=127.0.0.1
-ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS?=1000000000 \
+ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS?=1000000000
+# Timestamp for Osaka activation in the hoodi. Sufficient to start network with Prague for tests.
+# Future: initialize network with Osaka activated once supported.
+ETHREX_OSAKA_ACTIVATION_TIME?=1761677592 
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -132,7 +135,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
 	--eth.rpc-url ${L1_RPC_URL} \
-	--osaka-activation-time 1761677592 \
+	--osaka-activation-time ${ETHREX_OSAKA_ACTIVATION_TIME} \
 	--no-monitor \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
 	--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
@@ -145,7 +148,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
-	l2 --dev --osaka-activation-time 1761677592
+	l2 --dev --osaka-activation-time ${ETHREX_OSAKA_ACTIVATION_TIME}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	L1_RPC_URL=${L1_RPC_URL} \

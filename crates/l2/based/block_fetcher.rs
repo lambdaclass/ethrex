@@ -119,7 +119,7 @@ impl BlockFetcher {
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
             last_l1_block_fetched,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
-            osaka_activation_time: cfg.based.block_fetcher.osaka_activation_time,
+            osaka_activation_time: cfg.eth.osaka_activation_time,
         })
     }
 
@@ -271,7 +271,7 @@ impl BlockFetcher {
 
     async fn store_batch(&mut self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
-            self.blockchain.add_block(block.clone()).await?;
+            self.blockchain.add_block(block.clone())?;
 
             let block_hash = block.hash();
 
@@ -360,7 +360,7 @@ impl BlockFetcher {
         let mut acc_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
         for block in batch {
             let vm_db = StoreVmDatabase::new(self.store.clone(), block.header.parent_hash);
-            let mut vm = self.blockchain.new_evm(vm_db).await?;
+            let mut vm = self.blockchain.new_evm(vm_db)?;
             vm.execute_block(block)
                 .map_err(BlockFetcherError::EvmError)?;
             let account_updates = vm
@@ -390,10 +390,10 @@ impl BlockFetcher {
         )
         .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
-        let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
+        let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
             .await
             .map_err(BlockFetcherError::EthClientError)?;
-        let (blobs_bundle, _) = generate_blobs_bundle(&state_diff, fork)
+        let (blobs_bundle, _) = generate_blobs_bundle(&state_diff, l1_fork)
             .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
         Ok(Batch {

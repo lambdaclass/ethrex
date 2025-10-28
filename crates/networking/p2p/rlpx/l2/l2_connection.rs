@@ -393,19 +393,15 @@ async fn process_new_block(
         let block = Arc::<Block>::try_unwrap(block).map_err(|_| {
             PeerConnectionError::InternalError("Failed to take ownership of block".to_string())
         })?;
-        established
-            .blockchain
-            .add_block(block)
-            .await
-            .inspect_err(|e| {
-                log_peer_error!(
-                    &established.node,
-                    &format!(
-                        "Error adding new block {} with hash {:?}, error: {e}",
-                        block_number, block_hash
-                    ),
-                );
-            })?;
+        established.blockchain.add_block(block).inspect_err(|e| {
+            log_peer_error!(
+                &established.node,
+                &format!(
+                    "Error adding new block {} with hash {:?}, error: {e}",
+                    block_number, block_hash
+                ),
+            );
+        })?;
 
         apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
             .await
@@ -438,10 +434,10 @@ pub(crate) async fn send_sealed_batch(
         {
             return Ok(());
         }
-        let fork = established.blockchain.current_fork().await?;
+        let l1_fork = established.blockchain.current_fork().await?;
         let Some(batch) = l2_state
             .store_rollup
-            .get_batch(next_batch_to_send, fork)
+            .get_batch(next_batch_to_send, l1_fork)
             .await?
         else {
             return Ok(());

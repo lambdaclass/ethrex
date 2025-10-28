@@ -34,6 +34,7 @@ use ethrex_rpc::{
     },
 };
 use hex::FromHexError;
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
@@ -1094,9 +1095,7 @@ async fn test_send(
     .await
     .with_context(|| format!("Failed to build tx for {test}"))?;
     tx.gas = tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
-    let tx_hash = send_generic_transaction(client, tx, &signer, None)
-        .await
-        .unwrap();
+    let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
         .with_context(|| format!("Failed to get receipt for {test}"))
@@ -1203,7 +1202,6 @@ async fn test_deposit(
         l1_client,
         generic_tx,
         &(LocalSigner::new(*rich_wallet_private_key).into()),
-        None,
     )
     .await?;
 
@@ -2260,13 +2258,21 @@ async fn get_fees_details_l2(
 }
 
 fn l1_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(DEFAULT_L1_RPC.to_string()))
-        .unwrap()
+    EthClient::new(
+        std::env::var("INTEGRATION_TEST_L1_RPC")
+            .map(|val| Url::parse(&val).expect("Error parsing URL (INTEGRATION_TEST_L1_RPC)"))
+            .unwrap_or(Url::parse(DEFAULT_L1_RPC).unwrap()),
+    )
+    .unwrap()
 }
 
 fn l2_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L2_RPC").unwrap_or(DEFAULT_L2_RPC.to_string()))
-        .unwrap()
+    EthClient::new(
+        std::env::var("INTEGRATION_TEST_L2_RPC")
+            .map(|val| Url::parse(&val).expect("Error parsing URL (INTEGRATION_TEST_L2_RPC)"))
+            .unwrap_or(Url::parse(DEFAULT_L2_RPC).unwrap()),
+    )
+    .unwrap()
 }
 
 fn coinbase() -> Address {

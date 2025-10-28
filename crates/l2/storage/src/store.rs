@@ -188,7 +188,7 @@ impl Store {
                 .get_blobs_by_batch(batch_number)
                 .await?
                 .unwrap_or_default(),
-                fork,
+                if fork <= Fork::Prague { None } else { Some(1) },
         ).map_err(|e| {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;

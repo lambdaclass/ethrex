@@ -105,7 +105,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
-        blob_proof,
+        blob_proofs,
     } = input;
 
     let chain_id = execution_witness.chain_config.chain_id;
@@ -118,7 +118,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             elasticity_multiplier,
             _fee_configs,
             blob_commitment,
-            blob_proof,
+            blob_proofs,
             chain_id,
         );
     }

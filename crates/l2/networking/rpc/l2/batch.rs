@@ -92,10 +92,10 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested batch with number: {}", self.batch_number);
-        let fork = context.l1_ctx.blockchain.current_fork().await?;
+        let l1_fork = context.l1_ctx.blockchain.current_fork().await?;
         let Some(batch) = context
             .rollup_store
-            .get_batch(self.batch_number, fork)
+            .get_batch(self.batch_number, l1_fork)
             .await?
         else {
             return Ok(Value::Null);

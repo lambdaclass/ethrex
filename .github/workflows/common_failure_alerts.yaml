@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   notify-on-failure:
@@ -61,10 +62,12 @@ jobs:
                 run_id: runId,
                 per_page: 100,
               },
-              response =>
-                response.data.jobs.filter(
+              response => {
+                const jobs = Array.isArray(response?.data?.jobs) ? response.data.jobs : [];
+                return jobs.filter(
                   job => job.conclusion && failingConclusions.has(job.conclusion)
-                )
+                );
+              }
             );
             const ignoredJobs = new Set(['Integration Test']);
             const relevantJobs = failedJobs
