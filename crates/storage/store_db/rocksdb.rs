@@ -748,8 +748,22 @@ impl Store {
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
         let mut trie_mut = (*trie).clone();
         let mut batch = WriteBatch::default();
-        let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
-            open_cfs(db, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
+        let [
+            cf_accounts_trie_nodes,
+            cf_accounts_flatkeyvalue,
+            cf_storage_trie_nodes,
+            cf_storage_flatkeyvalue,
+            cf_misc,
+        ] = open_cfs(
+            db,
+            [
+                CF_ACCOUNT_TRIE_NODES,
+                CF_ACCOUNT_FLATKEYVALUE,
+                CF_STORAGE_TRIE_NODES,
+                CF_STORAGE_FLATKEYVALUE,
+                CF_MISC_VALUES,
+            ],
+        )?;
 
         let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
         // Commit removes the bottom layer and returns it, this is the mutation step.
@@ -761,9 +775,9 @@ impl Store {
                 continue;
             }
             let cf = if is_leaf {
-                &cf_flatkeyvalue
+                &cf_accounts_flatkeyvalue
             } else {
-                &cf_trie_nodes
+                &cf_accounts_trie_nodes
             };
             if value.is_empty() {
                 batch.delete_cf(cf, key);
@@ -806,32 +820,26 @@ impl StoreEngine for Store {
 
         let _span = tracing::trace_span!("Block DB update").entered();
 
-            let [
-                cf_trie_nodes,
-                cf_flatkeyvalue,
-                cf_receipts,
-                cf_codes,
-                cf_block_numbers,
-                cf_tx_locations,
-                cf_headers,
-                cf_bodies,
-                cf_misc,
-            ] = open_cfs(
-                &db,
-                [
-                    CF_ACCOUNT_TRIE_NODES,
-                    CF_ACCOUNT_FLATKEYVALUE,
-                    CF_RECEIPTS,
-                    CF_ACCOUNT_CODES,
-                    CF_BLOCK_NUMBERS,
-                    CF_TRANSACTION_LOCATIONS,
-                    CF_HEADERS,
-                    CF_BODIES,
-                    CF_MISC_VALUES,
-                ],
-            )?;
+        let [
+            cf_receipts,
+            cf_codes,
+            cf_block_numbers,
+            cf_tx_locations,
+            cf_headers,
+            cf_bodies,
+        ] = open_cfs(
+            &db,
+            [
+                CF_RECEIPTS,
+                CF_ACCOUNT_CODES,
+                CF_BLOCK_NUMBERS,
+                CF_TRANSACTION_LOCATIONS,
+                CF_HEADERS,
+                CF_BODIES,
+            ],
+        )?;
 
-            let mut batch = WriteBatch::default();
+        let mut batch = WriteBatch::default();
 
         let UpdateBatch {
             account_updates,
