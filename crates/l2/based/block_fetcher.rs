@@ -390,10 +390,10 @@ impl BlockFetcher {
         )
         .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
-        let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
+        let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
             .await
             .map_err(BlockFetcherError::EthClientError)?;
-        let (blobs_bundle, _) = generate_blobs_bundle(&state_diff, fork)
+        let (blobs_bundle, _) = generate_blobs_bundle(&state_diff, l1_fork)
             .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
         Ok(Batch {

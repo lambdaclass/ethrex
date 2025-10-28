@@ -673,8 +673,8 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         TxType::EIP4844 => {
-            let fork = get_l1_active_fork(client, osaka_activation_time).await?;
-            let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, fork)?;
+            let l1_fork = get_l1_active_fork(client, osaka_activation_time).await?;
+            let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, l1_fork)?;
             tx.tx
                 .sign_inplace(signer)
                 .await

@@ -65,14 +65,14 @@ impl BatchesTable {
         .await?;
         new_latest_batches.truncate(BATCH_WINDOW_SIZE);
 
-        let fork = get_l1_active_fork(eth_client, osaka_activation_time)
+        let l1_fork = get_l1_active_fork(eth_client, osaka_activation_time)
             .await
             .map_err(MonitorError::EthClientError)?;
 
         let n_new_latest_batches = new_latest_batches.len();
         self.items
             .truncate(BATCH_WINDOW_SIZE - n_new_latest_batches);
-        self.refresh_items(rollup_store, fork).await?;
+        self.refresh_items(rollup_store, l1_fork).await?;
         self.items.extend_from_slice(&new_latest_batches);
         self.items.rotate_right(n_new_latest_batches);
 
@@ -130,7 +130,7 @@ impl BatchesTable {
                     .map_err(|_| MonitorError::BatchWindow)?,
             ),
         );
-        let fork = get_l1_active_fork(eth_client, osaka_activation_time)
+        let l1_fork = get_l1_active_fork(eth_client, osaka_activation_time)
             .await
             .map_err(MonitorError::EthClientError)?;
 
@@ -138,7 +138,7 @@ impl BatchesTable {
             last_l2_batch_fetched,
             last_l2_batch_number,
             rollup_store,
-            fork,
+            l1_fork,
         )
         .await?;
 

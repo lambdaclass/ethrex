@@ -434,10 +434,10 @@ pub(crate) async fn send_sealed_batch(
         {
             return Ok(());
         }
-        let fork = established.blockchain.current_fork().await?;
+        let l1_fork = established.blockchain.current_fork().await?;
         let Some(batch) = l2_state
             .store_rollup
-            .get_batch(next_batch_to_send, fork)
+            .get_batch(next_batch_to_send, l1_fork)
             .await?
         else {
             return Ok(());

@@ -257,10 +257,14 @@ impl L1Committer {
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
-        let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
+        let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
             .await
             .map_err(CommitterError::EthClientError)?;
-        let batch = match self.rollup_store.get_batch(batch_to_commit, fork).await? {
+        let batch = match self
+            .rollup_store
+            .get_batch(batch_to_commit, l1_fork)
+            .await?
+        {
             Some(batch) => batch,
             None => {
                 let last_committed_blocks = self
@@ -586,10 +590,10 @@ impl L1Committer {
                     &acc_privileged_txs,
                     acc_account_updates.clone().into_values().collect(),
                 )?;
-                let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
+                let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
                     .await
                     .map_err(CommitterError::EthClientError)?;
-                generate_blobs_bundle(&state_diff, fork)
+                generate_blobs_bundle(&state_diff, l1_fork)
             } else {
                 Ok((BlobsBundle::default(), 0_usize))
             };
@@ -711,10 +715,10 @@ impl L1Committer {
                 ..
             } = &batch.blobs_bundle;
 
-            let fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
+            let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
                 .await
                 .map_err(CommitterError::EthClientError)?;
-            let proof_count = if fork < Fork::Osaka {
+            let proof_count = if l1_fork < Fork::Osaka {
                 1
             } else {
                 CELLS_PER_EXT_BLOB
