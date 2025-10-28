@@ -290,16 +290,19 @@ impl Blockchain {
                                         .insert(hashed_key, storage_value.encode_to_vec())?;
                                 }
                             }
-                            debug!("Collecting changes");
+                            debug!("Collecting storage changes");
                             let (storage_hash, storage_updates) =
                                 storage_trie.collect_changes_since_last_hash();
-                            debug!("Changes collected");
+                            debug!("Storage changes collected");
                             storage_updates_map.extend(storage_updates);
                             account_state.storage_root = storage_hash;
                         }
+                        debug!("Inserting account updates");
                         state_trie.insert(hashed_address, account_state.encode_to_vec())?;
                     }
+                    debug!("Collecting account changes");
                     (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+                    debug!("Account changes collected");
                     state_updates_map.extend(state_updates);
                 }
                 debug!("Finished rx loop");
