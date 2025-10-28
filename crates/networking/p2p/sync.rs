@@ -544,25 +544,25 @@ impl Syncer {
         cancel_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
-        if sync_head_found {
-            let mut last_valid_hash = H256::default();
-            for block in blocks {
-                let block_hash = block.hash();
-                blockchain.add_block_pipeline(block).map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
-                last_valid_hash = block_hash;
-            }
-            Ok(())
-        } else {
-            blockchain.add_blocks_in_batch(blocks, cancel_token).await
+        // if sync_head_found {
+        let mut last_valid_hash = H256::default();
+        for block in blocks {
+            let block_hash = block.hash();
+            blockchain.add_block_pipeline(block).map_err(|e| {
+                (
+                    e,
+                    Some(BatchBlockProcessingFailure {
+                        last_valid_hash,
+                        failed_block_hash: block_hash,
+                    }),
+                )
+            })?;
+            last_valid_hash = block_hash;
         }
+        Ok(())
+        // } else {
+        //     blockchain.add_blocks_in_batch(blocks, cancel_token).await
+        // }
     }
 }
 
