@@ -69,8 +69,6 @@ impl NodeRef {
                 }
                 acc.push((path.clone(), buf));
 
-                *self = hash.into();
-
                 hash
             }
             NodeRef::Hash(hash) => hash,
