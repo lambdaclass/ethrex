@@ -2,6 +2,7 @@
 members = [
   "archive_sync",
   "ef_tests/blockchain",
+  "ef_tests/state",
   "ef_tests/state_v2",
   "hive_report",
   "load_test",
