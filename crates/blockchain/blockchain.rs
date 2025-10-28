@@ -38,6 +38,7 @@ use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
+use std::collections::hash_map::{Entry, OccupiedEntry};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
@@ -240,20 +241,19 @@ impl Blockchain {
                         }
                         // Store the added storage in the account's storage trie and compute its new root
                         if !update.added_storage.is_empty() {
-                            let (storage_trie, storage_updates_map) = storage_updates_map
-                                .entry(hashed_address_h256)
-                                .or_insert_with(|| {
-                                    (
-                                        self.storage
-                                            .open_storage_trie(
-                                                hashed_address_h256,
-                                                account_state.storage_root,
-                                                parent_header.state_root,
-                                            )
-                                            .unwrap(),
+                            let (storage_trie, storage_updates_map) =
+                                match storage_updates_map.entry(hashed_address_h256) {
+                                    Entry::Occupied(occupied) => occupied,
+                                    Entry::Vacant(vacant) => vacant.insert_entry((
+                                        self.storage.open_storage_trie(
+                                            hashed_address_h256,
+                                            account_state.storage_root,
+                                            parent_header.state_root,
+                                        )?,
                                         Default::default(),
-                                    )
-                                });
+                                    )),
+                                }
+                                .into_mut();
                             for (storage_key, storage_value) in &update.added_storage {
                                 let hashed_key = hash_key(storage_key);
                                 if storage_value.is_zero() {
@@ -289,8 +289,10 @@ impl Blockchain {
             });
             (execution_handle.join(), merkleize_handle.join())
         });
-        let execution_result = execution_result.unwrap()?;
-        let account_updates_list = account_updates_list.unwrap()?;
+        let execution_result = execution_result
+            .map_err(|_| StoreError::Custom("execution thread panicked".to_string()))??;
+        let account_updates_list = account_updates_list
+            .map_err(|_| StoreError::Custom("merklization thread panicked".to_string()))??;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
