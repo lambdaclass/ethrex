@@ -5505,6 +5505,7 @@ dependencies = [
  "hex",
  "secp256k1 0.30.0",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -7410,6 +7411,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]
