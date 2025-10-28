@@ -60,11 +60,11 @@ impl NodeHash {
     /// changing it to the `NodeHash::Hashed` variant.
     pub fn finalize_mut(&mut self) -> &H256 {
         if let NodeHash::Inline(_) = self {
-            let hash = H256::from_slice(
+            let hash = H256(
                 Keccak256::new()
                     .chain_update(self.as_ref())
                     .finalize()
-                    .as_slice(),
+                    .into(),
             );
             *self = NodeHash::Hashed(hash);
         }
