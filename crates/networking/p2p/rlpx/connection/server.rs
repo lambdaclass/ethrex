@@ -387,7 +387,7 @@ impl GenServer for PeerConnectionServer {
                 Self::CastMsg::L2(msg) if peer_supports_l2 => {
                     trace!(
                         peer=%established_state.node,
-                        ?msg,
+                        message=?msg,
                         "Handling cast for L2 msg"
                     );
                     match msg {
