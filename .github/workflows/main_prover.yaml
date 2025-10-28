@@ -54,21 +54,31 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          PROVER=sp1 G=true make build-prover
+          make build-prover-sp1 GPU=true
+
+      - name: Show vks
+        # if: ${{ always() && github.event_name == 'merge_group' }}
+        run: |
+          ls -lah crates/l2/prover/src/guest_program/src/sp1/out/
 
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cargo test l2 --features l2 --no-run --release
 
-      - name: Start L1 & Deploy contracts
+      - name: Start L1
+        run: |
+          cd crates/l2
+          docker compose up --detach ethrex_l1
+
+      - name: Deploy contracts
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           touch cmd/.env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
+          ETHREX_L2_SP1=true \
           docker compose up --build contract_deployer
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
@@ -104,7 +114,7 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug PROVER=sp1 G=true make init-prover &
+          make init-prover-sp1 GPU=true &
           docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT

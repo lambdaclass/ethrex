@@ -82,12 +82,6 @@ pub async fn start_l2(
         return Ok(());
     };
 
-    if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
-        error!(
-            "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
-        );
-        return Ok(());
-    }
     if needed_proof_types.contains(&ProverType::TDX)
         && cfg.proof_coordinator.tdx_private_key.is_none()
     {
@@ -162,10 +156,11 @@ pub async fn start_l2(
         });
     let mut verifier_handle = None;
 
-    if needed_proof_types.contains(&ProverType::Aligned) {
+    if cfg.aligned.aligned_mode {
         verifier_handle = Some(tokio::spawn(l1_proof_verifier::start_l1_proof_verifier(
             cfg.clone(),
             rollup_store.clone(),
+            needed_proof_types.clone(),
         )));
     }
     if cfg.based.enabled {
