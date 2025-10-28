@@ -24,7 +24,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::{fs::read_to_string, path::Path};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
@@ -993,6 +993,7 @@ pub async fn get_l1_active_fork(
     activation_time: Option<u64>,
 ) -> Result<Fork, EthClientError> {
     let Some(osaka_activation_time) = activation_time else {
+        info!("No activation time, active fork is Osaka");
         return Ok(Fork::Osaka);
     };
     let current_timestamp = client
@@ -1001,8 +1002,10 @@ pub async fn get_l1_active_fork(
         .header
         .timestamp;
     if current_timestamp < osaka_activation_time {
+        info!("L1 active fork is Prague");
         Ok(Fork::Prague)
     } else {
+        info!("L1 active fork is Osaka");
         Ok(Fork::Osaka)
     }
 }

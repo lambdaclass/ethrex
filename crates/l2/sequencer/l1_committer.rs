@@ -899,6 +899,7 @@ pub fn generate_blobs_bundle(
     state_diff: &StateDiff,
     fork: Fork,
 ) -> Result<(BlobsBundle, usize), CommitterError> {
+    info!("Generating blobs bundle for {fork:?}");
     let blob_data = state_diff.encode().map_err(CommitterError::from)?;
 
     let blob_size = blob_data.len();
