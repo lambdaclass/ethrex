@@ -2493,17 +2493,6 @@
     "list": [
       {
         "current": {
-          "text": "Prometheus",
-          "value": "${DS_PROMETHEUS}"
-        },
-        "name": "DS_PROMETHEUS",
-        "options": [],
-        "query": "prometheus",
-        "refresh": 1,
-        "type": "datasource"
-      },
-      {
-        "current": {
           "text": "",
           "value": ""
         },
@@ -2539,6 +2528,17 @@
         "refresh": 1,
         "regex": "/^(?<text>[^:]+)(?::\\d+)?$/",
         "type": "query"
+      },
+      {
+        "current": {
+          "text": "Prometheus",
+          "value": "${DS_PROMETHEUS}"
+        },
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
       },
       {
         "current": {
