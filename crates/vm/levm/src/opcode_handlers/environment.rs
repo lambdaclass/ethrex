@@ -204,7 +204,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.bytecode.len()))?;
+            .push1(U256::from(current_call_frame.bytecode.bytecode.len()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -230,30 +230,39 @@ impl<'a> VM<'a> {
         }
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
-        if let Some(code_offset_end) = code_offset.checked_add(size) {
-            if code_offset_end <= current_call_frame.bytecode.len() {
-                #[expect(unsafe_code, reason = "bounds checked beforehand")]
-                let slice = unsafe {
-                    current_call_frame
-                        .bytecode
-                        .get_unchecked(code_offset..code_offset_end)
-                };
-                current_call_frame.memory.store_data(dest_offset, slice)?;
+        if let Some(code_offset_end) = code_offset.checked_add(size)
+            && code_offset_end <= current_call_frame.bytecode.bytecode.len()
+        {
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            let slice = unsafe {
+                current_call_frame
+                    .bytecode
+                    .bytecode
+                    .get_unchecked(code_offset..code_offset_end)
+            };
+            current_call_frame.memory.store_data(dest_offset, slice)?;
 
-                return Ok(OpcodeResult::Continue);
-            }
+            return Ok(OpcodeResult::Continue);
         }
 
         let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.len() {
-            let diff = current_call_frame.bytecode.len().wrapping_sub(code_offset);
+        if code_offset < current_call_frame.bytecode.bytecode.len() {
+            let diff = current_call_frame
+                .bytecode
+                .bytecode
+                .len()
+                .wrapping_sub(code_offset);
             let final_size = size.min(diff);
             let end = code_offset.wrapping_add(final_size);
 
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             unsafe {
-                data.get_unchecked_mut(..final_size)
-                    .copy_from_slice(current_call_frame.bytecode.get_unchecked(code_offset..end));
+                data.get_unchecked_mut(..final_size).copy_from_slice(
+                    current_call_frame
+                        .bytecode
+                        .bytecode
+                        .get_unchecked(code_offset..end),
+                );
             }
         }
 
@@ -277,7 +286,8 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
-        let account_code_length = self.db.get_account_code(address)?.len().into();
+        // FIXME: a bit wasteful to fetch the whole code just to get the length.
+        let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
 
         let current_call_frame = &mut self.current_call_frame;
 
@@ -318,28 +328,28 @@ impl<'a> VM<'a> {
         let bytecode = self.db.get_account_code(address)?;
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
-        if let Some(offset_end) = offset.checked_add(size) {
-            if offset_end <= bytecode.len() {
-                #[expect(unsafe_code, reason = "bounds checked beforehand")]
-                let slice = unsafe { bytecode.get_unchecked(offset..offset_end) };
-                self.current_call_frame
-                    .memory
-                    .store_data(dest_offset, slice)?;
+        if let Some(offset_end) = offset.checked_add(size)
+            && offset_end <= bytecode.bytecode.len()
+        {
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            let slice = unsafe { bytecode.bytecode.get_unchecked(offset..offset_end) };
+            self.current_call_frame
+                .memory
+                .store_data(dest_offset, slice)?;
 
-                return Ok(OpcodeResult::Continue);
-            }
+            return Ok(OpcodeResult::Continue);
         }
 
         let mut data = vec![0u8; size];
-        if offset < bytecode.len() {
-            let diff = bytecode.len().wrapping_sub(offset);
+        if offset < bytecode.bytecode.len() {
+            let diff = bytecode.bytecode.len().wrapping_sub(offset);
             let final_size = size.min(diff);
             let end = offset.wrapping_add(final_size);
 
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             unsafe {
                 data.get_unchecked_mut(..final_size)
-                    .copy_from_slice(bytecode.get_unchecked(offset..end));
+                    .copy_from_slice(bytecode.bytecode.get_unchecked(offset..end));
             }
         }
 

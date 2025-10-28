@@ -1,8 +1,7 @@
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, BlockHash, BlockNumber, ChainConfig},
+    types::{AccountState, BlockHash, BlockNumber, ChainConfig, Code},
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
@@ -43,9 +42,9 @@ impl StoreVmDatabase {
 
 impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
-    fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
+    fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.store
-            .get_account_info_by_hash(self.block_hash, address)
+            .get_account_state_by_hash(self.block_hash, address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
@@ -104,9 +103,9 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     #[instrument(level = "trace", name = "Account code read", skip_all)]
-    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
-            return Ok(Bytes::new());
+            return Ok(Code::default());
         }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),

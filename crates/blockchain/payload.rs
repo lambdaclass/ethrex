@@ -28,6 +28,8 @@ use sha3::{Digest, Keccak256};
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+#[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
 use tokio_util::sync::CancellationToken;
 
@@ -36,11 +38,12 @@ use crate::{
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
+    new_evm,
     vm::StoreVmDatabase,
 };
 
 use thiserror::Error;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -220,7 +223,7 @@ impl PayloadBuildContext {
     pub fn new(
         payload: Block,
         storage: &Store,
-        blockchain_type: BlockchainType,
+        blockchain_type: &BlockchainType,
     ) -> Result<Self, EvmError> {
         let config = storage
             .get_chain_config()
@@ -234,10 +237,7 @@ impl PayloadBuildContext {
         );
 
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
-        let vm = match blockchain_type {
-            BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
-        };
+        let vm = new_evm(blockchain_type, vm_db)?;
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -365,32 +365,39 @@ impl Blockchain {
         cancel_token: CancellationToken,
     ) -> Result<PayloadBuildResult, ChainError> {
         let start = Instant::now();
-        let self_clone = self.clone();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        let mut res = self_clone.build_payload(payload.clone()).await?;
+        // TODO(#4997): start with an empty block
+        let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
+            let self_clone = self.clone();
+            let building_task =
+                tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
-            if let Some(current_res) = cancel_token
-                .run_until_cancelled(self_clone.build_payload(payload))
-                .await
-            {
-                res = current_res?;
+            // TODO(#5011): this doesn't stop the building task, but only keeps it running in the background,
+            //   which wastes CPU resources.
+            match cancel_token.run_until_cancelled(building_task).await {
+                Some(Ok(current_res)) => {
+                    res = current_res?;
+                }
+                Some(Err(err)) => {
+                    warn!(%err, "Payload-building task panicked");
+                }
+                None => {}
             }
         }
         Ok(res)
     }
 
     /// Completes the payload building process, return the block value
-    pub async fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+    pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context =
-            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
+        let mut context = PayloadBuildContext::new(payload, &self.storage, &self.options.r#type)?;
 
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
@@ -398,19 +405,24 @@ impl Blockchain {
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
         self.extract_requests(&mut context)?;
-        self.finalize_payload(&mut context).await?;
+        self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
-        tracing::info!(
+
+        tracing::debug!(
             "[METRIC] BUILDING PAYLOAD TOOK: {interval} ms, base fee {}",
             base_fee
         );
+        metrics!(METRICS_BLOCKS.set_block_building_ms(interval as i64));
+        metrics!(METRICS_BLOCKS.set_block_building_base_fee(base_fee as i64));
         if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
             let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
             if interval != 0 {
                 let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-                tracing::info!(
+                metrics!(METRICS_BLOCKS.set_latest_gigagas_block_building(throughput));
+
+                tracing::debug!(
                     "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
                 );
             }
@@ -543,7 +555,7 @@ impl Blockchain {
                 }
                 // Ignore following txs from sender
                 Err(e) => {
-                    error!("Failed to execute transaction: {tx_hash:x}, {e}");
+                    debug!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     txs.pop();
                     continue;
@@ -621,16 +633,12 @@ impl Blockchain {
         Ok(())
     }
 
-    pub async fn finalize_payload(
-        &self,
-        context: &mut PayloadBuildContext,
-    ) -> Result<(), ChainError> {
+    pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
         let ret_acount_updates_list = self
             .storage
-            .apply_account_updates_batch(context.parent_hash(), &account_updates)
-            .await?
+            .apply_account_updates_batch(context.parent_hash(), &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let state_root = ret_acount_updates_list.state_trie_hash;

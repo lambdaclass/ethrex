@@ -1,9 +1,12 @@
-use ethrex_rlp::structs::Encoder;
+use ethrex_rlp::encode::RLPEncode;
 
 use crate::ValueRLP;
 use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
-use crate::{TrieDB, error::TrieError};
+use crate::{
+    TrieDB,
+    error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError},
+};
 
 use super::{BranchNode, Node, NodeRef, ValueOrHash};
 
@@ -26,10 +29,16 @@ impl ExtensionNode {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
+                ))
+            })?;
 
             child_node.get(db, path)
         } else {
@@ -56,15 +65,23 @@ impl ExtensionNode {
         */
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
+            let path = path.offset(match_index);
             // Insert into child node
-            let child_node = self
-                .child
-                .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)?;
-            let new_child_node = child_node.insert(db, path.offset(match_index), value)?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
+                ))
+            })?;
+            let new_child_node = child_node.insert(db, path, value)?;
             self.child = new_child_node.into();
             Ok(self.into())
         } else if match_index == 0 {
+            let current_node_hash = self.compute_hash().finalize();
             let new_node = if self.prefix.len() == 1 {
                 self.child
             } else {
@@ -72,9 +89,32 @@ impl ExtensionNode {
             };
             let mut choices = BranchNode::EMPTY_CHOICES;
             let branch_node = if self.prefix.at(0) == 16 {
-                match new_node.get_node(db)? {
+                match new_node.get_node(db, path.current())? {
                     Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
-                    _ => return Err(TrieError::InconsistentTree),
+                    Some(_) => {
+                        return Err(TrieError::InconsistentTree(Box::new(
+                            InconsistentTreeError::ExtensionNodeChildDiffers(
+                                ExtensionNodeErrorData {
+                                    node_hash: new_node.compute_hash().finalize(),
+                                    extension_node_hash: current_node_hash,
+                                    extension_node_prefix: self.prefix,
+                                    node_path: path.current(),
+                                },
+                            ),
+                        )));
+                    }
+                    None => {
+                        return Err(TrieError::InconsistentTree(Box::new(
+                            InconsistentTreeError::ExtensionNodeChildNotFound(
+                                ExtensionNodeErrorData {
+                                    node_hash: new_node.compute_hash().finalize(),
+                                    extension_node_hash: current_node_hash,
+                                    extension_node_prefix: self.prefix,
+                                    node_path: path.current(),
+                                },
+                            ),
+                        )));
+                    }
                 }
             } else {
                 choices[self.prefix.at(0)] = new_node;
@@ -105,10 +145,16 @@ impl ExtensionNode {
 
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
+                ))
+            })?;
             // Remove value from child subtrie
             let (child_node, old_value) = child_node.remove(db, path)?;
             // Restructure node based on removal
@@ -144,16 +190,7 @@ impl ExtensionNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(&self.encode_raw())
-    }
-
-    /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
-        encoder = self.child.compute_hash().encode(encoder);
-        encoder.finish();
-        buf
+        NodeHash::from_encoded(&self.encode_to_vec())
     }
 
     /// Traverses own subtrie until reaching the node containing `path`
@@ -166,16 +203,22 @@ impl ExtensionNode {
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
-        let encoded = self.encode_raw();
+        let encoded = self.encode_to_vec();
         if encoded.len() >= 32 {
             node_path.push(encoded);
         };
         // Continue to child
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+                TrieError::InconsistentTree(Box::new(
+                    InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
+                        node_hash: self.child.clone().compute_hash().finalize(),
+                        extension_node_hash: self.compute_hash().finalize(),
+                        extension_node_prefix: self.prefix.clone(),
+                        node_path: path.current(),
+                    }),
+                ))
+            })?;
             child_node.get_path(db, path, node_path)?;
         }
         Ok(())
@@ -184,6 +227,8 @@ impl ExtensionNode {
 
 #[cfg(test)]
 mod test {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+
     use super::*;
     use crate::{Trie, node::LeafNode, pmt_node};
 
@@ -492,7 +537,7 @@ mod test {
             } }
         }
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 
     #[test]
@@ -508,7 +553,7 @@ mod test {
         }
         .into();
 
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 
     #[test]
@@ -533,6 +578,6 @@ mod test {
             } }
         }
         .into();
-        assert_eq!(Node::decode_raw(&node.encode_raw()).unwrap(), node)
+        assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
     }
 }

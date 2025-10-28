@@ -7,6 +7,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::AccountUpdate;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     block_execution_witness::GuestProgramState, block_execution_witness::GuestProgramStateError,
 };
@@ -64,6 +65,9 @@ pub enum StatelessExecutionError {
     #[cfg(feature = "l2")]
     #[error("Invalid state diff")]
     InvalidStateDiff,
+    #[cfg(feature = "l2")]
+    #[error("FeeConfig not provided for L2 execution")]
+    FeeConfigNotFound,
     #[error("Batch has no blocks")]
     EmptyBatchError,
     #[error("Invalid database")]
@@ -97,6 +101,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blocks,
         execution_witness,
         elasticity_multiplier,
+        fee_configs: _fee_configs,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
@@ -111,6 +116,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &blocks,
             execution_witness,
             elasticity_multiplier,
+            _fee_configs,
             blob_commitment,
             blob_proof,
             chain_id,
@@ -132,7 +138,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, None)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
@@ -154,6 +160,7 @@ pub fn stateless_validation_l2(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
+    fee_configs: Option<Vec<FeeConfig>>,
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
@@ -171,7 +178,12 @@ pub fn stateless_validation_l2(
         nodes_hashed,
         codes_hashed,
         parent_block_header,
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
+    } = execute_stateless(
+        blocks,
+        execution_witness,
+        elasticity_multiplier,
+        fee_configs,
+    )?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -187,8 +199,14 @@ pub fn stateless_validation_l2(
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
+        use bytes::Bytes;
+        use ethrex_common::types::Code;
+
         let mut guest_program_state = GuestProgramState {
-            codes_hashed,
+            codes_hashed: codes_hashed
+                .into_iter()
+                .map(|(h, c)| (h, Code::from_bytecode(Bytes::from_owner(c))))
+                .collect(),
             parent_block_header,
             first_block_number: initial_db.first_block_number,
             chain_config: initial_db.chain_config,
@@ -255,6 +273,7 @@ fn execute_stateless(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
+    fee_configs: Option<Vec<FeeConfig>>,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let guest_program_state: GuestProgramState = execution_witness
         .try_into()
@@ -266,9 +285,15 @@ fn execute_stateless(
     #[cfg(feature = "l2")]
     let nodes_hashed = guest_program_state.nodes_hashed.clone();
     #[cfg(feature = "l2")]
-    let codes_hashed = guest_program_state.codes_hashed.clone();
+    let codes_hashed = guest_program_state
+        .codes_hashed
+        .iter()
+        .map(|(h, c)| (*h, c.bytecode.to_vec()))
+        .collect();
     #[cfg(feature = "l2")]
     let parent_block_header_clone = guest_program_state.parent_block_header.clone();
+    #[cfg(feature = "l2")]
+    let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
@@ -308,7 +333,8 @@ fn execute_stateless(
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut acc_receipts = Vec::new();
     let mut non_privileged_count = 0;
-    for block in blocks {
+
+    for (i, block) in blocks.iter().enumerate() {
         // Validate the block
         validate_block(
             block,
@@ -320,7 +346,13 @@ fn execute_stateless(
 
         // Execute block
         #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
+        let mut vm = Evm::new_for_l2(
+            wrapped_db.clone(),
+            fee_configs
+                .get(i)
+                .cloned()
+                .ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
+        )?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(wrapped_db.clone());
         let result = vm

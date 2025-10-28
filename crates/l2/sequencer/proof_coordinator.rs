@@ -1,25 +1,15 @@
 use crate::sequencer::errors::{ConnectionHandlerError, ProofCoordinatorError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
-use crate::sequencer::utils::get_latest_sent_batch;
-use crate::{
-    BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-};
+use crate::sequencer::utils::{get_git_commit_hash, get_latest_sent_batch};
+use crate::{CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig};
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
-use ethrex_common::types::BlobsBundle;
-use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use ethrex_common::{
-    Address,
-    types::{Block, blobs_bundle},
-};
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_common::Address;
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
-use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
 use std::net::{IpAddr, SocketAddr};
@@ -36,20 +26,6 @@ use ethrex_metrics::l2::metrics::METRICS;
 use std::{collections::HashMap, time::SystemTime};
 #[cfg(feature = "metrics")]
 use tokio::sync::Mutex;
-
-#[serde_as]
-#[derive(Serialize, Deserialize)]
-pub struct ProverInputData {
-    pub blocks: Vec<Block>,
-    pub execution_witness: ExecutionWitness,
-    pub elasticity_multiplier: u64,
-    #[cfg(feature = "l2")]
-    #[serde_as(as = "[_; 48]")]
-    pub blob_commitment: blobs_bundle::Commitment,
-    #[cfg(feature = "l2")]
-    #[serde_as(as = "[_; 48]")]
-    pub blob_proof: blobs_bundle::Proof,
-}
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
 #[allow(clippy::large_enum_variant)]
@@ -152,10 +128,6 @@ impl ProofData {
     }
 }
 
-pub fn get_commit_hash() -> String {
-    env!("VERGEN_GIT_SHA").to_string()
-}
-
 #[derive(Clone)]
 pub enum ProofCordInMessage {
     Listen { listener: Arc<TcpListener> },
@@ -170,32 +142,24 @@ pub enum ProofCordOutMessage {
 pub struct ProofCoordinator {
     listen_ip: IpAddr,
     port: u16,
-    store: Store,
     eth_client: EthClient,
     on_chain_proposer_address: Address,
-    elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     rpc_url: String,
     tdx_private_key: Option<SecretKey>,
-    blockchain: Arc<Blockchain>,
-    validium: bool,
     needed_proof_types: Vec<ProverType>,
-    commit_hash: String,
+    git_commit_hash: String,
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
     qpl_tool_path: Option<String>,
 }
 
 impl ProofCoordinator {
-    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
-        proposer_config: &BlockProducerConfig,
-        store: Store,
         rollup_store: StoreRollup,
-        blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofCoordinatorError> {
         let eth_client = EthClient::new_with_config(
@@ -220,17 +184,13 @@ impl ProofCoordinator {
         Ok(Self {
             listen_ip: config.listen_ip,
             port: config.listen_port,
-            store,
             eth_client,
             on_chain_proposer_address,
-            elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
             rpc_url,
             tdx_private_key: config.tdx_private_key,
-            blockchain,
-            validium: config.validium,
             needed_proof_types,
-            commit_hash: get_commit_hash(),
+            git_commit_hash: get_git_commit_hash(),
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
             qpl_tool_path: config.qpl_tool_path.clone(),
@@ -238,20 +198,15 @@ impl ProofCoordinator {
     }
 
     pub async fn spawn(
-        store: Store,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
-        blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofCoordinatorError> {
         let state = Self::new(
             &cfg.proof_coordinator,
             &cfg.l1_committer,
             &cfg.eth,
-            &cfg.block_producer,
-            store,
             rollup_store,
-            blockchain,
             needed_proof_types,
         )
         .await?;
@@ -297,13 +252,13 @@ impl ProofCoordinator {
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received");
 
-        if commit_hash != self.commit_hash {
+        if commit_hash != self.git_commit_hash {
             error!(
                 "Code version mismatch: expected {}, got {}",
-                self.commit_hash, commit_hash
+                self.git_commit_hash, commit_hash
             );
 
-            let response = ProofData::invalid_code_version(self.commit_hash.clone());
+            let response = ProofData::invalid_code_version(self.git_commit_hash.clone());
             send_response(stream, &response).await?;
             info!("InvalidCodeVersion sent");
             return Ok(());
@@ -336,7 +291,16 @@ impl ProofCoordinator {
                 debug!("Sending empty BatchResponse");
                 ProofData::empty_batch_response()
             } else {
-                let input = self.create_prover_input(batch_to_verify).await?;
+                let Some(input) = self
+                    .rollup_store
+                    .get_prover_input_by_batch_and_version(batch_to_verify, &self.git_commit_hash)
+                    .await?
+                else {
+                    return Err(ProofCoordinatorError::MissingBatchProverInput(
+                        batch_to_verify,
+                        self.git_commit_hash.clone(),
+                    ));
+                };
                 debug!("Sending BatchResponse for block_number: {batch_to_verify}");
                 metrics!(
                     // First request starts a timer until a proof is received. The elapsed time will be
@@ -454,82 +418,6 @@ impl ProofCoordinator {
         send_response(stream, &response).await?;
         info!("ProverSetupACK sent");
         Ok(())
-    }
-
-    async fn create_prover_input(
-        &mut self,
-        batch_number: u64,
-    ) -> Result<ProverInputData, ProofCoordinatorError> {
-        // Get blocks in batch
-        let Some(block_numbers) = self
-            .rollup_store
-            .get_block_numbers_by_batch(batch_number)
-            .await?
-        else {
-            return Err(ProofCoordinatorError::ItemNotFoundInStore(format!(
-                "Batch number {batch_number} not found in store"
-            )));
-        };
-
-        let blocks = self.fetch_blocks(block_numbers).await?;
-
-        let witness = self
-            .blockchain
-            .generate_witness_for_blocks(&blocks)
-            .await
-            .map_err(ProofCoordinatorError::from)?;
-
-        // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
-        let (blob_commitment, blob_proof) = if self.validium {
-            ([0; 48], [0; 48])
-        } else {
-            let blob = self
-                .rollup_store
-                .get_blobs_by_batch(batch_number)
-                .await?
-                .ok_or(ProofCoordinatorError::MissingBlob(batch_number))?;
-            let BlobsBundle {
-                mut commitments,
-                mut proofs,
-                ..
-            } = BlobsBundle::create_from_blobs(&blob)?;
-            match (commitments.pop(), proofs.pop()) {
-                (Some(commitment), Some(proof)) => (commitment, proof),
-                _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),
-            }
-        };
-
-        debug!("Created prover input for batch {batch_number}");
-
-        Ok(ProverInputData {
-            execution_witness: witness,
-            blocks,
-            elasticity_multiplier: self.elasticity_multiplier,
-            #[cfg(feature = "l2")]
-            blob_commitment,
-            #[cfg(feature = "l2")]
-            blob_proof,
-        })
-    }
-
-    async fn fetch_blocks(
-        &mut self,
-        block_numbers: Vec<u64>,
-    ) -> Result<Vec<Block>, ProofCoordinatorError> {
-        let mut blocks = vec![];
-        for block_number in block_numbers {
-            let header = self
-                .store
-                .get_block_header(block_number)?
-                .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
-            let body = self
-                .store
-                .get_block_body(block_number)
-                .await?
-                .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
-            blocks.push(Block::new(header, body));
-        }
-        Ok(blocks)
     }
 }
 

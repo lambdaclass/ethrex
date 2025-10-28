@@ -19,12 +19,11 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
-# TODO(#1102): Move to Lambdaworks in the future
-c-kzg = { version = "2.1.1", optional = true }
 kzg-rs.workspace = true
 sha3.workspace = true
 secp256k1.workspace = true
 once_cell = "1.20.2"
+libc = "0.2"
 crc32fast.workspace = true
 bytes.workspace = true
 hex.workspace = true
@@ -38,8 +37,9 @@ hex-literal.workspace = true
 
 [features]
 default = []
-c-kzg = ["dep:c-kzg", "ethrex-crypto/c-kzg"]
- 
+c-kzg = ["ethrex-crypto/c-kzg"]
+risc0 = ["ethrex-crypto/risc0"]
+
 [lib]
 path = "./common.rs"
 

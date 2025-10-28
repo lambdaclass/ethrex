@@ -1,19 +1,16 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use bytes::Bytes;
 use ethrex_common::{
     H256,
-    types::{Block, BlockBody, BlockHash, BlockHeader, Receipt},
+    types::{Block, BlockBody, BlockHeader, Receipt},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
 // Account types
 pub type AccountCodeHashRLP = Rlp<H256>;
-pub type AccountCodeRLP = Rlp<Bytes>;
 
 // Block types
-pub type BlockHashRLP = Rlp<BlockHash>;
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
 pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;

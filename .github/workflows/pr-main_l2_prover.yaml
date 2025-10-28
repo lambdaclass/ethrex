@@ -5,6 +5,10 @@ on:
   pull_request:
     branches: ["**"]
 
+permissions:
+  contents: read
+  actions: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -17,14 +21,12 @@ jobs:
       matrix:
         backend: ["sp1", "risc0"]
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-          
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
@@ -51,7 +53,6 @@ jobs:
       - name: Check ${{ matrix.backend }} backend
         run: |
           cargo check -r -p ethrex-prover -F ${{ matrix.backend }}
-          cargo check -r -p ethrex-replay -F ${{ matrix.backend }}
 
       - name: Clippy ${{ matrix.backend }} backend
         run: |

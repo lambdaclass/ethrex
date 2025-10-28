@@ -14,7 +14,6 @@ Commands:
   import              Import blocks to the database
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
-  l2
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -57,9 +56,14 @@ Node options:
 
           [default: INFO]
 
+      --log.color <LOG_COLOR>
+          Possible values: auto, always, never
+
+          [default: auto]
+
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
-        
+
           [default: 10000]
 
 P2P options:
@@ -67,9 +71,9 @@ P2P options:
           Comma separated enode URLs for P2P discovery bootstrap.
 
       --syncmode <SYNC_MODE>
-          Can be either "full" or "snap" with "full" as default value.
+          Can be either "full" or "snap" with "snap" as default value.
 
-          [default: full]
+          [default: snap]
 
       --p2p.enabled
 
@@ -84,6 +88,16 @@ P2P options:
 
           [default: 30303]
 
+      --p2p.tx-broadcasting-interval <INTERVAL_MS>
+          Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
+
+          [default: 1000]
+
+      --target.peers <MAX_PEERS>
+          Max amount of connected peers.
+
+          [default: 100]
+
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the http rpc server.
@@ -96,6 +110,23 @@ RPC options:
 
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
+
+      --ws.enabled
+          Enable websocket rpc server. Disabled by default.
+
+          [env: ETHREX_ENABLE_WS=]
+
+      --ws.addr <ADDRESS>
+          Listening address for the websocket rpc server.
+
+          [env: ETHREX_WS_ADDR=]
+          [default: 0.0.0.0]
+
+      --ws.port <PORT>
+          Listening port for the websocket rpc server.
+
+          [env: ETHREX_WS_PORT=]
+          [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
@@ -112,11 +143,16 @@ RPC options:
 
           [default: jwt.hex]
 
-Block producer options:
-      --block-producer.extra-data <EXTRA_DATA>
+Block building options:
+      --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 0.1.0"]
+          [default: "ethrex 5.0.0"]
+
+      --builder.gas-limit <GAS_LIMIT>
+          Target block gas limit.
+
+          [default: 30000000]
 ```
 
 <!-- END_CLI_HELP -->
@@ -133,6 +169,8 @@ Commands:
   blobs-saver   Launch a server that listens for Blobs submissions and saves them offline.
   reconstruct   Reconstructs the L2 state from L1 blobs.
   revert-batch  Reverts unverified batches.
+  pause         Pause L1 contracts
+  unpause       Unpause L1 contracts
   deploy        Deploy in L1 all contracts needed by an L2.
   help          Print this message or the help of the given subcommand(s)
 
@@ -158,7 +196,7 @@ Node options:
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
 
           [env: ETHREX_DATADIR=]
-          [default: /home/runner/.local/share/ethrex]
+          [default: "/home/runner/.local/share/ethrex"]
 
       --force
           Delete the database without confirmation.
@@ -181,19 +219,30 @@ Node options:
 
           [default: INFO]
 
+      --log.color <LOG_COLOR>
+          Possible values: auto, always, never
+
+          [default: auto]
+
+      --mempool.maxsize <MEMPOOL_MAX_SIZE>
+          Maximum size of the mempool in number of transactions
+
+          [default: 10000]
+
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
           Comma separated enode URLs for P2P discovery bootstrap.
 
       --syncmode <SYNC_MODE>
-          Can be either "full" or "snap" with "full" as default value.
+          Can be either "full" or "snap" with "snap" as default value.
 
-          [default: full]
+          [default: snap]
 
       --p2p.enabled
 
+
       --p2p.port <PORT>
-          TCP port for P2P.
+          TCP port for P2P protocol.
 
           [default: 30303]
 
@@ -202,12 +251,22 @@ P2P options:
 
           [default: 30303]
 
+      --p2p.tx-broadcasting-interval <INTERVAL_MS>
+          Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
+
+          [default: 1000]
+
+      --target.peers <MAX_PEERS>
+          Max amount of connected peers.
+
+          [default: 100]
+
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the http rpc server.
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: localhost]
+          [default: 0.0.0.0]
 
       --http.port <PORT>
           Listening port for the http rpc server.
@@ -215,10 +274,27 @@ RPC options:
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
 
+      --ws.enabled
+          Enable websocket rpc server. Disabled by default.
+
+          [env: ETHREX_ENABLE_WS=]
+
+      --ws.addr <ADDRESS>
+          Listening address for the websocket rpc server.
+
+          [env: ETHREX_WS_ADDR=]
+          [default: 0.0.0.0]
+
+      --ws.port <PORT>
+          Listening port for the websocket rpc server.
+
+          [env: ETHREX_WS_PORT=]
+          [default: 8546]
+
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
 
-          [default: localhost]
+          [default: 127.0.0.1]
 
       --authrpc.port <PORT>
           Listening port for the authenticated rpc server.
@@ -229,6 +305,17 @@ RPC options:
           Receives the jwt secret used for authenticated rpc requests.
 
           [default: jwt.hex]
+
+Block building options:
+      --builder.extra-data <EXTRA_DATA>
+          Block extra data message.
+
+          [default: "ethrex 5.0.0"]
+
+      --builder.gas-limit <GAS_LIMIT>
+          Target block gas limit.
+
+          [default: 30000000]
 
 Eth options:
       --eth.rpc-url <RPC_URL>...
@@ -268,7 +355,7 @@ L1 Watcher options:
           How often the L1 watcher checks for new blocks in milliseconds.
 
           [env: ETHREX_WATCHER_WATCH_INTERVAL=]
-          [default: 1000]
+          [default: 12000]
 
       --watcher.max-block-step <UINT64>
           [env: ETHREX_WATCHER_MAX_BLOCK_STEP=]
@@ -289,6 +376,23 @@ Block producer options:
 
       --block-producer.coinbase-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS=]
+
+      --block-producer.base-fee-vault-address <ADDRESS>
+          [env: ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=]
+
+      --block-producer.operator-fee-vault-address <ADDRESS>
+          [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=]
+
+      --operator-fee-per-gas <UINT64>
+          Fee that the operator will receive for each unit of gas consumed in a block.
+
+          [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=]
+
+      --block-producer.block-gas-limit <UINT64>
+          Maximum gas limit for the L2 blocks.
+
+          [env: ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT=]
+          [default: 30000000]
 
 Proposer options:
       --elasticity-multiplier <UINT64>
@@ -320,6 +424,16 @@ L1 Committer options:
           [env: ETHREX_COMMITTER_COMMIT_TIME=]
           [default: 60000]
 
+      --committer.batch-gas-limit <UINT64>
+          Maximum gas limit for the batch
+
+          [env: ETHREX_COMMITTER_BATCH_GAS_LIMIT=]
+
+      --committer.first-wake-up-time <UINT64>
+          Time to wait before the sequencer seals a batch when started. After committing the first batch, `committer.commit-time` will be used.
+
+          [env: ETHREX_COMMITTER_FIRST_WAKE_UP_TIME=]
+
       --committer.arbitrary-base-blob-gas-price <UINT64>
           [env: ETHREX_COMMITTER_ARBITRARY_BASE_BLOB_GAS_PRICE=]
           [default: 1000000000]
@@ -334,6 +448,12 @@ Proof coordinator options:
           Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.
 
           [env: ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=]
+
+      --proof-coordinator.qpl-tool-path <QPL_TOOL_PATH>
+          Path to the QPL tool that will be used to generate TDX quotes.
+
+          [env: ETHREX_PROOF_COORDINATOR_QPL_TOOL_PATH=]
+          [default: ./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool]
 
       --proof-coordinator.remote-signer-url <URL>
           URL of a Web3Signer-compatible server to remote sign instead of a local private key.
@@ -360,9 +480,6 @@ Proof coordinator options:
 
           [env: ETHREX_PROOF_COORDINATOR_SEND_INTERVAL=]
           [default: 5000]
-
-      --proof-coordinator.dev-mode
-          [env: ETHREX_PROOF_COORDINATOR_DEV_MODE=]
 
 Based options:
       --state-updater.sequencer-registry <ADDRESS>
@@ -413,6 +530,15 @@ Aligned options:
 
           [env: ETHREX_ALIGNED_SP1_ELF_PATH=]
 
+Admin server options:
+      --admin-server.addr <IP_ADDRESS>
+          [env: ETHREX_ADMIN_SERVER_LISTEN_ADDRESS=]
+          [default: 127.0.0.1]
+
+      --admin-server.port <UINT16>
+          [env: ETHREX_ADMIN_SERVER_LISTEN_PORT=]
+          [default: 5555]
+
 L2 options:
       --validium
           If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.
@@ -431,6 +557,7 @@ L2 options:
 Monitor options:
       --no-monitor
           [env: ETHREX_NO_MONITOR=]
+          
 ```
 
 ## ethrex l2 prover

@@ -63,12 +63,22 @@ pub enum EthClientError {
     FailedToGetTxPool(#[from] TxPoolContentError),
     #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
+    #[error("ethrex_getBlobBaseFee request error: {0}")]
+    GetBlobBaseFeeError(#[from] GetBlobBaseFeeRequestError),
     #[error("All RPC calls failed")]
     FailedAllRPC,
     #[error("Generic transaction error: {0}")]
     GenericTransactionError(#[from] GenericTransactionError),
     #[error("Failed to parse hex string: {0}")]
     FromStrRadixError(#[from] FromStrRadixErr),
+    #[error("ethrex_getBaseFeeVaultAddress request error: {0}")]
+    GetBaseFeeVaultAddressError(#[from] GetBaseFeeVaultAddressError),
+    #[error("ethrex_getOperatorFeeVaultAddress request error: {0}")]
+    GetOperatorFeeVaultAddressError(#[from] GetOperatorFeeVaultAddressError),
+    #[error("ethrex_getOperatorFee request error: {0}")]
+    GetOperatorFeeError(#[from] GetOperatorFeeError),
+    #[error("ethrex_getL1BlobBaseFee request error: {0}")]
+    GetL1BlobBaseFeeError(#[from] GetL1BlobBaseFeeRequestError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -294,6 +304,16 @@ pub enum TxPoolContentError {
     RPCError(String),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum GetBlobBaseFeeRequestError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
 // TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetBatchByNumberError {
@@ -301,4 +321,36 @@ pub enum GetBatchByNumberError {
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
     RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetBaseFeeVaultAddressError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+#[derive(Debug, thiserror::Error)]
+pub enum GetOperatorFeeVaultAddressError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+#[derive(Debug, thiserror::Error)]
+pub enum GetOperatorFeeError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetL1BlobBaseFeeRequestError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }

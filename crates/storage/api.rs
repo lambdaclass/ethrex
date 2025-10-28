@@ -121,10 +121,12 @@ pub mod tables {
     pub const RECEIPTS: &str = "receipts";
     pub const SNAP_STATE: &str = "snap_state";
     pub const INVALID_CHAINS: &str = "invalid_chains";
-    pub const STATE_TRIE_NODES: &str = "state_trie_nodes";
-    pub const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
+    pub const TRIE_NODES: &str = "trie_nodes";
+    pub const FULLSYNC_HEADERS: &str = "fullsync_headers";
+    pub const FLATKEY_VALUES: &str = "flatkey_values";
+    pub const MISC_VALUES: &str = "misc_values";
 
-    pub const LIST: [&str; 13] = [
+    pub const LIST: [&str; 15] = [
         CHAIN_DATA,
         ACCOUNT_CODES,
         BODIES,
@@ -136,7 +138,9 @@ pub mod tables {
         RECEIPTS,
         SNAP_STATE,
         INVALID_CHAINS,
-        STATE_TRIE_NODES,
-        STORAGE_TRIE_NODES,
+        TRIE_NODES,
+        FULLSYNC_HEADERS,
+        FLATKEY_VALUES,
+        MISC_VALUES,
     ];
 }
