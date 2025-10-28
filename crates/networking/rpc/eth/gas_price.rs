@@ -40,7 +40,10 @@ impl RpcHandler for GasPrice {
 
         // Add the operator fee to the gas price if configured
         if let BlockchainType::L2(l2_config) = &context.blockchain.options.r#type {
-            let fee_config = *l2_config.fee_config.read().await;
+            let fee_config = *l2_config
+                .fee_config
+                .read()
+                .map_err(|_| RpcErr::Internal("Fee config lock was poisoned".to_string()))?;
             if let Some(operator_fee_config) = &fee_config.operator_fee_config {
                 gas_price += operator_fee_config.operator_fee_per_gas;
             }

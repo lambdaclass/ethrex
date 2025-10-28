@@ -19,6 +19,7 @@ use ethrex_rpc::{
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
+use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
@@ -81,7 +82,11 @@ impl L1Watcher {
         sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
-        let l2_client = EthClient::new("http://localhost:1729")?;
+        // TODO: De-hardcode the rollup client URL
+        #[allow(clippy::expect_used)]
+        let l2_client = EthClient::new(
+            Url::parse("http://localhost:1729").expect("Unreachable error. URL is hardcoded"),
+        )?;
         let last_block_fetched = U256::zero();
         Ok(Self {
             store,
@@ -355,7 +360,10 @@ impl GenServer for L1Watcher {
                     return CastResponse::NoReply;
                 };
 
-                let mut fee_config_guard = l2_config.fee_config.write().await;
+                let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
+                    error!("Fee config lock was poisoned when updating L1 blob base fee");
+                    return CastResponse::NoReply;
+                };
 
                 let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_mut() else {
                     warn!("L1 fee config is not set. Skipping L1 blob base fee update.");
