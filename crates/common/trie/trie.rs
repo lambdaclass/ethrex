@@ -494,6 +494,17 @@ impl Trie {
         }
     }
 
+    pub fn root_node(&self) -> Result<Option<Node>, TrieError> {
+        if self.hash_no_commit() == *EMPTY_TRIE_HASH {
+            return Ok(None);
+        }
+        let node = self
+            .root
+            .get_node(self.db.as_ref(), Nibbles::default())?
+            .unwrap();
+        Ok(Some((*node).clone()))
+    }
+
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
         let db = InMemoryTrieDB::new(Default::default());
