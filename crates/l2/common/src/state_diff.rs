@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::Address;
 use ethrex_common::types::{
-    AccountInfo, AccountState, AccountUpdate, BlockHeader, PrivilegedL2Transaction, TxKind,
+    AccountInfo, AccountState, AccountUpdate, BlockHeader, Code, PrivilegedL2Transaction, TxKind,
+    account_diff::{AccountDiffError, AccountStateDiff, Decoder, DecoderError},
     code_hash,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -33,14 +34,8 @@ pub enum StateDiffError {
     FailedToDeserializeStateDiff(String),
     #[error("StateDiff failed to serialize: {0}")]
     FailedToSerializeStateDiff(String),
-    #[error("StateDiff invalid account state diff type: {0}")]
-    InvalidAccountStateDiffType(u8),
     #[error("StateDiff unsupported version: {0}")]
     UnsupportedVersion(u8),
-    #[error("Both bytecode and bytecode hash are set")]
-    BytecodeAndBytecodeHashSet,
-    #[error("Empty account diff")]
-    EmptyAccountDiff,
     #[error("The length of the vector is too big to fit in u16: {0}")]
     LengthTooBig(#[from] core::num::TryFromIntError),
     #[error("DB Error: {0}")]
@@ -53,24 +48,10 @@ pub enum StateDiffError {
     InternalError(String),
     #[error("Evm Error: {0}")]
     EVMError(#[from] EvmError),
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct AccountStateDiff {
-    pub new_balance: Option<U256>,
-    pub nonce_diff: u16,
-    pub storage: BTreeMap<H256, U256>,
-    pub bytecode: Option<Bytes>,
-    pub bytecode_hash: Option<H256>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum AccountStateDiffType {
-    NewBalance = 1,
-    NonceDiff = 2,
-    Storage = 4,
-    Bytecode = 8,
-    BytecodeHash = 16,
+    #[error("Decoder Error: {0}")]
+    DecoderError(#[from] DecoderError),
+    #[error("AccountDiff Error: {0}")]
+    AccountDiffError(#[from] AccountDiffError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,40 +61,6 @@ pub struct StateDiff {
     pub modified_accounts: BTreeMap<Address, AccountStateDiff>,
     pub l1_messages: Vec<L1Message>,
     pub privileged_transactions: Vec<PrivilegedTransactionLog>,
-}
-
-impl TryFrom<u8> for AccountStateDiffType {
-    type Error = StateDiffError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(AccountStateDiffType::NewBalance),
-            2 => Ok(AccountStateDiffType::NonceDiff),
-            4 => Ok(AccountStateDiffType::Storage),
-            8 => Ok(AccountStateDiffType::Bytecode),
-            16 => Ok(AccountStateDiffType::BytecodeHash),
-            _ => Err(StateDiffError::InvalidAccountStateDiffType(value)),
-        }
-    }
-}
-
-impl From<AccountStateDiffType> for u8 {
-    fn from(value: AccountStateDiffType) -> Self {
-        match value {
-            AccountStateDiffType::NewBalance => 1,
-            AccountStateDiffType::NonceDiff => 2,
-            AccountStateDiffType::Storage => 4,
-            AccountStateDiffType::Bytecode => 8,
-            AccountStateDiffType::BytecodeHash => 16,
-        }
-    }
-}
-
-impl AccountStateDiffType {
-    // Checks if the type is present in the given value
-    pub fn is_in(&self, value: u8) -> bool {
-        value & u8::from(*self) == u8::from(*self)
-    }
 }
 
 impl Default for StateDiff {
@@ -297,239 +244,14 @@ impl StateDiff {
                     address: *address,
                     removed: false,
                     info: account_info,
-                    code: diff.bytecode.clone(),
+                    code: diff.bytecode.clone().map(Code::from_bytecode),
                     added_storage: diff.storage.clone().into_iter().collect(),
+                    removed_storage: false,
                 },
             );
         }
 
         Ok(account_updates)
-    }
-}
-
-impl AccountStateDiff {
-    pub fn encode(&self, address: &Address) -> Result<Vec<u8>, StateDiffError> {
-        if self.bytecode.is_some() && self.bytecode_hash.is_some() {
-            return Err(StateDiffError::BytecodeAndBytecodeHashSet);
-        }
-
-        let mut r#type = 0;
-        let mut encoded: Vec<u8> = Vec::new();
-
-        if let Some(new_balance) = self.new_balance {
-            let r_type: u8 = AccountStateDiffType::NewBalance.into();
-            r#type += r_type;
-            encoded.extend_from_slice(&new_balance.to_big_endian());
-        }
-
-        if self.nonce_diff != 0 {
-            let r_type: u8 = AccountStateDiffType::NonceDiff.into();
-            r#type += r_type;
-            encoded.extend(self.nonce_diff.to_be_bytes());
-        }
-
-        if !self.storage.is_empty() {
-            let r_type: u8 = AccountStateDiffType::Storage.into();
-            let storage_len: u16 = self
-                .storage
-                .len()
-                .try_into()
-                .map_err(StateDiffError::from)?;
-            r#type += r_type;
-            encoded.extend(storage_len.to_be_bytes());
-            for (key, value) in &self.storage {
-                encoded.extend_from_slice(&key.0);
-                encoded.extend_from_slice(&value.to_big_endian());
-            }
-        }
-
-        if let Some(bytecode) = &self.bytecode {
-            let r_type: u8 = AccountStateDiffType::Bytecode.into();
-            let bytecode_len: u16 = bytecode.len().try_into().map_err(StateDiffError::from)?;
-            r#type += r_type;
-            encoded.extend(bytecode_len.to_be_bytes());
-            encoded.extend(bytecode);
-        }
-
-        if let Some(bytecode_hash) = &self.bytecode_hash {
-            let r_type: u8 = AccountStateDiffType::BytecodeHash.into();
-            r#type += r_type;
-            encoded.extend(&bytecode_hash.0);
-        }
-
-        if r#type == 0 {
-            return Err(StateDiffError::EmptyAccountDiff);
-        }
-
-        let mut result = Vec::with_capacity(1 + address.0.len() + encoded.len());
-        result.extend(r#type.to_be_bytes());
-        result.extend(address.0);
-        result.extend(encoded);
-
-        Ok(result)
-    }
-
-    /// Returns a tuple of the number of bytes read, the address of the account
-    /// and the decoded `AccountStateDiff`
-    pub fn decode(bytes: &[u8]) -> Result<(usize, Address, Self), StateDiffError> {
-        let mut decoder = Decoder::new(bytes);
-
-        let update_type = decoder.get_u8()?;
-
-        let address = decoder.get_address()?;
-
-        let new_balance = if AccountStateDiffType::NewBalance.is_in(update_type) {
-            Some(decoder.get_u256()?)
-        } else {
-            None
-        };
-
-        let nonce_diff = if AccountStateDiffType::NonceDiff.is_in(update_type) {
-            Some(decoder.get_u16()?)
-        } else {
-            None
-        };
-
-        let mut storage_diff = BTreeMap::new();
-        if AccountStateDiffType::Storage.is_in(update_type) {
-            let storage_slots_updated = decoder.get_u16()?;
-
-            for _ in 0..storage_slots_updated {
-                let key = decoder.get_h256()?;
-                let new_value = decoder.get_u256()?;
-
-                storage_diff.insert(key, new_value);
-            }
-        }
-
-        let bytecode = if AccountStateDiffType::Bytecode.is_in(update_type) {
-            let bytecode_len = decoder.get_u16()?;
-            Some(decoder.get_bytes(bytecode_len.into())?)
-        } else {
-            None
-        };
-
-        let bytecode_hash = if AccountStateDiffType::BytecodeHash.is_in(update_type) {
-            Some(decoder.get_h256()?)
-        } else {
-            None
-        };
-
-        Ok((
-            decoder.consumed(),
-            address,
-            AccountStateDiff {
-                new_balance,
-                nonce_diff: nonce_diff.unwrap_or(0),
-                storage: storage_diff,
-                bytecode,
-                bytecode_hash,
-            },
-        ))
-    }
-}
-
-struct Decoder {
-    bytes: Bytes,
-    offset: usize,
-}
-
-impl Decoder {
-    fn new(bytes: &[u8]) -> Self {
-        Decoder {
-            bytes: Bytes::copy_from_slice(bytes),
-            offset: 0,
-        }
-    }
-
-    fn consumed(&self) -> usize {
-        self.offset
-    }
-
-    fn advance(&mut self, size: usize) {
-        self.offset += size;
-    }
-
-    fn get_address(&mut self) -> Result<Address, StateDiffError> {
-        let res = Address::from_slice(self.bytes.get(self.offset..self.offset + 20).ok_or(
-            StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
-        )?);
-        self.offset += 20;
-
-        Ok(res)
-    }
-
-    fn get_u256(&mut self) -> Result<U256, StateDiffError> {
-        let res = U256::from_big_endian(self.bytes.get(self.offset..self.offset + 32).ok_or(
-            StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
-        )?);
-        self.offset += 32;
-
-        Ok(res)
-    }
-
-    fn get_h256(&mut self) -> Result<H256, StateDiffError> {
-        let res = H256::from_slice(self.bytes.get(self.offset..self.offset + 32).ok_or(
-            StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
-        )?);
-        self.offset += 32;
-
-        Ok(res)
-    }
-
-    fn get_u8(&mut self) -> Result<u8, StateDiffError> {
-        let res =
-            self.bytes
-                .get(self.offset)
-                .ok_or(StateDiffError::FailedToDeserializeStateDiff(
-                    "Not enough bytes".to_string(),
-                ))?;
-        self.offset += 1;
-
-        Ok(*res)
-    }
-
-    fn get_u16(&mut self) -> Result<u16, StateDiffError> {
-        let res = u16::from_be_bytes(
-            self.bytes
-                .get(self.offset..self.offset + 2)
-                .ok_or(StateDiffError::FailedToDeserializeStateDiff(
-                    "Not enough bytes".to_string(),
-                ))?
-                .try_into()
-                .map_err(|_| {
-                    StateDiffError::FailedToDeserializeStateDiff("Cannot parse u16".to_string())
-                })?,
-        );
-        self.offset += 2;
-
-        Ok(res)
-    }
-
-    fn get_u64(&mut self) -> Result<u64, StateDiffError> {
-        let res = u64::from_be_bytes(
-            self.bytes
-                .get(self.offset..self.offset + 8)
-                .ok_or(StateDiffError::FailedToDeserializeStateDiff(
-                    "Not enough bytes".to_string(),
-                ))?
-                .try_into()
-                .map_err(|_| {
-                    StateDiffError::FailedToDeserializeStateDiff("Cannot parse u64".to_string())
-                })?,
-        );
-        self.offset += 8;
-
-        Ok(res)
-    }
-
-    fn get_bytes(&mut self, size: usize) -> Result<Bytes, StateDiffError> {
-        let res = self.bytes.get(self.offset..self.offset + size).ok_or(
-            StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
-        )?;
-        self.offset += size;
-
-        Ok(Bytes::copy_from_slice(res))
     }
 }
 
@@ -582,7 +304,7 @@ pub fn prepare_state_diff(
                 new_balance: account_update.info.clone().map(|info| info.balance),
                 nonce_diff,
                 storage: account_update.added_storage.clone().into_iter().collect(),
-                bytecode: account_update.code.clone(),
+                bytecode: account_update.code.map(|b| b.bytecode).clone(),
                 bytecode_hash: None,
             },
         );
@@ -612,6 +334,8 @@ pub fn prepare_state_diff(
 #[cfg(test)]
 #[allow(clippy::as_conversions)]
 mod tests {
+    use ethrex_common::U256;
+
     use super::*;
     #[test]
     fn test_l1_message_size() {

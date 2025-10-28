@@ -7,9 +7,9 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -63,7 +63,7 @@ impl Store {
         })
         .await?;
         // Sets the lastest sent batch proof to 0
-        self.set_lastest_sent_batch_proof(0).await
+        self.set_latest_sent_batch_proof(0).await
     }
 
     /// Returns the block numbers by a given batch_number
@@ -287,16 +287,16 @@ impl Store {
     }
 
     /// Returns the lastest sent batch proof
-    pub async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
-        self.engine.get_lastest_sent_batch_proof().await
+    pub async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+        self.engine.get_latest_sent_batch_proof().await
     }
 
     /// Sets the lastest sent batch proof
-    pub async fn set_lastest_sent_batch_proof(
+    pub async fn set_latest_sent_batch_proof(
         &self,
         batch_number: u64,
     ) -> Result<(), RollupStoreError> {
-        self.engine.set_lastest_sent_batch_proof(batch_number).await
+        self.engine.set_latest_sent_batch_proof(batch_number).await
     }
 
     /// Returns the account updates yielded from executing a block
@@ -354,5 +354,42 @@ impl Store {
         self.engine
             .delete_proof_by_batch_and_type(batch_number, proof_type)
             .await
+    }
+
+    pub async fn store_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_prover_input_by_batch_and_version(batch_number, prover_version, prover_input)
+            .await
+    }
+
+    pub async fn get_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+    ) -> Result<Option<ProverInputData>, RollupStoreError> {
+        self.engine
+            .get_prover_input_by_batch_and_version(batch_number, prover_version)
+            .await
+    }
+
+    pub async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_fee_config_by_block(block_number, fee_config)
+            .await
+    }
+    pub async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        self.engine.get_fee_config_by_block(block_number).await
     }
 }

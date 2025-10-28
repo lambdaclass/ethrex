@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
-use ethrex_common::utils::keccak;
+use ethrex_common::types::Code;
+use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
 use crate::account::AccountStatus;
@@ -27,7 +27,7 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
-    pub codes: BTreeMap<H256, Bytes>,
+    pub codes: BTreeMap<H256, Code>,
     pub tx_backup: Option<CallFrameBackup>,
 }
 
@@ -96,7 +96,7 @@ impl GeneralizedDatabase {
     /// Gets code immutably given the code hash.
     /// Use this only inside of the VM, when we don't surely know if the code is in the cache or not
     /// But e.g. in `get_state_transitions` just do `db.codes.get(code_hash)` because we know for sure code is there.
-    pub fn get_code(&mut self, code_hash: H256) -> Result<&Bytes, InternalError> {
+    pub fn get_code(&mut self, code_hash: H256) -> Result<&Code, InternalError> {
         match self.codes.entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
@@ -107,7 +107,7 @@ impl GeneralizedDatabase {
     }
 
     /// Shortcut for getting the code when we only have the address of an account and we don't need anything else.
-    pub fn get_account_code(&mut self, address: Address) -> Result<&Bytes, InternalError> {
+    pub fn get_account_code(&mut self, address: Address) -> Result<&Code, InternalError> {
         let code_hash = self.get_account(address)?.info.code_hash;
         self.get_code(code_hash)
     }
@@ -164,31 +164,6 @@ impl GeneralizedDatabase {
                         "Failed to get account {address} from immutable cache",
                     ))))?;
 
-            // Edge cases:
-            //   1. Account was destroyed and created again afterwards.
-            //   2. Account was destroyed but then was sent ETH, so it's not going to be removed completely from the trie.
-            // This is a way of removing the storage of an account but keeping the info.
-            if new_state_account.status == AccountStatus::DestroyedModified {
-                // Push to account updates the removal of the account and then push the new state of the account.
-                account_updates.push(AccountUpdate::removed(*address));
-                let new_account_update = AccountUpdate {
-                    address: *address,
-                    removed: false,
-                    info: Some(new_state_account.info.clone()),
-                    code: Some(
-                        self.codes
-                            .get(&new_state_account.info.code_hash)
-                            .ok_or(VMError::Internal(InternalError::Custom(format!(
-                                "Failed to get code for account {address}"
-                            ))))?
-                            .clone(),
-                    ),
-                    added_storage: new_state_account.storage.clone(),
-                };
-                account_updates.push(new_account_update);
-                continue;
-            }
-
             let mut acc_info_updated = false;
             let mut storage_updated = false;
 
@@ -214,11 +189,22 @@ impl GeneralizedDatabase {
                     None
                 };
 
+            // Account will have only its storage removed if it was Destroyed and then modified
+            // Edge cases that can make this true:
+            //   1. Account was destroyed and created again afterwards.
+            //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
+            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = BTreeMap::new();
 
             for (key, new_value) in &new_state_account.storage {
-                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?;
+                let old_value = if !removed_storage {
+                    initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?
+                } else {
+                    // There's not an "old value" if the contract was destroyed and re-created.
+                    &ZERO_U256
+                };
 
                 if new_value != old_value {
                     added_storage.insert(*key, *new_value);
@@ -233,11 +219,11 @@ impl GeneralizedDatabase {
             };
 
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // If the account was already empty then this is not an update
+            // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
             let was_empty = initial_state_account.is_empty();
             let removed = new_state_account.is_empty() && !was_empty;
 
-            if !removed && !acc_info_updated && !storage_updated {
+            if !removed && !acc_info_updated && !storage_updated && !removed_storage {
                 // Account hasn't been updated
                 continue;
             }
@@ -248,6 +234,7 @@ impl GeneralizedDatabase {
                 info,
                 code: code.cloned(),
                 added_storage,
+                removed_storage,
             };
 
             account_updates.push(account_update);
@@ -338,11 +325,11 @@ impl<'a> VM<'a> {
     pub fn update_account_bytecode(
         &mut self,
         address: Address,
-        new_bytecode: Bytes,
+        new_bytecode: Code,
     ) -> Result<(), InternalError> {
         let acc = self.get_account_mut(address)?;
-        let code_hash = keccak(new_bytecode.as_ref()).0.into();
-        acc.info.code_hash = code_hash;
+        let code_hash = new_bytecode.hash;
+        acc.info.code_hash = new_bytecode.hash;
         self.db.codes.entry(code_hash).or_insert(new_bytecode);
         Ok(())
     }

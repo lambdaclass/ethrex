@@ -1,10 +1,10 @@
-use ethrex_common::types::{AccountInfo, AccountUpdate, ChainConfig};
+use ethrex_common::types::{AccountInfo, AccountUpdate, ChainConfig, Code};
 use ethrex_common::{Address as CoreAddress, BigEndianHash, H256, U256};
 use ethrex_vm::{DynVmDatabase, EvmError, VmDatabase};
 use revm::context::DBErrorMarker;
-use revm::database::states::{bundle_state::BundleRetention, AccountStatus};
+use revm::database::states::{AccountStatus, bundle_state::BundleRetention};
 use revm::primitives::{
-    Address as RevmAddress, Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
+    Address as RevmAddress, B256 as RevmB256, Bytes as RevmBytes, U256 as RevmU256,
 };
 use revm::state::{AccountInfo as RevmAccountInfo, Bytecode as RevmBytecode};
 
@@ -74,7 +74,7 @@ impl revm::Database for RevmDynVmDatabase {
     fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
         let code =
             <dyn VmDatabase>::get_account_code(self.0.as_ref(), H256::from(code_hash.as_ref()))?;
-        Ok(RevmBytecode::new_raw(RevmBytes(code)))
+        Ok(RevmBytecode::new_raw(RevmBytes(code.bytecode)))
     }
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
@@ -117,7 +117,7 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
         let code =
             <dyn VmDatabase>::get_account_code(self.0.as_ref(), H256::from(code_hash.as_ref()))?;
-        Ok(RevmBytecode::new_raw(RevmBytes(code)))
+        Ok(RevmBytecode::new_raw(RevmBytes(code.bytecode)))
     }
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
@@ -187,7 +187,10 @@ impl RevmState {
                             balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
                             nonce: new_acc_info.nonce,
                         }),
-                        code: new_acc_info.code.map(|c| c.original_bytes().0),
+                        code: new_acc_info
+                            .code
+                            .map(|c| c.original_bytes().0)
+                            .map(Code::from_bytecode),
                         added_storage: account
                             .storage
                             .iter()
@@ -198,6 +201,7 @@ impl RevmState {
                                 )
                             })
                             .collect(),
+                        removed_storage: false,
                     };
                     account_updates.push(new_acc_update);
                 }
@@ -219,7 +223,8 @@ impl RevmState {
                     // Update code in db
                     if account.is_contract_changed() {
                         if let Some(code) = new_acc_info.code {
-                            account_update.code = Some(code.original_bytes().0);
+                            account_update.code =
+                                Some(Code::from_bytecode(code.original_bytes().0));
                         }
                     }
                 }

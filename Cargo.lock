@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "aligned-sdk"
 version = "0.1.0"
-source = "git+https://github.com/yetanotherco/aligned_layer?tag=v0.16.1#d6c5ffd0b7e4952724c4ee167187bf0945238d0d"
+source = "git+https://github.com/yetanotherco/aligned_layer?rev=c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23#c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23"
 dependencies = [
  "ciborium",
  "dialoguer",
@@ -110,6 +110,7 @@ dependencies = [
  "log",
  "reqwest 0.12.23",
  "serde",
+ "serde_bytes",
  "serde_json",
  "serde_repr",
  "sha3",
@@ -258,15 +259,15 @@ dependencies = [
 
 [[package]]
 name = "archive_sync"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "clap 4.5.48",
  "clap_complete",
  "ethrex",
- "ethrex-common 3.0.0",
- "ethrex-rlp 3.0.0",
+ "ethrex-common 5.0.0",
+ "ethrex-rlp 5.0.0",
  "ethrex-rpc",
- "ethrex-storage 3.0.0",
+ "ethrex-storage 5.0.0",
  "eyre",
  "hex",
  "lazy_static",
@@ -794,9 +795,9 @@ dependencies = [
 
 [[package]]
 name = "axum"
-version = "0.8.6"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a18ed336352031311f4e0b4dd2ff392d4fbb370777c9d18d7fc9d7359f73871"
+checksum = "021e862c184ae977658b36c4500f7feac3221ca5da43e3f25bd04ab6c79a29b5"
 dependencies = [
  "axum-core 0.5.5",
  "base64 0.22.1",
@@ -814,14 +815,15 @@ dependencies = [
  "mime",
  "percent-encoding",
  "pin-project-lite",
- "serde_core",
+ "rustversion",
+ "serde",
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
  "sha1",
  "sync_wrapper 1.0.2",
  "tokio",
- "tokio-tungstenite 0.28.0",
+ "tokio-tungstenite 0.26.2",
  "tower 0.5.2",
  "tower-layer",
  "tower-service",
@@ -887,11 +889,11 @@ dependencies = [
 
 [[package]]
 name = "axum-extra"
-version = "0.10.3"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9963ff19f40c6102c76756ef0a46004c0d58957d87259fc9208ff8441c12ab96"
+checksum = "45bf463831f5131b7d3c756525b305d40f1185b688565648a92e1392ca35713d"
 dependencies = [
- "axum 0.8.6",
+ "axum 0.8.4",
  "axum-core 0.5.5",
  "bytes",
  "futures-util",
@@ -902,10 +904,10 @@ dependencies = [
  "mime",
  "pin-project-lite",
  "rustversion",
- "serde_core",
+ "serde",
+ "tower 0.5.2",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -1392,11 +1394,11 @@ dependencies = [
 
 [[package]]
 name = "camino"
-version = "1.2.1"
+version = "1.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "276a59bf2b2c967788139340c9f0c5b12d7fd6630315c15c217e559de85d2609"
+checksum = "dd0b03af37dad7a14518b7691d81acb0f8222604ad3d1b02f6b4bed5188c0cd5"
 dependencies = [
- "serde_core",
+ "serde",
 ]
 
 [[package]]
@@ -1416,7 +1418,7 @@ checksum = "2d886547e41f740c616ae73108f6eb70afe6d940c7bc697cb30f13daec073037"
 dependencies = [
  "camino",
  "cargo-platform",
- "semver 1.0.27",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -1430,7 +1432,7 @@ checksum = "dd5eb614ed4c27c5d706420e4320fbe3216ab31fa1c33cd8246ac36dae4479ba"
 dependencies = [
  "camino",
  "cargo-platform",
- "semver 1.0.27",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -1863,14 +1865,15 @@ dependencies = [
 
 [[package]]
 name = "const-hex"
-version = "1.16.0"
+version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6407bff74dea37e0fa3dc1c1c974e5d46405f0c987bf9997a0762adce71eda6"
+checksum = "dccd746bf9b1038c0507b7cec21eb2b11222db96a2902c96e8c185d6d20fb9c4"
 dependencies = [
  "cfg-if 1.0.3",
  "cpufeatures",
+ "hex",
  "proptest",
- "serde_core",
+ "serde",
 ]
 
 [[package]]
@@ -2537,12 +2540,12 @@ dependencies = [
 
 [[package]]
 name = "deranged"
-version = "0.5.4"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a41953f86f8a05768a6cda24def994fd2f424b04ec5c719cf89989779f199071"
+checksum = "d630bccd429a5bb5a64b5e94f693bfc48c9f8566418fda4c494cc94f911f87cc"
 dependencies = [
  "powerfmt",
- "serde_core",
+ "serde",
 ]
 
 [[package]]
@@ -2887,15 +2890,15 @@ dependencies = [
 
 [[package]]
 name = "ef_tests-blockchain"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "datatest-stable",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-prover",
- "ethrex-rlp 3.0.0",
- "ethrex-storage 3.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-vm",
  "guest_program",
  "hex",
@@ -2908,21 +2911,23 @@ dependencies = [
 
 [[package]]
 name = "ef_tests-statev2"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "alloy-rlp",
  "bytes",
+ "chrono",
  "clap 4.5.48",
  "clap_complete",
  "colored",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-l2-rpc",
  "ethrex-levm",
- "ethrex-rlp 3.0.0",
- "ethrex-storage 3.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-vm",
  "hex",
+ "prettytable-rs",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3120,12 +3125,11 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "erased-serde"
-version = "0.4.8"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "259d404d09818dec19332e31d94558aeb442fea04c817006456c24b5460bbd4b"
+checksum = "e004d887f51fcb9fef17317a2f3525c887d8aa3f4f50fed920816a688284a5b7"
 dependencies = [
  "serde",
- "serde_core",
  "typeid",
 ]
 
@@ -3368,7 +3372,7 @@ dependencies = [
  "chrono",
  "ethers-core",
  "reqwest 0.11.27",
- "semver 1.0.27",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -3478,7 +3482,7 @@ dependencies = [
  "path-slash",
  "rayon",
  "regex",
- "semver 1.0.27",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "solang-parser",
@@ -3493,7 +3497,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3501,7 +3505,7 @@ dependencies = [
  "clap_complete",
  "directories 5.0.1",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-config",
  "ethrex-crypto",
  "ethrex-dev",
@@ -3511,10 +3515,10 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-prover",
- "ethrex-rlp 3.0.0",
+ "ethrex-rlp 5.0.0",
  "ethrex-rpc",
  "ethrex-sdk",
- "ethrex-storage 3.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
@@ -3541,16 +3545,16 @@ dependencies = [
 
 [[package]]
 name = "ethrex-benches"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "criterion",
  "ethrex",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-config",
  "ethrex-l2-rpc",
- "ethrex-storage 3.0.0",
+ "ethrex-storage 5.0.0",
  "secp256k1",
  "serde_json",
  "tempfile",
@@ -3559,13 +3563,13 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-metrics",
- "ethrex-rlp 3.0.0",
- "ethrex-storage 3.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-vm",
  "hex",
  "secp256k1",
@@ -3606,14 +3610,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
  "ethereum-types 0.15.1",
  "ethrex-crypto",
- "ethrex-rlp 3.0.0",
- "ethrex-trie 3.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-trie 5.0.0",
  "hex",
  "hex-literal",
  "kzg-rs",
@@ -3635,9 +3639,9 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-p2p",
  "hex",
  "serde",
@@ -3646,7 +3650,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
@@ -3655,7 +3659,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -3674,11 +3678,11 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "aligned-sdk",
  "anyhow",
- "axum 0.8.6",
+ "axum 0.8.4",
  "bincode",
  "bytes",
  "chrono",
@@ -3690,7 +3694,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethers",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-config",
  "ethrex-dev",
  "ethrex-l2-common",
@@ -3698,12 +3702,12 @@ dependencies = [
  "ethrex-levm",
  "ethrex-metrics",
  "ethrex-p2p",
- "ethrex-rlp 3.0.0",
+ "ethrex-rlp 5.0.0",
  "ethrex-rpc",
  "ethrex-sdk",
- "ethrex-storage 3.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-storage-rollup",
- "ethrex-trie 3.0.0",
+ "ethrex-trie 5.0.0",
  "ethrex-vm",
  "futures",
  "guest_program",
@@ -3732,36 +3736,39 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common 3.0.0",
- "ethrex-rlp 3.0.0",
- "ethrex-storage 3.0.0",
- "ethrex-trie 3.0.0",
+ "ethrex-common 5.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-storage 5.0.0",
+ "ethrex-trie 5.0.0",
  "ethrex-vm",
+ "hex",
  "lambdaworks-crypto 0.11.0",
+ "rkyv",
  "secp256k1",
  "serde",
+ "serde_with",
  "sha3",
  "thiserror 2.0.17",
 ]
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
- "axum 0.8.6",
+ "axum 0.8.4",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-l2-common",
  "ethrex-p2p",
- "ethrex-rlp 3.0.0",
+ "ethrex-rlp 5.0.0",
  "ethrex-rpc",
- "ethrex-storage 3.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-storage-rollup",
  "hex",
  "reqwest 0.12.23",
@@ -3779,19 +3786,20 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
+ "bitvec",
  "bls12_381 0.8.0",
  "bytes",
  "colored",
  "datatest-stable",
  "derive_more 1.0.0",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-crypto",
- "ethrex-rlp 3.0.0",
+ "ethrex-rlp 5.0.0",
  "hex",
  "k256",
  "lambdaworks-math 0.11.0",
@@ -3806,16 +3814,17 @@ dependencies = [
  "sha3",
  "spinoff",
  "strum 0.27.2",
+ "substrate-bn",
  "thiserror 2.0.17",
  "walkdir",
 ]
 
 [[package]]
 name = "ethrex-metrics"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
- "axum 0.8.6",
- "ethrex-common 3.0.0",
+ "axum 0.8.4",
+ "ethrex-common 5.0.0",
  "prometheus 0.13.4",
  "serde",
  "serde_json",
@@ -3827,7 +3836,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "aes",
  "async-trait",
@@ -3837,12 +3846,12 @@ dependencies = [
  "ctr",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
- "ethrex-rlp 3.0.0",
- "ethrex-storage 3.0.0",
+ "ethrex-common 5.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-storage-rollup",
  "ethrex-threadpool",
- "ethrex-trie 3.0.0",
+ "ethrex-trie 5.0.0",
  "futures",
  "hex",
  "hex-literal",
@@ -3870,7 +3879,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-prover"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3878,12 +3887,12 @@ dependencies = [
  "clap 4.5.48",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-l2",
  "ethrex-l2-common",
- "ethrex-rlp 3.0.0",
+ "ethrex-rlp 5.0.0",
  "ethrex-sdk",
- "ethrex-storage 3.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-vm",
  "guest_program",
  "hex",
@@ -3920,7 +3929,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -3934,21 +3943,21 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
- "axum 0.8.6",
+ "axum 0.8.4",
  "axum-extra",
  "bytes",
  "envy",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-l2-common",
  "ethrex-p2p",
- "ethrex-rlp 3.0.0",
- "ethrex-storage 3.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-storage-rollup",
- "ethrex-trie 3.0.0",
+ "ethrex-trie 5.0.0",
  "ethrex-vm",
  "hex",
  "hex-literal",
@@ -3972,14 +3981,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
- "ethrex-rlp 3.0.0",
+ "ethrex-rlp 5.0.0",
  "ethrex-rpc",
  "ethrex-sdk-contract-utils",
  "eyre",
@@ -3997,7 +4006,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "thiserror 2.0.17",
  "tracing",
@@ -4028,19 +4037,20 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common 3.0.0",
- "ethrex-rlp 3.0.0",
- "ethrex-trie 3.0.0",
+ "ethrex-common 5.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-trie 5.0.0",
  "hex",
  "hex-literal",
  "rocksdb",
+ "rustc-hash 2.1.1",
  "serde",
  "serde_json",
  "sha3",
@@ -4052,19 +4062,20 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
  "ethereum-types 0.15.1",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-l2-common",
- "ethrex-rlp 3.0.0",
- "ethrex-storage 3.0.0",
- "ethrex-trie 3.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-storage 5.0.0",
+ "ethrex-trie 5.0.0",
  "futures",
  "libsql",
+ "rkyv",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -4100,7 +4111,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4109,7 +4120,7 @@ dependencies = [
  "crossbeam 0.8.4",
  "digest 0.10.7",
  "ethereum-types 0.15.1",
- "ethrex-rlp 3.0.0",
+ "ethrex-rlp 5.0.0",
  "ethrex-threadpool",
  "hasher",
  "hex",
@@ -4129,17 +4140,17 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bincode",
  "bytes",
  "derive_more 1.0.0",
  "dyn-clone",
  "ethereum-types 0.15.1",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-levm",
- "ethrex-rlp 3.0.0",
- "ethrex-trie 3.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-trie 5.0.0",
  "hex",
  "lazy_static",
  "rkyv",
@@ -4594,9 +4605,9 @@ dependencies = [
 
 [[package]]
 name = "genesis-tool"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "serde_json",
 ]
 
@@ -4768,16 +4779,16 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-crypto",
  "ethrex-l2-common",
- "ethrex-rlp 3.0.0",
- "ethrex-storage 3.0.0",
- "ethrex-trie 3.0.0",
+ "ethrex-rlp 5.0.0",
+ "ethrex-storage 5.0.0",
+ "ethrex-trie 5.0.0",
  "ethrex-vm",
  "hex",
  "risc0-build",
@@ -5016,6 +5027,9 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "hex-conservative"
@@ -5034,7 +5048,7 @@ checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
 
 [[package]]
 name = "hive_report"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -6300,12 +6314,12 @@ checksum = "f5e54036fe321fd421e10d732f155734c4e4afd610dd556d9a82833ab3ee0bed"
 
 [[package]]
 name = "load_test"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "clap 4.5.48",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-rpc",
@@ -6315,11 +6329,12 @@ dependencies = [
  "hex",
  "secp256k1",
  "tokio",
+ "url",
 ]
 
 [[package]]
 name = "loc"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "clap 4.5.48",
  "clap_complete",
@@ -6643,14 +6658,14 @@ dependencies = [
 
 [[package]]
 name = "migrations"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "clap 4.5.48",
  "ethrex-blockchain",
  "ethrex-common 1.0.0",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-storage 1.0.0",
- "ethrex-storage 3.0.0",
+ "ethrex-storage 5.0.0",
  "tokio",
 ]
 
@@ -7986,6 +8001,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "prettytable-rs"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eea25e07510aa6ab6547308ebe3c036016d162b8da920dbb079e3ba8acf3d95a"
+dependencies = [
+ "csv",
+ "encode_unicode",
+ "is-terminal",
+ "lazy_static",
+ "term",
+ "unicode-width 0.1.14",
+]
+
+[[package]]
 name = "primeorder"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8037,7 +8066,7 @@ version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "219cb19e96be00ab2e37d6e299658a0cfa83e52429179969b0f0121b4ac46983"
 dependencies = [
- "toml_edit 0.23.7",
+ "toml_edit 0.23.4",
 ]
 
 [[package]]
@@ -8616,11 +8645,11 @@ dependencies = [
 
 [[package]]
 name = "reorgs"
-version = "3.0.0"
+version = "5.0.0"
 dependencies = [
  "ethrex",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-config",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
@@ -8634,6 +8663,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -8820,7 +8850,7 @@ dependencies = [
  "risc0-zkp",
  "risc0-zkvm-platform",
  "ruint",
- "semver 1.0.27",
+ "semver 1.0.26",
  "serde",
  "tracing",
 ]
@@ -8842,7 +8872,7 @@ dependencies = [
  "risc0-zkp",
  "risc0-zkvm-platform",
  "rzup",
- "semver 1.0.27",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "stability",
@@ -9141,7 +9171,7 @@ dependencies = [
  "rrs-lib",
  "rustc-demangle",
  "rzup",
- "semver 1.0.27",
+ "semver 1.0.26",
  "serde",
  "sha2",
  "stability",
@@ -9311,14 +9341,13 @@ dependencies = [
 
 [[package]]
 name = "ruint"
-version = "1.17.0"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a68df0380e5c9d20ce49534f292a36a7514ae21350726efe1865bdb1fa91d278"
+checksum = "9ecb38f82477f20c5c3d62ef52d7c4e536e38ea9b73fb570a20c5cae0e14bcf6"
 dependencies = [
  "alloy-rlp",
  "ark-ff 0.3.0",
  "ark-ff 0.4.2",
- "ark-ff 0.5.0",
  "borsh",
  "bytes",
  "fastrlp 0.3.1",
@@ -9333,7 +9362,7 @@ dependencies = [
  "rand 0.9.2",
  "rlp 0.5.2",
  "ruint-macro",
- "serde_core",
+ "serde",
  "valuable",
  "zeroize",
 ]
@@ -9352,9 +9381,9 @@ dependencies = [
  "clap 4.5.48",
  "env_logger 0.11.8",
  "ethrex-blockchain",
- "ethrex-common 3.0.0",
+ "ethrex-common 5.0.0",
  "ethrex-levm",
- "ethrex-storage 3.0.0",
+ "ethrex-storage 5.0.0",
  "ethrex-vm",
  "hex",
  "json5",
@@ -9404,7 +9433,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
- "semver 1.0.27",
+ "semver 1.0.26",
 ]
 
 [[package]]
@@ -9600,7 +9629,7 @@ checksum = "5d2aed296f203fa64bcb4b52069356dd86d6ec578593985b919b6995bee1f0ae"
 dependencies = [
  "hex",
  "rsa",
- "semver 1.0.27",
+ "semver 1.0.26",
  "serde",
  "serde_with",
  "sha2",
@@ -9851,12 +9880,11 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.27"
+version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+checksum = "56e6fa9c48d24d85fb3de5ad847117517440f6beceb7798af16b4a87d616b8d0"
 dependencies = [
  "serde",
- "serde_core",
 ]
 
 [[package]]
@@ -9900,6 +9928,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes"
+version = "0.11.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8437fd221bde2d4ca316d61b90e337e9e702b3820b87d63caa9ba6c02bd06d96"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9921,27 +9958,25 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.145"
+version = "1.0.143"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "402a6f66d8c709116cf22f558eab210f5a50187f702eb4d7e5ef38d9a7f1c79c"
+checksum = "d401abef1d108fbd9cbaebc3e46611f4b1021f714a0597a71f41ee463f5f4a5a"
 dependencies = [
  "indexmap 2.11.4",
  "itoa",
  "memchr",
  "ryu",
  "serde",
- "serde_core",
 ]
 
 [[package]]
 name = "serde_path_to_error"
-version = "0.1.20"
+version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+checksum = "59fab13f937fa393d08645bf3a84bdfe86e296747b506ada67bb15f10f218b2a"
 dependencies = [
  "itoa",
  "serde",
- "serde_core",
 ]
 
 [[package]]
@@ -9978,9 +10013,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.15.0"
+version = "3.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6093cd8c01b25262b84927e0f7151692158fab02d961e04c979d3903eba7ecc5"
+checksum = "c522100790450cf78eeac1507263d0a350d4d5b30df0c8e1fe051a10c22b376e"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -9989,7 +10024,8 @@ dependencies = [
  "indexmap 2.11.4",
  "schemars 0.9.0",
  "schemars 1.0.4",
- "serde_core",
+ "serde",
+ "serde_derive",
  "serde_json",
  "serde_with_macros",
  "time",
@@ -9997,9 +10033,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.15.0"
+version = "3.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7e6c180db0816026a61afa1cff5344fb7ebded7e4d3062772179f2501481c27"
+checksum = "327ada00f7d64abaac1e55a6911e90cf665aa051b9a561c7006c157f4633135e"
 dependencies = [
  "darling 0.21.3",
  "proc-macro2",
@@ -10713,9 +10749,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa00b753ef7c942c13ee953f13609746a41c0fb8cf221849bbf3f654811a6669"
+checksum = "c34171afa9ef68114f07b4be6cf294f49a388380b62a036010b31534ecc0f927"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -10726,9 +10762,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42396ff1bc8bfdcad31f099a3af74b4830fb7bdc09a70d843dcfa8bab74ecea4"
+checksum = "b83e35512b851b51d27a6dcee6025da1c61e7d842e2ec79971124eab2be3e974"
 dependencies = [
  "crossbeam 0.7.3",
  "tokio",
@@ -10892,6 +10928,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "substrate-bn"
+version = "0.6.0"
+source = "git+https://github.com/sp1-patches/bn?tag=patch-0.6.0-sp1-5.0.0#e0d67f219b2ad6a1887e3275b7ba09ada4b1afb6"
+dependencies = [
+ "bytemuck",
+ "byteorder",
+ "cfg-if 1.0.3",
+ "crunchy",
+ "lazy_static",
+ "num-bigint 0.4.6",
+ "rand 0.8.5",
+ "rustc-hex",
+ "sp1-lib",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10908,7 +10960,7 @@ dependencies = [
  "hex",
  "once_cell",
  "reqwest 0.11.27",
- "semver 1.0.27",
+ "semver 1.0.26",
  "serde",
  "serde_json",
  "sha2",
@@ -11430,14 +11482,14 @@ dependencies = [
 
 [[package]]
 name = "tokio-tungstenite"
-version = "0.28.0"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
+checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
  "tokio",
- "tungstenite 0.28.0",
+ "tungstenite 0.26.2",
 ]
 
 [[package]]
@@ -11486,11 +11538,11 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "0.7.3"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2cdb639ebbc97961c51720f858597f7f24c4fc295327923af55b74c3c724533"
+checksum = "bade1c3e902f58d73d3f294cd7f20391c1cb2fbcb643b73566bc773971df91e3"
 dependencies = [
- "serde_core",
+ "serde",
 ]
 
 [[package]]
@@ -11520,12 +11572,12 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.23.7"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6485ef6d0d9b5d0ec17244ff7eb05310113c3f316f2d14200d4de56b3cb98f8d"
+checksum = "7211ff1b8f0d3adae1663b7da9ffe396eabe1ca25f0b0bee42b0da29a9ddce93"
 dependencies = [
  "indexmap 2.11.4",
- "toml_datetime 0.7.3",
+ "toml_datetime 0.7.0",
  "toml_parser",
  "winnow 0.7.13",
 ]
@@ -11914,9 +11966,9 @@ dependencies = [
 
 [[package]]
 name = "tungstenite"
-version = "0.28.0"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442"
+checksum = "4793cb5e56680ecbb1d843515b23b6de9a75eb04b66643e256a396d43be33c13"
 dependencies = [
  "bytes",
  "data-encoding",
