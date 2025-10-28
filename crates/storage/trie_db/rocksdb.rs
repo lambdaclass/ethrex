@@ -167,13 +167,13 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+                let cf_trie = ColumnFamilyDescriptor::new("test_trie_cf", Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new("test_flatkey_cf", Options::default());
         let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
-        let cf_fkv = ColumnFamilyDescriptor::new(CF_ACCOUNT_FLATKEYVALUE, Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor, cf_misc, cf_fkv],
+            vec![cf_trie, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
@@ -210,12 +210,12 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
-        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let cf_fkv = ColumnFamilyDescriptor::new(CF_ACCOUNT_FLATKEYVALUE, Options::default());
+        let cf_trie = ColumnFamilyDescriptor::new("test_trie_cf", Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new("test_flatkey_cf", Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor, cf_misc, cf_fkv],
+            vec![cf_trie, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
@@ -249,12 +249,12 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
-        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let cf_fkv = ColumnFamilyDescriptor::new(CF_ACCOUNT_FLATKEYVALUE, Options::default());
+        let cf_trie = ColumnFamilyDescriptor::new("test_trie_cf", Options::default());
+        let cf_fkv = ColumnFamilyDescriptor::new("test_flatkey_cf", Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_descriptor, cf_misc, cf_fkv],
+            vec![cf_trie, cf_misc, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
