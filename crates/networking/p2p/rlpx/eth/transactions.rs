@@ -295,13 +295,6 @@ impl PooledTransactions {
                     continue;
                 }
             } else {
-                if matches!(tx, P2PTransaction::PrivilegedL2Transaction(_)) {
-                    debug!(
-                        peer=%node,
-                        "Rejecting privileged - privileged L2 transactions are not broadcasted",
-                    );
-                    continue;
-                }
                 let regular_tx = tx
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
