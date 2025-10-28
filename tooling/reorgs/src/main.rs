@@ -151,7 +151,7 @@ async fn snap_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
 
     node0.update_forkchoice(&base_chain).await;
 
-    // Check the storage slots are as expected after the reorg
+    // Check the storage slots are as expected after snap-syncing
     let value_slot0 = node0.get_storage_at(contract_address, slot_key0).await;
     assert_eq!(value_slot0, slot_value0);
     let value_slot1 = node0.get_storage_at(contract_address, slot_key1).await;
