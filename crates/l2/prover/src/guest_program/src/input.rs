@@ -26,8 +26,8 @@ pub struct ProgramInput {
     pub blob_commitment: blobs_bundle::Commitment,
     #[cfg(feature = "l2")]
     /// KZG opening for a challenge over the blob commitment
-    #[serde_as(as = "Vec<[_; 48]>")]
-    pub blob_proof: Vec<blobs_bundle::Proof>,
+    #[serde_as(as = "[_; 48]")]
+    pub blob_proof: blobs_bundle::Proof,
 }
 
 impl Default for ProgramInput {
@@ -40,7 +40,7 @@ impl Default for ProgramInput {
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],
             #[cfg(feature = "l2")]
-            blob_proof: vec![[0u8; 48]],
+            blob_proof: [0u8; 48],
         }
     }
 }
