@@ -6,7 +6,7 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, default-features = false }
 ethrex-levm = { path = "./levm", default-features = false }
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
@@ -30,10 +30,20 @@ ethereum-types.workspace = true
 path = "./lib.rs"
 
 [features]
-default = []
+default = ["l1"]
+
+secp256k1 = ["ethrex-levm/secp256k1", "ethrex-common/secp256k1"]
+k256 = ["ethrex-levm/k256", "ethrex-common/k256"]
+
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+kzg-rs = ["ethrex-levm/kzg-rs", "ethrex-common/kzg-rs"]
+openvm-kzg = ["ethrex-levm/openvm-kzg", "ethrex-common/openvm-kzg"]
+
+l1 = ["ethrex-levm/l1", "ethrex-common/l1"]
+sp1 = ["ethrex-levm/sp1", "ethrex-common/sp1"]
+risc0 = ["ethrex-levm/risc0", "ethrex-common/risc0"]
+
 debug = ["ethrex-levm/debug"]
-sp1 = ["ethrex-levm/sp1"]
 
 [lints.clippy]
 unwrap_used = "deny"

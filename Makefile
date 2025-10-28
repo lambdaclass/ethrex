@@ -8,11 +8,13 @@ help: ## 📚 Show help for each of the Makefile recipes
 build: ## 🔨 Build the client
 	cargo build --workspace
 
-lint-l1:
+lint-l1: ## 🧹 Linter check L1
 	cargo clippy --lib --bins -F debug,sync-test \
 		--release -- -D warnings
 
-lint-l2:
+lint-l2: ## 🧹 Linter check L2
+	# Note that we are compiling without the "gpu" feature (see #4048 for why)
+	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
 		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
 		--release -- -D warnings

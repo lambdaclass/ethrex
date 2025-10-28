@@ -6,13 +6,13 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethrex-blockchain.workspace = true
-ethrex-common.workspace = true
-ethrex-storage.workspace = true
+ethrex-blockchain = { workspace = true, default-features = false }
+ethrex-common = { workspace = true, default-features = false }
+ethrex-vm = { workspace = true, default-features = false }
+ethrex-levm = { workspace = true, default-features = false }
+ethrex-storage = { workspace = true, default-features = false }
+ethrex-l2-rpc = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
-ethrex-vm.workspace = true
-ethrex-levm.workspace = true
-ethrex-l2-rpc.workspace = true
 
 secp256k1.workspace = true
 serde.workspace = true
@@ -32,6 +32,14 @@ prettytable-rs = "0.10"
 hex = "0.4.3"
 
 [features]
-default = ["c-kzg"]
-c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+default = ["l1"]
+
+l1 = [
+    "ethrex-blockchain/l1",
+    "ethrex-common/l1",
+    "ethrex-vm/l1",
+    "ethrex-levm/l1",
+    "ethrex-storage/l1",
+]
+
 block = []

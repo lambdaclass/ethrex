@@ -47,7 +47,7 @@ async fn test_state_reconstruct() {
                 .unwrap_or(pk)
                 .parse::<SecretKey>()
                 .unwrap();
-            get_address_from_secret_key(&secret_key).unwrap()
+            get_address_from_secret_key(&secret_key.secret_bytes()).unwrap()
         })
         .collect::<Vec<_>>();
 

@@ -5,13 +5,23 @@ edition.workspace = true
 
 [dependencies]
 ethrex = { workspace = true, features = ["l2"] }
-ethrex-common.workspace = true
-ethrex-blockchain.workspace = true
-ethrex-rpc.workspace = true
-ethrex-config.workspace = true
-ethrex-l2-common.workspace = true
-ethrex-l2-rpc.workspace = true
-ethrex-p2p.workspace = true
+ethrex-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-blockchain = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-rpc = { workspace = true, default-features = false, features = ["l1"] }
+ethrex-config = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-l2-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-l2-rpc = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-p2p = { workspace = true, default-features = false, features = ["l1"] }
 
 tokio.workspace = true
 tokio-util.workspace = true

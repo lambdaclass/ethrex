@@ -31,5 +31,14 @@ secp256k1 = { version = "0.30.0", default-features = false, features = [
 [workspace]
 
 [features]
-default = ["l2"]
+default = [
+  "l2",
+  "ethrex-common/l1",
+  "ethrex-storage/l1",
+  "ethrex-vm/l1",
+  "ethrex-blockchain/l1",
+  "ethrex-rpc/l1",
+  "ethrex-l2-common/l1",
+]
+
 l2 = ["guest_program/l2", "ethrex-l2/l2"]

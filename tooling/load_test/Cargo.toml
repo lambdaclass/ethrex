@@ -6,16 +6,25 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
+ethrex-sdk = { workspace = true, default-features = false }
+ethrex-blockchain = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-l2-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-rpc = { workspace = true, default-features = false, features = ["l1"] }
+ethrex-l2-rpc = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+
 clap.workspace = true
 hex.workspace = true
 secp256k1.workspace = true
 ethereum-types.workspace = true
-ethrex-rpc.workspace = true
-ethrex-sdk.workspace = true
-ethrex-blockchain.workspace = true
-ethrex-common.workspace = true
-ethrex-l2-common.workspace = true
-ethrex-l2-rpc.workspace = true
 eyre.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures = "0.3"
