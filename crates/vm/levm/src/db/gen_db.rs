@@ -334,12 +334,12 @@ impl GeneralizedDatabase {
             };
 
             account_updates.push(account_update);
-            self.initial_accounts_state.extend(
-                self.current_accounts_state
-                    .iter()
-                    .map(|(k, v)| (*k, v.clone())),
-            );
         }
+        self.initial_accounts_state.extend(
+            self.current_accounts_state
+                .iter()
+                .map(|(k, v)| (*k, v.clone())),
+        );
         Ok(account_updates)
     }
 }
