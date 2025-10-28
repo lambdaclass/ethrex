@@ -69,7 +69,7 @@ impl L1ProofVerifier {
         rollup_store: StoreRollup,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_config(
-            eth_cfg.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_cfg.rpc_url.clone(),
             eth_cfg.max_number_of_retries,
             eth_cfg.backoff_factor,
             eth_cfg.min_retry_delay,

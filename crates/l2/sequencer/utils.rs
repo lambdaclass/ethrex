@@ -17,6 +17,7 @@ use ethrex_storage::Store;
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use rand::Rng;
+use reqwest::Url;
 use std::time::{Duration, SystemTime};
 use std::{str::FromStr, time::UNIX_EPOCH};
 use tokio::time::sleep;
@@ -83,7 +84,7 @@ pub async fn send_verify_tx(
 }
 
 pub async fn get_needed_proof_types(
-    rpc_urls: Vec<String>,
+    rpc_urls: Vec<Url>,
     on_chain_proposer_address: Address,
 ) -> Result<Vec<ProverType>, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;

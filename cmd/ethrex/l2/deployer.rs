@@ -35,6 +35,7 @@ use clap::ArgAction;
 use ethrex_common::H160;
 use hex::FromHexError;
 use secp256k1::SecretKey;
+use url::Url;
 
 use ethrex_config::networks::{
     LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, LOCAL_DEVNETL2_GENESIS_CONTENTS,
@@ -48,7 +49,7 @@ pub struct DeployerOptions {
         env = "ETHREX_ETH_RPC_URL",
         help_heading = "Eth options"
     )]
-    pub rpc_url: String,
+    pub rpc_url: Url,
     #[arg(
         long,
         default_value = "10000000000",
@@ -338,7 +339,8 @@ pub struct DeployerOptions {
 impl Default for DeployerOptions {
     fn default() -> Self {
         Self {
-            rpc_url: "http://localhost:8545".to_string(),
+            rpc_url: Url::parse("http://localhost:8545")
+                .expect("Unreachable error. URL is hardcoded"),
             maximum_allowed_max_fee_per_gas: 10_000_000_000,
             maximum_allowed_max_fee_per_blob_gas: 10_000_000_000,
             max_number_of_retries: 10,
@@ -526,7 +528,7 @@ pub async fn deploy_l1_contracts(
     let signer: Signer = LocalSigner::new(opts.private_key).into();
 
     let eth_client = EthClient::new_with_config(
-        vec![&opts.rpc_url],
+        vec![opts.rpc_url.clone()],
         opts.max_number_of_retries,
         opts.backoff_factor,
         opts.min_retry_delay,
@@ -706,7 +708,7 @@ fn deploy_tdx_contracts(
     Command::new("make")
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
-        .env("RPC_URL", &opts.rpc_url)
+        .env("RPC_URL", opts.rpc_url.as_str())
         .env("ON_CHAIN_PROPOSER", format!("{on_chain_proposer:#x}"))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())

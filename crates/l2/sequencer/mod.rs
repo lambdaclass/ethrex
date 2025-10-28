@@ -19,6 +19,8 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
+#[cfg(feature = "metrics")]
+use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -45,7 +47,7 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
-    #[cfg(feature = "metrics")] l2_url: String,
+    #[cfg(feature = "metrics")] l2_url: Url,
     initial_checkpoint_store: Store,
     initial_checkpoint_blockchain: Arc<Blockchain>,
     genesis: Genesis,

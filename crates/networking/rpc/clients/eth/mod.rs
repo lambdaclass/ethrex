@@ -80,7 +80,7 @@ pub const MAX_RETRY_DELAY: u64 = 1800;
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
 impl EthClient {
-    pub fn new(url: &str) -> Result<EthClient, EthClientError> {
+    pub fn new(url: Url) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
             vec![url],
             MAX_NUMBER_OF_RETRIES,
@@ -93,7 +93,7 @@ impl EthClient {
     }
 
     pub fn new_with_config(
-        urls: Vec<&str>,
+        urls: Vec<Url>,
         max_number_of_retries: u64,
         backoff_factor: u64,
         min_retry_delay: u64,
@@ -101,14 +101,6 @@ impl EthClient {
         maximum_allowed_max_fee_per_gas: Option<u64>,
         maximum_allowed_max_fee_per_blob_gas: Option<u64>,
     ) -> Result<Self, EthClientError> {
-        let urls = urls
-            .iter()
-            .map(|url| {
-                Url::parse(url)
-                    .map_err(|_| EthClientError::ParseUrlError("Failed to parse urls".to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
         Ok(Self {
             client: Client::new(),
             urls,
@@ -121,9 +113,9 @@ impl EthClient {
         })
     }
 
-    pub fn new_with_multiple_urls(urls: Vec<String>) -> Result<EthClient, EthClientError> {
+    pub fn new_with_multiple_urls(urls: Vec<Url>) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
-            urls.iter().map(AsRef::as_ref).collect(),
+            urls,
             MAX_NUMBER_OF_RETRIES,
             BACKOFF_FACTOR,
             MIN_RETRY_DELAY,
