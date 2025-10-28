@@ -34,6 +34,7 @@ use ethrex_rpc::{
     },
 };
 use hex::FromHexError;
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
@@ -2257,13 +2258,21 @@ async fn get_fees_details_l2(
 }
 
 fn l1_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(DEFAULT_L1_RPC.to_string()))
-        .unwrap()
+    EthClient::new(
+        std::env::var("INTEGRATION_TEST_L1_RPC")
+            .map(|val| Url::parse(&val).expect("Error parsing URL (INTEGRATION_TEST_L1_RPC)"))
+            .unwrap_or(Url::parse(DEFAULT_L1_RPC).unwrap()),
+    )
+    .unwrap()
 }
 
 fn l2_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L2_RPC").unwrap_or(DEFAULT_L2_RPC.to_string()))
-        .unwrap()
+    EthClient::new(
+        std::env::var("INTEGRATION_TEST_L2_RPC")
+            .map(|val| Url::parse(&val).expect("Error parsing URL (INTEGRATION_TEST_L2_RPC)"))
+            .unwrap_or(Url::parse(DEFAULT_L2_RPC).unwrap()),
+    )
+    .unwrap()
 }
 
 fn coinbase() -> Address {
