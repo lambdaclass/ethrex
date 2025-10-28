@@ -14,7 +14,6 @@ From an operator point of view the flow mirrors the integration test in `crates/
    - `Overrides::fee_token` to the fee token address,
    - `Overrides::value` and any calldata/context just like a regular transaction.
 3. Sign and submit the transaction with `ethrex_l2_sdk::send_generic_transaction`.
-4. Wait for the receipt (e.g. `ethrex_l2_sdk::wait_for_transaction_receipt`) and, if desired, reuse `tests::get_fees_details_l2` to inspect how the ERC-20 fees were routed.
 
 That is all that is needed to run fee-token transactions; the sequencer handles the rest as long as the token exposes the expected interface.
 
