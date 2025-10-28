@@ -193,7 +193,9 @@ impl TxBroadcaster {
         let full_txs = txs_to_broadcast
             .iter()
             .map(|tx| tx.transaction().clone())
-            .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction { .. }))
+            .filter(|tx| {
+                !matches!(tx, Transaction::EIP4844Transaction { .. }) && !tx.is_privileged()
+            })
             .collect::<Vec<Transaction>>();
 
         let blob_txs = txs_to_broadcast
@@ -262,6 +264,7 @@ impl TxBroadcaster {
                     .known_txs
                     .get(&hash)
                     .is_some_and(|record| record.peers.is_set(peer_idx))
+                    && !tx.is_privileged()
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
@@ -292,13 +295,6 @@ pub async fn send_tx_hashes(
             let tx_count = tx_chunk.len();
             let mut txs_to_send = Vec::with_capacity(tx_count);
             for tx in tx_chunk {
-                if tx.is_privileged() {
-                    debug!(
-                        peer=%format!("{:#x}", peer_id),
-                        "Not sending privileged transaction hash to peer",
-                    );
-                    continue;
-                }
                 txs_to_send.push((**tx).clone());
             }
             let hashes_message = Message::NewPooledTransactionHashes(

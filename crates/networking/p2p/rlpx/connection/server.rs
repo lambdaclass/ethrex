@@ -589,6 +589,7 @@ async fn send_all_pooled_tx_hashes(
         .get_all_txs_by_sender()?
         .into_values()
         .flatten()
+        .filter(|tx| !tx.is_privileged())
         .collect();
     if !txs.is_empty() {
         state
