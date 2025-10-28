@@ -2504,25 +2504,6 @@
       },
       {
         "current": {
-          "text": "ethrex L1",
-          "value": "ethrex L1"
-        },
-        "definition": "label_values(up, job)",
-        "description": "",
-        "label": "job",
-        "name": "job",
-        "options": [],
-        "query": {
-          "qryType": 5,
-          "query": "label_values(up, job)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery"
-        },
-        "refresh": 1,
-        "regex": "",
-        "type": "query"
-      },
-      {
-        "current": {
           "text": "",
           "value": ""
         },
@@ -2557,6 +2538,25 @@
         },
         "refresh": 1,
         "regex": "/^(?<text>[^:]+)(?::\\d+)?$/",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "ethrex L1",
+          "value": "ethrex L1"
+        },
+        "definition": "label_values(up, job)",
+        "description": "",
+        "label": "job",
+        "name": "job",
+        "options": [],
+        "query": {
+          "qryType": 5,
+          "query": "label_values(up, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
         "type": "query"
       }
     ]
