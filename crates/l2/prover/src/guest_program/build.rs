@@ -1,6 +1,5 @@
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=PROVER_CLIENT_ALIGNED");
 
     #[cfg(all(not(clippy), feature = "risc0"))]
     build_risc0_program();
@@ -77,21 +76,14 @@ fn build_sp1_program() {
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
 
-    let aligned_mode = std::env::var("PROVER_CLIENT_ALIGNED").unwrap_or("false".to_string());
-
-    if aligned_mode == "true" {
-        let vk = vk.vk.hash_bytes();
-        std::fs::write(
-            "./src/sp1/out/riscv32im-succinct-zkvm-vk",
-            format!("0x{}\n", hex::encode(vk)),
-        )
-        .expect("could not write SP1 vk to file");
-    } else {
-        let vk = vk.vk.bytes32();
-        std::fs::write(
-            "./src/sp1/out/riscv32im-succinct-zkvm-vk",
-            format!("{}\n", vk),
-        )
-        .expect("could not write SP1 vk to file");
-    };
+    std::fs::write(
+        "./src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+        format!("{}\n", vk.vk.bytes32()),
+    )
+    .expect("could not write SP1 vk-bn254 to file");
+    std::fs::write(
+        "./src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+        format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
+    )
+    .expect("could not write SP1 vk-u32 to file");
 }

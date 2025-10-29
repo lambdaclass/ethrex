@@ -19,6 +19,8 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
+#[cfg(feature = "metrics")]
+use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -45,7 +47,7 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
-    #[cfg(feature = "metrics")] l2_url: String,
+    #[cfg(feature = "metrics")] l2_url: Url,
     initial_checkpoint_store: Store,
     initial_checkpoint_blockchain: Arc<Blockchain>,
     genesis: Genesis,
@@ -80,12 +82,6 @@ pub async fn start_l2(
         return Ok(());
     };
 
-    if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
-        error!(
-            "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
-        );
-        return Ok(());
-    }
     if needed_proof_types.contains(&ProverType::TDX)
         && cfg.proof_coordinator.tdx_private_key.is_none()
     {
@@ -160,10 +156,11 @@ pub async fn start_l2(
         });
     let mut verifier_handle = None;
 
-    if needed_proof_types.contains(&ProverType::Aligned) {
+    if cfg.aligned.aligned_mode {
         verifier_handle = Some(tokio::spawn(l1_proof_verifier::start_l1_proof_verifier(
             cfg.clone(),
             rollup_store.clone(),
+            needed_proof_types.clone(),
         )));
     }
     if cfg.based.enabled {
