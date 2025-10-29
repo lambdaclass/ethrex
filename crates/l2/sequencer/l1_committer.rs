@@ -1108,7 +1108,7 @@ pub fn generate_blobs_bundle(
     let len: u64 = blocks.len().try_into()?;
     let mut blob_data = Vec::new();
 
-    blob_data.extend(len.to_le_bytes());
+    blob_data.extend(len.to_be_bytes());
 
     for block in blocks {
         blob_data.extend(block.encode_to_vec());
