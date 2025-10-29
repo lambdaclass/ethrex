@@ -26,14 +26,6 @@ pub use tables::TABLES;
 /// when the data comes directly from the database.
 pub type PrefixResult = Result<(Box<[u8]>, Box<[u8]>), StoreError>;
 
-/// Configuration options for table creation.
-#[derive(Debug, Clone)]
-pub struct TableOptions {
-    /// Whether the table supports duplicate keys, this means that multiple values can be stored for the same key.
-    /// This is useful for certain indexing scenarios but not supported by all backends.
-    pub dupsort: bool,
-}
-
 /// This trait provides a minimal set of operations required from a database backend.
 /// Implementations should focus on providing efficient access to the underlying storage
 /// without implementing business logic.
@@ -42,9 +34,6 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn open(path: impl AsRef<Path>) -> Result<Self, StoreError>
     where
         Self: Sized;
-
-    /// Creates a new table, allowing to specify [`TableOptions`].
-    fn create_table(&self, name: &'static str, options: TableOptions) -> Result<(), StoreError>;
 
     /// Removes all data from the specified table.
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;

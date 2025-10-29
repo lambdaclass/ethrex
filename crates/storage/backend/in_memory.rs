@@ -1,6 +1,4 @@
-use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions,
-};
+use crate::api::{PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx};
 use crate::error::StoreError;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -22,16 +20,6 @@ impl StorageBackend for InMemoryBackend {
         Ok(Self {
             inner: Arc::new(RwLock::new(Database::new())),
         })
-    }
-
-    fn create_table(&self, name: &str, _options: TableOptions) -> Result<(), StoreError> {
-        let mut db = self
-            .inner
-            .write()
-            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
-
-        db.entry(name.to_string()).or_insert_with(Table::new);
-        Ok(())
     }
 
     fn clear_table(&self, table: &str) -> Result<(), StoreError> {

@@ -1,6 +1,4 @@
-use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions,
-};
+use crate::api::{PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES};
 use crate::error::StoreError;
 use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
@@ -73,12 +71,6 @@ impl StorageBackend for RocksDBBackend {
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
         Ok(Self { db: Arc::new(db) })
-    }
-
-    fn create_table(&self, _name: &'static str, _options: TableOptions) -> Result<(), StoreError> {
-        // Now we are creating the tables in the open() function
-        // Check if this function is still needed
-        Ok(())
     }
 
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
