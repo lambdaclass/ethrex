@@ -407,10 +407,12 @@ impl PeerHandler {
         );
 
         {
+            let max_gas = ret.iter().filter_map(|h| h.excess_blob_gas).max();
             let downloaded_headers = ret.len();
             let unique_headers = ret.iter().map(|h| h.hash()).collect::<HashSet<_>>();
 
-            debug!(
+            info!(
+                max_gas,
                 "Downloaded {} headers, unique: {}, duplicates: {}",
                 downloaded_headers,
                 unique_headers.len(),
