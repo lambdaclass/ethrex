@@ -137,9 +137,11 @@ impl GeneralizedDatabase {
     /// Gets the transaction backup, if it exists.
     /// It only works if the `BackupHook` was enabled during the transaction execution.
     pub fn get_tx_backup(&self) -> Result<CallFrameBackup, InternalError> {
-        self.tx_backup.clone().ok_or(InternalError::Custom(
-            "Transaction backup not found. Was BackupHook enabled?".to_string(),
-        ))
+        self.tx_backup.clone().ok_or_else(|| {
+            InternalError::Custom(
+                "Transaction backup not found. Was BackupHook enabled?".to_string(),
+            )
+        })
     }
 
     /// Undoes the last transaction by restoring the cache state to the state before the transaction.
@@ -158,11 +160,11 @@ impl GeneralizedDatabase {
             }
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
-                self.initial_accounts_state
-                    .get(address)
-                    .ok_or(VMError::Internal(InternalError::Custom(format!(
+                self.initial_accounts_state.get(address).ok_or_else(|| {
+                    VMError::Internal(InternalError::Custom(format!(
                         "Failed to get account {address} from immutable cache",
-                    ))))?;
+                    )))
+                })?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -176,18 +178,21 @@ impl GeneralizedDatabase {
                 acc_info_updated = true;
             }
 
-            let code =
-                if initial_state_account.info.code_hash != new_state_account.info.code_hash {
-                    acc_info_updated = true;
-                    // code should be in `codes`
-                    Some(self.codes.get(&new_state_account.info.code_hash).ok_or(
-                        VMError::Internal(InternalError::Custom(format!(
-                            "Failed to get code for account {address}"
-                        ))),
-                    )?)
-                } else {
-                    None
-                };
+            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                acc_info_updated = true;
+                // code should be in `codes`
+                Some(
+                    self.codes
+                        .get(&new_state_account.info.code_hash)
+                        .ok_or_else(|| {
+                            VMError::Internal(InternalError::Custom(format!(
+                                "Failed to get code for account {address}"
+                            )))
+                        })?,
+                )
+            } else {
+                None
+            };
 
             // Account will have only its storage removed if it was Destroyed and then modified
             // Edge cases that can make this true:
@@ -252,13 +257,13 @@ impl GeneralizedDatabase {
                 // Skip processing account that we know wasn't mutably accessed during execution
                 continue;
             }
-            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
+            // [LIE] In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
-                self.initial_accounts_state
-                    .get(address)
-                    .ok_or(VMError::Internal(InternalError::Custom(format!(
+                self.initial_accounts_state.get(address).ok_or_else(|| {
+                    VMError::Internal(InternalError::Custom(format!(
                         "Failed to get account {address} from immutable cache",
-                    ))))?;
+                    )))
+                })?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -272,18 +277,21 @@ impl GeneralizedDatabase {
                 acc_info_updated = true;
             }
 
-            let code =
-                if initial_state_account.info.code_hash != new_state_account.info.code_hash {
-                    acc_info_updated = true;
-                    // code should be in `codes`
-                    Some(self.codes.get(&new_state_account.info.code_hash).ok_or(
-                        VMError::Internal(InternalError::Custom(format!(
-                            "Failed to get code for account {address}"
-                        ))),
-                    )?)
-                } else {
-                    None
-                };
+            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                acc_info_updated = true;
+                // code should be in `codes`
+                Some(
+                    self.codes
+                        .get(&new_state_account.info.code_hash)
+                        .ok_or_else(|| {
+                            VMError::Internal(InternalError::Custom(format!(
+                                "Failed to get code for account {address}"
+                            )))
+                        })?,
+                )
+            } else {
+                None
+            };
 
             // Account will have only its storage removed if it was Destroyed and then modified
             // Edge cases that can make this true:
