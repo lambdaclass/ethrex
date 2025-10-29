@@ -38,7 +38,6 @@ use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
@@ -208,8 +207,10 @@ impl Blockchain {
                 let mut state_updates;
                 let mut state_trie_hash = H256::default();
                 let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
-                let mut storage_updates_map: FxHashMap<H256, (Trie, FxHashMap<Nibbles, Vec<u8>>)> =
-                    Default::default();
+                let mut storage_updates_map: FxHashMap<
+                    H256,
+                    (Result<Trie, _>, FxHashMap<Nibbles, Vec<u8>>),
+                > = Default::default();
                 let mut code_updates: FxHashMap<H256, Code> = Default::default();
                 debug!("Starting rx loop");
                 for updates in rx {
@@ -261,25 +262,24 @@ impl Blockchain {
                         // Store the added storage in the account's storage trie and compute its new root
                         if !update.added_storage.is_empty() {
                             debug!(count = update.added_storage.len(), "With storages");
-                            let (storage_trie, storage_updates_map) =
-                                match storage_updates_map.entry(hashed_address_h256) {
-                                    Entry::Occupied(occupied) => {
-                                        debug!("Already open");
-                                        occupied
-                                    }
-                                    Entry::Vacant(vacant) => {
-                                        debug!("Opening");
-                                        vacant.insert_entry((
-                                            self.storage.open_storage_trie(
-                                                hashed_address_h256,
-                                                account_state.storage_root,
-                                                parent_header.state_root,
-                                            )?,
-                                            Default::default(),
-                                        ))
-                                    }
-                                }
-                                .into_mut();
+                            let (storage_trie, storage_updates_map) = storage_updates_map
+                                .entry(hashed_address_h256)
+                                .or_insert_with(|| {
+                                    (
+                                        self.storage.open_storage_trie(
+                                            hashed_address_h256,
+                                            account_state.storage_root,
+                                            parent_header.state_root,
+                                        ),
+                                        Default::default(),
+                                    )
+                                });
+                            let Ok(storage_trie) = storage_trie else {
+                                debug!("Failed to open storage trie");
+                                return Err(StoreError::Custom(
+                                    "Error opening storage trie".to_string(),
+                                ));
+                            };
                             for (storage_key, storage_value) in &update.added_storage {
                                 let hashed_key = hash_key(storage_key);
                                 if storage_value.is_zero() {
