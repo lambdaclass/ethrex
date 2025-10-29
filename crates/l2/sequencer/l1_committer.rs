@@ -698,11 +698,31 @@ impl L1Committer {
         )
         .await?;
 
-        let batch_witness = self
-            .current_checkpoint_blockchain
+        let rand_suffix: u32 = rand::thread_rng().r#gen();
+        let one_time_checkpoint_path = self.checkpoints_dir.join(format!(
+            "temp_checkpoint_witness_{}_{rand_suffix}",
+            batch.number
+        ));
+
+        // We need to create a one-time checkpoint copy because if witness generation fails the checkpoint would be modified
+        let (_, one_time_checkpoint_blockchain) = self
+            .create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
+            .await?;
+
+        let result = one_time_checkpoint_blockchain
             .generate_witness_for_blocks_with_fee_configs(&blocks, Some(&fee_configs))
             .await
-            .map_err(CommitterError::FailedToGenerateBatchWitness)?;
+            .map_err(CommitterError::FailedToGenerateBatchWitness);
+
+        if one_time_checkpoint_path.exists() {
+            let _ = remove_dir_all(&one_time_checkpoint_path).inspect_err(|e| {
+                error!(
+                    "Failed to remove one-time checkpoint directory at path {one_time_checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
+                )
+            });
+        }
+
+        let batch_witness = result?;
 
         // We still need to differentiate the validium case because for validium
         // we are generating the BlobsBundle with BlobsBundle::default which
