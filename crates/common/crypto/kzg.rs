@@ -66,11 +66,7 @@ pub fn verify_cell_kzg_proof_batch(
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         let mut cells = Vec::new();
         for blob in blobs {
-            let blob: c_kzg::Blob = (*blob).into();
-            let cells_blob = c_kzg_settings
-                .compute_cells(&blob)
-                .map_err(KzgError::CKzg)?;
-            cells.extend(*cells_blob);
+            cells.extend(c_kzg_settings.compute_cells(&(*blob).into())?.into_iter());
         }
         c_kzg::KzgSettings::verify_cell_kzg_proof_batch(
             c_kzg_settings,
@@ -179,35 +175,15 @@ pub fn verify_kzg_proof(
 pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), KzgError> {
     let blob: c_kzg::Blob = (*blob).into();
 
-    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
-
-    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg_settings, &blob)?;
-
+    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(
+        c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
+        &blob,
+    )?;
     let commitment_bytes = commitment.to_bytes();
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
     let proof = c_kzg_settings.compute_blob_kzg_proof(&blob, &commitment_bytes)?;
 
     let proof_bytes = proof.to_bytes();
 
     Ok((commitment_bytes.into_inner(), proof_bytes.into_inner()))
-}
-
-#[cfg(feature = "c-kzg")]
-pub fn blob_to_commitment_and_cell_proofs(
-    blob: &Blob,
-) -> Result<(Commitment, Vec<Proof>), KzgError> {
-    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
-
-    let blob: c_kzg::Blob = (*blob).into();
-
-    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg_settings, &blob)?;
-
-    let commitment_bytes = commitment.to_bytes();
-
-    let (_cells, cell_proofs) = c_kzg_settings
-        .compute_cells_and_kzg_proofs(&blob)
-        .map_err(KzgError::CKzg)?;
-
-    let cell_proofs = cell_proofs.map(|p| p.to_bytes().into_inner());
-
-    Ok((commitment_bytes.into_inner(), cell_proofs.to_vec()))
 }
