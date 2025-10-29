@@ -57,6 +57,7 @@ use ethrex_common::types::BlobsBundle;
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
+type StoreUpdatesMap = FxHashMap<H256, (Result<Trie, StoreError>, FxHashMap<Nibbles, Vec<u8>>)>;
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
@@ -206,10 +207,7 @@ impl Blockchain {
                 let mut state_updates;
                 let mut state_trie_hash = H256::default();
                 let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
-                let mut storage_updates_map: FxHashMap<
-                    H256,
-                    (Result<Trie, _>, FxHashMap<Nibbles, Vec<u8>>),
-                > = Default::default();
+                let mut storage_updates_map: StoreUpdatesMap = Default::default();
                 let mut code_updates: FxHashMap<H256, Code> = Default::default();
                 debug!("Starting rx loop");
                 for updates in rx {
