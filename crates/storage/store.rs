@@ -1970,7 +1970,7 @@ mod tests {
             })
             .collect();
         accounts.sort_by_key(|a| a.0);
-        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
         for (address, state) in &accounts {
             trie.insert(address.0.to_vec(), state.encode_to_vec())
                 .unwrap();
@@ -1996,13 +1996,13 @@ mod tests {
             .collect();
         slots.sort_by_key(|a| a.0);
         let mut trie = store
-            .open_storage_trie(address, *EMPTY_TRIE_HASH, *EMPTY_TRIE_HASH)
+            .open_direct_storage_trie(address, *EMPTY_TRIE_HASH)
             .unwrap();
         for (slot, value) in &slots {
             trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
         }
         let storage_root = trie.hash().unwrap();
-        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
         trie.insert(
             address.0.to_vec(),
             AccountState {
