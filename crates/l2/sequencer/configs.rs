@@ -49,6 +49,7 @@ pub struct EthConfig {
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
     pub max_retry_delay: u64,
+    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -97,7 +98,6 @@ pub struct AlignedConfig {
     pub beacon_urls: Vec<Url>,
     pub network: Network,
     pub fee_estimate: String,
-    pub aligned_sp1_elf_path: String,
 }
 
 #[derive(Clone, Debug)]
