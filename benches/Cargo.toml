@@ -29,3 +29,6 @@ ethrex-l2-rpc.workspace = true
 [[bench]]
 name = "build_block_benchmark"
 harness = false
+
+[lints]
+workspace = true

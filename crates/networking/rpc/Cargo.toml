@@ -50,6 +50,7 @@ path = "./lib.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"
 
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]

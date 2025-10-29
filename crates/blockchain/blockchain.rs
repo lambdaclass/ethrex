@@ -210,6 +210,8 @@ impl Blockchain {
 
         // Later on, we need to access block hashes by number. To avoid needing
         // to apply fork choice for each block, we cache them here.
+        // The clone is not redundant, the hash function modifies the original block.
+        #[allow(clippy::redundant_clone)]
         let mut block_hashes_map: BTreeMap<u64, H256> = blocks
             .iter()
             .cloned()

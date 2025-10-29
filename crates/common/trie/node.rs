@@ -104,7 +104,7 @@ impl NodeRef {
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }
-                acc.push((path.clone(), buf));
+                acc.push((path, buf));
 
                 *self = hash.into();
 

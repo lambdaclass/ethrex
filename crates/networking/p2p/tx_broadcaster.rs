@@ -127,7 +127,7 @@ impl TxBroadcaster {
             next_peer_idx: 0,
         };
 
-        let server = state.clone().start();
+        let server = state.start();
 
         send_interval(
             Duration::from_millis(tx_broadcasting_time_interval),
