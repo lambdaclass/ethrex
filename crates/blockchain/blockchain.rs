@@ -300,7 +300,6 @@ impl Blockchain {
                         }
                         debug!("Inserting account updates");
                         state_trie.insert(hashed_address, account_state.encode_to_vec())?;
-                        // known_changes.insert(update);
                     }
                     debug!("Collecting account changes");
                     (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
