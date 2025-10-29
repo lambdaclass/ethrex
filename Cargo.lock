@@ -2959,6 +2959,7 @@ dependencies = [
  "ff 0.13.1",
  "generic-array 0.14.7",
  "group 0.13.0",
+ "hkdf",
  "pem-rfc7468",
  "pkcs8",
  "rand_core 0.6.4",
@@ -5052,6 +5053,15 @@ version = "5.0.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac",
 ]
 
 [[package]]
@@ -10448,6 +10458,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fce8ad0f153443d09d398eccb650a0b2dcbf829470e394e4bf60ec4379c7af93"
 dependencies = [
  "bincode",
+ "elliptic-curve",
  "serde",
  "sp1-primitives",
 ]

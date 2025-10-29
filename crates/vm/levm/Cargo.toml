@@ -57,13 +57,12 @@ default = []
 
 c-kzg = ["ethrex-common/c-kzg"]
 
-sp1 = []
+sp1 = ["dep:substrate-bn"]
 risc0 = ["c-kzg"]
 
 ethereum_foundation_tests = []
 
 debug = []
-sp1 = ["dep:substrate-bn"]
 
 [lints.rust]
 unsafe_code = "warn"
