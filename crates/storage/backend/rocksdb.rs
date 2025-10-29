@@ -149,13 +149,12 @@ impl RocksDBBackend {
         for cf_name in &existing_cfs {
             if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
                 warn!("Dropping obsolete column family: {}", cf_name);
-                match db.drop_cf(cf_name) {
-                    Ok(_) => info!("Successfully dropped column family: {}", cf_name),
-                    Err(e) => {
+                let _ = db
+                    .drop_cf(cf_name)
+                    .inspect(|_| info!("Successfully dropped column family: {}", cf_name))
+                    .inspect_err(|e| 
                         // Log error but don't fail initialization - the database is still usable
-                        warn!("Failed to drop obsolete column family '{}': {}", cf_name, e);
-                    }
-                }
+                        warn!("Failed to drop column family '{}': {}", cf_name, e));
             }
         }
         Ok(Self { db: Arc::new(db) })
