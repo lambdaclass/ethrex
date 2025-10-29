@@ -42,6 +42,7 @@ pub enum Transaction {
 
 /// The same as a Transaction enum, only that blob transactions are in wrapped format, including
 /// the blobs bundle.
+/// PrivilegedL2Transaction is not included as it is not expected to be sent over P2P.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum P2PTransaction {
     LegacyTransaction(LegacyTransaction),
