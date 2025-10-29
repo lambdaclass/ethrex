@@ -1,3 +1,5 @@
+#[cfg(feature = "fjall")]
+use crate::backend::fjall::FjallBackend;
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
