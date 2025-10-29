@@ -25,6 +25,7 @@ use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
 use std::cmp::{Ordering, max};
+use std::u64;
 
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
@@ -399,13 +400,17 @@ pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fract
 pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u64 {
     let mut i = 1;
     let mut output = U256::zero();
-    let mut numerator_accum = (U256::zero() + factor) * denominator;
-    while numerator_accum > U256::zero() {
+    let mut numerator_accum = U256::from(factor) * denominator;
+    while !numerator_accum.is_zero() {
         output += numerator_accum;
         numerator_accum = numerator_accum * numerator / (denominator * i);
         i += 1;
     }
-    (output / denominator).as_u64()
+    if (output / denominator) > U256::from(u64::MAX) {
+        u64::MAX
+    } else {
+        (output / denominator).as_u64()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
