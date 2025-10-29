@@ -1560,6 +1560,7 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
             CF_ACCOUNT_TRIE_NODES,
+            CF_ACCOUNT_FLATKEYVALUE,
             None,
         )?);
         let wrap_db = Box::new(TrieWrapper {
@@ -1583,7 +1584,8 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
-            CF_ACCOUNT_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
+            CF_STORAGE_FLATKEYVALUE,
             None,
         )?);
         let wrap_db = Box::new(TrieWrapper {

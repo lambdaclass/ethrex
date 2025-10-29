@@ -4,7 +4,7 @@ use rocksdb::{DBWithThreadMode, MultiThreaded, SnapshotWithThreadMode};
 use std::sync::Arc;
 
 use crate::{
-    store_db::rocksdb::{CF_ACCOUNT_FLATKEYVALUE, CF_MISC_VALUES},
+    store_db::rocksdb::CF_MISC_VALUES,
     trie_db::layering::apply_prefix,
 };
 
@@ -26,19 +26,20 @@ pub struct RocksDBLockedTrieDB {
 impl RocksDBLockedTrieDB {
     pub fn new(
         db: Arc<DBWithThreadMode<MultiThreaded>>,
-        cf_name: &str,
+        trie_cf_name: &str,
+        fkv_cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
         // Leak the database reference to get 'static lifetime
         let db = Box::leak(Box::new(db));
 
         // Verify column family exists
-        let cf = db.cf_handle(cf_name).ok_or_else(|| {
-            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
+        let cf = db.cf_handle(trie_cf_name).ok_or_else(|| {
+            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", trie_cf_name))
         })?;
         // Verify column family exists
-        let cf_flatkeyvalue = db.cf_handle(CF_ACCOUNT_FLATKEYVALUE).ok_or_else(|| {
-            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
+        let cf_flatkeyvalue = db.cf_handle(fkv_cf_name).ok_or_else(|| {
+            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", trie_cf_name))
         })?;
 
         let cf_misc = db
