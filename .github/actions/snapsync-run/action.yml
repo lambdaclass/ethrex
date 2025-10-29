@@ -13,10 +13,6 @@ runs:
   steps:
     - uses: actions/checkout@v4
 
-    # We need to run this step because kurtosis uses cached docker images but we want the latest ethrex image
-    - name: Remove cached ethrex image
-      run: docker image rm -f ghcr.io/lambdaclass/ethrex:main || true
-
     - name: Generate Kurtosis args
       shell: bash
       env:
