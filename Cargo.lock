@@ -3943,6 +3943,7 @@ dependencies = [
  "prometheus 0.14.0",
  "rand 0.8.5",
  "rayon",
+ "rocksdb",
  "secp256k1",
  "serde",
  "serde_json",
