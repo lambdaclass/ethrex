@@ -49,6 +49,7 @@ use tracing::{debug, error, warn};
 pub struct PayloadBuildTask {
     task: tokio::task::JoinHandle<Result<PayloadBuildResult, ChainError>>,
     cancel: CancellationToken,
+    abort_handle: tokio::task::AbortHandle,
 }
 
 #[derive(Debug)]
@@ -61,6 +62,7 @@ impl PayloadBuildTask {
     /// Finishes the current payload build process and returns its result
     pub async fn finish(self) -> Result<PayloadBuildResult, ChainError> {
         self.cancel.cancel();
+        self.abort_handle.abort();
         self.task
             .await
             .map_err(|_| ChainError::Custom("Failed to join task".to_string()))?
@@ -339,6 +341,7 @@ impl Blockchain {
                 .build_payload_loop(payload, cancel_token_clone)
                 .await
         });
+        let abort_handle = payload_build_task.abort_handle();
         let mut payloads = self.payloads.lock().await;
         if payloads.len() >= MAX_PAYLOADS {
             // Remove oldest unclaimed payload
@@ -349,6 +352,7 @@ impl Blockchain {
             PayloadOrTask::Task(PayloadBuildTask {
                 task: payload_build_task,
                 cancel: cancel_token,
+                abort_handle,
             }),
         ));
     }
@@ -370,17 +374,29 @@ impl Blockchain {
             let self_clone = self.clone();
             let building_task =
                 tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
-            // Cancel the current build process and return the previous payload if it is requested earlier
-            // TODO(#5011): this doesn't stop the building task, but only keeps it running in the background,
-            //   which wastes CPU resources.
-            match cancel_token.run_until_cancelled(building_task).await {
-                Some(Ok(current_res)) => {
-                    res = current_res?;
+            let abort_handle = building_task.abort_handle();
+            
+            // Use timeout to race between the building task and cancellation
+            let timeout_duration = Duration::from_millis(100); // Check for cancellation every 100ms
+            match tokio::time::timeout(timeout_duration, building_task).await {
+                Ok(result) => {
+                    match result {
+                        Ok(current_res) => {
+                            res = current_res?;
+                        }
+                        Err(err) => {
+                            warn!(%err, "Payload-building task panicked");
+                        }
+                    }
                 }
-                Some(Err(err)) => {
-                    warn!(%err, "Payload-building task panicked");
+                Err(_timeout) => {
+                    // Timeout occurred, check if we should cancel
+                    if cancel_token.is_cancelled() {
+                        abort_handle.abort();
+                        break;
+                    }
+                    // Continue with the next iteration if not cancelled
                 }
-                None => {}
             }
         }
         Ok(res)
