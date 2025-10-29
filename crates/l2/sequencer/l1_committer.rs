@@ -15,8 +15,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork,
-        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle,
-        fake_exponential_checked,
+        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
     },
 };
 use ethrex_l2_common::{
@@ -1209,12 +1208,18 @@ async fn estimate_blob_gas(
 
     // If the blob's market is in high demand, the equation may give a really big number.
     // This function doesn't panic, it performs checked/saturating operations.
-    let blob_gas = fake_exponential_checked(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        total_blob_gas,
+    let blob_gas = fake_exponential(
+        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
+        U256::from(total_blob_gas),
         BLOB_BASE_FEE_UPDATE_FRACTION,
     )
     .map_err(BlobEstimationError::FakeExponentialError)?;
+
+    let blob_gas = if blob_gas > u64::MAX.into() {
+        unreachable!("We shouldn't get blob gas over u64")
+    } else {
+        blob_gas.as_u64()
+    };
 
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
