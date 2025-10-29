@@ -983,4 +983,10 @@ mod test {
         let res = calc_excess_blob_gas(&parent, schedule, fork);
         assert_eq!(res, 3538944)
     }
+
+    #[test]
+    fn test_fake_exponential_overflow() {
+        // With u64 this overflows
+        fake_exponential(57532635, 3145728, 3338477);
+    }
 }
