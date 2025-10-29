@@ -172,7 +172,7 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT)
 
 start-ethrex: ## Start ethrex for the network given by NETWORK.
-	cd $(ETHREX_DIR) && RUST_LOG=info,ethrex_p2p=debug cargo run --release --features "rocksdb sync-test metrics" --bin ethrex -- \
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "rocksdb sync-test metrics" --bin ethrex -- \
     		--http.addr 0.0.0.0 \
     		--http.port 8545 \
     		--authrpc.port 8551 \
