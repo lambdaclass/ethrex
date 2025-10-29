@@ -45,10 +45,8 @@ pub enum EthClientError {
     GetWitnessError(#[from] GetWitnessError),
     #[error("eth_maxPriorityFeePerGas request error: {0}")]
     GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
-    #[error("eth_config request error: {0}")]
-    GetEthConfigError(#[from] GetEthConfigError),
     #[error("Unreachable nonce")]
-    UnreachableNonce,
+    UnrecheableNonce,
     #[error("Error: {0}")]
     Custom(String),
     #[error("Failed to encode calldata: {0}")]
@@ -319,14 +317,6 @@ pub enum GetBlobBaseFeeRequestError {
 // TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetBatchByNumberError {
-    #[error("{0}")]
-    SerdeJSONError(#[from] serde_json::Error),
-    #[error("{0}")]
-    RPCError(String),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum GetEthConfigError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
