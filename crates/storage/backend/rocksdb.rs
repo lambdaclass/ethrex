@@ -12,6 +12,7 @@ use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
+use tracing::{info, warn};
 
 /// RocksDB backend
 #[derive(Debug)]
@@ -143,6 +144,20 @@ impl RocksDBBackend {
             cf_descriptors,
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
+
+        // Clean up obsolete column families
+        for cf_name in &existing_cfs {
+            if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
+                warn!("Dropping obsolete column family: {}", cf_name);
+                match db.drop_cf(cf_name) {
+                    Ok(_) => info!("Successfully dropped column family: {}", cf_name),
+                    Err(e) => {
+                        // Log error but don't fail initialization - the database is still usable
+                        warn!("Failed to drop obsolete column family '{}': {}", cf_name, e);
+                    }
+                }
+            }
+        }
         Ok(Self { db: Arc::new(db) })
     }
 }
