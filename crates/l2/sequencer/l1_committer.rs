@@ -10,7 +10,7 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -45,6 +45,8 @@ use ethrex_rpc::{
 use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
+use ethrex_vm::{BlockExecutionResult, Evm};
+use rand::Rng;
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -269,16 +271,49 @@ impl L1Committer {
                     )?;
                 let first_block_to_commit = last_block + 1;
 
+                // We need to guarantee that the checkpoint path is new
+                // to avoid causing a lock error under rocksdb feature.
+                let rand_suffix: u32 = rand::thread_rng().r#gen();
+                let one_time_checkpoint_path = self
+                    .checkpoints_dir
+                    .join(format!("temp_checkpoint_{batch_to_commit}_{rand_suffix}"));
+
+                // For re-execution we need to use a checkpoint to the previous state
+                // (i.e. checkpoint of the state to the latest block from the previous
+                // batch, or the state of the genesis if this is the first batch).
+                // We already have this initial checkpoint as part of the L1Committer
+                // struct, but we need to create a one-time copy of it because
+                // we still need to use the current checkpoint store later for witness
+                // generation.
+                let (one_time_checkpoint_store, one_time_checkpoint_blockchain) = self
+                    .create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
+                    .await?;
+
                 // Try to prepare batch
+                let result = self
+                    .prepare_batch_from_block(
+                        *last_block,
+                        batch_to_commit,
+                        one_time_checkpoint_store,
+                        one_time_checkpoint_blockchain,
+                    )
+                    .await;
+
+                if one_time_checkpoint_path.exists() {
+                    let _ = remove_dir_all(&one_time_checkpoint_path).inspect_err(|e| {
+                        error!(
+                            "Failed to remove one-time checkpoint directory at path {one_time_checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
+                        )
+                    });
+                }
+
                 let (
                     blobs_bundle,
                     new_state_root,
                     message_hashes,
                     privileged_transactions_hash,
                     last_block_of_batch,
-                ) = self
-                    .prepare_batch_from_block(*last_block, batch_to_commit)
-                    .await?;
+                ) = result?;
 
                 if *last_block == last_block_of_batch {
                     debug!("No new blocks to commit, skipping");
@@ -369,6 +404,8 @@ impl L1Committer {
         &mut self,
         mut last_added_block_number: BlockNumber,
         batch_number: u64,
+        one_time_checkpoint_store: Store,
+        one_time_checkpoint_blockchain: Arc<Blockchain>,
     ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
@@ -391,21 +428,6 @@ impl L1Committer {
         let mut batch_gas_used = 0_u64;
 
         info!("Preparing batch from block {first_block_of_batch}, {batch_number}");
-
-        let one_time_checkpoint_path = self
-            .checkpoints_dir
-            .join(format!("temp_checkpoint_batch_{batch_number}"));
-
-        // For re-execution we need to use a checkpoint to the previous state
-        // (i.e. checkpoint of the state to the latest block from the previous
-        // batch, or the state of the genesis if this is the first batch).
-        // We already have this initial checkpoint as part of the L1Committer
-        // struct, but we need to create a one-time copy of it because
-        // we still need to use the current checkpoint store later for witness
-        // generation.
-        let (one_time_checkpoint_store, _) = self
-            .create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
-            .await?;
 
         loop {
             let block_to_commit_number = last_added_block_number + 1;
@@ -475,6 +497,67 @@ impl L1Committer {
             // Get block messages and privileged transactions
             let messages = get_block_l1_messages(&receipts);
             let privileged_transactions = get_block_privileged_transactions(&txs);
+
+            // // Get block account updates.
+            let account_updates = if let Some(account_updates) = self
+                .rollup_store
+                .get_account_updates_by_block_number(block_to_commit_number)
+                .await?
+            {
+                account_updates
+            } else {
+                warn!(
+                    "Could not find execution cache result for block {}, falling back to re-execution",
+                    last_added_block_number + 1
+                );
+
+                // Here we use the checkpoint store because we need the previous
+                // state available (i.e. not pruned) for re-execution.
+                let vm_db = StoreVmDatabase::new(
+                    one_time_checkpoint_store.clone(),
+                    potential_batch_block.header.parent_hash,
+                );
+
+                let fee_config = self
+                    .rollup_store
+                    .get_fee_config_by_block(block_to_commit_number)
+                    .await?
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "Failed to get fee config for re-execution".to_owned(),
+                    ))?;
+
+                let mut vm = Evm::new_for_l2(vm_db, fee_config)?;
+
+                vm.execute_block(&potential_batch_block)?;
+
+                vm.get_state_transitions()?
+            };
+
+            // The checkpoint store's state corresponds to the parent state of
+            // the first block of the batch. Therefore, we need to apply the
+            // account updates of each block as we go, to be able to continue
+            // re-executing the next blocks in the batch.
+            {
+                let account_updates_list = one_time_checkpoint_store
+                    .apply_account_updates_batch(
+                        potential_batch_block.header.parent_hash,
+                        &account_updates,
+                    )?
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "no account updated".to_owned(),
+                    ))?;
+
+                one_time_checkpoint_blockchain
+                    .store_block(
+                        potential_batch_block.clone(),
+                        account_updates_list,
+                        BlockExecutionResult {
+                            receipts,
+                            requests: vec![],
+                        },
+                    )
+                    .await?;
+            }
 
             // Accumulate block data with the rest of the batch.
             acc_messages.extend(messages.clone());
@@ -579,12 +662,6 @@ impl L1Committer {
 
         let privileged_transactions_hash =
             compute_privileged_transactions_hash(privileged_transactions_hashes)?;
-
-        remove_dir_all(&one_time_checkpoint_path).map_err(|e| {
-            CommitterError::FailedToCreateCheckpoint(format!(
-                "Failed to remove one-time checkpoint directory {one_time_checkpoint_path:?}: {e}"
-            ))
-        })?;
 
         Ok((
             blobs_bundle,
