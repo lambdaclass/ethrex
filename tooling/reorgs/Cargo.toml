@@ -22,6 +22,3 @@ hex.workspace = true
 nix = { version = "0.30", features = ["signal"] }
 secp256k1.workspace = true
 url.workspace = true
-
-[lints]
-workspace = true
