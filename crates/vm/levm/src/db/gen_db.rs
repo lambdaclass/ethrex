@@ -283,6 +283,7 @@ impl GeneralizedDatabase {
                 Some(
                     self.codes
                         .get(&new_state_account.info.code_hash)
+                        .cloned()
                         .ok_or_else(|| {
                             VMError::Internal(InternalError::Custom(format!(
                                 "Failed to get code for account {address}"
@@ -316,11 +317,7 @@ impl GeneralizedDatabase {
                 }
             }
 
-            let info = if acc_info_updated {
-                Some(new_state_account.info.clone())
-            } else {
-                None
-            };
+            let info = acc_info_updated.then(|| new_state_account.info.clone());
 
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
             // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
@@ -336,7 +333,7 @@ impl GeneralizedDatabase {
                 address: *address,
                 removed,
                 info,
-                code: code.cloned(),
+                code,
                 added_storage,
                 removed_storage,
             };
