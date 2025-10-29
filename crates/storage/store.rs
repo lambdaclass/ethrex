@@ -131,8 +131,6 @@ impl Store {
 
         let _span = tracing::trace_span!("Block DB update").entered();
 
-        let mut batch_ops = Vec::new();
-
         let UpdateBatch {
             account_updates,
             storage_updates,
@@ -153,30 +151,23 @@ impl Store {
             .map_err(|e| {
                 StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
             })?;
+        let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
             let block_number = block.header.number;
             let block_hash = block.hash();
 
             let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            batch_ops.push((
-                HEADERS,
-                block_hash.as_bytes().to_vec(),
-                header_value_rlp.into_vec(),
-            ));
+            tx.put(HEADERS, block_hash.as_bytes(), header_value_rlp.bytes())?;
 
             let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            batch_ops.push((
-                BODIES,
-                block_hash.as_bytes().to_vec(),
-                body_value.into_vec(),
-            ));
+            tx.put(BODIES, block_hash.as_bytes(), body_value.bytes())?;
 
-            batch_ops.push((
+            tx.put(
                 BLOCK_NUMBERS,
-                block_hash.as_bytes().to_vec(),
-                block_number.to_le_bytes().to_vec(),
-            ));
+                block_hash.as_bytes(),
+                &block_number.to_le_bytes(),
+            )?;
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
@@ -185,7 +176,7 @@ impl Store {
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                batch_ops.push((TRANSACTION_LOCATIONS, composite_key, location_value));
+                tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
             }
         }
 
@@ -193,7 +184,7 @@ impl Store {
             for (index, receipt) in receipts.into_iter().enumerate() {
                 let key = (block_hash, index as u64).encode_to_vec();
                 let value = receipt.encode_to_vec();
-                batch_ops.push((RECEIPTS, key, value));
+                tx.put(RECEIPTS, &key, &value)?;
             }
         }
 
@@ -206,7 +197,7 @@ impl Store {
                 .collect::<Vec<u8>>()
                 .as_slice()
                 .encode(&mut buf);
-            batch_ops.push((ACCOUNT_CODES, code_hash.0.to_vec(), buf));
+            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
@@ -215,7 +206,9 @@ impl Store {
             .recv()
             .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
         // After top-level is added, we can make the rest of the changes visible.
-        db.write_batch(batch_ops)
+        tx.commit()?;
+
+        Ok(())
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
@@ -349,7 +342,7 @@ impl Store {
             debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
 
             let mut ctr = 0;
-            let mut batch_ops = vec![];
+            let mut write_txn = self.engine.begin_write()?;
             let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
             if last_written_account > Nibbles::default() {
                 iter.advance(last_written_account.to_bytes())?;
@@ -360,15 +353,12 @@ impl Store {
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
-                batch_ops.push((
-                    MISC_VALUES,
-                    "last_written".as_bytes().to_vec(),
-                    path.as_ref().to_vec(),
-                ));
-                batch_ops.push((FLATKEY_VALUES, path.as_ref().to_vec(), node.value.to_vec()));
+                write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
+                write_txn.put(FLATKEY_VALUES, path.as_ref(), &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
-                    self.engine.write_batch(std::mem::take(&mut batch_ops))?;
+                    write_txn.commit()?;
+                    write_txn = self.engine.begin_write()?;
                 }
 
                 let mut iter_inner = self
@@ -383,15 +373,12 @@ impl Store {
                         return Ok(());
                     };
                     let key = apply_prefix(Some(account_hash), path);
-                    batch_ops.push((
-                        MISC_VALUES,
-                        "last_written".as_bytes().to_vec(),
-                        key.as_ref().to_vec(),
-                    ));
-                    batch_ops.push((FLATKEY_VALUES, key.as_ref().to_vec(), node.value.to_vec()));
+                    write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
+                    write_txn.put(FLATKEY_VALUES, key.as_ref(), &node.value)?;
                     ctr += 1;
                     if ctr > 10_000 {
-                        self.engine.write_batch(std::mem::take(&mut batch_ops))?;
+                        write_txn.commit()?;
+                        write_txn = self.engine.begin_write()?;
                     }
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
@@ -428,8 +415,8 @@ impl Store {
                 }
                 Err(err) => return Err(err),
                 Ok(()) => {
-                    batch_ops.push((MISC_VALUES, "last_written".as_bytes().to_vec(), vec![0xff]));
-                    self.engine.write_batch(batch_ops)?;
+                    write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
+                    write_txn.commit()?;
                     return Ok(());
                 }
             };

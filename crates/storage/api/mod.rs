@@ -70,12 +70,15 @@ pub trait StorageRoTx {
 pub trait StorageRwTx: StorageRoTx + Send {
     /// Stores a key-value pair in the specified table.
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.put_batch(vec![(table, key.to_vec(), value.to_vec())])
+        self.put_batch(table, vec![(key.to_vec(), value.to_vec())])
     }
 
     /// Stores multiple key-value pairs in the specified table within the transaction.
-    fn put_batch(&mut self, batch: Vec<(&'static str, Vec<u8>, Vec<u8>)>)
-    -> Result<(), StoreError>;
+    fn put_batch(
+        &mut self,
+        table: &'static str,
+        batch: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError>;
 
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;

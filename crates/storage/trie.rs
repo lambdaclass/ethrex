@@ -47,11 +47,11 @@ impl TrieDB for BackendTrieDB {
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let mut batch = Vec::with_capacity(key_values.len());
         for (node_hash, value) in key_values {
-            batch.push((self.table_name, self.make_key(node_hash), value));
+            batch.push((self.make_key(node_hash), value));
         }
 
         let mut tx = self.tx.lock().map_err(|_| TrieError::LockError)?;
-        tx.put_batch(batch)
+        tx.put_batch(self.table_name, batch)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         tx.commit()
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))

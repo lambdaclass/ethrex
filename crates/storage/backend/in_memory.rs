@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 type Table = BTreeMap<Vec<u8>, Vec<u8>>;
-type Database = BTreeMap<String, Table>;
+type Database = BTreeMap<&'static str, Table>;
 
 #[derive(Debug)]
 pub struct InMemoryBackend {
@@ -44,17 +44,17 @@ impl StorageBackend for InMemoryBackend {
         }))
     }
 
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
+    fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError> {
         Ok(Box::new(InMemoryLocked {
             backend: self.inner.clone(),
-            table_name: table_name.to_string(),
+            table_name,
         }))
     }
 }
 
 pub struct InMemoryLocked {
     backend: Arc<RwLock<Database>>,
-    table_name: String,
+    table_name: &'static str,
 }
 
 pub struct InMemoryPrefixIter {
@@ -169,14 +169,19 @@ impl StorageRoTx for InMemoryRwTx {
 }
 
 impl StorageRwTx for InMemoryRwTx {
-    fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
+    fn put_batch(
+        &mut self,
+        table: &'static str,
+        batch: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
         let mut db = self
             .backend
             .write()
             .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
 
-        for (table, key, value) in batch {
-            let table_ref = db.entry(table.to_string()).or_insert_with(Table::new);
+        let table_ref = db.entry(table).or_insert_with(Table::new);
+
+        for (key, value) in batch {
             table_ref.insert(key, value);
         }
 

@@ -9,7 +9,7 @@ use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
 };
 use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -283,44 +283,18 @@ impl StorageRwTx for RocksDBRwTx {
     /// Changes are accumulated in the batch and written atomically on commit.
     fn put_batch(
         &mut self,
-        batch: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
+        table: &'static str,
+        batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         // Fast-path if we have only one table in the batch
-        let Some(first_table) = batch.first().map(|(t, _, _)| *t) else {
-            // Empty batch
-            return Ok(());
-        };
+        // All tables are the same
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
 
-        if batch.iter().all(|(t, _, _)| *t == first_table) {
-            // All tables are the same
-            let cf = self
-                .db
-                .cf_handle(first_table)
-                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", first_table)))?;
-
-            for (_, key, value) in batch {
-                self.batch.put_cf(&cf, key, value);
-            }
-            return Ok(());
-        }
-
-        // Load the column families for the tables in the batch
-        let mut cfs = HashMap::new();
-        for (table, _, _) in &batch {
-            if !cfs.contains_key(table) {
-                let cf = self
-                    .db
-                    .cf_handle(table)
-                    .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-                cfs.insert(*table, cf);
-            }
-        }
-
-        for (table, key, value) in batch {
-            let cf = cfs
-                .get(table)
-                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-            self.batch.put_cf(cf, key, value);
+        for (key, value) in batch {
+            self.batch.put_cf(&cf, key, value);
         }
         Ok(())
     }
