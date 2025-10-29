@@ -398,14 +398,14 @@ pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fract
 // Defined in [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844)
 pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u64 {
     let mut i = 1;
-    let mut output = 0;
-    let mut numerator_accum = factor * denominator;
-    while numerator_accum > 0 {
+    let mut output = U256::zero();
+    let mut numerator_accum = (U256::zero() + factor) * denominator;
+    while numerator_accum > U256::zero() {
         output += numerator_accum;
         numerator_accum = numerator_accum * numerator / (denominator * i);
         i += 1;
     }
-    output / denominator
+    (output / denominator).as_u64()
 }
 
 #[derive(Debug, thiserror::Error)]
