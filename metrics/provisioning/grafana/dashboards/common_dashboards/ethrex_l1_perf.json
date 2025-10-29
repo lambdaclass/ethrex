@@ -2526,7 +2526,7 @@
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
-        "regex": "",
+        "regex": "/^(?<text>[^:]+)(?::\\d+)?$/",
         "type": "query"
       },
       {
