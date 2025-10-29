@@ -1,6 +1,6 @@
 # Execution witness
 
-The purpose of the execution witness is to allow executing the blocks without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.
+The purpose of the execution witness is to allow executing blocks without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.
 
 An execution witness contains all the initial state values (state nodes, codes, storage keys, block headers) that will be read or written to during the blocks' execution.
 

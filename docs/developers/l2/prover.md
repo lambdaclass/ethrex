@@ -151,21 +151,4 @@ Two separate machines are recommended for running the `Prover` and the `sequence
 ## Configuration
 
 Configuration is done through environment variables or CLI flags.
-You can see a list of available flags by passing `--help` to the CLI.
-
-The following environment variables are available to configure the `Prover`:
-
-- `CONFIGS_PATH`: The path where the `PROVER_CLIENT_CONFIG_FILE` is located at.
-- `PROVER_CLIENT_CONFIG_FILE`: The `.toml` that contains the config for the `Prover`.
-- `PROVER_ENV_FILE`: The name of the `.env` that has the parsed `.toml` configuration.
-- `PROVER_CLIENT_PROVER_SERVER_ENDPOINT`: Prover Server's Endpoint used to connect the Client to the Server.
-
-The following environment variables are used by the ProverServer:
-
-- `PROVER_SERVER_LISTEN_IP`: IP used to start the Server.
-- `PROVER_SERVER_LISTEN_PORT`: Port used to start the Server.
-- `PROVER_SERVER_VERIFIER_ADDRESS`: The address of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
-- `PROVER_SERVER_VERIFIER_PRIVATE_KEY`: The private key of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
-
-> [!NOTE]
-> The `PROVER_SERVER_VERIFIER` account must differ from the `COMMITTER_L1` account.
+You can see a list of available flags by passing `--help` to the CLI, or checkout [CLI](../../CLI.md).

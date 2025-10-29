@@ -49,7 +49,7 @@ There are two kinds of MPT proofs:
 
 These three components are specific additions for ethrex's L2 protocol, layered on top of standard Ethereum execution logic. They each require specific validation steps within the program.
 
-For more details, refer to [Overview](./overview.md), [Withdrawals](../fundamentals/withdrawals.md), and [State diffs](../fundamentals/state_diffs.md).
+For more details, refer to [Overview](../l2/architecture/overview.md), [Withdrawals](../l2/fundamentals/withdrawals.md), and [State diffs](../l2/fundamentals/state_diffs.md).
 
 #### Step 1: initial state validation
 
