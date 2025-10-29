@@ -314,7 +314,7 @@ contract CommonBridge is
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= (pendingTxHashesLength()),
+            uint256(number) <= pendingTxHashesLength(),
             "CommonBridge: number is greater than the length of pendingTxHashes (get)"
         );
 
@@ -333,7 +333,7 @@ contract CommonBridge is
         uint16 number
     ) public onlyOnChainProposer {
         require(
-            number <= (pendingTxHashesLength()),
+            number <= pendingTxHashesLength(),
             "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
         );
 
