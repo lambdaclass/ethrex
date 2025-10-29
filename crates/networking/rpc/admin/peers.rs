@@ -9,6 +9,7 @@ use ethrex_p2p::{
 };
 use serde::Serialize;
 use serde_json::Value;
+use tracing::info;
 /// Serializable peer data returned by the node's rpc
 #[derive(Serialize)]
 pub struct RpcPeer {
@@ -116,21 +117,22 @@ pub async fn add_peers(context: &mut RpcApiContext, request: &RpcRequest) -> Res
         .cast(InMessage::Initiate { node: node.clone() })
         .await
     {
-        Err(_) => Ok(serde_json::to_value(false)?),
+        Err(_) => {
+            info!("ACA salió mal");
+            Ok(serde_json::to_value(false)?)
+        }
         Ok(_) => {
-            if context
-                .peer_handler
-                .read_connected_peers()
-                .await
-                .into_iter()
-                .map(|peer| peer.node.enode_url())
-                .collect::<Vec<_>>()
-                .contains(&node.enode_url())
-            {
-                Ok(serde_json::to_value(true)?)
-            } else {
-                Ok(serde_json::to_value(false)?)
-            }
+            info!("ACA salió bien");
+            Ok(serde_json::to_value(
+                context
+                    .peer_handler
+                    .read_connected_peers()
+                    .await
+                    .into_iter()
+                    .map(|peer| peer.node.enode_url())
+                    .collect::<Vec<_>>()
+                    .contains(&node.enode_url()),
+            )?)
         }
     }
 }
