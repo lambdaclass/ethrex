@@ -25,8 +25,10 @@ lint-gpu:
 lint: lint-l1 lint-l2 ## 🧹 Linter check
 
 CRATE ?= *
+# CAUTION: It is important that the ethrex-l2 crate remains excluded here,
+# as its tests depend on external setup that is not handled by this Makefile.
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-l2
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
