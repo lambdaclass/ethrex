@@ -290,34 +290,28 @@ impl L1Committer {
                     .await?;
 
                 // Try to prepare batch
-                let (
-                    blobs_bundle,
-                    new_state_root,
-                    message_hashes,
-                    privileged_transactions_hash,
-                    last_block_of_batch,
-                ) = self
+                let result = self
                     .prepare_batch_from_block(
                         *last_block,
                         batch_to_commit,
                         one_time_checkpoint_store,
                         one_time_checkpoint_blockchain,
                     )
-                    .await
-                    .inspect_err(|_| {
-                        if one_time_checkpoint_path.exists() {
-                            // Remove one-time checkpoint directory
-                            let _ = remove_dir_all(&one_time_checkpoint_path);
-                        }
-                    })?;
+                    .await;
 
-                if one_time_checkpoint_path.exists() {
-                    remove_dir_all(&one_time_checkpoint_path).map_err(|e| {
-                        CommitterError::FailedToCreateCheckpoint(format!(
-                            "Failed to remove one-time checkpoint directory {one_time_checkpoint_path:?}: {e}"
-                        ))
-                    })?;
-                }
+                let _ = remove_dir_all(&one_time_checkpoint_path).inspect_err(|e| {
+                    error!(
+                        "Failed to remove one-time checkpoint directory at path {one_time_checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
+                    )
+                });
+
+                let (
+                    blobs_bundle,
+                    new_state_root,
+                    message_hashes,
+                    privileged_transactions_hash,
+                    last_block_of_batch,
+                ) = result?;
 
                 if *last_block == last_block_of_batch {
                     debug!("No new blocks to commit, skipping");
