@@ -23,6 +23,7 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
+    /// Gets a shared reference to the inner node.
     pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
@@ -40,7 +41,13 @@ impl NodeRef {
         }
     }
 
-    pub fn get_node_mut(
+    /// Gets a mutable shared reference to the inner node.
+    ///
+    /// # Caution
+    ///
+    /// 1. If more than one strong reference exists to this node, it will be cloned (see `Arc::make_mut`).
+    /// 2. Mutating the inner node without updating parents can lead to trie inconsistencies.
+    pub(crate) fn get_node_mut(
         &mut self,
         db: &dyn TrieDB,
         path: Nibbles,

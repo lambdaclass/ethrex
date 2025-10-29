@@ -139,12 +139,12 @@ impl Iterator for TrieIterator {
             return None;
         };
         // Fetch the last node in the stack
-        let (mut path, mut next_node_ref) = self.stack.pop()?;
+        let (mut path, next_node_ref) = self.stack.pop()?;
         let next_node = next_node_ref
-            .get_node_mut(self.db.as_ref(), path.clone())
+            .get_node(self.db.as_ref(), path.clone())
             .ok()
             .flatten()?;
-        match &next_node {
+        match &(*next_node) {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)
                 for (choice, child) in branch_node.choices.iter().enumerate().rev() {
@@ -166,7 +166,7 @@ impl Iterator for TrieIterator {
                 path.extend(&leaf.partial);
             }
         }
-        Some((path, next_node.clone()))
+        Some((path, (*next_node).clone()))
     }
 }
 
