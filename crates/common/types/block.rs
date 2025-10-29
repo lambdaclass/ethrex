@@ -25,7 +25,6 @@ use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
 use std::cmp::{Ordering, max};
-use std::u64;
 
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
