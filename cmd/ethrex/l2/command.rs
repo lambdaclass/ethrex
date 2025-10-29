@@ -40,9 +40,9 @@ use std::{
 use tracing::{debug, info};
 
 // Compile-time check to ensure that at least one of the database features is enabled.
-#[cfg(not(feature = "rocksdb"))]
+#[cfg(all(not(feature = "rocksdb"), not(feature = "fjall")))]
 const _: () = {
-    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
+    compile_error!("Database feature must be enabled (Available: `rocksdb`, `fjall`).");
 };
 
 const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
@@ -384,6 +384,9 @@ impl Command {
             } => {
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
+
+                #[cfg(feature = "fjall")]
+                let store_type = EngineType::Fjall;
 
                 #[cfg(feature = "l2-sql")]
                 let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
