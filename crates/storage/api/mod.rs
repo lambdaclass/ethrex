@@ -43,7 +43,10 @@ pub trait StorageBackend: Debug + Send + Sync {
     ///
     /// This provides a persistent read-only view of a single table, optimized
     /// for batch read operations. The snapshot remains valid until dropped.
-    fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError>;
+    fn begin_locked(
+        &self,
+        table_name: &'static str,
+    ) -> Result<Box<dyn StorageLocked + 'static>, StoreError>;
 }
 
 /// Read-only transaction interface.
@@ -87,7 +90,7 @@ pub trait StorageRwTx: StorageRoTx + Send {
 /// table, such as trie traversal operations.
 /// This is currently only used in snapsync stage.
 /// TODO: Check if we can remove this trait and use [`StorageRoTx`] instead.
-pub trait StorageLocked: Send + Sync + 'static {
+pub trait StorageLocked: Send + Sync {
     /// Retrieves a value by key from the locked table.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 }
