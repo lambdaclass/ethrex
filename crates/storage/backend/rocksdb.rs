@@ -1,4 +1,6 @@
-use crate::api::{PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES};
+use crate::api::{
+    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, tables::TABLES,
+};
 use crate::error::StoreError;
 use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
