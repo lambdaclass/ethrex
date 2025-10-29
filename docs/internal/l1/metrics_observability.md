@@ -1,7 +1,7 @@
-# Ethrex L1 Metrics Coverage & Roadmap
+# Ethrex L1 Metrics Coverage
 
 ## Scope
-This note tracks the current state of metrics and dashboard observability for the L1, highlights the gaps against a cross-client baseline, and proposes a pragmatic priority sequence for closing them. It covers runtime metrics exposed through our metrics, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
+This note tracks the current state of metrics and dashboard observability for the L1, highlights the gaps against a cross-client baseline. It covers runtime metrics exposed through our metrics, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
 
 ## Baseline We Compare Against
 The gap analysis below uses a cross-client checklist we gathered after looking at Geth, Nethermind, and Reth metrics and dashboard setups; this works as a baseline of "must-have" coverage for execution clients. The key categories are:
@@ -81,19 +81,3 @@ Some good resources for reference:
   - *Missing*: Finality lag (latest finalized vs safe vs head), healing backlog, stage-by-stage completion.
 - **Additional must-have surfaced by review**
   - *JSON-RPC health*: Need per-method call rates, latency, error counters to detect API regressions (currently absent from both metrics and dashboards).
-
-## Prioritized Roadmap
-| Priority | Focus | Why it matters | Key tasks |
-| --- | --- | --- | --- |
-| P0 | Sync & peer visibility | Operators cannot tell whether we are syncing or isolated. | Export peer count, best peer height, sync stage/percentiles from `crates/networking/p2p/network.rs`; add Grafana "Sync & Peers" row; wire alerts for high lag. |
-| P1 | Txpool health panels | Existing counters are blind to backlog and drops. | Feed `mempool_tx_count`, add drop/eviction counters in txpool, surface Grafana panels for pending, blob share, TPS, error rate. |
-| P2 | Engine API latency | Validators need proof we meet 4s deadlines. | Wrap Engine API handlers with `HistogramVec` timers, count successes/failures, chart latency and failure ratio. |
-| P3 | Storage & state telemetry | Diagnosing stalls requires IO visibility. | Instrument DB read/write bytes, cache hit/miss, heal backlog. Add Grafana "State/Storage" row. |
-| P4 | Error counters & alerting | Need early warning without log scraping. | Add Prometheus counters for block import failures, reorg depth, RPC errors; define Grafana stat panels + alert rules. |
-| P5 | JSON-RPC performance | RPC regressions currently silent. | Introduce middleware to emit per-method latency/hit/error metrics; include lightweight table in dashboard. |
-
-## Suggested Next Steps
-- Size and implement P0 within the current `improve_ethrex_l1_grafana_dashboard` effort; wiring the metrics and Grafana panels unlocks immediate operator value.
-- Parallelise P1 with Grafana dashboard updates to ensure the new txpool metrics are visible as soon as the code paths feed them.
-- Plan P2 as part of the Engine API refactor backlog so we capture payload build SLA before broadened validator pilots.
-- Revisit provisioning once P3–P5 land to ensure Prometheus retention, alert thresholds, and documentation (`docs/l1/running/monitoring.md`) stay in sync.
