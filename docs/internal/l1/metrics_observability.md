@@ -1,10 +1,10 @@
 # Ethrex L1 Metrics Coverage & Roadmap
 
 ## Scope
-This note tracks the current state of observability for the L1, highlights the gaps against a cross-client baseline, and proposes a pragmatic priority sequence for closing them. It covers runtime metrics exposed through our metrics, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
+This note tracks the current state of metrics and dashboard observability for the L1, highlights the gaps against a cross-client baseline, and proposes a pragmatic priority sequence for closing them. It covers runtime metrics exposed through our metrics, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
 
 ## Baseline We Compare Against
-The gap analysis below uses a cross-client checklist we obtained after looking at Geth, Nethermind, and Reth production setups, this works as a baseline of "must-have" for execution clients. The key categories are:
+The gap analysis below uses a cross-client checklist we gathered after looking at Geth, Nethermind, and Reth metrics and dashboard setups, this works as a baseline of "must-have" for execution clients. The key categories are:
 - **Chain sync & finality**: head vs peer lag, stage progress, finalized/safe head distance, sync ETA.
 - **Peer health**: active peers, connected peer roles, snap-capable availability, ingress/egress traffic.
 - **Block & payload pipeline**: gas throughput, execution breakdown timings, block import failures, payload build latency.
@@ -13,6 +13,11 @@ The gap analysis below uses a cross-client checklist we obtained after looking a
 - **State & storage**: db size, read/write bytes, cache hit/miss, heal backlog, pruning progress.
 - **Process & host health**: CPU, memory, FDs, uptime, disk headroom (usually covered by node_exporter but treated as must-have).
 - **Error & anomaly counters**: explicit counters for reorgs, failed imports, sync retries, bad peer events.
+
+Some good resources for reference:
+- [Understanding Geth's dashboard](https://geth.ethereum.org/docs/monitoring/understanding-dashboards)
+- [Nethermind's metrics](https://docs.nethermind.io/monitoring/metrics/)
+- [Reth's observability](https://reth.rs/run/monitoring/#observability-with-prometheus--grafana)
 
 ## Current Instrumentation
 - **Block execution pipeline**
