@@ -216,10 +216,6 @@ impl Blockchain {
                     debug!("Recv'd {} updates", updates.len());
                     // Apply the account updates over the last block's state and compute the new state root
                     for update in updates {
-                        // if !known_changes.contains(&update) {
-                        //     continue;
-                        // }
-
                         let hashed_address = hash_address(&update.address);
                         debug!("Update cycle for {}", hex::encode(&hashed_address));
                         if update.removed {
