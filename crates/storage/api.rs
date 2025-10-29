@@ -19,7 +19,7 @@
 use crate::error::StoreError;
 use std::{fmt::Debug, path::Path};
 
-pub use tables::LIST as TABLES;
+pub use tables::TABLES;
 
 /// Type alias for the result of a prefix iterator.
 /// Uses Box<[u8]> instead of Vec<u8> to avoid unnecessary allocations
@@ -126,7 +126,7 @@ pub mod tables {
     pub const FLATKEY_VALUES: &str = "flatkey_values";
     pub const MISC_VALUES: &str = "misc_values";
 
-    pub const LIST: [&str; 15] = [
+    pub const TABLES: [&str; 15] = [
         CHAIN_DATA,
         ACCOUNT_CODES,
         BODIES,
