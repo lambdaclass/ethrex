@@ -39,10 +39,11 @@ impl TrieIterator {
             db: &dyn TrieDB,
             prefix_nibbles: Nibbles,
             mut target_nibbles: Nibbles,
-            node: NodeRef,
+            mut node: NodeRef,
             new_stack: &mut Vec<(Nibbles, NodeRef)>,
         ) -> Result<(), TrieError> {
-            let Some(next_node) = node.get_node(db, prefix_nibbles.clone()).ok().flatten() else {
+            let Some(next_node) = node.get_node_mut(db, prefix_nibbles.clone()).ok().flatten()
+            else {
                 return Ok(());
             };
             match &next_node {
@@ -143,7 +144,7 @@ impl Iterator for TrieIterator {
             .get_node(self.db.as_ref(), path.clone())
             .ok()
             .flatten()?;
-        match &next_node {
+        match &(*next_node) {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)
                 for (choice, child) in branch_node.choices.iter().enumerate().rev() {
@@ -165,7 +166,7 @@ impl Iterator for TrieIterator {
                 path.extend(&leaf.partial);
             }
         }
-        Some((path, next_node))
+        Some((path, (*next_node).clone()))
     }
 }
 
