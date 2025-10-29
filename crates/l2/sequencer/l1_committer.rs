@@ -14,9 +14,8 @@ use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork,
-        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle,
-        fake_exponential_checked,
+        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Genesis,
+        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
     },
 };
 use ethrex_l2_common::{
@@ -32,7 +31,7 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, get_l1_active_fork, get_last_committed_batch,
+    build_generic_tx, calldata::encode_calldata, get_last_committed_batch,
     send_tx_bump_gas_exponential_backoff,
 };
 #[cfg(feature = "metrics")]
@@ -111,8 +110,6 @@ pub struct L1Committer {
     last_committed_batch: u64,
     /// Cancellation token for the next inbound InMessage::Commit
     cancellation_token: Option<CancellationToken>,
-    /// Timestamp for Osaka activation on L1. This is used to determine which fork to use when generating blobs proofs.
-    osaka_activation_time: Option<u64>,
     /// Elasticity multiplier for prover input generation
     elasticity_multiplier: u64,
     /// Git commit hash of the build
@@ -197,7 +194,6 @@ impl L1Committer {
             last_committed_batch_timestamp: 0,
             last_committed_batch,
             cancellation_token: None,
-            osaka_activation_time: eth_config.osaka_activation_time,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             git_commit_hash: get_git_commit_hash(),
             current_checkpoint_store: initial_checkpoint_store,
@@ -257,14 +253,7 @@ impl L1Committer {
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
-        let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
-            .await
-            .map_err(CommitterError::EthClientError)?;
-        let batch = match self
-            .rollup_store
-            .get_batch(batch_to_commit, l1_fork)
-            .await?
-        {
+        let batch = match self.rollup_store.get_batch(batch_to_commit).await? {
             Some(batch) => batch,
             None => {
                 let last_committed_blocks = self
@@ -590,10 +579,7 @@ impl L1Committer {
                     &acc_privileged_txs,
                     acc_account_updates.clone().into_values().collect(),
                 )?;
-                let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
-                    .await
-                    .map_err(CommitterError::EthClientError)?;
-                generate_blobs_bundle(&state_diff, l1_fork)
+                generate_blobs_bundle(&state_diff)
             } else {
                 Ok((BlobsBundle::default(), 0_usize))
             };
@@ -712,39 +698,20 @@ impl L1Committer {
             let BlobsBundle {
                 commitments,
                 proofs,
-                blobs,
                 ..
             } = &batch.blobs_bundle;
 
-            let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
-                .await
-                .map_err(CommitterError::EthClientError)?;
-
-            let commitment = commitments
-                .last()
-                .cloned()
-                .ok_or_else(|| CommitterError::MissingBlob(batch.number))?;
-
-            // The prover takes a single proof even for Osaka type proofs, so if
-            // the committer generated Osaka type proofs (cell proofs), we need
-            // to create a BlobsBundle from the blobs specifying a pre-Osaka
-            // fork to get a single proof for the entire blob.
-            // If we are pre-Osaka, we already have a single proof in the
-            // previously generated bundle
-            let proof = if l1_fork < Fork::Osaka {
-                proofs
+            (
+                commitments
                     .first()
                     .cloned()
-                    .ok_or_else(|| CommitterError::MissingBlob(batch.number))?
-            } else {
-                BlobsBundle::create_from_blobs(blobs, Some(0))?
-                    .proofs
-                    .first()
-                    .cloned()
-                    .ok_or_else(|| CommitterError::MissingBlob(batch.number))?
-            };
-
-            (commitment, proof)
+                    .ok_or(CommitterError::Unreachable(
+                        "Blob commitment missing in batch blobs bundle".to_string(),
+                    ))?,
+                proofs.first().cloned().ok_or(CommitterError::Unreachable(
+                    "Blob proof missing in batch blobs bundle".to_string(),
+                ))?,
+            )
         };
 
         let prover_input = ProverInputData {
@@ -959,7 +926,6 @@ impl L1Committer {
                     max_fee_per_gas: Some(gas_price),
                     max_priority_fee_per_gas: Some(gas_price),
                     blobs_bundle: Some(batch.blobs_bundle.clone()),
-                    wrapper_version: Some(batch.blobs_bundle.version),
                     ..Default::default()
                 },
             )
@@ -1137,18 +1103,15 @@ impl GenServer for L1Committer {
 /// Generate the blob bundle necessary for the EIP-4844 transaction.
 pub fn generate_blobs_bundle(
     state_diff: &StateDiff,
-    fork: Fork,
 ) -> Result<(BlobsBundle, usize), CommitterError> {
     let blob_data = state_diff.encode().map_err(CommitterError::from)?;
 
     let blob_size = blob_data.len();
 
     let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
-    let wrapper_version = if fork <= Fork::Prague { None } else { Some(1) };
 
     Ok((
-        BlobsBundle::create_from_blobs(&vec![blob], wrapper_version)
-            .map_err(CommitterError::from)?,
+        BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)?,
         blob_size,
     ))
 }

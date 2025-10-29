@@ -2167,7 +2167,6 @@ mod serde_impl {
         pub authorization_list: Option<Vec<AuthorizationTupleEntry>>,
         #[serde(default)]
         pub blob_versioned_hashes: Vec<H256>,
-        pub wrapper_version: Option<u8>,
         #[serde(default, with = "crate::serde_utils::bytes::vec")]
         pub blobs: Vec<Bytes>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -2233,7 +2232,6 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
-                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2288,7 +2286,6 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: value.blob_versioned_hashes,
                 blobs: vec![],
-                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2311,11 +2308,10 @@ mod serde_impl {
                 })
                 .collect();
 
-            let wrapper_version = value.wrapper_version;
             Ok(Self {
                 tx: value.try_into()?,
-                wrapper_version,
-                blobs_bundle: BlobsBundle::create_from_blobs(&blobs, wrapper_version)?,
+                wrapper_version: None,
+                blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
             })
         }
     }
@@ -2378,7 +2374,6 @@ mod serde_impl {
                 ),
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
-                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2406,7 +2401,6 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
-                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: value.from,
             }
@@ -2457,7 +2451,6 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
-                wrapper_version: None,
                 chain_id: None,
                 input: value.data,
             }
@@ -2488,7 +2481,6 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
-                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 input: value.data,
             }
@@ -2839,7 +2831,6 @@ mod tests {
             }],
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
-            wrapper_version: None,
             chain_id: Default::default(),
             authorization_list: None,
         };
@@ -2893,7 +2884,6 @@ mod tests {
             }],
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
-            wrapper_version: None,
             chain_id: Default::default(),
             authorization_list: None,
         };

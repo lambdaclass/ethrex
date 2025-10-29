@@ -2075,7 +2075,6 @@ name = "ethrex-blockchain"
 version = "5.0.0"
 dependencies = [
  "bytes",
- "cfg-if 1.0.3",
  "ethrex-common",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -2094,14 +2093,15 @@ name = "ethrex-common"
 version = "5.0.0"
 dependencies = [
  "bytes",
- "c-kzg",
  "crc32fast",
  "ethereum-types 0.15.1",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
  "kzg-rs",
  "lazy_static",
+ "libc",
  "once_cell",
  "rayon",
  "rkyv",
@@ -2163,7 +2163,6 @@ dependencies = [
  "axum",
  "bincode",
  "bytes",
- "cfg-if 1.0.3",
  "chrono",
  "clap",
  "color-eyre",
@@ -2366,7 +2365,6 @@ dependencies = [
  "axum",
  "axum-extra",
  "bytes",
- "cfg-if 1.0.3",
  "envy",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
@@ -2501,7 +2499,6 @@ version = "5.0.0"
 dependencies = [
  "bincode",
  "bytes",
- "cfg-if 1.0.3",
  "derive_more 1.0.0",
  "dyn-clone",
  "ethereum-types 0.15.1",
@@ -2880,6 +2877,7 @@ dependencies = [
  "bytes",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-storage",

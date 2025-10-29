@@ -195,7 +195,7 @@ pub fn stateless_validation_l2(
         )?;
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
-    let validium = (blob_commitment, &blob_proof) == ([0; 48], &[0; 48]);
+    let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
