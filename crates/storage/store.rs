@@ -831,7 +831,6 @@ impl Store {
                     storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
-                storage_trie.commit()?;
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
