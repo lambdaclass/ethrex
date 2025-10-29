@@ -86,7 +86,10 @@ struct FjallRoTx {
 impl StorageRoTx for FjallRoTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let partition = self.backend.get_partition(table).unwrap();
-        let value = partition.get(key).unwrap();
+        // NOTE: we prepend a 0 to avoid keys being empty, since that triggers a panic in put_batch
+        let mut key = key.to_vec();
+        key.insert(0, 0);
+        let value = partition.get(&key).unwrap();
         Ok(value.map(|v| v.to_vec()))
     }
 
@@ -96,9 +99,14 @@ impl StorageRoTx for FjallRoTx {
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = crate::api::PrefixResult> + '_>, StoreError> {
         let partition = self.backend.get_partition(table).unwrap();
-        Ok(Box::new(partition.prefix(prefix).map(|res| {
+        let mut prefix = prefix.to_vec();
+        prefix.insert(0, 0);
+        Ok(Box::new(partition.prefix(&prefix).map(|res| {
             let (k, v) = res.unwrap();
-            Ok((k.to_vec().into_boxed_slice(), v.to_vec().into_boxed_slice()))
+            Ok((
+                k[1..].to_vec().into_boxed_slice(),
+                v.to_vec().into_boxed_slice(),
+            ))
         })))
     }
 }
@@ -129,10 +137,12 @@ impl StorageRwTx for FjallRwTx {
         batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let mut partitions = std::collections::HashMap::new();
-        for (key, value) in batch {
+        for (mut key, value) in batch {
             let partition = partitions
                 .entry(table)
                 .or_insert_with(|| self.ro_tx.backend.get_partition(table).unwrap());
+            // NOTE: we prepend a 0 to avoid keys being empty, since that triggers a panic
+            key.insert(0, 0);
             self.write_batch.insert(partition, key, value);
         }
         Ok(())
@@ -140,6 +150,9 @@ impl StorageRwTx for FjallRwTx {
 
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
         let partition = self.ro_tx.backend.get_partition(table).unwrap();
+        // NOTE: we prepend a 0 to avoid keys being empty, since that triggers a panic in put_batch
+        let mut key = key.to_vec();
+        key.insert(0, 0);
         partition.remove(key).unwrap();
         Ok(())
     }
@@ -159,6 +172,9 @@ struct FjallLockedTx {
 
 impl StorageLocked for FjallLockedTx {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        // NOTE: we prepend a 0 to avoid keys being empty, since that triggers a panic in put_batch
+        let mut key = key.to_vec();
+        key.insert(0, 0);
         Ok(self.snapshot.get(key).unwrap().map(|v| v.to_vec()))
     }
 }
