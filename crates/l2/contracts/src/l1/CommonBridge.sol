@@ -92,7 +92,8 @@ contract CommonBridge is
     /// Otherwise, this address is used for native token deposits and withdrawals.
     address public NATIVE_TOKEN_L1;
 
-    uint256 pendingPrivilegedTxIndex = 0;
+    /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
+    uint256 private pendingPrivilegedTxIndex = 0;
 
     modifier onlyOnChainProposer() {
         require(
