@@ -239,20 +239,11 @@ pub(crate) async fn send_new_block(
                             &l2_state.committer_key,
                         )
                         .serialize_compact();
-<<<<<<< HEAD
-                    let recovery_id: u8 =
-                        Into::<i32>::into(recovery_id).try_into().map_err(|e| {
-                            PeerConnectionError::InternalError(format!(
-                                "Failed to convert recovery id to u8: {e}. This is a bug."
-                            ))
-                        })?;
-=======
                     let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
-                        RLPxError::InternalError(format!(
+                        PeerConnectionError::InternalError(format!(
                             "Failed to convert recovery id to u8: {e}. This is a bug."
                         ))
                     })?;
->>>>>>> parent of 4da3a4982 (feat(l1): remove revm from workspace (#4686))
                     let mut sig = [0u8; 65];
                     sig[..64].copy_from_slice(&signature);
                     sig[64] = recovery_id;

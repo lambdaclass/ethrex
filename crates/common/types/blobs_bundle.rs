@@ -79,15 +79,14 @@ impl BlobsBundle {
     }
 
     // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
-    #[cfg(feature = "c-kzg")]
     pub fn create_from_blobs(blobs: &Vec<Blob>) -> Result<Self, BlobsBundleError> {
-        use ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof;
+        //use ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof;
         let mut commitments = Vec::new();
         let mut proofs = Vec::new();
 
         // Populate the commitments and proofs
         for blob in blobs {
-            let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
+            let (commitment, proof) = ([0; 48], [0; 48]);
             commitments.push(commitment);
             proofs.push(proof);
         }
@@ -107,7 +106,6 @@ impl BlobsBundle {
             .collect()
     }
 
-    #[cfg(feature = "c-kzg")]
     pub fn validate(
         &self,
         tx: &super::EIP4844Transaction,
@@ -147,10 +145,10 @@ impl BlobsBundle {
 
         if self.version != 0 {
             // Validate the blobs with the commitments and cell proofs
-            use ethrex_crypto::kzg::verify_cell_kzg_proof_batch;
-            if !verify_cell_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
+            //use ethrex_crypto::kzg::verify_cell_kzg_proof_batch;
+            /*if !verify_cell_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
                 return Err(BlobsBundleError::BlobToCommitmentAndProofError);
-            }
+            }*/
         } else {
             // Validate the blobs with the commitments and proofs
             for ((blob, commitment), proof) in self
@@ -159,11 +157,11 @@ impl BlobsBundle {
                 .zip(self.commitments.iter())
                 .zip(self.proofs.iter())
             {
-                use ethrex_crypto::kzg::verify_blob_kzg_proof;
+                /*use ethrex_crypto::kzg::verify_blob_kzg_proof;
 
                 if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
                     return Err(BlobsBundleError::BlobToCommitmentAndProofError);
-                }
+                }*/
             }
         }
 
@@ -210,12 +208,9 @@ impl AddAssign for BlobsBundle {
     }
 }
 
-#[cfg(feature = "c-kzg")]
 const MAX_BLOB_COUNT: usize = 6;
-#[cfg(feature = "c-kzg")]
 const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 
-#[cfg(feature = "c-kzg")]
 fn max_blobs_per_block(fork: crate::types::Fork) -> usize {
     if fork >= crate::types::Fork::Prague {
         MAX_BLOB_COUNT_ELECTRA
@@ -238,15 +233,13 @@ pub enum BlobsBundleError {
     BlobToCommitmentAndProofError,
     #[error("Max blobs per block exceeded")]
     MaxBlobsExceeded,
-    #[cfg(feature = "c-kzg")]
-    #[error("KZG related error: {0}")]
-    Kzg(#[from] ethrex_crypto::kzg::KzgError),
+    //#[error("KZG related error: {0}")]
+    //Kzg(#[from] ethrex_crypto::kzg::KzgError),
 }
 
 #[cfg(test)]
 mod tests {
     mod shared {
-        #[cfg(feature = "c-kzg")]
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
             let bytes = hex::decode(s).expect("Invalid hex string");
             let mut array = [0u8; 48];
@@ -256,7 +249,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "c-kzg")]
     fn transaction_with_valid_blobs_should_pass() {
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()

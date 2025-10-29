@@ -418,8 +418,6 @@ pub async fn init_l1(
     display_chain_initialization(&genesis);
 
     raise_fd_limit()?;
-    debug!("Preloading KZG trusted setup");
-    ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store = init_store(datadir, genesis).await;
 

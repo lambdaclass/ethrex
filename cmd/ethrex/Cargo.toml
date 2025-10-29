@@ -12,7 +12,6 @@ build = "build.rs"
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-config.workspace = true
-ethrex-crypto.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
@@ -73,15 +72,8 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "metrics", "jemalloc", "dev"]
+default = ["rocksdb", "metrics", "jemalloc", "dev"]
 dev = ["dep:ethrex-dev"]
-c-kzg = [
-  "ethrex-vm/c-kzg",
-  "ethrex-common/c-kzg",
-  "ethrex-blockchain/c-kzg",
-  "ethrex-p2p/c-kzg",
-  "ethrex-crypto/c-kzg",
-]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]

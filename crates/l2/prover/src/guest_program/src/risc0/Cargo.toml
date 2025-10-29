@@ -6,29 +6,21 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-c-kzg = { version = "2.1.1", features = ["eip-7594"] }
 risc0-zkvm = { version = "=3.0.3", default-features = false, features = [
     "std",
-<<<<<<< HEAD
     "getrandom",
-=======
->>>>>>> parent of 4da3a4982 (feat(l1): remove revm from workspace (#4686))
 ] }
 risc0-zkvm-platform = { version = "=2.2.1", default-features = false, features = [
     "sys-getenv",
 ] }
-guest_program = { path = "../../", default-features = false, features = [
-    "c-kzg",
-] }
+guest_program = { path = "../../", default-features = false }
 rkyv = { version = "0.8.10", features = ["unaligned"] }
 
 
 ethrex-common = { path = "../../../../../../common", default-features = false, features = ["risc0"] }
 ethrex-storage = { path = "../../../../../../storage", default-features = false }
 ethrex-rlp = { path = "../../../../../../common/rlp" }
-ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
-    "c-kzg",
-] }
+ethrex-vm = { path = "../../../../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false }
 ethrex-l2-common = { path = "../../../../../common", default-features = false }
 

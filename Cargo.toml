@@ -30,7 +30,6 @@ members = [
   "crates/common/config",
   "tooling/reorgs",
   "crates/concurrency",
-  "tooling/migrations",
 ]
 resolver = "2"
 
@@ -58,6 +57,7 @@ debug = 2
 ethrex-blockchain = { path = "./crates/blockchain" }
 ethrex-common = { path = "./crates/common" }
 ethrex-config = { path = "./crates/common/config" }
+ethrex-crypto = { path = "./crates/common/crypto" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-storage = { path = "./crates/storage" }

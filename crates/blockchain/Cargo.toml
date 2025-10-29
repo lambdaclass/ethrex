@@ -33,7 +33,6 @@ path = "./blockchain.rs"
 
 [features]
 default = []
-c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
 
 [lints.clippy]

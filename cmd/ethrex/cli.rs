@@ -375,21 +375,10 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
-    #[cfg(feature = "l2")]
-    #[command(name = "l2")]
-    L2(crate::l2::L2Command),
 }
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
-        // L2 has its own init_tracing because of the ethrex monitor
-        match self {
-            #[cfg(feature = "l2")]
-            Self::L2(_) => {}
-            _ => {
-                init_tracing(opts);
-            }
-        }
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
@@ -426,8 +415,6 @@ impl Subcommand {
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
             }
-            #[cfg(feature = "l2")]
-            Subcommand::L2(command) => command.run().await?,
         }
 
         Ok(())

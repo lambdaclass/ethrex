@@ -1,0 +1,15 @@
+[package]
+name = "ethrex-crypto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+
+[lib]
+path = "./lib.rs"
+
+
+thiserror.workspace = true
+
+[features]
+default = []

@@ -16,9 +16,9 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
-    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
+    AccountUpdate, BlobsBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
+    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
@@ -44,9 +44,6 @@ use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
-
-#[cfg(feature = "c-kzg")]
-use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
@@ -662,7 +659,6 @@ impl Blockchain {
     }
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
-    #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,

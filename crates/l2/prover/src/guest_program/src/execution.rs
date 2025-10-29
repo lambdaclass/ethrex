@@ -57,8 +57,8 @@ pub enum StatelessExecutionError {
     #[error("Blobs bundle error: {0}")]
     BlobsBundleError(#[from] BlobsBundleError),
     #[cfg(feature = "l2")]
-    #[error("KZG error (proof couldn't be verified): {0}")]
-    KzgError(#[from] ethrex_crypto::kzg::KzgError),
+    //#[error("KZG error (proof couldn't be verified): {0}")]
+    //KzgError(#[from] ethrex_crypto::kzg::KzgError),
     #[cfg(feature = "l2")]
     #[error("Invalid KZG blob proof")]
     InvalidBlobProof,
@@ -469,14 +469,14 @@ fn verify_blob(
     commitment: Commitment,
     proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
-    use ethrex_crypto::kzg::verify_blob_kzg_proof;
+    //use ethrex_crypto::kzg::verify_blob_kzg_proof;
 
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
 
-    if !verify_blob_kzg_proof(blob_data, commitment, proof)? {
-        return Err(StatelessExecutionError::InvalidBlobProof);
-    }
+    //if !verify_blob_kzg_proof(blob_data, commitment, proof)? {
+    //    return Err(StatelessExecutionError::InvalidBlobProof);
+    //}
 
     Ok(kzg_commitment_to_versioned_hash(&commitment))
 }

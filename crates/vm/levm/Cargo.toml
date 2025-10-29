@@ -8,6 +8,7 @@ documentation.workspace = true
 [dependencies]
 lazy_static.workspace = true
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
 
@@ -52,11 +53,11 @@ colored = "2.1.0"
 spinoff = "0.8.0"
 
 [features]
-default = []
-c-kzg = ["ethrex-common/c-kzg"]
+default = ["revm"]
 ethereum_foundation_tests = []
 debug = []
 sp1 = ["dep:substrate-bn"]
+revm = []
 
 [lints.rust]
 unsafe_code = "warn"

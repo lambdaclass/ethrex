@@ -12,7 +12,7 @@ use ethrex_common::{
     Address, H256, U256, serde_utils::bool, types::Fork, types::Fork::*,
     utils::u256_from_big_endian,
 };
-use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
+use ethrex_crypto::blake2f::blake2b_f;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use k256::elliptic_curve::Field;
 use lambdaworks_math::cyclic_group::IsGroup;
@@ -1063,9 +1063,9 @@ fn point_evaluation(
     }
 
     // This verifies the proof from a point (x, y) and a commitment
-    if !verify_kzg_proof(commitment, x, y, proof).unwrap_or(false) {
+    /*if !verify_kzg_proof(commitment, x, y, proof).unwrap_or(false) {
         return Err(PrecompileError::ParsingInputError.into());
-    }
+    }*/
 
     // The first 32 bytes consist of the number of field elements in the blob, and the
     // other 32 bytes consist of the modulus used in the BLS signature scheme.

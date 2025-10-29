@@ -1500,7 +1500,6 @@ mod serde_impl {
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
-    #[cfg(feature = "c-kzg")]
     use crate::types::BYTES_PER_BLOB;
     use crate::types::{AccessListItem, AuthorizationTuple, BlobsBundleError};
 
@@ -2303,7 +2302,6 @@ mod serde_impl {
         }
     }
 
-    #[cfg(feature = "c-kzg")]
     impl TryFrom<GenericTransaction> for WrappedEIP4844Transaction {
         type Error = GenericTransactionError;
 
