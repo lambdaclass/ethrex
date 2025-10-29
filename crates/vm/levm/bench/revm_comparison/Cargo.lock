@@ -1107,7 +1107,6 @@ dependencies = [
  "bytes",
  "crc32fast",
  "ethereum-types",
- "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
@@ -1129,14 +1128,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-crypto"
-version = "4.0.0"
-dependencies = [
- "kzg-rs",
- "thiserror",
-]
-
-[[package]]
 name = "ethrex-levm"
 version = "4.0.0"
 dependencies = [
@@ -1149,7 +1140,6 @@ dependencies = [
  "datatest-stable",
  "derive_more 1.0.0",
  "ethrex-common",
- "ethrex-crypto",
  "ethrex-rlp",
  "k256",
  "lambdaworks-math",

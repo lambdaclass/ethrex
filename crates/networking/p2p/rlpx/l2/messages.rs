@@ -68,8 +68,13 @@ impl BatchSealed {
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(&SecpMessage::from_digest(hash.into()), secret_key)
             .serialize_compact();
+<<<<<<< HEAD
         let recovery_id: u8 = Into::<i32>::into(recovery_id).try_into().map_err(|e| {
             PeerConnectionError::InternalError(format!(
+=======
+        let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
+            RLPxError::InternalError(format!(
+>>>>>>> parent of 4da3a4982 (feat(l1): remove revm from workspace (#4686))
                 "Failed to convert recovery id to u8: {e}. This is a bug."
             ))
         })?;

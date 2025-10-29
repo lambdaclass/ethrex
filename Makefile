@@ -145,8 +145,14 @@ view-hive: ## 🛠️ Builds hiveview with the logs from the hive execution
 	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
-	echo "Running the test-node with LEVM"; \
-
+	@if [ -z "$$L" ]; then \
+		LEVM="revm"; \
+		echo "Running the test-node without the LEVM feature"; \
+		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
+	else \
+		LEVM="levm"; \
+		echo "Running the test-node with the LEVM feature"; \
+	fi; \
 	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
 	-- \

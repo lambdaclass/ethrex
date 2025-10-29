@@ -32,7 +32,7 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 
     let (msg_signature_recovery_id, msg_signature) = signed_msg.serialize_compact();
 
-    let msg_signature_recovery_id = Into::<i32>::into(msg_signature_recovery_id) + 27;
+    let msg_signature_recovery_id = msg_signature_recovery_id.to_i32() + 27;
 
     [&msg_signature[..], &[msg_signature_recovery_id as u8]].concat()
 }

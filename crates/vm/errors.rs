@@ -1,3 +1,8 @@
+#[cfg(feature = "revm")]
+use revm::primitives::result::EVMError as RevmError;
+#[cfg(feature = "revm")]
+use std::fmt::Display;
+
 use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
 use thiserror::Error;
 
@@ -19,6 +24,19 @@ pub enum EvmError {
     InvalidDepositRequest,
     #[error("System call failed: {0}")]
     SystemContractCallFailed(String),
+}
+
+#[cfg(feature = "revm")]
+impl<E: Display> From<RevmError<E>> for EvmError {
+    fn from(value: RevmError<E>) -> Self {
+        match value {
+            RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
+            RevmError::Header(err) => EvmError::Header(err.to_string()),
+            RevmError::Database(err) => EvmError::DB(err.to_string()),
+            RevmError::Custom(err) => EvmError::Custom(err),
+            RevmError::Precompile(err) => EvmError::Precompile(err),
+        }
+    }
 }
 
 impl From<VMError> for EvmError {

@@ -112,6 +112,7 @@ l2-sql = ["ethrex-storage-rollup/sql"]
 sp1 = ["ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0"]
+revm = ["ethrex-vm/revm"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
