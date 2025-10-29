@@ -210,6 +210,12 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
+    #[cfg(feature = "l2")]
+    let based_context_arg = based_context;
+
+    #[cfg(not(feature = "l2"))]
+    let based_context_arg = None;
+
     let context = P2PContext::new(
         local_p2p_node,
         tracker.clone(),
@@ -218,8 +224,7 @@ pub async fn init_network(
         store,
         blockchain.clone(),
         get_client_version(),
-        #[cfg(feature = "l2")]
-        based_context,
+        based_context_arg,
         opts.tx_broadcasting_time_interval,
     )
     .await

@@ -1,4 +1,3 @@
-use crate::log_peer_error;
 use crate::rlpx::connection::server::send;
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
@@ -12,7 +11,7 @@ use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::messages::batch_hash;
 use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
@@ -46,8 +45,12 @@ fn broadcast_message(state: &Established, msg: Message) -> Result<(), PeerConnec
     match msg {
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
+            error!(
+                peer=%state.node,
+                message=%msg,
+                "Broadcasting for this message is not supported"
+            );
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
-            log_peer_error!(&state.node, &error_message);
             Err(PeerConnectionError::BroadcastError(error_message))
         }
     }
@@ -158,9 +161,10 @@ pub(crate) fn broadcast_l2_message(
                 .connection_broadcast_send
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
-                    log_peer_error!(
-                        &state.node,
-                        &format!("Could not broadcast l2 message BatchSealed: {e}"),
+                    error!(
+                        peer=%state.node,
+                        error=%e,
+                        "Could not broadcast l2 message BatchSealed"
                     );
                 })
                 .map_err(|_| {
@@ -176,9 +180,10 @@ pub(crate) fn broadcast_l2_message(
                 .connection_broadcast_send
                 .send((task_id, msg.into()))
                 .inspect_err(|e| {
-                    log_peer_error!(
-                        &state.node,
-                        &format!("Could not broadcast l2 message NewBlock: {e}"),
+                    error!(
+                        peer=%state.node,
+                        error=%e,
+                        "Could not broadcast l2 message NewBlock",
                     );
                 })
                 .map_err(|_| {
@@ -303,9 +308,10 @@ async fn should_process_new_block(
                 PeerConnectionError::InternalError("Recover Address task failed".to_string())
             })?
             .map_err(|e| {
-                log_peer_error!(
-                    &established.node,
-                    &format!("Failed to recover lead sequencer: {e}"),
+                error!(
+                    peer=%established.node,
+                    error=%e,
+                    "Failed to recover lead sequencer",
                 );
                 PeerConnectionError::CryptographyError(e.to_string())
             })?;
@@ -352,9 +358,10 @@ async fn should_process_batch_sealed(
     let hash = batch_hash(&msg.batch);
 
     let recovered_lead_sequencer = recover_address(msg.signature, hash).map_err(|e| {
-        log_peer_error!(
-            &established.node,
-            &format!("Failed to recover lead sequencer: {e}"),
+        error!(
+            peer=%established.node,
+            error=%e,
+            "Failed to recover lead sequencer",
         );
         PeerConnectionError::CryptographyError(e.to_string())
     })?;
@@ -397,12 +404,12 @@ async fn process_new_block(
             .blockchain
             .add_block_pipeline(block)
             .inspect_err(|e| {
-                log_peer_error!(
-                    &established.node,
-                    &format!(
-                        "Error adding new block {} with hash {:?}, error: {e}",
-                        block_number, block_hash
-                    ),
+                error!(
+                    peer=%established.node,
+                    error=%e,
+                    block_number,
+                    ?block_hash,
+                    "Error adding new block",
                 );
             })?;
 
@@ -437,7 +444,12 @@ pub(crate) async fn send_sealed_batch(
         {
             return Ok(());
         }
-        let Some(batch) = l2_state.store_rollup.get_batch(next_batch_to_send).await? else {
+        let l1_fork = established.blockchain.current_fork().await?;
+        let Some(batch) = l2_state
+            .store_rollup
+            .get_batch(next_batch_to_send, l1_fork)
+            .await?
+        else {
             return Ok(());
         };
         match l2_state
