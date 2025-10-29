@@ -285,6 +285,7 @@ impl L1Committer {
                 // struct, but we need to create a one-time copy of it because
                 // we still need to use the current checkpoint store later for witness
                 // generation.
+
                 let (one_time_checkpoint_store, one_time_checkpoint_blockchain) = self
                     .create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
                     .await?;
@@ -703,7 +704,6 @@ impl L1Committer {
             "temp_checkpoint_witness_{}_{rand_suffix}",
             batch.number
         ));
-
         // We need to create a one-time checkpoint copy because if witness generation fails the checkpoint would be modified
         let (_, one_time_checkpoint_blockchain) = self
             .create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
@@ -810,7 +810,7 @@ impl L1Committer {
     /// 1. Creates a checkpoint of the provided store at the specified path.
     /// 2. Initializes a new store and blockchain for the checkpoint.
     /// 3. Regenerates the head state in the checkpoint store.
-    /// 4. Validates that the checkpoint store's head block number and latest block match those of the original store.
+    /// 4. TODO: Validates that the checkpoint contains the needed state root.
     async fn create_checkpoint(
         &self,
         checkpointee: &Store,
@@ -838,53 +838,7 @@ impl L1Committer {
             self.blockchain.options.clone(),
         ));
 
-        let checkpoint_head_block_number = checkpoint_store.get_latest_block_number().await?;
-
-        let db_head_block_number = checkpointee.get_latest_block_number().await?;
-
-        if checkpoint_head_block_number != db_head_block_number {
-            return Err(CommitterError::FailedToCreateCheckpoint(
-                "checkpoint store head block number does not match main store head block number before regeneration".to_string(),
-            ));
-        }
-
         regenerate_head_state(&checkpoint_store, &checkpoint_blockchain).await?;
-
-        let checkpoint_latest_block_number = checkpoint_store.get_latest_block_number().await?;
-
-        let db_latest_block_number = checkpointee.get_latest_block_number().await?;
-
-        let checkpoint_latest_block = checkpoint_store
-            .get_block_by_number(checkpoint_latest_block_number)
-            .await?
-            .ok_or(CommitterError::FailedToCreateCheckpoint(
-                "latest block not found in checkpoint store".to_string(),
-            ))?;
-
-        let db_latest_block = checkpointee
-            .get_block_by_number(db_latest_block_number)
-            .await?
-            .ok_or(CommitterError::FailedToCreateCheckpoint(
-                "latest block not found in main store".to_string(),
-            ))?;
-
-        if !checkpoint_store.has_state_root(checkpoint_latest_block.header.state_root)? {
-            return Err(CommitterError::FailedToCreateCheckpoint(
-                "checkpoint store state is not regenerated properly".to_string(),
-            ));
-        }
-
-        if checkpoint_latest_block_number != db_head_block_number {
-            return Err(CommitterError::FailedToCreateCheckpoint(
-                "checkpoint store latest block number does not match main store head block number after regeneration".to_string(),
-            ));
-        }
-
-        if checkpoint_latest_block.hash() != db_latest_block.hash() {
-            return Err(CommitterError::FailedToCreateCheckpoint(
-                "checkpoint store latest block hash does not match main store latest block hash after regeneration".to_string(),
-            ));
-        }
 
         Ok((checkpoint_store, checkpoint_blockchain))
     }
