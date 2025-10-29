@@ -931,11 +931,12 @@ impl Blockchain {
             .map_err(|e| (e.into(), None))?;
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
-        let mut throughput = 0.0;
-        if elapsed_seconds > 0.0 && total_gas_used != 0 {
+        let throughput = if elapsed_seconds > 0.0 && total_gas_used != 0 {
             let as_gigas = (total_gas_used as f64) / 1e9;
-            throughput = as_gigas / elapsed_seconds;
-        }
+            as_gigas / elapsed_seconds
+        } else {
+            0.0
+        };
 
         metrics!(
             let _ = METRICS_BLOCKS.set_block_number(last_block_number);
