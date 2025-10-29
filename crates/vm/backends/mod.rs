@@ -78,14 +78,7 @@ impl Evm {
         db: impl VmDatabase + 'static,
         fee_config: FeeConfig,
     ) -> Result<Self, EvmError> {
-        let wrapped_db: DynVmDatabase = Box::new(db);
-
-        let evm = Evm {
-            db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
-            vm_type: VMType::L2(fee_config),
-        };
-
-        Ok(evm)
+        Err(EvmError::InvalidEVM("REVM not supported in L2".to_string()))
     }
 
     pub fn new_from_db_for_l1(store: Arc<impl LevmDatabase + 'static>) -> Self {

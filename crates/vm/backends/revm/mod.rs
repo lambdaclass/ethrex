@@ -286,6 +286,8 @@ impl REVM {
                                 )
                             })
                             .collect(),
+                        removed_storage: new_state_account.status
+                            == AccountStatus::DestroyedModified,
                     };
                     account_updates.push(new_acc_update);
                 }
