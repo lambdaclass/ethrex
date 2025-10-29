@@ -26,6 +26,8 @@ rocksdb = { workspace = true, optional = true }
 rustc-hash.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 
+canopydb = "0.2.4"
+
 [features]
 default = []
 rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb"]
