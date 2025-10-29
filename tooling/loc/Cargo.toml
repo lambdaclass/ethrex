@@ -14,6 +14,3 @@ clap_complete.workspace = true
 colored = "2.1.0"
 spinoff = "0.8.0"
 prettytable = "0.10.0"
-
-[lints]
-workspace = true
