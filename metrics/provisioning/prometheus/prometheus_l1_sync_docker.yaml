@@ -6,8 +6,10 @@ scrape_configs:
     static_configs:
       - targets: ["host.docker.internal:3701"]
         labels:
-          # port is needed just to match the regex in the dashboard,
-          # it's how the instance show up when picked from different servers
+          # We need to collapse all the instances under the same name
+          # for the dashboard to work properly locally as it works distributed
+          # the port is needed just to match the regex in the dashboard, so
+          # 0000 is just a placeholder.
           instance: "localhost:0000"
     scrape_interval: 10s
     metrics_path: /metrics
@@ -22,8 +24,10 @@ scrape_configs:
     static_configs:
       - targets: ["ethereum-metrics-exporter:9093"]
         labels:
-          # port is needed just to match the regex in the dashboard,
-          # it's how the instance show up when picked from different servers
+          # We need to collapse all the instances under the same name
+          # for the dashboard to work properly locally as it works distributed
+          # the port is needed just to match the regex in the dashboard, so
+          # 0000 is just a placeholder.
           instance: "localhost:0000"
     scrape_interval:  5s
     metrics_path: /metrics
@@ -32,8 +36,10 @@ scrape_configs:
     static_configs:
       - targets: ['host.docker.internal:9122']
         labels:
-          # port is needed just to match the regex in the dashboard,
-          # it's how the instance show up when picked from different servers
+          # We need to collapse all the instances under the same name
+          # for the dashboard to work properly locally as it works distributed
+          # the port is needed just to match the regex in the dashboard, so
+          # 0000 is just a placeholder.
           instance: "localhost:0000"
     scrape_interval:  5s
     metrics_path: /metrics
