@@ -4,9 +4,26 @@ use ethrex_common::types::{
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    path::PathBuf,
+};
 
 use crate::calldata::Value;
+
+#[cfg(feature = "sp1")]
+const SP1_VM_PROGRAM_CODE: Option<&[u8]> = Some(include_bytes!(concat!(
+    "../../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf"
+)));
+#[cfg(not(feature = "sp1"))]
+const SP1_VM_PROGRAM_CODE: Option<&[u8]> = None;
+
+#[cfg(feature = "risc0")]
+const RISC0_VM_PROGRAM_CODE: Option<&str> = Some(include_str!(concat!(
+    "../../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk"
+)));
+#[cfg(not(feature = "risc0"))]
+const RISC0_VM_PROGRAM_CODE: Option<&str> = None;
 
 #[serde_as]
 #[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive)]
@@ -27,7 +44,6 @@ pub enum ProverType {
     Exec,
     RISC0,
     SP1,
-    Aligned,
     TDX,
 }
 
@@ -37,8 +53,7 @@ impl From<ProverType> for u32 {
             ProverType::Exec => 0,
             ProverType::RISC0 => 1,
             ProverType::SP1 => 2,
-            ProverType::Aligned => 4,
-            ProverType::TDX => 5,
+            ProverType::TDX => 3,
         }
     }
 }
@@ -50,7 +65,6 @@ impl ProverType {
             ProverType::Exec,
             ProverType::RISC0,
             ProverType::SP1,
-            ProverType::Aligned,
             ProverType::TDX,
         ]
         .into_iter()
@@ -70,19 +84,64 @@ impl ProverType {
                 vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
-            ProverType::Aligned => unimplemented!("Doesn't need to generate an empty calldata."),
         }
     }
 
+    /// Used to call a getter for the REQUIRE_*_PROOF boolean in the OnChainProposer contract
     pub fn verifier_getter(&self) -> Option<String> {
         // These values have to match with the OnChainProposer.sol contract
         match self {
-            Self::Aligned => Some("ALIGNEDPROOFAGGREGATOR()".to_string()),
-            Self::RISC0 => Some("R0VERIFIER()".to_string()),
-            Self::SP1 => Some("SP1VERIFIER()".to_string()),
-            Self::TDX => Some("TDXVERIFIER()".to_string()),
+            Self::RISC0 => Some("REQUIRE_RISC0_PROOF()".to_string()),
+            Self::SP1 => Some("REQUIRE_SP1_PROOF()".to_string()),
+            Self::TDX => Some("REQUIRE_TDX_PROOF()".to_string()),
             Self::Exec => None,
         }
+    }
+
+    /// Fills the "vm_program_code" field of an AlignedVerificationData struct,
+    /// used for sending a proof to Aligned Layer.
+    pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
+        match self {
+            Self::RISC0 => {
+                let trimmed = RISC0_VM_PROGRAM_CODE.unwrap_or_default().trim_start_matches("0x").trim();
+                let decoded = hex::decode(trimmed).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
+                })?;
+                Ok(Some(decoded))
+            },
+            // for sp1, Aligned requires the ELF file
+            Self::SP1 => {
+                Ok(SP1_VM_PROGRAM_CODE.map(|x| x.to_vec()))
+            }
+            ,
+            // other types are not supported by Aligned
+            _ => Ok(None),
+        }
+    }
+
+    /// Gets the verification key or image id for this prover backend, used for
+    /// proof verification. Aligned Layer uses a different vk in SP1's case.
+    pub fn vk_path(&self, aligned: bool) -> std::io::Result<Option<PathBuf>> {
+        let path = match &self {
+            Self::RISC0 => format!(
+                "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
+            // the hash as a bn254 F_r element.
+            Self::SP1 if aligned => format!(
+                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            Self::SP1 if !aligned => format!(
+                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            // other types don't have a verification key
+            _ => return Ok(None),
+        };
+        let path = std::fs::canonicalize(path)?;
+        Ok(Some(path))
     }
 }
 
@@ -93,7 +152,6 @@ impl Display for ProverType {
             Self::RISC0 => write!(f, "RISC0"),
             Self::SP1 => write!(f, "SP1"),
             Self::TDX => write!(f, "TDX"),
-            Self::Aligned => write!(f, "Aligned"),
         }
     }
 }
@@ -111,7 +169,7 @@ impl BatchProof {
     pub fn prover_type(&self) -> ProverType {
         match self {
             BatchProof::ProofCalldata(proof) => proof.prover_type,
-            BatchProof::ProofBytes(_) => ProverType::Aligned,
+            BatchProof::ProofBytes(proof) => proof.prover_type,
         }
     }
 
@@ -122,10 +180,10 @@ impl BatchProof {
         }
     }
 
-    pub fn proof(&self) -> Vec<u8> {
+    pub fn compressed(&self) -> Option<Vec<u8>> {
         match self {
-            BatchProof::ProofCalldata(_) => vec![],
-            BatchProof::ProofBytes(proof) => proof.proof.clone(),
+            BatchProof::ProofCalldata(_) => None,
+            BatchProof::ProofBytes(proof) => Some(proof.proof.clone()),
         }
     }
 
@@ -141,6 +199,7 @@ impl BatchProof {
 /// It is used to send the proof to Aligned.
 #[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub struct ProofBytes {
+    pub prover_type: ProverType,
     pub proof: Vec<u8>,
     pub public_values: Vec<u8>,
 }
@@ -150,4 +209,14 @@ pub struct ProofBytes {
 pub struct ProofCalldata {
     pub prover_type: ProverType,
     pub calldata: Vec<Value>,
+}
+
+/// Indicates the prover which proof *format* to generate
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+pub enum ProofFormat {
+    #[default]
+    /// A compressed proof wrapped over groth16. EVM friendly.
+    Groth16,
+    /// Fixed size STARK execution proof.
+    Compressed,
 }

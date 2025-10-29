@@ -2,6 +2,7 @@ use crate::based::block_fetcher::BlockFetcherError;
 use crate::based::state_updater::StateUpdaterError;
 use crate::sequencer::admin_server::AdminError;
 use crate::utils::error::UtilsError;
+use aligned_sdk::common::errors::SubmitError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::Address;
@@ -131,6 +132,8 @@ pub enum ProofSenderError {
     EthClientError(#[from] EthClientError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
     #[error("{0} proof is not present")]
     ProofNotPresent(ProverType),
     #[error("Unexpected Error: {0}")]
@@ -145,12 +148,20 @@ pub enum ProofSenderError {
     AlignedFeeEstimateError(String),
     #[error("Proof Sender failed to get nonce from batcher: {0}")]
     AlignedGetNonceError(String),
-    #[error("Proof Sender failed to submit proof: {0}")]
-    AlignedSubmitProofError(String),
+    #[error("Proof Sender failed to submit proof(s): {0}")]
+    AlignedSubmitProofError(Box<SubmitError>),
+    #[error("Wrong batch proof format; should be compressed but found groth16 instead")]
+    AlignedWrongProofFormat,
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
     #[error("Failed to convert integer")]
     TryIntoError(#[from] std::num::TryFromIntError),
+}
+
+impl From<SubmitError> for ProofSenderError {
+    fn from(value: SubmitError) -> Self {
+        ProofSenderError::AlignedSubmitProofError(value.into())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -167,6 +178,17 @@ pub enum ProofVerifierError {
     StoreError(#[from] StoreError),
     #[error("Block Producer failed because of a rollup store error: {0}")]
     RollupStoreError(#[from] RollupStoreError),
+    #[error("Aligned does not support prover type {0}")]
+    UnsupportedProverType(String),
+    #[error(
+        "Mismatched public inputs for batch {batch_number} and prover type {prover_type}. Existing: {existing_hex}, latest: {latest_hex}"
+    )]
+    MismatchedPublicInputs {
+        batch_number: u64,
+        prover_type: ProverType,
+        existing_hex: String,
+        latest_hex: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -265,6 +287,8 @@ pub enum CommitterError {
     Unreachable(String),
     #[error("Failed to generate batch witness: {0}")]
     FailedToGenerateBatchWitness(#[source] ChainError),
+    #[error("Missing blob for batch {0}")]
+    MissingBlob(u64),
     #[error("Failed to create checkpoint: {0}")]
     FailedToCreateCheckpoint(String),
     #[error("Failed to process blobs: {0}")]
