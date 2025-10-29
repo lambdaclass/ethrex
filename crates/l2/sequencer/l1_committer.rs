@@ -272,7 +272,7 @@ impl L1Committer {
                 let first_block_to_commit = last_block + 1;
 
                 // We need to guarantee that the checkpoint path is new
-                // to avoid causing an lock error under rocksdb feature.
+                // to avoid causing a lock error under rocksdb feature.
                 let rand_suffix: u32 = rand::thread_rng().r#gen();
                 let one_time_checkpoint_path = self
                     .checkpoints_dir
@@ -771,7 +771,7 @@ impl L1Committer {
         // We need to skip checkpoint creation if the directory already exists.
         // Sometimes the commit_next_batch task is retried after a failure, and in
         // that case we would try to create a checkpoint again at the same path,
-        // causing an lock error under rocksdb feature.
+        // causing a lock error under rocksdb feature.
         if new_checkpoint_path.exists() {
             debug!("Checkpoint at path {new_checkpoint_path:?} already exists, skipping creation");
             return Ok(());
