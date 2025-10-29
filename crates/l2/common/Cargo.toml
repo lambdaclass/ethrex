@@ -33,7 +33,3 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
-
-[features]
-sp1 = []
-risc0 = []

@@ -15,6 +15,7 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::EstimateGasError},
 };
 use ethrex_storage_rollup::StoreRollup;
+use guest_program::{ZKVM_SP1_PROGRAM_ELF, methods::ZKVM_RISC0_PROGRAM_ELF};
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
@@ -246,10 +247,30 @@ impl L1ProofSender {
                 return Err(ProofSenderError::AlignedWrongProofFormat);
             };
 
-            let Some(vm_program_code) = prover_type.aligned_vm_program_code()? else {
-                return Err(ProofSenderError::UnexpectedError(format!(
-                    "no vm_program_code for {prover_type}"
-                )));
+            let vm_program_code = match prover_type {
+                ProverType::RISC0 => {
+                    if !cfg!(feature = "risc0") {
+                        return Err(ProofSenderError::UnexpectedError(
+                            "Trying to send RISC0 proof but RISC0 feature is disabled".to_string(),
+                        ));
+                    }
+
+                    ZKVM_RISC0_PROGRAM_ELF.to_vec()
+                }
+                ProverType::SP1 => {
+                    if !cfg!(feature = "sp1") {
+                        return Err(ProofSenderError::UnexpectedError(
+                            "Trying to send SP1 proof but SP1 feature is disabled".to_string(),
+                        ));
+                    }
+
+                    ZKVM_SP1_PROGRAM_ELF.to_vec()
+                }
+                _other => {
+                    return Err(ProofSenderError::UnexpectedError(format!(
+                        "no vm_program_code for {prover_type}"
+                    )));
+                }
             };
 
             let pub_input = Some(batch_proof.public_values());
