@@ -384,21 +384,16 @@ fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) -> bool {
 
 /// Calculates the base fee per blob gas for the current block based on
 /// it's parent excess blob gas and the update fraction, which depends on the fork.
-pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> u64 {
+pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> U256 {
     if update_fraction == 0 {
-        return 0;
+        return U256::zero();
     }
-    let result = fake_exponential(
+    fake_exponential(
         U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
         U256::from(parent_excess_blob_gas),
         update_fraction,
     )
-    .unwrap_or_default();
-    if result > u64::MAX.into() {
-        unreachable!("We shouldn't get blob gas over u64")
-    } else {
-        result.as_u64()
-    }
+    .unwrap_or_default()
 }
 
 /// Approximates factor * e ** (numerator / denominator) using Taylor expansion
@@ -761,8 +756,8 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
     }
 
     if fork >= Fork::Osaka
-        && BLOB_BASE_COST * parent_base_fee_per_gas
-            > (GAS_PER_BLOB as u64)
+        && U256::from(BLOB_BASE_COST * parent_base_fee_per_gas)
+            > (U256::from(GAS_PER_BLOB))
                 * calculate_base_fee_per_blob_gas(
                     parent_excess_blob_gas,
                     schedule.base_fee_update_fraction,
