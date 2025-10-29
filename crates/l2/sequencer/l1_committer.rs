@@ -942,7 +942,7 @@ impl L1Committer {
                 20, // 20% of headroom
             )
             .await?
-            .to_le_bytes();
+            .to_little_endian();
 
             let gas_price_per_blob = U256::from_little_endian(&le_bytes);
 
@@ -1181,7 +1181,7 @@ async fn estimate_blob_gas(
     eth_client: &EthClient,
     arbitrary_base_blob_gas_price: u64,
     headroom: u64,
-) -> Result<u64, CommitterError> {
+) -> Result<U256, CommitterError> {
     let latest_block = eth_client
         .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
         .await?;
@@ -1215,16 +1215,10 @@ async fn estimate_blob_gas(
     )
     .map_err(BlobEstimationError::FakeExponentialError)?;
 
-    let blob_gas = if blob_gas > u64::MAX.into() {
-        unreachable!("We shouldn't get blob gas over u64")
-    } else {
-        blob_gas.as_u64()
-    };
-
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
     // Check if we have an overflow when we take the headroom into account.
-    let blob_gas = arbitrary_base_blob_gas_price
+    let blob_gas = U256::from(arbitrary_base_blob_gas_price)
         .checked_add(gas_with_headroom)
         .ok_or(BlobEstimationError::OverflowError)?;
 
