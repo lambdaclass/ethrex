@@ -299,11 +299,13 @@ impl L1Committer {
                     )
                     .await;
 
-                let _ = remove_dir_all(&one_time_checkpoint_path).inspect_err(|e| {
-                    error!(
-                        "Failed to remove one-time checkpoint directory at path {one_time_checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
-                    )
-                });
+                if one_time_checkpoint_path.exists() {
+                    let _ = remove_dir_all(&one_time_checkpoint_path).inspect_err(|e| {
+                        error!(
+                            "Failed to remove one-time checkpoint directory at path {one_time_checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
+                        )
+                    });
+                }
 
                 let (
                     blobs_bundle,
