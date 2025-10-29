@@ -1,7 +1,6 @@
 use crate::api::{PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx};
 use crate::error::StoreError;
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 type Table = BTreeMap<Vec<u8>, Vec<u8>>;
@@ -12,16 +11,15 @@ pub struct InMemoryBackend {
     inner: Arc<RwLock<Database>>,
 }
 
-impl StorageBackend for InMemoryBackend {
-    fn open(_path: impl AsRef<Path>) -> Result<Self, StoreError>
-    where
-        Self: Sized,
-    {
+impl InMemoryBackend {
+    pub fn open() -> Result<Self, StoreError> {
         Ok(Self {
-            inner: Arc::new(RwLock::new(Database::new())),
+            inner: Default::default(),
         })
     }
+}
 
+impl StorageBackend for InMemoryBackend {
     fn clear_table(&self, table: &str) -> Result<(), StoreError> {
         let mut db = self
             .inner

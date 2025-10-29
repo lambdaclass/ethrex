@@ -15,11 +15,8 @@ pub struct RocksDBBackend {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
 }
 
-impl StorageBackend for RocksDBBackend {
-    fn open(path: impl AsRef<Path>) -> Result<Self, StoreError>
-    where
-        Self: Sized,
-    {
+impl RocksDBBackend {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -72,7 +69,9 @@ impl StorageBackend for RocksDBBackend {
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
         Ok(Self { db: Arc::new(db) })
     }
+}
 
+impl StorageBackend for RocksDBBackend {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
         let cf = self
             .db

@@ -17,7 +17,7 @@
 //!   only used in snapsync stage.
 
 use crate::error::StoreError;
-use std::{fmt::Debug, path::Path};
+use std::fmt::Debug;
 
 pub use tables::TABLES;
 
@@ -30,11 +30,6 @@ pub type PrefixResult = Result<(Box<[u8]>, Box<[u8]>), StoreError>;
 /// Implementations should focus on providing efficient access to the underlying storage
 /// without implementing business logic.
 pub trait StorageBackend: Debug + Send + Sync {
-    /// Opens a storage backend at the specified path.
-    fn open(path: impl AsRef<Path>) -> Result<Self, StoreError>
-    where
-        Self: Sized;
-
     /// Removes all data from the specified table.
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;
 

@@ -1,12 +1,9 @@
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
-    api::{
-        StorageBackend,
-        tables::{
-            ACCOUNT_CODES, BLOCK_NUMBERS, BODIES, FLATKEY_VALUES, HEADERS, MISC_VALUES, RECEIPTS,
-            TRANSACTION_LOCATIONS, TRIE_NODES,
-        },
+    api::tables::{
+        ACCOUNT_CODES, BLOCK_NUMBERS, BODIES, FLATKEY_VALUES, HEADERS, MISC_VALUES, RECEIPTS,
+        TRANSACTION_LOCATIONS, TRIE_NODES,
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
@@ -222,14 +219,14 @@ impl Store {
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
-        let path = path.as_ref();
+        let _path = &path;
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self::from_engine(Arc::new(StoreEngine::new(Arc::new(
                 RocksDBBackend::open(path)?,
             ))?)),
             EngineType::InMemory => Self::from_engine(Arc::new(StoreEngine::new(Arc::new(
-                InMemoryBackend::open(path)?,
+                InMemoryBackend::open()?,
             ))?)),
         }
     }
