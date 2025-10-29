@@ -199,7 +199,6 @@ impl Blockchain {
             let (tx, rx) = channel();
             let execution_handle = s.spawn(move || vm.execute_block_pipeline(block, tx));
             let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
-                let mut known_changes: FxHashSet<AccountUpdate> = FxHashSet::default();
                 let mut state_trie = self
                     .storage
                     .state_trie(parent_header.hash())?
