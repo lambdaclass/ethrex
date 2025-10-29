@@ -179,7 +179,6 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--p2p.port 30303\
     		--discovery.port 30303 \
     		--metrics \
-    		--log.level debug \
     		--metrics.port 3701 \
     		--network $(NETWORK) \
     		--datadir "$(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM)" \
