@@ -272,11 +272,10 @@ impl StoreEngine {
             .map_err(StoreError::from)
     }
 
-    pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let block_hash = block.hash();
         let block_value = BlockRLP::from(block).into_vec();
-        self.write_async(PENDING_BLOCKS, block_hash.as_bytes().to_vec(), block_value)
-            .await
+        self.write(PENDING_BLOCKS, block_hash.as_bytes().to_vec(), block_value)
     }
     pub async fn get_pending_block(
         &self,

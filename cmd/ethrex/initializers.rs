@@ -95,7 +95,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
-    let store = open_store(datadir.as_ref());
+    let mut store = open_store(datadir.as_ref());
     store
         .add_initial_state(genesis)
         .await
@@ -210,6 +210,12 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
+    #[cfg(feature = "l2")]
+    let based_context_arg = based_context;
+
+    #[cfg(not(feature = "l2"))]
+    let based_context_arg = None;
+
     let context = P2PContext::new(
         local_p2p_node,
         tracker.clone(),
@@ -218,8 +224,7 @@ pub async fn init_network(
         store,
         blockchain.clone(),
         get_client_version(),
-        #[cfg(feature = "l2")]
-        based_context,
+        based_context_arg,
         opts.tx_broadcasting_time_interval,
     )
     .await
@@ -552,7 +557,7 @@ pub async fn regenerate_head_state(
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block(block).await?;
+        blockchain.add_block(block)?;
     }
 
     info!("Finished regenerating state");

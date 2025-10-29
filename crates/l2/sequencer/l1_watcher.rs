@@ -19,6 +19,7 @@ use ethrex_rpc::{
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
+use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
@@ -81,7 +82,11 @@ impl L1Watcher {
         sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
-        let l2_client = EthClient::new("http://localhost:1729")?;
+        // TODO: De-hardcode the rollup client URL
+        #[allow(clippy::expect_used)]
+        let l2_client = EthClient::new(
+            Url::parse("http://localhost:1729").expect("Unreachable error. URL is hardcoded"),
+        )?;
         let last_block_fetched = U256::zero();
         Ok(Self {
             store,
@@ -215,11 +220,7 @@ impl L1Watcher {
                 .try_into()
                 .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
 
-            let chain_id = self
-                .store
-                .get_chain_config()
-                .map_err(|e| L1WatcherError::FailedToRetrieveChainConfig(e.to_string()))?
-                .chain_id;
+            let chain_id = self.store.get_chain_config().chain_id;
 
             let mint_transaction = privileged_transaction_data
                 .into_tx(&self.eth_client, chain_id, gas_price)
