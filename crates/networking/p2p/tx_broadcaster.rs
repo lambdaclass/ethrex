@@ -193,7 +193,9 @@ impl TxBroadcaster {
         let full_txs = txs_to_broadcast
             .iter()
             .map(|tx| tx.transaction().clone())
-            .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction { .. }))
+            .filter(|tx| {
+                !matches!(tx, Transaction::EIP4844Transaction { .. }) && !tx.is_privileged()
+            })
             .collect::<Vec<Transaction>>();
 
         let blob_txs = txs_to_broadcast
@@ -262,6 +264,7 @@ impl TxBroadcaster {
                     .known_txs
                     .get(&hash)
                     .is_some_and(|record| record.peers.is_set(peer_idx))
+                    && !tx.is_privileged()
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
