@@ -1,3 +1,6 @@
+use crate::api::tables::{
+    ACCOUNT_CODES, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, HEADERS, RECEIPTS, TRIE_NODES,
+};
 use crate::api::{
     PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, tables::TABLES,
 };
@@ -27,17 +30,35 @@ impl RocksDBBackend {
         opts.set_max_open_files(-1);
         opts.set_max_file_opening_threads(16);
 
+        opts.set_max_background_jobs(8);
+
+        opts.set_level_zero_file_num_compaction_trigger(2);
+        opts.set_level_zero_slowdown_writes_trigger(10);
+        opts.set_level_zero_stop_writes_trigger(16);
+        opts.set_target_file_size_base(512 * 1024 * 1024); // 512MB
+        opts.set_max_bytes_for_level_base(2 * 1024 * 1024 * 1024); // 2GB L1
+        opts.set_max_bytes_for_level_multiplier(10.0);
+        opts.set_level_compaction_dynamic_level_bytes(true);
+
+        opts.set_db_write_buffer_size(1024 * 1024 * 1024); // 1GB
+        opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+        opts.set_max_write_buffer_number(4);
+        opts.set_min_write_buffer_number_to_merge(2);
+
+        opts.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
+        opts.set_max_total_wal_size(2 * 1024 * 1024 * 1024); // 2GB
+        opts.set_wal_bytes_per_sync(32 * 1024 * 1024); // 32MB
+        opts.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
         opts.set_use_fsync(false); // fdatasync
 
-        opts.enable_statistics();
-        opts.set_stats_dump_period_sec(600);
+        opts.set_enable_pipelined_write(true);
+        opts.set_allow_concurrent_memtable_write(true);
+        opts.set_enable_write_thread_adaptive_yield(true);
+        opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
+        opts.set_advise_random_on_open(false);
 
-        // Values taken from https://github.com/facebook/rocksdb/wiki/Setup-Options-and-Basic-Tuning#other-general-options
-        // These are 'real' default values
-        opts.set_level_compaction_dynamic_level_bytes(true);
-        opts.set_max_background_jobs(6);
-        opts.set_bytes_per_sync(1048576);
-        opts.set_compaction_pri(rocksdb::CompactionPri::MinOverlappingRatio);
+        // opts.enable_statistics();
+        // opts.set_stats_dump_period_sec(600);
 
         // Open all column families
         let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
@@ -47,21 +68,74 @@ impl RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
-        let cf_descriptors = all_cfs_to_open
-            .iter()
-            .map(|cf| {
-                let mut cf_opts = Options::default();
-                let mut bb_opts = BlockBasedOptions::default();
-                bb_opts.set_block_size(16 * 1024);
-                bb_opts.set_cache_index_and_filter_blocks(true);
-                bb_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-                // Newest in this [list](https://github.com/facebook/rocksdb/blob/v8.6.7/include/rocksdb/table.h#L493-L521)
-                // We can check main
-                bb_opts.set_format_version(6);
-                cf_opts.set_block_based_table_factory(&bb_opts);
-                ColumnFamilyDescriptor::new(cf, cf_opts)
-            })
-            .collect::<Vec<_>>();
+        let mut cf_descriptors = Vec::new();
+        for cf_name in &all_cfs_to_open {
+            let mut cf_opts = Options::default();
+
+            cf_opts.set_level_zero_file_num_compaction_trigger(4);
+            cf_opts.set_level_zero_slowdown_writes_trigger(20);
+            cf_opts.set_level_zero_stop_writes_trigger(36);
+
+            match cf_name.as_str() {
+                HEADERS | BODIES => {
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
+                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+                    cf_opts.set_max_write_buffer_number(4);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(32 * 1024); // 32KB blocks
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
+                    block_opts.set_bloom_filter(10.0, false);
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                TRIE_NODES => {
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
+                    cf_opts.set_max_write_buffer_number(6);
+                    cf_opts.set_min_write_buffer_number_to_merge(2);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                RECEIPTS | ACCOUNT_CODES => {
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(32 * 1024); // 32KB
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                _ => {
+                    // Default for other CFs
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024);
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+            }
+
+            cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
+        }
 
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &opts,
