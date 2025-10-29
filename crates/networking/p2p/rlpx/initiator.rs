@@ -32,8 +32,8 @@ impl RLPxInitiator {
     pub fn new(context: P2PContext) -> Self {
         Self {
             context,
-            initial_lookup_interval: Duration::from_millis(50),
-            lookup_interval: Duration::from_secs(5 * 60),
+            initial_lookup_interval: Duration::from_millis(100),
+            lookup_interval: Duration::from_millis(600),
             target_peers: 50,
         }
     }
