@@ -1,7 +1,6 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
-use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
@@ -847,7 +846,6 @@ pub async fn build_generic_tx(
             .map(AccessListEntry::from)
             .collect(),
         from,
-        wrapper_version: overrides.wrapper_version,
         ..Default::default()
     };
     tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
@@ -992,26 +990,6 @@ pub async fn get_pending_privileged_transactions(
     )
     .await?;
     from_hex_string_to_h256_array(&response)
-}
-
-// TODO: This is a work around for now, issue: https://github.com/lambdaclass/ethrex/issues/4828
-pub async fn get_l1_active_fork(
-    client: &EthClient,
-    activation_time: Option<u64>,
-) -> Result<Fork, EthClientError> {
-    let Some(osaka_activation_time) = activation_time else {
-        return Ok(Fork::Osaka);
-    };
-    let current_timestamp = client
-        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
-        .await?
-        .header
-        .timestamp;
-    if current_timestamp < osaka_activation_time {
-        Ok(Fork::Prague)
-    } else {
-        Ok(Fork::Osaka)
-    }
 }
 
 async fn _generic_call(
