@@ -28,15 +28,10 @@ type Proof = Bytes48;
 pub fn warm_up_trusted_setup() {
     #[cfg(feature = "c-kzg")]
     {
-        use std::sync::OnceLock;
         use std::thread;
 
-        static WARMUP_TRIGGER: OnceLock<()> = OnceLock::new();
-
-        WARMUP_TRIGGER.get_or_init(|| {
-            let _ = thread::spawn(|| {
-                std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
-            });
+        let _ = thread::Builder::new().name("kzg-warmup".into()).spawn(|| {
+            std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
         });
     }
 }
