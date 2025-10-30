@@ -19,7 +19,7 @@ use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::{
     metrics::{CurrentStepValue, METRICS},
