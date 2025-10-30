@@ -285,7 +285,7 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         for updates in rx {
-            let current_length = queue_length.fetch_sub(1, Ordering::Relaxed);
+            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
             state_trie_hash = Self::process_incoming_update_message(
                 &self.storage,
