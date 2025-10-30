@@ -50,6 +50,7 @@ impl RLPEncode for BranchNode {
                 NodeHash::Inline((encoded, len)) => buf.extend_from_slice(&encoded[..*len as usize]),
             }
         }
+        <[u8] as RLPEncode>::encode(&self.value, &mut buf);
 
         buf
     }
