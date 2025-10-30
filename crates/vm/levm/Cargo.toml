@@ -47,6 +47,8 @@ substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-s
 
 bitvec = { version = "1.0.1", features = ["alloc"] }
 
+rustc-hash.workspace = true
+
 [dev-dependencies]
 hex.workspace = true
 colored = "2.1.0"
