@@ -81,6 +81,12 @@ redundant_clone = "warn"
 
 [features]
 default = ["l2"]
+
+sp1 = ["guest_program/sp1"]
+risc0 = ["guest_program/risc0"]
+
 rocksdb = []
+
 metrics = ["ethrex-blockchain/metrics"]
+
 l2 = ["guest_program/l2"]
