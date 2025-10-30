@@ -36,10 +36,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x36664d7c5031bd965bbb405b55495a90dd780740
+// 0x79d6af40f7c9145b0741639ea969c13d5faa3cc6
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x36, 0x66, 0x4d, 0x7c, 0x50, 0x31, 0xbd, 0x96, 0x5b, 0xbb, 0x40, 0x5b, 0x55, 0x49, 0x5a, 0x90,
-    0xdd, 0x78, 0x07, 0x40,
+    0x79, 0xd6, 0xaf, 0x40, 0xf7, 0xc9, 0x14, 0x5b, 0x07, 0x41, 0x63, 0x9e, 0xa9, 0x69, 0xc1, 0x3d,
+    0x5f, 0xaa, 0x3c, 0xc6,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -958,6 +958,18 @@ pub async fn get_sp1_vk(
     on_chain_proposer_address: Address,
 ) -> Result<[u8; 32], EthClientError> {
     _call_bytes32_variable(client, b"SP1_VERIFICATION_KEY()", on_chain_proposer_address).await
+}
+
+pub async fn get_risc0_vk(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+) -> Result<[u8; 32], EthClientError> {
+    _call_bytes32_variable(
+        client,
+        b"RISC0_VERIFICATION_KEY()",
+        on_chain_proposer_address,
+    )
+    .await
 }
 
 pub async fn get_last_fetched_l1_block(

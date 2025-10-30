@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    clients::eth::errors::{CallError, GetPeerCountError, GetWitnessError, TxPoolContentError},
+    clients::eth::errors::{
+        CallError, GetBlobBaseFeeRequestError, GetPeerCountError, GetWitnessError,
+        TxPoolContentError,
+    },
     debug::execution_witness::RpcExecutionWitness,
     mempool::MempoolContent,
     types::{
@@ -77,7 +80,7 @@ pub const MAX_RETRY_DELAY: u64 = 1800;
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
 impl EthClient {
-    pub fn new(url: &str) -> Result<EthClient, EthClientError> {
+    pub fn new(url: Url) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
             vec![url],
             MAX_NUMBER_OF_RETRIES,
@@ -90,7 +93,7 @@ impl EthClient {
     }
 
     pub fn new_with_config(
-        urls: Vec<&str>,
+        urls: Vec<Url>,
         max_number_of_retries: u64,
         backoff_factor: u64,
         min_retry_delay: u64,
@@ -98,14 +101,6 @@ impl EthClient {
         maximum_allowed_max_fee_per_gas: Option<u64>,
         maximum_allowed_max_fee_per_blob_gas: Option<u64>,
     ) -> Result<Self, EthClientError> {
-        let urls = urls
-            .iter()
-            .map(|url| {
-                Url::parse(url)
-                    .map_err(|_| EthClientError::ParseUrlError("Failed to parse urls".to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
         Ok(Self {
             client: Client::new(),
             urls,
@@ -118,9 +113,9 @@ impl EthClient {
         })
     }
 
-    pub fn new_with_multiple_urls(urls: Vec<String>) -> Result<EthClient, EthClientError> {
+    pub fn new_with_multiple_urls(urls: Vec<Url>) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
-            urls.iter().map(AsRef::as_ref).collect(),
+            urls,
             MAX_NUMBER_OF_RETRIES,
             BACKOFF_FACTOR,
             MIN_RETRY_DELAY,
@@ -293,7 +288,7 @@ impl EthClient {
             .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(EstimateGasError::RPCError(error_response.error.message.to_string()).into())
+                Err(EstimateGasError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -660,6 +655,24 @@ impl EthClient {
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
                 Err(TxPoolContentError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
+    pub async fn get_blob_base_fee(&self, block: BlockIdentifier) -> Result<u64, EthClientError> {
+        let params = Some(vec![block.into()]);
+        let request = RpcRequest::new("eth_blobBaseFee", params);
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => Ok(u64::from_str_radix(
+                serde_json::from_value::<String>(result.result)
+                    .map_err(GetBlobBaseFeeRequestError::SerdeJSONError)?
+                    .trim_start_matches("0x"),
+                16,
+            )
+            .map_err(GetBlobBaseFeeRequestError::ParseIntError)?),
+            RpcResponse::Error(error_response) => {
+                Err(GetBlobBaseFeeRequestError::RPCError(error_response.error.message).into())
             }
         }
     }

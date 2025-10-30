@@ -3,6 +3,7 @@ use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_l2_common::l1_messages::L1MessageProof;
+use ethrex_rpc::clients::eth::errors::GetL1BlobBaseFeeRequestError;
 use ethrex_rpc::clients::eth::errors::GetOperatorFeeError;
 use ethrex_rpc::clients::eth::errors::GetOperatorFeeVaultAddressError;
 use ethrex_rpc::types::block_identifier::BlockIdentifier;
@@ -100,6 +101,23 @@ pub async fn get_operator_fee(
             .map_err(EthClientError::from),
         RpcResponse::Error(error_response) => {
             Err(GetOperatorFeeError::RPCError(error_response.error.message).into())
+        }
+    }
+}
+
+pub async fn get_l1_blob_base_fee_per_gas(
+    client: &EthClient,
+    block_number: u64,
+) -> Result<u64, EthClientError> {
+    let params = Some(vec![json!(format!("{block_number:#x}"))]);
+    let request = RpcRequest::new("ethrex_getL1BlobBaseFee", params);
+
+    match client.send_request(request).await? {
+        RpcResponse::Success(result) => serde_json::from_value(result.result)
+            .map_err(GetL1BlobBaseFeeRequestError::SerdeJSONError)
+            .map_err(EthClientError::from),
+        RpcResponse::Error(error_response) => {
+            Err(GetL1BlobBaseFeeRequestError::RPCError(error_response.error.message).into())
         }
     }
 }
