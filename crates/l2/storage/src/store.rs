@@ -63,7 +63,11 @@ impl Store {
         })
         .await?;
         // Sets the lastest sent batch proof to 0
-        self.set_latest_sent_batch_proof(0).await
+        if self.get_latest_sent_batch_proof().await.is_err() {
+            // If not set, we initialize it to 0
+            self.set_latest_sent_batch_proof(0).await?;
+        };
+        Ok(())
     }
 
     /// Returns the block numbers by a given batch_number
