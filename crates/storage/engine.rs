@@ -263,10 +263,15 @@ impl StoreEngine {
     ) -> Result<Option<BlockHeader>, StoreError> {
         let txn = self.backend.begin_read()?;
         let header_value = txn.get(HEADERS, block_hash.as_bytes())?;
-        header_value
+        let mut header = header_value
             .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StoreError::from)
+            .map_err(StoreError::from)?;
+        header.as_mut().inspect(|h| {
+            // Set the hash so we avoid recomputing it later
+            let _ = h.hash.set(block_hash);
+        });
+        Ok(header)
     }
 
     pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
