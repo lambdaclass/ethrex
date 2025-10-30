@@ -14,43 +14,43 @@ Benchmark server hardware:
 
 Common setup:
 - Block time 12 seconds
-- Batch time 12*64 = 768 seconds = 12m 48s (64 block batch)
+- Batch time 12*64 = 768 seconds = 12m 48s (aimed for 64 block batch, but batches had 63 blocks on average)
 - Prover: SP1, running in a RTX 4090
 
 ## ETH Transfers only
 
 Validium L2 (no blobs):
 
-| TPS | Avg. batch size (blocks) | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
+| TPS | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 63 | missing | 4m 15s | ✅ | l2-gpu-3 |
-| 3 | 63 | 755k | 8m 49s | ✅ | ethrex-gpu-4090-1 |
-| 5 | 63 | 1.25M | 13m 12s | ❌ | ethrex-gpu-4090-1 |
+| 1 | missing | 4m 15s | ✅ | l2-gpu-3 |
+| 3 | 755k | 8m 49s | ✅ | ethrex-gpu-4090-1 |
+| 5 | 1.25M | 13m 12s | ❌ | ethrex-gpu-4090-1 |
 
 ## ERC20 Transfers only
 
 Validium L2 (no blobs):
 
-| TPS | Avg. batch size (blocks) | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
+| TPS | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 63 | 625k | 7m 27s | ✅ | l2-gpu-3 |
-| 2 | 63 | 1.25M | 10m 6s | ✅ | ethrex-gpu-4090-1 |
-| 3 | 63 | 1.87M | 21m 30s | ❌ | l2-gpu-3 |
-| 4 | 63 | 2.52M | 20m 8s | ❌ | ethrex-gpu-4090-1 |
+| 1 | 625k | 7m 27s | ✅ | l2-gpu-3 |
+| 2 | 1.25M | 10m 6s | ✅ | ethrex-gpu-4090-1 |
+| 3 | 1.87M | 21m 30s | ❌ | l2-gpu-3 |
+| 4 | 2.52M | 20m 8s | ❌ | ethrex-gpu-4090-1 |
 
 Rollup L2 (publishes blobs)
 
-| TPS | Avg. batch size (blocks) | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
+| TPS | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
 | --- | --- | --- | --- | --- | --- |
-| 2 | 63 | 1.38M | 10m 52s | ✅ | ethrex-gpu-4090-1 |
-| 3 | 63 | 2.10M | 17m 12s | ❌ | l2-gpu-3 |
+| 2 | 1.38M | 10m 52s | ✅ | ethrex-gpu-4090-1 |
+| 3 | 2.10M | 17m 12s | ❌ | l2-gpu-3 |
 
 Rollup L2 (publishes blobs), with 1.000.000 genesis accounts (big state)
 
-| TPS | Avg. batch size (blocks) | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
+| TPS | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
 | --- | --- | --- | --- | --- | --- |
-| 2 | 63 | 1.07M | 10m 6s | ✅ | l2-gpu-3 |
-| 3 | 63 | 1.87M | 16m 36s | ❌ | l2-gpu-3 |
+| 2 | 1.07M | 10m 6s | ✅ | l2-gpu-3 |
+| 3 | 1.87M | 16m 36s | ❌ | l2-gpu-3 |
 
 **Note:**
 
