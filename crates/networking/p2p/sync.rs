@@ -149,7 +149,7 @@ impl Syncer {
             Ok(()) => {
                 info!(
                     time_elapsed_s = start_time.elapsed().as_secs(),
-                    "Sync cycle finished succesfully",
+                    "Sync cycle finished successfully",
                 );
             }
 
