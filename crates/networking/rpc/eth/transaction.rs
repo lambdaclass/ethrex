@@ -348,7 +348,7 @@ impl RpcHandler for CreateAccessListRequest {
         };
 
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.hash());
-        let mut vm = context.blockchain.new_evm(vm_db).await?;
+        let mut vm = context.blockchain.new_evm(vm_db)?;
 
         // Run transaction and obtain access list
         let (gas_used, access_list, error) = vm.create_access_list(&self.transaction, &header)?;
@@ -571,8 +571,8 @@ async fn simulate_tx(
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    let vm_db = StoreVmDatabase::new(storage.clone(), block_header.hash());
-    let mut vm = blockchain.new_evm(vm_db).await?;
+    let vm_db = StoreVmDatabase::new(storage, block_header.hash());
+    let mut vm = blockchain.new_evm(vm_db)?;
 
     match vm.simulate_tx_from_generic(transaction, block_header)? {
         ExecutionResult::Revert {

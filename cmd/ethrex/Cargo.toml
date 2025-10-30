@@ -83,7 +83,7 @@ c-kzg = [
   "ethrex-crypto/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
-rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb"]
+rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [
   "jemalloc",
@@ -103,15 +103,14 @@ l2 = [
   "ethrex-storage-rollup",
   "dep:tui-logger",
   "dep:bytes",
-  "dep:genesis-tool",
   "dep:thiserror",
   "dep:serde_json",
   "dep:hex",
 ]
 l2-sql = ["ethrex-storage-rollup/sql"]
-sp1 = ["ethrex-prover/sp1"]
+sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-prover/gpu"]
-risc0 = ["ethrex-prover/risc0"]
+risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
@@ -120,5 +119,7 @@ hex = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 ethrex-common = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-genesis-tool = { path = "../../tooling/genesis", optional = true }
 thiserror = { workspace = true, optional = true }
+
+[lints]
+workspace = true

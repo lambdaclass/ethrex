@@ -37,7 +37,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 1).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            let chain_config = context.storage.get_chain_config()?;
+            let chain_config = context.storage.get_chain_config();
             if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV1 used to build Cancun payload".to_string(),
@@ -70,7 +70,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            let chain_config = context.storage.get_chain_config()?;
+            let chain_config = context.storage.get_chain_config();
             if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV2 used to build Cancun payload".to_string(),
@@ -216,10 +216,19 @@ async fn handle_forkchoice(
     }
 
     if context.syncer.sync_mode() == SyncMode::Snap {
-        context
-            .syncer
-            .sync_to_head(fork_choice_state.head_block_hash);
-        return Ok((None, PayloadStatus::syncing().into()));
+        // Don't trigger a sync if the block is already canonical
+        if context
+            .storage
+            .is_canonical_sync(fork_choice_state.head_block_hash)?
+        {
+            // Disable snapsync mode so we can process incoming payloads
+            context.syncer.disable_snap();
+        } else {
+            context
+                .syncer
+                .sync_to_head(fork_choice_state.head_block_hash);
+            return Ok((None, PayloadStatus::syncing().into()));
+        }
     }
 
     match apply_fork_choice(
@@ -332,7 +341,7 @@ fn validate_attributes_v3(
     head_block: &BlockHeader,
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
+    let chain_config = context.storage.get_chain_config();
     // Specification indicates this order of validations:
     // https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#specification-1
     if attributes.withdrawals.is_none() {
