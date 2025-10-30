@@ -108,9 +108,9 @@ l2 = [
   "dep:hex",
 ]
 l2-sql = ["ethrex-storage-rollup/sql"]
-sp1 = ["ethrex-prover/sp1", "ethrex-l2-common/sp1"]
+sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-prover/gpu"]
-risc0 = ["ethrex-prover/risc0", "ethrex-l2-common/risc0"]
+risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
@@ -120,3 +120,6 @@ bytes = { workspace = true, optional = true }
 ethrex-common = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
+
+[lints]
+workspace = true

@@ -38,3 +38,4 @@ risc0 = ["ethrex-levm/risc0"]
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"
