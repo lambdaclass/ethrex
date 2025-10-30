@@ -2,7 +2,7 @@
 
 This document describes the algorithm implemented in [crates/common/trie/trie_sorted.rs](/crates/common/trie/trie_sorted.rs)
 which is used to speed up the insertion time in snap sync.
-During that step we are inserting all of the account state and storage
+During that step we are inserting all of the accounts state and storage
 slots downloaded into the Ethereum world state Merkle Patricia Trie.
 To know how that trie works, it's recommended to [read this primer first.](https://epf.wiki/#/wiki/EL/data-structures?id=world-state-trie)
 
