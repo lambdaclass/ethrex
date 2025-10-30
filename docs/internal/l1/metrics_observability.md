@@ -94,4 +94,4 @@ Before addressing the gaps listed below, we should also consider some general im
 5. Review block building metrics.
 6. Instrument Engine API handlers with histograms/counters; plan storage IO metrics in parallel.
 7. Revisit histogram buckets and naming conventions once new metrics are merged, then define alert thresholds.
-8. Define exemplars when appropriate.
+8. Investigate exemplar usage where appropriate.
