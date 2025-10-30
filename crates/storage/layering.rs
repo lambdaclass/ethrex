@@ -126,6 +126,7 @@ impl TrieDB for TrieWrapper {
         let key = apply_prefix(self.prefix, key);
         self.db.flatkeyvalue_computed(key)
     }
+
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
         if let Some(value) = self.inner.get(self.state_root, key.clone()) {
