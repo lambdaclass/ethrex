@@ -1574,7 +1574,9 @@ async fn insert_storages(
     debug!(thread_count, "Inserting storages");
     scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
+        let semaphore = Arc::new(std::sync::RwLock::new(0_u64));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
+            let semaphore = semaphore.clone();
             let sender = sender.clone();
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
@@ -1586,6 +1588,7 @@ async fn insert_storages(
             let pool_clone = pool.clone();
             let mut iter = snapshot.raw_iterator();
             let task = Box::new(move || {
+                let _unused = semaphore.read();
                 let mut buffer: [u8; 64] = [0_u8; 64];
                 buffer[..32].copy_from_slice(&account_hash.0);
                 iter.seek(buffer);
@@ -1611,6 +1614,9 @@ async fn insert_storages(
             });
             pool.execute(task);
         }
+        let _unused = semaphore
+            .write()
+            .expect("We have finished all our operations");
     });
 
     std::fs::remove_dir_all(account_storages_snapshots_dir)
