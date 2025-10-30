@@ -1,4 +1,5 @@
 use crate::{
+    call_frame::CallFrameBackup,
     errors::{ContextResult, InternalError, TxValidationError},
     hooks::{
         DefaultHook,
@@ -9,12 +10,22 @@ use crate::{
         hook::Hook,
     },
     opcodes::Opcode,
+    utils::get_account_diffs_in_tx,
     vm::VM,
 };
 
+use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, U256,
-    types::fee_config::{FeeConfig, OperatorFeeConfig},
+    Address, H160, H256, U256,
+    constants::GAS_PER_BLOB,
+    types::{
+        Code,
+        {
+            SAFE_BYTES_PER_BLOB,
+            account_diff::get_accounts_diff_size,
+            fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig},
+        },
+    },
 };
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
@@ -24,6 +35,7 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
 
 pub struct L2Hook {
     pub fee_config: FeeConfig,
+    pub pre_execution_backup: CallFrameBackup,
 }
 
 impl Hook for L2Hook {
@@ -36,6 +48,8 @@ impl Hook for L2Hook {
             // Max fee per gas must be sufficient to cover base fee + operator fee
             validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
 
+            // Backup the callframe to calculate the tx state diff later
+            self.pre_execution_backup = vm.current_call_frame.call_frame_backup.clone();
             return Ok(());
         }
 
@@ -108,8 +122,11 @@ impl Hook for L2Hook {
             // If the transaction failed some validation, but it must still be included
             // To prevent it from taking effect, we force it to revert
             vm.current_call_frame.msg_value = U256::zero();
-            vm.current_call_frame
-                .set_code(vec![Opcode::INVALID.into()].into())?;
+            vm.current_call_frame.set_code(Code {
+                hash: H256::zero(),
+                bytecode: vec![Opcode::INVALID.into()].into(),
+                jump_targets: Vec::new(),
+            })?;
             return Ok(());
         }
 
@@ -132,27 +149,60 @@ impl Hook for L2Hook {
 
             let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
             let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
-            refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
-
-            delete_self_destruct_accounts(vm)?;
 
             // Different from L1:
 
-            pay_coinbase_l2(
+            let mut l1_gas = calculate_l1_fee_gas(
                 vm,
-                ctx_result.gas_used,
-                &self.fee_config.operator_fee_config,
+                std::mem::take(&mut self.pre_execution_backup),
+                &self.fee_config.l1_fee_config,
             )?;
+
+            let mut total_gas = actual_gas_used
+                .checked_add(l1_gas)
+                .ok_or(InternalError::Overflow)?;
+
+            // Check that sender has enough gas to pay the l1 fee
+            if total_gas > vm.current_call_frame.gas_limit {
+                // Not enough gas to pay l1 fee, force revert
+
+                // Restore VM state to before execution
+                vm.substate.revert_backup();
+                vm.restore_cache_state()?;
+
+                undo_value_transfer(vm)?;
+
+                ctx_result.result = crate::errors::TxResult::Revert(
+                    TxValidationError::InsufficientMaxFeePerGas.into(),
+                );
+                ctx_result.gas_used = vm.current_call_frame.gas_limit;
+                ctx_result.output = Bytes::new();
+                // Set l1_gas to use all remaining gas
+                l1_gas = vm
+                    .current_call_frame
+                    .gas_limit
+                    .saturating_sub(actual_gas_used);
+
+                total_gas = vm.current_call_frame.gas_limit
+            }
+
+            delete_self_destruct_accounts(vm)?;
+
+            // L1 fee is paid to the L1 fee vault
+            pay_to_l1_fee_vault(vm, l1_gas, self.fee_config.l1_fee_config)?;
+
+            refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
+
+            // We pay to coinbase after the l1_fee to avoid charging the diff to every transaction
+            pay_coinbase_l2(vm, actual_gas_used, &self.fee_config.operator_fee_config)?;
 
             // Base fee is not burned
-            pay_base_fee_vault(vm, ctx_result.gas_used, self.fee_config.base_fee_vault)?;
+            pay_base_fee_vault(vm, actual_gas_used, self.fee_config.base_fee_vault)?;
 
             // Operator fee is paid to the chain operator
-            pay_operator_fee(
-                vm,
-                ctx_result.gas_used,
-                &self.fee_config.operator_fee_config,
-            )?;
+            pay_operator_fee(vm, actual_gas_used, &self.fee_config.operator_fee_config)?;
+
+            ctx_result.gas_used = total_gas;
 
             return Ok(());
         }
@@ -250,5 +300,75 @@ fn pay_operator_fee(
         .ok_or(InternalError::Overflow)?;
 
     vm.increase_account_balance(fee_config.operator_fee_vault, operator_fee)?;
+    Ok(())
+}
+
+fn calculate_l1_fee(
+    fee_config: &L1FeeConfig,
+    account_diffs_size: u64,
+) -> Result<U256, crate::errors::VMError> {
+    let l1_fee_per_blob: U256 = fee_config
+        .l1_fee_per_blob_gas
+        .checked_mul(GAS_PER_BLOB.into())
+        .ok_or(InternalError::Overflow)?
+        .into();
+
+    let l1_fee_per_blob_byte = l1_fee_per_blob
+        .checked_div(U256::from(SAFE_BYTES_PER_BLOB))
+        .ok_or(InternalError::DivisionByZero)?;
+
+    let l1_fee = l1_fee_per_blob_byte
+        .checked_mul(U256::from(account_diffs_size))
+        .ok_or(InternalError::Overflow)?;
+
+    Ok(l1_fee)
+}
+
+fn calculate_l1_fee_gas(
+    vm: &mut VM<'_>,
+    pre_execution_backup: CallFrameBackup,
+    l1_fee_config: &Option<L1FeeConfig>,
+) -> Result<u64, crate::errors::VMError> {
+    let Some(fee_config) = l1_fee_config else {
+        // No l1 fee configured, l1 fee gas is zero
+        return Ok(0);
+    };
+
+    let mut execution_backup = vm.current_call_frame.call_frame_backup.clone();
+    execution_backup.extend(pre_execution_backup);
+    let account_diffs_in_tx = get_account_diffs_in_tx(vm.db, execution_backup)?;
+    let account_diffs_size = get_accounts_diff_size(&account_diffs_in_tx)
+        .map_err(|e| InternalError::Custom(format!("Failed to get account diffs size: {}", e)))?;
+
+    let l1_fee = calculate_l1_fee(fee_config, account_diffs_size)?;
+    let mut l1_fee_gas = l1_fee
+        .checked_div(vm.env.gas_price)
+        .ok_or(InternalError::DivisionByZero)?;
+
+    // Ensure at least 1 gas is charged if there is a non-zero l1 fee
+    if l1_fee_gas == U256::zero() && l1_fee > U256::zero() {
+        l1_fee_gas = U256::one();
+    }
+
+    Ok(l1_fee_gas.try_into().map_err(|_| InternalError::Overflow)?)
+}
+
+fn pay_to_l1_fee_vault(
+    vm: &mut VM<'_>,
+    gas_to_pay: u64,
+    l1_fee_config: Option<L1FeeConfig>,
+) -> Result<(), crate::errors::VMError> {
+    let Some(fee_config) = l1_fee_config else {
+        // No l1 fee configured, l1 fee is not paid
+        return Ok(());
+    };
+
+    let l1_fee = U256::from(gas_to_pay)
+        .checked_mul(vm.env.gas_price)
+        .ok_or(InternalError::Overflow)?;
+
+    vm.increase_account_balance(fee_config.l1_fee_vault, l1_fee)
+        .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+
     Ok(())
 }

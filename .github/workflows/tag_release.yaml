@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   packages: write
+  actions: write
 
 env:
   REGISTRY: ghcr.io
@@ -19,7 +20,7 @@ jobs:
       matrix:
         platform:
           - ubuntu-22.04
-          - ubuntu-24.04-arm
+          - ubuntu-22.04-arm
           - macos-latest
         stack:
           - l1
@@ -33,13 +34,14 @@ jobs:
             os: linux
             arch: x86_64
             cpu_flags: RUSTFLAGS='-C target-cpu=x86-64-v2'
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             os: linux
             arch: aarch64
           - platform: macos-latest
             os: macos
             arch: aarch64
           - platform: macos-latest
+            os: macos
             stack: l2
             features: l2,l2-sql
           - platform: ubuntu-22.04
@@ -48,10 +50,10 @@ jobs:
           - platform: ubuntu-22.04
             stack: l2_gpu
             features: l2,l2-sql,sp1,risc0,gpu
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             stack: l2
             features: l2,l2-sql,sp1
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             stack: l2_gpu
             features: l2,l2-sql,sp1,gpu
           - stack: l2_gpu
@@ -62,15 +64,12 @@ jobs:
             l2_suffix: "-l2"
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Free Disk Space (Ubuntu)
-        if: ${{ matrix.os == 'linux' }}
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        if: ${{ matrix.os == 'linux' }}
+        uses: ./.github/actions/free-disk
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -83,9 +82,8 @@ jobs:
         run: |
           curl -L https://sp1up.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.8
-
       - name: Set up QEMU (only Linux ARM)
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
@@ -99,7 +97,6 @@ jobs:
           ~/.risc0/bin/rzup install cargo-risczero 3.0.3
           ~/.risc0/bin/rzup install risc0-groth16
           ~/.risc0/bin/rzup install rust
-
       - name: Install CUDA (only Linux x86 GPU)
         uses: Jimver/cuda-toolkit@v0.2.24
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }}
@@ -109,23 +106,21 @@ jobs:
           method: "network"
           sub-packages: '["nvcc"]'
 
-      - name: Install solc
-        if: ${{ matrix.platform != 'ubuntu-24.04-arm' }}
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install solc (Linux ARM)
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
+      - name: Install solc
         run: |
-          sudo curl -L -o /usr/local/bin/solc https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29
-          sudo chmod +x /usr/local/bin/solc
+          if [[ "${{ matrix.os }}" == "linux" ]]; then
+            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-static-linux
+            sudo chmod +x /usr/local/bin/solc
+          elif [[ "${{ matrix.os }}" == "macos" ]]; then
+            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-macos
+            sudo chmod +x /usr/local/bin/solc
+          fi
+          solc --version
 
       - name: Build ethrex
         run: |
@@ -188,6 +183,7 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+      actions: write
 
     steps:
       - name: Checkout code

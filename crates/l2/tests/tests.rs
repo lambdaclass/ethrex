@@ -2,7 +2,9 @@
 #![allow(clippy::expect_used)]
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use ethrex_common::types::TxType;
+use ethrex_common::constants::GAS_PER_BLOB;
+use ethrex_common::types::account_diff::{AccountStateDiff, get_accounts_diff_size};
+use ethrex_common::types::{SAFE_BYTES_PER_BLOB, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
@@ -10,7 +12,9 @@ use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1M
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::L1MessageProof;
+use ethrex_l2_common::state_diff::SIMPLE_TX_STATE_DIFF_SIZE;
 use ethrex_l2_common::utils::get_address_from_secret_key;
+use ethrex_l2_rpc::clients::get_l1_blob_base_fee_per_gas;
 use ethrex_l2_rpc::clients::get_operator_fee;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
@@ -30,8 +34,10 @@ use ethrex_rpc::{
     },
 };
 use hex::FromHexError;
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::cmp::min;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Add, AddAssign};
 use std::{
     fs::{File, read_to_string},
@@ -59,6 +65,7 @@ use tokio::task::JoinSet;
 /// INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS: The address of the l2 coinbase
 /// INTEGRATION_TEST_PROPOSER_BASE_FEE_VAULT_ADDRESS: The address of the l2 base_fee_vault
 /// INTEGRATION_TEST_PROPOSER_OPERATOR_FEE_VAULT_ADDRESS: The address of the l2 operator_fee_vault
+/// INTEGRATION_TEST_PROPOSER_L1_FEE_VAULT_ADDRESS: The address of the l2 l1_fee_vault
 ///
 /// Test parameters:
 ///
@@ -82,10 +89,10 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0xad, 0x62, 0x0c, 0x8d,
 ]);
 
-// 0x44e09413ab37c3dae5663f2fd408e60ac2dbc7e2
+// 0x3e141f8f9f083024c6e1ec3de2509de5da47c354
 const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
-    0x44, 0xe0, 0x94, 0x13, 0xab, 0x37, 0xc3, 0xda, 0xe5, 0x66, 0x3f, 0x2f, 0xd4, 0x08, 0xe6, 0x0a,
-    0xc2, 0xdb, 0xc7, 0xe2,
+    0x3e, 0x14, 0x1f, 0x8f, 0x9f, 0x08, 0x30, 0x24, 0xc6, 0xe1, 0xec, 0x3d, 0xe2, 0x50, 0x9d, 0xe5,
+    0xda, 0x47, 0xc3, 0x54,
 ]);
 
 // 0x000c0d6b7c4516a5b274c51ea331a9410fe69127
@@ -100,6 +107,13 @@ const DEFAULT_PROPOSER_BASE_FEE_VAULT_ADDRESS: Address = H160([
 const DEFAULT_OPERATOR_FEE_VAULT_ADDRESS: Address = H160([
     0xd5, 0xd2, 0xa8, 0x57, 0x51, 0xb6, 0xf1, 0x58, 0xe5, 0xb9, 0xb8, 0xcd, 0x50, 0x92, 0x06, 0xa8,
     0x65, 0x67, 0x23, 0x62,
+]);
+
+// 0x45681AE1768a8936FB87aB11453B4755e322ceec
+// pk: 0x3a7b2002e24304d2dfa39e37a10b44585d10395d1c18f127dfa7b90232cfc5e4
+const DEFAULT_L1_FEE_VAULT_ADDRESS: Address = H160([
+    0x45, 0x68, 0x1a, 0xe1, 0x76, 0x8a, 0x89, 0x36, 0xfb, 0x87, 0xab, 0x11, 0x45, 0x3b, 0x47, 0x55,
+    0xe3, 0x22, 0xce, 0xec,
 ]);
 
 const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.txt";
@@ -137,6 +151,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let operator_fee_vault_balance_before_tests = l2_client
         .get_balance(operator_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let l1_fee_vault_balance_before_tests = l2_client
+        .get_balance(l1_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let mut set = JoinSet::new();
@@ -215,11 +232,13 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let mut acc_priority_fees = 0;
     let mut acc_base_fees = 0;
     let mut acc_operator_fee = 0;
+    let mut acc_l1_fees = 0;
     while let Some(res) = set.join_next().await {
         let fees_details = res??;
         acc_priority_fees += fees_details.priority_fees;
         acc_base_fees += fees_details.base_fees;
         acc_operator_fee += fees_details.operator_fees;
+        acc_l1_fees += fees_details.l1_fees;
     }
 
     let coinbase_balance_after_tests = l2_client
@@ -232,6 +251,10 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     let operator_fee_vault_balance_after_tests = l2_client
         .get_balance(operator_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    let l1_fee_vault_balance_after_tests = l2_client
+        .get_balance(l1_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     println!("Checking coinbase, base and operator fee vault balances");
@@ -254,6 +277,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         operator_fee_vault_balance_after_tests,
         operator_fee_vault_balance_before_tests + acc_operator_fee,
         "Operator fee vault is not correct after tests"
+    );
+
+    assert_eq!(
+        l1_fee_vault_balance_after_tests,
+        l1_fee_vault_balance_before_tests + acc_l1_fees,
+        "L1 fee vault is not correct after tests"
     );
 
     // Not thread-safe (coinbase and bridge balance checks)
@@ -311,6 +340,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         &bridge_code,
         &bridge_owner_private_key,
         "test_upgrade",
+        dummy_modified_storage_slots(0),
     )
     .await?;
 
@@ -383,6 +413,7 @@ async fn test_privileged_tx_with_contract_call(
         &init_code,
         &rich_wallet_private_key,
         "ptx_with_contract_call",
+        dummy_modified_storage_slots(0),
     )
     .await?;
 
@@ -480,6 +511,7 @@ async fn test_privileged_tx_with_contract_call_revert(
         &init_code,
         &rich_wallet_private_key,
         "ptx_with_contract_call_revert",
+        dummy_modified_storage_slots(0),
     )
     .await?;
 
@@ -570,6 +602,7 @@ async fn test_erc20_roundtrip(
         &init_code_l2,
         &rich_wallet_private_key,
         "test_erc20_roundtrip",
+        dummy_modified_storage_slots(3),
     )
     .await?;
 
@@ -641,7 +674,12 @@ async fn test_erc20_roundtrip(
     )
     .await?;
 
-    let approve_fees = get_fees_details_l2(&approve_receipt, &l2_client).await;
+    let approve_fees = get_fees_details_l2(
+        &approve_receipt,
+        &l2_client,
+        get_account_diff_size_for_erc20approve(),
+    )
+    .await?;
 
     let withdraw_receipt = test_send(
         &l2_client,
@@ -658,7 +696,12 @@ async fn test_erc20_roundtrip(
     )
     .await?;
 
-    let withdraw_fees = get_fees_details_l2(&withdraw_receipt, &l2_client).await;
+    let withdraw_fees = get_fees_details_l2(
+        &withdraw_receipt,
+        &l2_client,
+        get_account_diff_size_for_erc20withdraw(),
+    )
+    .await?;
 
     let withdrawal_tx_hash = withdraw_receipt.tx_info.transaction_hash;
     assert_eq!(
@@ -1051,7 +1094,7 @@ async fn test_send(
     )
     .await
     .with_context(|| format!("Failed to build tx for {test}"))?;
-    tx.gas = tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
+    tx.gas = tx.gas.map(|g| g * 6 / 5); // (+20%) tx reverts in some cases otherwise
     let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
@@ -1538,7 +1581,8 @@ async fn perform_transfer(
         "Transfer transaction failed"
     );
 
-    let transfer_fees = get_fees_details_l2(&transfer_tx_receipt, l2_client).await;
+    let transfer_fees =
+        get_fees_details_l2(&transfer_tx_receipt, l2_client, SIMPLE_TX_STATE_DIFF_SIZE).await?;
     let total_fees = transfer_fees.total();
 
     println!("{test}: Checking balances on L2 after transfer");
@@ -1630,6 +1674,10 @@ async fn test_n_withdraws(
         .get_balance(operator_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
+    let l1_fee_vault_balance_before_withdrawal = l2_client
+        .get_balance(l1_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
     println!("test_n_withdraws: Withdrawing funds from L2 to L1");
 
     let mut withdraw_txs = vec![];
@@ -1669,8 +1717,10 @@ async fn test_n_withdraws(
 
     // Compute actual total L2 gas paid by the withdrawer from receipts
     let mut total_withdraw_fees_l2 = FeesDetails::default();
+    let account_diff_size = get_account_diff_size_for_withdraw();
     for receipt in &receipts {
-        total_withdraw_fees_l2 += get_fees_details_l2(receipt, l2_client).await;
+        total_withdraw_fees_l2 +=
+            get_fees_details_l2(receipt, l2_client, account_diff_size).await?;
     }
 
     // Now assert exact balance movement on L2: value + gas
@@ -1707,8 +1757,13 @@ async fn test_n_withdraws(
     let base_fee_vault_balance_after_withdrawal = l2_client
         .get_balance(base_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
+
     let operator_fee_vault_balance_after_withdrawal = l2_client
         .get_balance(operator_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    let l1_fee_vault_balance_after_withdrawal = l2_client
+        .get_balance(l1_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     assert_eq!(
@@ -1721,14 +1776,20 @@ async fn test_n_withdraws(
         assert_eq!(
             base_fee_vault_balance_after_withdrawal,
             base_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.base_fees,
-            "Coinbase balance didn't increase as expected after withdrawal"
+            "Base fee vault balance didn't increase as expected after withdrawal"
         );
     }
 
     assert_eq!(
         operator_fee_vault_balance_after_withdrawal,
         operator_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.operator_fees,
-        "Coinbase balance didn't increase as expected after withdrawal"
+        "Operator balance didn't increase as expected after withdrawal"
+    );
+
+    assert_eq!(
+        l1_fee_vault_balance_after_withdrawal,
+        l1_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.l1_fees,
+        "L1 fee vault balance didn't increase as expected after withdrawal"
     );
 
     // We need to wait for all the txs to be included in some batch
@@ -1858,13 +1919,20 @@ async fn test_total_balance_l2(
 
     println!("Operator fee vault balance: {operator_fee_vault_balance}");
 
+    let l1_fee_vault_balance = l2_client
+        .get_balance(l1_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    println!("L1 fee vault balance: {l1_fee_vault_balance}");
+
     let total_balance_on_l2 = rich_accounts_balance
         + coinbase_balance
         + base_fee_vault_balance
-        + operator_fee_vault_balance;
+        + operator_fee_vault_balance
+        + l1_fee_vault_balance;
 
     println!(
-        "Total balance on L2: {rich_accounts_balance} + {coinbase_balance} + {base_fee_vault_balance} + {operator_fee_vault_balance} = {total_balance_on_l2}"
+        "Total balance on L2: {rich_accounts_balance} + {coinbase_balance} + {base_fee_vault_balance} + {operator_fee_vault_balance} + {l1_fee_vault_balance} = {total_balance_on_l2}"
     );
     println!("Checking native tokens locked on CommonBridge");
 
@@ -1903,6 +1971,7 @@ async fn test_deploy(
     init_code: &[u8],
     deployer_private_key: &SecretKey,
     test_name: &str,
+    storage_after_deploy: BTreeMap<H256, U256>,
 ) -> Result<(Address, FeesDetails)> {
     println!("{test_name}: Deploying contract on L2");
 
@@ -1928,7 +1997,14 @@ async fn test_deploy(
         "{test_name}: Deploy transaction failed"
     );
 
-    let deploy_fees = get_fees_details_l2(&deploy_tx_receipt, l2_client).await;
+    let contract_bytecode = l2_client
+        .get_code(contract_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    let account_diff_size =
+        get_account_diff_size_for_deploy(&contract_bytecode, storage_after_deploy);
+
+    let deploy_fees = get_fees_details_l2(&deploy_tx_receipt, l2_client, account_diff_size).await?;
 
     let deployer_balance_after_deploy = l2_client
         .get_balance(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
@@ -2068,11 +2144,12 @@ struct FeesDetails {
     base_fees: u64,
     priority_fees: u64,
     operator_fees: u64,
+    l1_fees: u64,
 }
 
 impl FeesDetails {
     fn total(&self) -> u64 {
-        self.base_fees + self.priority_fees + self.operator_fees
+        self.base_fees + self.priority_fees + self.operator_fees + self.l1_fees
     }
 }
 
@@ -2084,6 +2161,7 @@ impl Add for FeesDetails {
             base_fees: self.base_fees + other.base_fees,
             priority_fees: self.priority_fees + other.priority_fees,
             operator_fees: self.operator_fees + other.operator_fees,
+            l1_fees: self.l1_fees + other.l1_fees,
         }
     }
 }
@@ -2093,18 +2171,39 @@ impl AddAssign for FeesDetails {
         self.base_fees += other.base_fees;
         self.priority_fees += other.priority_fees;
         self.operator_fees += other.operator_fees;
+        self.l1_fees += other.l1_fees;
     }
 }
 
-async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> FeesDetails {
+fn calculate_tx_gas_price(
+    max_fee_per_gas: u64,
+    max_priority_fee_per_gas: u64,
+    base_fee_per_gas: u64,
+    operator_fee_per_gas: u64,
+) -> u64 {
+    let fee_per_gas = base_fee_per_gas + operator_fee_per_gas;
+    min(max_priority_fee_per_gas + fee_per_gas, max_fee_per_gas)
+}
+
+async fn get_fees_details_l2(
+    tx_receipt: &RpcReceipt,
+    l2_client: &EthClient,
+    tx_account_diff_size: u64,
+) -> Result<FeesDetails> {
     let rpc_tx = l2_client
         .get_transaction_by_hash(tx_receipt.tx_info.transaction_hash)
         .await
         .unwrap()
         .unwrap();
-    let gas_used = tx_receipt.tx_info.gas_used;
+    let tx_gas_used = tx_receipt.tx_info.gas_used;
     let max_fee_per_gas = rpc_tx.tx.max_fee_per_gas().unwrap();
     let max_priority_fee_per_gas: u64 = rpc_tx.tx.max_priority_fee().unwrap();
+    let block_number = tx_receipt.block_info.block_number;
+
+    let l1_blob_base_fee_per_gas = get_l1_blob_base_fee_per_gas(l2_client, block_number).await?;
+    let l1_fee_per_blob: u64 = l1_blob_base_fee_per_gas * u64::from(GAS_PER_BLOB);
+    let l1_fee_per_blob_byte = l1_fee_per_blob / u64::try_from(SAFE_BYTES_PER_BLOB).unwrap();
+    let calculated_l1_fee = l1_fee_per_blob_byte * tx_account_diff_size;
 
     let base_fee_per_gas = l2_client
         .get_block_by_number(
@@ -2126,29 +2225,54 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
     .try_into()
     .unwrap();
 
+    let gas_price = calculate_tx_gas_price(
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        base_fee_per_gas,
+        operator_fee_per_gas,
+    );
+
+    let mut l1_gas = calculated_l1_fee / gas_price;
+
+    if l1_gas == 0 && calculated_l1_fee > 0 {
+        l1_gas = 1;
+    }
+
+    let actual_gas_used = tx_gas_used - l1_gas;
+
     let priority_fees = min(
         max_priority_fee_per_gas,
         max_fee_per_gas - base_fee_per_gas - operator_fee_per_gas,
-    ) * gas_used;
+    ) * actual_gas_used;
 
-    let operator_fees = operator_fee_per_gas * gas_used;
-    let base_fees = base_fee_per_gas * gas_used;
+    let operator_fees = operator_fee_per_gas * actual_gas_used;
+    let base_fees = base_fee_per_gas * actual_gas_used;
+    let l1_fees = l1_gas * gas_price;
 
-    FeesDetails {
+    Ok(FeesDetails {
         base_fees,
         priority_fees,
         operator_fees,
-    }
+        l1_fees,
+    })
 }
 
 fn l1_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(DEFAULT_L1_RPC.to_string()))
-        .unwrap()
+    EthClient::new(
+        std::env::var("INTEGRATION_TEST_L1_RPC")
+            .map(|val| Url::parse(&val).expect("Error parsing URL (INTEGRATION_TEST_L1_RPC)"))
+            .unwrap_or(Url::parse(DEFAULT_L1_RPC).unwrap()),
+    )
+    .unwrap()
 }
 
 fn l2_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L2_RPC").unwrap_or(DEFAULT_L2_RPC.to_string()))
-        .unwrap()
+    EthClient::new(
+        std::env::var("INTEGRATION_TEST_L2_RPC")
+            .map(|val| Url::parse(&val).expect("Error parsing URL (INTEGRATION_TEST_L2_RPC)"))
+            .unwrap_or(Url::parse(DEFAULT_L2_RPC).unwrap()),
+    )
+    .unwrap()
 }
 
 fn coinbase() -> Address {
@@ -2167,6 +2291,12 @@ fn operator_fee_vault() -> Address {
     std::env::var("INTEGRATION_TEST_PROPOSER_OPERATOR_FEE_VAULT_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer coinbase address"))
         .unwrap_or(DEFAULT_OPERATOR_FEE_VAULT_ADDRESS)
+}
+
+fn l1_fee_vault() -> Address {
+    std::env::var("INTEGRATION_TEST_PROPOSER_L1_FEE_VAULT_ADDRESS")
+        .map(|address| address.parse().expect("Invalid proposer coinbase address"))
+        .unwrap_or(DEFAULT_L1_FEE_VAULT_ADDRESS)
 }
 
 async fn wait_for_l2_deposit_receipt(
@@ -2377,4 +2507,108 @@ async fn wait_for_verified_proof(
     }
 
     proof
+}
+
+// ======================================================================
+// Auxiliary functions to calculate account diff size for different tx
+// ======================================================================
+
+fn get_account_diff_size_for_deploy(
+    bytecode: &Bytes,
+    storage_after_deploy: BTreeMap<H256, U256>,
+) -> u64 {
+    let mut account_diffs = HashMap::new();
+    // tx sender
+    account_diffs.insert(Address::random(), sender_account_diff());
+    // Deployed contract account
+    account_diffs.insert(
+        Address::random(),
+        AccountStateDiff {
+            nonce_diff: 1,
+            bytecode: Some(bytecode.clone()),
+            storage: storage_after_deploy,
+            ..Default::default()
+        },
+    );
+    get_accounts_diff_size(&account_diffs).unwrap()
+}
+
+fn get_account_diff_size_for_withdraw() -> u64 {
+    let mut account_diffs = HashMap::new();
+    // tx sender
+    account_diffs.insert(Address::random(), sender_account_diff());
+    // L2_TO_L1_MESSENGER
+    account_diffs.insert(
+        Address::random(),
+        AccountStateDiff {
+            storage: dummy_modified_storage_slots(1),
+            ..Default::default()
+        },
+    );
+    // zero address
+    account_diffs.insert(
+        Address::zero(),
+        AccountStateDiff {
+            new_balance: Some(U256::zero()),
+            ..Default::default()
+        },
+    );
+    get_accounts_diff_size(&account_diffs).unwrap()
+}
+
+fn get_account_diff_size_for_erc20withdraw() -> u64 {
+    let mut account_diffs = HashMap::new();
+    // tx sender
+    account_diffs.insert(Address::random(), sender_account_diff());
+    // L2_TO_L1_MESSENGER
+    account_diffs.insert(
+        Address::random(),
+        AccountStateDiff {
+            storage: dummy_modified_storage_slots(1),
+            ..Default::default()
+        },
+    );
+    // ERC20 contract
+    account_diffs.insert(
+        Address::random(),
+        AccountStateDiff {
+            storage: dummy_modified_storage_slots(2),
+            ..Default::default()
+        },
+    );
+    get_accounts_diff_size(&account_diffs).unwrap()
+}
+
+fn get_account_diff_size_for_erc20approve() -> u64 {
+    let mut account_diffs = HashMap::new();
+    // tx sender
+    account_diffs.insert(Address::random(), sender_account_diff());
+
+    // ERC20 contract
+    account_diffs.insert(
+        Address::random(),
+        AccountStateDiff {
+            storage: dummy_modified_storage_slots(1),
+            ..Default::default()
+        },
+    );
+
+    get_accounts_diff_size(&account_diffs).unwrap()
+}
+
+// Account diff for the sender of the transaction
+fn sender_account_diff() -> AccountStateDiff {
+    AccountStateDiff {
+        nonce_diff: 1,
+        new_balance: Some(U256::zero()),
+        ..Default::default()
+    }
+}
+
+fn dummy_modified_storage_slots(modified_storage_slots: u64) -> BTreeMap<H256, U256> {
+    let mut storage = BTreeMap::new();
+    for _ in 0..modified_storage_slots {
+        storage.insert(H256::random(), U256::zero());
+    }
+    storage
 }
