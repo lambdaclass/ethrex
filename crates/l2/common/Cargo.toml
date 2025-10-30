@@ -19,6 +19,7 @@ serde.workspace = true
 lambdaworks-crypto.workspace = true
 sha3.workspace = true
 secp256k1.workspace = true
+hex.workspace = true
 serde_with.workspace = true
 # We do not need to enable the "unaligned" feature here since we are just using
 # rkyv for ProverInputData, a data structure meant to be used in the host and not
@@ -32,3 +33,8 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+redundant_clone = "warn"
+
+[features]
+sp1 = []
+risc0 = []
