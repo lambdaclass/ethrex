@@ -15,6 +15,7 @@ use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Sender;
 use tracing::instrument;
 
@@ -82,8 +83,9 @@ impl Evm {
         &mut self,
         block: &Block,
         merkleizer: Sender<Vec<AccountUpdate>>,
+        queue_length: &AtomicUsize,
     ) -> Result<BlockExecutionResult, EvmError> {
-        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer)
+        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
     }
 
     /// Wraps [LEVM::execute_tx].
