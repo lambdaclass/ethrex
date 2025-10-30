@@ -517,7 +517,7 @@ impl SubcommandLoad {
         let accounts = parse_pk_file(pkeys_path).unwrap_or_else(|_| {
             panic!("Failed to parse private keys file {}", pkeys_path.display())
         });
-        let client = EthClient::new(&self.node).expect("Failed to create EthClient");
+        let client = EthClient::new(self.node).expect("Failed to create EthClient");
         let chain_id = client
             .get_chain_id()
             .await
