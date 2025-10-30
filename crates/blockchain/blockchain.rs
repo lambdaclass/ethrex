@@ -41,7 +41,7 @@ use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{
     Arc, Mutex, RwLock,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
 use std::time::Instant;
@@ -183,7 +183,17 @@ impl Blockchain {
     fn execute_block_pipeline(
         &self,
         block: &Block,
-    ) -> Result<(BlockExecutionResult, AccountUpdatesList), ChainError> {
+    ) -> Result<
+        (
+            BlockExecutionResult,
+            AccountUpdatesList,
+            // FIXME: extract to stats struct
+            usize,
+            [Instant; 7],
+        ),
+        ChainError,
+    > {
+        let start_instant = Instant::now();
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -195,15 +205,31 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        let block_validated_instant = Instant::now();
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
 
+        let exec_merkle_start = Instant::now();
+        let queue_length = AtomicUsize::new(0);
+        let queue_length_ref = &queue_length;
+        let mut max_queue_length = 0;
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
             let (tx, rx) = channel();
-            let execution_handle = s.spawn(move || vm.execute_block_pipeline(block, tx));
+            let execution_handle = s.spawn(move || {
+                let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref);
+                let exec_end_instant = Instant::now();
+                execution_result.map(move |r| (r, exec_end_instant))
+            });
             let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
-                self.handle_merkleization(rx, &parent_header)
+                let account_updates_list = self.handle_merkleization(
+                    rx,
+                    &parent_header,
+                    queue_length_ref,
+                    &mut max_queue_length,
+                )?;
+                let merkle_end_instant = Instant::now();
+                Ok((account_updates_list, merkle_end_instant))
             });
             (
                 execution_handle.join().unwrap_or_else(|_| {
@@ -216,15 +242,30 @@ impl Blockchain {
                 }),
             )
         });
-        let account_updates_list = account_updates_list?;
-        let execution_result = execution_result?;
+        let (account_updates_list, merkle_end_instant) = account_updates_list?;
+        let (execution_result, exec_end_instant) = execution_result?;
+        let exec_merkle_end_instant = Instant::now();
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        let results_validated_instant = Instant::now();
 
-        Ok((execution_result, account_updates_list))
+        Ok((
+            execution_result,
+            account_updates_list,
+            max_queue_length,
+            [
+                start_instant,
+                block_validated_instant,
+                exec_merkle_start,
+                exec_end_instant,
+                merkle_end_instant,
+                exec_merkle_end_instant,
+                results_validated_instant,
+            ],
+        ))
     }
 
     #[instrument(level = "trace", name = "Trie update", skip_all)]
@@ -232,6 +273,8 @@ impl Blockchain {
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
         parent_header: &BlockHeader,
+        queue_length: &AtomicUsize,
+        max_queue_length: &mut usize,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut state_trie = self
             .storage
@@ -242,6 +285,8 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         for updates in rx {
+            let current_length = queue_length.fetch_sub(1, Ordering::Relaxed);
+            *max_queue_length = current_length.max(*max_queue_length);
             state_trie_hash = Self::process_incoming_update_message(
                 &self.storage,
                 &mut state_trie,
@@ -771,9 +816,8 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
-        let since = Instant::now();
-        let (res, account_updates_list) = self.execute_block_pipeline(&block)?;
-        let executed = Instant::now();
+        let (res, account_updates_list, merkle_queue_length, instants) =
+            self.execute_block_pipeline(&block)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -782,20 +826,22 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
-        let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res);
         let stored = Instant::now();
 
+        let instants = std::array::from_fn(move |i| match i {
+            _ if i < instants.len() => instants[i],
+            _ if i == instants.len() => stored,
+            _ => unreachable!(),
+        });
         if self.options.perf_logs_enabled {
-            Self::print_add_block_logs(
+            Self::print_add_block_pipeline_logs(
                 gas_used,
                 gas_limit,
                 block_number,
                 transactions_count,
-                since,
-                executed,
-                merkleized,
-                stored,
+                merkle_queue_length,
+                instants,
             );
         }
         result
@@ -818,7 +864,7 @@ impl Blockchain {
             let throughput = as_gigas / interval * 1000_f64;
 
             metrics!(
-                let _ = METRICS_BLOCKS.set_block_number(block_number);
+                METRICS_BLOCKS.set_block_number(block_number);
                 METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
                 METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
@@ -847,6 +893,67 @@ impl Blockchain {
                     percentage(since, executed, interval),
                     percentage(executed, merkleized, interval),
                     percentage(merkleized, stored, interval)
+                )
+            } else {
+                "".to_string()
+            };
+            info!("{}{}", base_log, extra_log);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn print_add_block_pipeline_logs(
+        gas_used: u64,
+        gas_limit: u64,
+        block_number: u64,
+        transactions_count: usize,
+        merkle_queue_length: usize,
+        [
+            start_instant,
+            block_validated_instant,
+            exec_merkle_start,
+            exec_end_instant,
+            merkle_end_instant,
+            exec_merkle_end_instant,
+            results_validated_instant,
+            stored_instant,
+        ]: [Instant; 8],
+    ) {
+        let interval = stored_instant.duration_since(start_instant).as_secs_f64();
+        if interval != 0f64 {
+            let as_gigas = gas_used as f64 * 1e-9;
+            let throughput = as_gigas / interval;
+
+            metrics!(
+                METRICS_BLOCKS.set_block_number(block_number);
+                METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
+                METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
+                METRICS_BLOCKS.set_latest_gigagas(throughput);
+                METRICS_BLOCKS.set_transaction_count(transactions_count as i64);
+            );
+
+            let base_log = format!(
+                "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
+                block_number,
+                throughput,
+                interval * 1000.0,
+                as_gigas,
+                (gas_used as f64 / gas_limit as f64) * 100.0,
+                transactions_count
+            );
+
+            let percentage = move |init: Instant, end: Instant| {
+                (end.duration_since(init).as_secs_f64() / interval * 100.0).round()
+            };
+            let extra_log = if as_gigas > 0.0 {
+                format!(
+                    " block validation: {}% exec+merkle: {}% (exec: {}% merkle: {}% max_queue_length: {merkle_queue_length}) results validation: {}% store: {}%",
+                    percentage(start_instant, block_validated_instant),
+                    percentage(exec_merkle_start, exec_merkle_end_instant),
+                    percentage(exec_merkle_start, exec_end_instant),
+                    percentage(exec_merkle_start, merkle_end_instant),
+                    percentage(merkle_end_instant, results_validated_instant),
+                    percentage(results_validated_instant, stored_instant),
                 )
             } else {
                 "".to_string()
