@@ -23,6 +23,7 @@ runs:
 
     # We need to run this step because kurtosis uses cached docker images but we want the latest ethrex image
     - name: Remove cached ethrex image
+      shell: bash
       run: docker image rm -f ${{ inputs.ethrex_image }}:${{ inputs.ethrex_tag }} || true
 
     - name: Generate Kurtosis args
