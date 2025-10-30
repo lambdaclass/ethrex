@@ -79,6 +79,7 @@ runs:
 
     - name: Summarize ethrex version
       if: ${{ always() }}
+      shell: bash
       run: |
         image="${{ inputs.ethrex_image }}:${{ inputs.ethrex_tag }}"
         version="$(docker run --rm "$image" --version 2>/dev/null || true)"
