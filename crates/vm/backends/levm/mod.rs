@@ -29,6 +29,7 @@ use ethrex_levm::{
     vm::VM,
 };
 use std::cmp::min;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
 /// The struct implements the following functions:
@@ -86,6 +87,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
+        queue_length: &AtomicUsize,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
@@ -97,6 +99,7 @@ impl LEVM {
         })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
             let transitions = LEVM::get_state_transitions_tx(db)?;
+            queue_length.fetch_add(1, Ordering::Release);
             merkleizer
                 .send(transitions)
                 .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
@@ -125,6 +128,7 @@ impl LEVM {
         };
 
         let transitions = LEVM::get_state_transitions_tx(db)?;
+        queue_length.fetch_add(1, Ordering::Relaxed);
         merkleizer
             .send(transitions)
             .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
