@@ -45,7 +45,7 @@ directories = "5.0.1"
 bincode = "1.3.3"
 serde_with.workspace = true
 lazy_static.workspace = true
-aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0.16.1" }
+aligned-sdk.workspace = true
 ethers = "2.0"
 chrono = "0.4.41"
 clap.workspace = true
@@ -77,8 +77,16 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+redundant_clone = "warn"
 
 [features]
 default = ["l2"]
+
+sp1 = ["guest_program/sp1"]
+risc0 = ["guest_program/risc0"]
+
+rocksdb = []
+
 metrics = ["ethrex-blockchain/metrics"]
+
 l2 = ["guest_program/l2"]

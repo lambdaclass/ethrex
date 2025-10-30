@@ -1,4 +1,5 @@
 use crate::l2::batch::{BatchNumberRequest, GetBatchByBatchNumberRequest};
+use crate::l2::execution_witness::handle_execution_witness;
 use crate::l2::fees::{
     GetBaseFeeVaultAddress, GetL1BlobBaseFeeRequest, GetOperatorFee, GetOperatorFeeVaultAddress,
 };
@@ -14,6 +15,7 @@ use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
+use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
 use ethrex_rpc::{
     GasTipEstimator, NodeData, RpcRequestWrapper,
     types::transaction::SendRawTransactionRequest,
@@ -86,6 +88,7 @@ pub async fn start_api(
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         l1_ctx: ethrex_rpc::RpcApiContext {
             storage,
@@ -103,6 +106,7 @@ pub async fn start_api(
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler,
             gas_ceil,
+            block_worker_channel,
         },
         valid_delegation_addresses,
         sponsor_pk,
@@ -197,13 +201,19 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = tx {
                 debug!(
                     "EIP-4844 transaction are not supported in the L2: {:#x}",
-                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()).hash()
+                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx).hash()
                 );
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "EIP-4844 transactions are not supported in the L2".to_string(),
                 ));
             }
             SendRawTransactionRequest::call(req, context.l1_ctx)
+                .await
+                .map_err(RpcErr::L1RpcErr)
+        }
+        "debug_executionWitness" => {
+            let request = ExecutionWitnessRequest::parse(&req.params)?;
+            handle_execution_witness(&request, context)
                 .await
                 .map_err(RpcErr::L1RpcErr)
         }
