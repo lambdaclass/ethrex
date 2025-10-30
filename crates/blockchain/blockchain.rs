@@ -936,7 +936,7 @@ impl Blockchain {
                 "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
                 block_number,
                 throughput,
-                interval,
+                interval * 1000,
                 as_gigas,
                 (gas_used as f64 / gas_limit as f64) * 100.0,
                 transactions_count
