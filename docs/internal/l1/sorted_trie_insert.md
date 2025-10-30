@@ -72,7 +72,7 @@ In this scenario, we know the leaf we need to compute from the current value,
 so we write that. We change the current value to be the current parent, and 
 the new current parent is popped from the "parent stack".
 
-![Image showing the insertion of 1 element with a current parent branch 0x17, the current element 0x175B and next element 0x1825. 0x175B is inserted with a single write, while the current parent branch becomes the current value, while the current parent branch is popped from the stack](sorted_trie_insert/Sorted%20Insertion%20Scenario%203.png)
+![Image showing the insertion of 1 element with a current parent branch 0x17, the current element 0x175B and next element 0x1825. 0x175B is inserted with a single write, while the current parent branch becomes the current value, and the current parent branch is popped from the stack](sorted_trie_insert/Sorted%20Insertion%20Scenario%203.png)
 
 These three scenarios keep repeating themselves until the trie is complete,
 at which point the algorithm returns a hash to the root node branch.
