@@ -1,6 +1,6 @@
 # ethrex-prover
 
-The prover leverages ethrex's stateless execution to generate zero-knowledge proofs of a block (or batch of blocks) execution. Stateless execution works by asking a synced node for an execution witness (the minimal state data needed to execute that block or batch) and using the L1 client code to re-execute it. See [Stateless execution](#stateless-execution) for more details.
+The prover leverages ethrex's stateless execution to generate zero-knowledge proofs of a block (or batch of blocks) execution. Stateless execution works by asking a synced node for an execution witness (the minimal state data needed to execute that block or batch) and using the L1 client code to re-execute it. See [Stateless execution](#stateless-execution-and-execution-witness) for more details.
 
 The main interface to try the prover is [ethrex-replay](../ethrex_replay/ethrex_replay.md), we also use it as a component of ethrex's L2 stack, to deploy zk-rollups or zk-validiums (a rollup publishes state information to L1 to reconstruct the L2 state if sequencing were to fail, a validium does not). Because of this the prover also supports some [L2 specific checks](#l2-specific-checks).
 
