@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use fxhash::FxHashMap as BTreeMap;
 use std::sync::Arc;
 
 use ethrex_common::Address;
@@ -18,7 +18,7 @@ use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
 pub use ethrex_common::types::AccountUpdate;
-use std::collections::btree_map::Entry;
+use std::collections::hash_map::Entry;
 
 pub type CacheDB = BTreeMap<Address, LevmAccount>;
 
@@ -35,10 +35,10 @@ impl GeneralizedDatabase {
     pub fn new(store: Arc<dyn Database>) -> Self {
         Self {
             store,
-            current_accounts_state: CacheDB::new(),
-            initial_accounts_state: CacheDB::new(),
+            current_accounts_state: CacheDB::default(),
+            initial_accounts_state: CacheDB::default(),
             tx_backup: None,
-            codes: BTreeMap::new(),
+            codes: BTreeMap::default(),
         }
     }
 
@@ -47,7 +47,7 @@ impl GeneralizedDatabase {
         store: Arc<dyn Database>,
         current_accounts_state: BTreeMap<Address, Account>,
     ) -> Self {
-        let mut codes = BTreeMap::new();
+        let mut codes = BTreeMap::default();
         let levm_accounts: BTreeMap<Address, LevmAccount> = current_accounts_state
             .into_iter()
             .map(|(address, account)| {
@@ -196,7 +196,7 @@ impl GeneralizedDatabase {
             let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage = BTreeMap::new();
+            let mut added_storage = BTreeMap::default();
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = if !removed_storage {
@@ -233,7 +233,7 @@ impl GeneralizedDatabase {
                 removed,
                 info,
                 code: code.cloned(),
-                added_storage,
+                added_storage: added_storage.into_iter().collect(),
                 removed_storage,
             };
 

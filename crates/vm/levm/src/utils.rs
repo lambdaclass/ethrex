@@ -25,12 +25,14 @@ use ethrex_common::{
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
+use fxhash::FxHashMap as BTreeMap;
+use fxhash::FxHashMap as HashMap;
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, HashMap};
+
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -171,7 +173,7 @@ pub fn get_account_diffs_in_tx(
     db: &GeneralizedDatabase,
     transaction_backup: CallFrameBackup,
 ) -> Result<HashMap<Address, AccountStateDiff>, VMError> {
-    let mut modified_accounts = HashMap::new();
+    let mut modified_accounts = HashMap::default();
 
     // First we add the account info
     for (address, original_account) in transaction_backup.original_accounts_info.iter() {
@@ -208,7 +210,7 @@ pub fn get_account_diffs_in_tx(
         let account_state_diff = AccountStateDiff {
             new_balance,
             nonce_diff,
-            storage: BTreeMap::new(), // We add the storage later
+            storage: Default::default(), // We add the storage later
             bytecode: bytecode.map(|c| c.bytecode),
             bytecode_hash: None,
         };
@@ -225,7 +227,7 @@ pub fn get_account_diffs_in_tx(
             .get(address)
             .ok_or(DatabaseError::Custom("DB Cache".to_owned()))?;
 
-        let mut added_storage = BTreeMap::new();
+        let mut added_storage = BTreeMap::default();
         for key in original_storage_slots.keys() {
             added_storage.insert(
                 *key,
@@ -236,13 +238,13 @@ pub fn get_account_diffs_in_tx(
             );
         }
         if let Some(account_state_diff) = modified_accounts.get_mut(address) {
-            account_state_diff.storage = added_storage;
+            account_state_diff.storage = added_storage.into_iter().collect();
         } else {
             // If the account is not in the modified accounts, we create a new one
             let account_state_diff = AccountStateDiff {
                 new_balance: None,
                 nonce_diff: 0,
-                storage: added_storage,
+                storage: added_storage.into_iter().collect(),
                 bytecode: None,
                 bytecode_hash: None,
             };
@@ -678,7 +680,7 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
         LevmAccount {
             info: account.info,
             has_storage: !account.storage.is_empty(), // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
-            storage: account.storage,
+            storage: account.storage.into_iter().collect(),
             status: AccountStatus::Unmodified,
         },
         account.code,

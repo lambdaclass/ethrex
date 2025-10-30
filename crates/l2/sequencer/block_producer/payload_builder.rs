@@ -213,7 +213,7 @@ pub async fn fill_transactions(
             get_account_diffs_in_tx(&context.vm.db, tx_backup).map_err(|e| {
                 BlockProducerError::Custom(format!("Failed to get account diffs from tx: {e}"))
             })?;
-        let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
+        let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx.into_iter().collect());
 
         let (tx_size_without_accounts, new_accounts_diff_size) =
             calculate_tx_diff_size(&merged_diffs, &head_tx, &receipt)?;

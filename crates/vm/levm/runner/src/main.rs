@@ -20,10 +20,10 @@ use log::{debug, error, info};
 use num_bigint::BigUint;
 use num_traits::Num;
 use runner::input::{InputAccount, InputTransaction, RunnerInput};
-use std::{collections::BTreeMap, io::Write};
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
-    io::BufReader,
+    io::{BufReader, Write},
     sync::Arc,
 };
 
@@ -142,7 +142,10 @@ fn main() {
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
-    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
+    let mut db = GeneralizedDatabase::new_with_account_state(
+        Arc::new(store),
+        initial_state.into_iter().collect(),
+    );
 
     // Initialize VM
     let mut vm = VM::new(
@@ -194,8 +197,8 @@ fn main() {
 
     // Print Accounts diff
     compare_initial_and_current_accounts(
-        db.initial_accounts_state,
-        db.current_accounts_state,
+        db.initial_accounts_state.into_iter().collect(),
+        db.current_accounts_state.into_iter().collect(),
         &runner_input.transaction,
     );
 }

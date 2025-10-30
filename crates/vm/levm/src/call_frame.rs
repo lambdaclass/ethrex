@@ -9,10 +9,8 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-};
+use fxhash::FxHashMap as BTreeMap;
+use std::{collections::HashMap, fmt};
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -286,7 +284,7 @@ impl CallFrameBackup {
             .entry(address)
             .or_insert_with(|| LevmAccount {
                 info: account.info.clone(),
-                storage: BTreeMap::new(),
+                storage: BTreeMap::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,
             });

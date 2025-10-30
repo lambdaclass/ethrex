@@ -3,8 +3,8 @@ use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::{AccountState, GenesisAccount};
 use ethrex_common::utils::keccak;
 use ethrex_common::{U256, constants::EMPTY_KECCACK_HASH, types::AccountInfo};
+use fxhash::FxHashMap as BTreeMap;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// Similar to `Account` struct but suited for LEVM implementation.
 /// Difference is this doesn't have code and it contains an additional `status` field for decision-making.
@@ -66,7 +66,7 @@ impl From<AccountState> for LevmAccount {
                 balance: state.balance,
                 nonce: state.nonce,
             },
-            storage: BTreeMap::new(),
+            storage: BTreeMap::default(),
             status: AccountStatus::Unmodified,
             has_storage: state.storage_root != *EMPTY_TRIE_HASH,
         }

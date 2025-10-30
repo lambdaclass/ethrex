@@ -15,7 +15,7 @@ use ethrex_levm::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
-use std::collections::BTreeMap;
+use fxhash::FxHashMap as BTreeMap;
 use std::hint::black_box;
 use std::sync::Arc;
 

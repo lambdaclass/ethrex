@@ -46,6 +46,7 @@ k256 = "0.13.4"
 substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-5.0.0", optional = true }
 
 bitvec = { version = "1.0.1", features = ["alloc"] }
+fxhash = "0.2.1"
 
 [dev-dependencies]
 hex.workspace = true
