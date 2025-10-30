@@ -744,20 +744,14 @@ impl Store {
 
     /// Obtain latest block number
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        let key = vec![ChainDataIndex::LatestBlockNumber as u8];
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .unwrap_or(Err(StoreError::MissingLatestBlockNumber))
+        Ok(self
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .number)
     }
 
-    // TODO: refactor here
-    pub async fn try_get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn load_latest_block_number_from_db(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = vec![ChainDataIndex::LatestBlockNumber as u8];
         self.read_async(CHAIN_DATA, key)
             .await?
@@ -825,7 +819,7 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
-        let latest = self.try_get_latest_block_number().await?.unwrap_or(0);
+        let latest = self.load_latest_block_number_from_db().await?.unwrap_or(0);
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
@@ -2025,7 +2019,7 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
-        if let Some(number) = self.try_get_latest_block_number().await? {
+        if let Some(number) = self.load_latest_block_number_from_db().await? {
             *self
                 .latest_block_header
                 .write()
