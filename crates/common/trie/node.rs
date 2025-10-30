@@ -2,18 +2,10 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::{
-    array,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 pub use branch::BranchNode;
-use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::Decoder,
-};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
@@ -31,20 +23,57 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
-    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Node>, TrieError> {
-        match *self {
-            NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
-            NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some(Node::decode_raw(&data[..len as usize])?))
+    /// Gets a shared reference to the inner node.
+    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+        match self {
+            NodeRef::Node(node, _) => Ok(Some(node.clone())),
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
-            NodeRef::Hash(hash) => db
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => (node.compute_hash() == hash).then_some(Ok(node)),
+                    Ok(node) => (node.compute_hash() == *hash).then_some(Ok(Arc::new(node))),
                     Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
                 .transpose(),
+        }
+    }
+
+    /// Gets a mutable shared reference to the inner node.
+    ///
+    /// # Caution
+    ///
+    /// 1. If more than one strong reference exists to this node, it will be cloned (see `Arc::make_mut`).
+    /// 2. Mutating the inner node without updating parents can lead to trie inconsistencies.
+    pub(crate) fn get_node_mut(
+        &mut self,
+        db: &dyn TrieDB,
+        path: Nibbles,
+    ) -> Result<Option<&mut Node>, TrieError> {
+        match self {
+            NodeRef::Node(node, _) => Ok(Some(Arc::make_mut(node))),
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                let node = Node::decode(hash.as_ref())?;
+                *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
+                self.get_node_mut(db, path)
+            }
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                let Some(node) = db
+                    .get(path.clone())?
+                    .filter(|rlp| !rlp.is_empty())
+                    .and_then(|rlp| match Node::decode(&rlp) {
+                        Ok(node) => (node.compute_hash() == *hash).then_some(Ok(node)),
+                        Err(err) => Some(Err(TrieError::RLPDecode(err))),
+                    })
+                    .transpose()?
+                else {
+                    return Ok(None);
+                };
+                *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
+                self.get_node_mut(db, path)
+            }
         }
     }
 
@@ -69,11 +98,13 @@ impl NodeRef {
                     }
                     Node::Leaf(_) => {}
                 }
-                let hash = *hash.get_or_init(|| node.compute_hash());
+                let mut buf = Vec::new();
+                node.encode(&mut buf);
+                let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }
-                acc.push((path.clone(), node.encode_to_vec()));
+                acc.push((path, buf));
 
                 *self = hash.into();
 
@@ -87,6 +118,16 @@ impl NodeRef {
         match self {
             NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
             NodeRef::Hash(hash) => *hash,
+        }
+    }
+
+    /// Resets the memoized hash of this Node
+    ///
+    /// This is used when mutating a node in place, in which case the memoized hash
+    /// is not valid anymore.
+    pub(crate) fn clear_hash(&mut self) {
+        if let NodeRef::Node(_, hash) = self {
+            hash.take();
         }
     }
 }
@@ -174,32 +215,45 @@ impl Node {
         }
     }
 
-    /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
+    /// Inserts a value into the subtrie originating from this node.
     pub fn insert(
-        self,
+        &mut self,
         db: &dyn TrieDB,
         path: Nibbles,
         value: impl Into<ValueOrHash>,
-    ) -> Result<Node, TrieError> {
-        match self {
-            Node::Branch(n) => n.insert(db, path, value.into()),
+    ) -> Result<(), TrieError> {
+        let new_node = match self {
+            Node::Branch(n) => {
+                n.insert(db, path, value.into())?;
+                Ok(None)
+            }
             Node::Extension(n) => n.insert(db, path, value.into()),
             Node::Leaf(n) => n.insert(path, value.into()),
+        };
+        if let Some(new_node) = new_node? {
+            *self = new_node;
         }
+        Ok(())
     }
 
     /// Removes a value from the subtrie originating from this node given its path
-    /// Returns the new root of the subtrie (if any) and the removed value if it existed in the subtrie
+    /// Returns a bool indicating if the new subtrie is empty, and the removed value if it existed in the subtrie
     pub fn remove(
-        self,
+        &mut self,
         db: &dyn TrieDB,
         path: Nibbles,
-    ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
-        match self {
+    ) -> Result<(bool, Option<ValueRLP>), TrieError> {
+        let (new_root, value) = match self {
             Node::Branch(n) => n.remove(db, path),
             Node::Extension(n) => n.remove(db, path),
             Node::Leaf(n) => n.remove(path),
+        }?;
+
+        let is_trie_empty = new_root.is_none();
+        if let Some(NodeRemoveResult::New(new_root)) = new_root {
+            *self = new_root;
         }
+        Ok((is_trie_empty, value))
     }
 
     /// Traverses own subtrie until reaching the node containing `path`
@@ -218,70 +272,6 @@ impl Node {
         }
     }
 
-    /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
-        match self {
-            Node::Branch(n) => n.encode_raw(),
-            Node::Extension(n) => n.encode_raw(),
-            Node::Leaf(n) => n.encode_raw(),
-        }
-    }
-
-    /// Decodes the node
-    pub fn decode_raw(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut rlp_items = vec![];
-        let mut decoder = Decoder::new(rlp)?;
-        let mut item;
-        // Get encoded fields
-        loop {
-            (item, decoder) = decoder.get_encoded_item()?;
-            rlp_items.push(item);
-            // Check if we reached the end or if we decoded more items than the ones we need
-            if decoder.is_done() || rlp_items.len() > 17 {
-                break;
-            }
-        }
-        // Deserialize into node depending on the available fields
-        Ok(match rlp_items.len() {
-            // Leaf or Extension Node
-            2 => {
-                let (path, _) = decode_bytes(&rlp_items[0])?;
-                let path = Nibbles::decode_compact(path);
-                if path.is_leaf() {
-                    // Decode as Leaf
-                    let (value, _) = decode_bytes(&rlp_items[1])?;
-                    LeafNode {
-                        partial: path,
-                        value: value.to_vec(),
-                    }
-                    .into()
-                } else {
-                    // Decode as Extension
-                    ExtensionNode {
-                        prefix: path,
-                        child: decode_child(&rlp_items[1]).into(),
-                    }
-                    .into()
-                }
-            }
-            // Branch Node
-            17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
-                let (value, _) = decode_bytes(&rlp_items[16])?;
-                BranchNode {
-                    choices,
-                    value: value.to_vec(),
-                }
-                .into()
-            }
-            n => {
-                return Err(RLPDecodeError::Custom(format!(
-                    "Invalid arg count for Node, expected 2 or 17, got {n}"
-                )));
-            }
-        })
-    }
-
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
         match self {
@@ -292,10 +282,10 @@ impl Node {
     }
 }
 
-fn decode_child(rlp: &[u8]) -> NodeHash {
-    match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
-        Ok((&[], &[])) => NodeHash::default(),
-        _ => NodeHash::from_slice(rlp),
-    }
+/// Used as return type for `Node` remove operations that may resolve into either:
+/// - a mutation of the `Node`
+/// - a new `Node`
+pub enum NodeRemoveResult {
+    Mutated,
+    New(Node),
 }

@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   packages: write
+  actions: write
 
 env:
   REGISTRY: ghcr.io
@@ -63,15 +64,12 @@ jobs:
             l2_suffix: "-l2"
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Free Disk Space (Ubuntu)
-        if: ${{ matrix.os == 'linux' }}
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        if: ${{ matrix.os == 'linux' }}
+        uses: ./.github/actions/free-disk
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -185,6 +183,7 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+      actions: write
 
     steps:
       - name: Checkout code

@@ -3,16 +3,18 @@ use crate::{
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{
         errors::CommitterError,
-        utils::{self, fetch_batch_blocks, get_git_commit_hash, system_now_ms},
+        utils::{
+            self, fetch_blocks_with_respective_fee_configs, get_git_commit_hash, system_now_ms,
+        },
     },
 };
 
 use bytes::Bytes;
-use ethrex_blockchain::{Blockchain, BlockchainType, vm::StoreVmDatabase};
+use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
+        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Genesis,
         MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
     },
 };
@@ -40,11 +42,16 @@ use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
+use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
+use ethrex_vm::{BlockExecutionResult, Evm};
+use rand::Rng;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap},
+    fs::remove_dir_all,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio_util::sync::CancellationToken;
@@ -108,6 +115,21 @@ pub struct L1Committer {
     elasticity_multiplier: u64,
     /// Git commit hash of the build
     git_commit_hash: String,
+    /// Store containing the state checkpoint at the last committed batch.
+    ///
+    /// It is used to ensure state availability for batch preparation and
+    /// witness generation.
+    current_checkpoint_store: Store,
+    /// Blockchain instance using the current checkpoint store.
+    ///
+    /// It is used for witness generation.
+    current_checkpoint_blockchain: Arc<Blockchain>,
+    /// Network genesis.
+    ///
+    /// It is used for creating checkpoints.
+    genesis: Genesis,
+    /// Directory where checkpoints are stored.
+    checkpoints_dir: PathBuf,
 }
 
 #[derive(Clone, Serialize)]
@@ -127,7 +149,7 @@ pub struct L1CommitterHealth {
 }
 
 impl L1Committer {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn new(
         committer_config: &CommitterConfig,
         proposer_config: &BlockProducerConfig,
@@ -137,9 +159,13 @@ impl L1Committer {
         rollup_store: StoreRollup,
         based: bool,
         sequencer_state: SequencerState,
+        initial_checkpoint_store: Store,
+        initial_checkpoint_blockchain: Arc<Blockchain>,
+        genesis: Genesis,
+        checkpoints_dir: PathBuf,
     ) -> Result<Self, CommitterError> {
         let eth_client = EthClient::new_with_config(
-            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_config.rpc_url.clone(),
             eth_config.max_number_of_retries,
             eth_config.backoff_factor,
             eth_config.min_retry_delay,
@@ -171,15 +197,24 @@ impl L1Committer {
             cancellation_token: None,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             git_commit_hash: get_git_commit_hash(),
+            current_checkpoint_store: initial_checkpoint_store,
+            current_checkpoint_blockchain: initial_checkpoint_blockchain,
+            genesis,
+            checkpoints_dir,
         })
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub async fn spawn(
         store: Store,
         blockchain: Arc<Blockchain>,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        initial_checkpoint_store: Store,
+        initial_checkpoint_blockchain: Arc<Blockchain>,
+        genesis: Genesis,
+        checkpoints_dir: PathBuf,
     ) -> Result<GenServerHandle<L1Committer>, CommitterError> {
         let state = Self::new(
             &cfg.l1_committer,
@@ -190,6 +225,10 @@ impl L1Committer {
             rollup_store.clone(),
             cfg.based.enabled,
             sequencer_state,
+            initial_checkpoint_store,
+            initial_checkpoint_blockchain,
+            genesis,
+            checkpoints_dir,
         )
         .await?;
         // NOTE: we spawn as blocking due to `generate_blobs_bundle` and
@@ -232,16 +271,50 @@ impl L1Committer {
                     )?;
                 let first_block_to_commit = last_block + 1;
 
+                // We need to guarantee that the checkpoint path is new
+                // to avoid causing a lock error under rocksdb feature.
+                let rand_suffix: u32 = rand::thread_rng().r#gen();
+                let one_time_checkpoint_path = self
+                    .checkpoints_dir
+                    .join(format!("temp_checkpoint_{batch_to_commit}_{rand_suffix}"));
+
+                // For re-execution we need to use a checkpoint to the previous state
+                // (i.e. checkpoint of the state to the latest block from the previous
+                // batch, or the state of the genesis if this is the first batch).
+                // We already have this initial checkpoint as part of the L1Committer
+                // struct, but we need to create a one-time copy of it because
+                // we still need to use the current checkpoint store later for witness
+                // generation.
+
+                let (one_time_checkpoint_store, one_time_checkpoint_blockchain) = self
+                    .create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
+                    .await?;
+
                 // Try to prepare batch
+                let result = self
+                    .prepare_batch_from_block(
+                        *last_block,
+                        batch_to_commit,
+                        one_time_checkpoint_store,
+                        one_time_checkpoint_blockchain,
+                    )
+                    .await;
+
+                if one_time_checkpoint_path.exists() {
+                    let _ = remove_dir_all(&one_time_checkpoint_path).inspect_err(|e| {
+                        error!(
+                            "Failed to remove one-time checkpoint directory at path {one_time_checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
+                        )
+                    });
+                }
+
                 let (
                     blobs_bundle,
                     new_state_root,
                     message_hashes,
                     privileged_transactions_hash,
                     last_block_of_batch,
-                ) = self
-                    .prepare_batch_from_block(*last_block, batch_to_commit)
-                    .await?;
+                ) = result?;
 
                 if *last_block == last_block_of_batch {
                     debug!("No new blocks to commit, skipping");
@@ -281,6 +354,12 @@ impl L1Committer {
         );
 
         self.generate_and_store_batch_prover_input(&batch).await?;
+
+        // We need to update the current checkpoint after generating the witness
+        // with it, and before sending the commitment.
+        // The actual checkpoint store directory is not pruned until the batch
+        // it served in is verified on L1.
+        self.update_current_checkpoint(&batch).await?;
 
         info!(
             first_block = batch.first_block,
@@ -326,6 +405,8 @@ impl L1Committer {
         &mut self,
         mut last_added_block_number: BlockNumber,
         batch_number: u64,
+        one_time_checkpoint_store: Store,
+        one_time_checkpoint_blockchain: Arc<Blockchain>,
     ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
@@ -349,25 +430,35 @@ impl L1Committer {
 
         loop {
             let block_to_commit_number = last_added_block_number + 1;
-            // Get a block to add to the batch
-            let Some(block_to_commit_body) = self
-                .store
-                .get_block_body(block_to_commit_number)
-                .await
-                .map_err(CommitterError::from)?
-            else {
-                debug!("No new block to commit, skipping..");
-                break;
-            };
-            let block_to_commit_header = self
-                .store
-                .get_block_header(block_to_commit_number)
-                .map_err(CommitterError::from)?
-                .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                    "Failed to get_block_header() after get_block_body()".to_owned(),
-                ))?;
 
-            let current_block_gas_used = block_to_commit_header.gas_used;
+            // Get potential block to include in the batch
+            // Here it is ok to fetch the blocks from the main store and not from
+            // the checkpoint because the blocks will be available. We only need
+            // the checkpoint for re-execution, this is during witness generation
+            // in generate_and_store_batch_prover_input and for later in this
+            // function.
+            let potential_batch_block = {
+                let Some(block_to_commit_body) = self
+                    .store
+                    .get_block_body(block_to_commit_number)
+                    .await
+                    .map_err(CommitterError::from)?
+                else {
+                    debug!("No new block to commit, skipping..");
+                    break;
+                };
+                let block_to_commit_header = self
+                    .store
+                    .get_block_header(block_to_commit_number)
+                    .map_err(CommitterError::from)?
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "Failed to get_block_header() after get_block_body()".to_owned(),
+                    ))?;
+
+                Block::new(block_to_commit_header, block_to_commit_body)
+            };
+
+            let current_block_gas_used = potential_batch_block.header.gas_used;
 
             // Check if adding this block would exceed the batch gas limit
             if self.batch_gas_limit.is_some_and(|batch_gas_limit| {
@@ -382,7 +473,7 @@ impl L1Committer {
             // Get block transactions and receipts
             let mut txs = vec![];
             let mut receipts = vec![];
-            for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
+            for (index, tx) in potential_batch_block.body.transactions.iter().enumerate() {
                 let receipt = self
                     .store
                     .get_receipt(block_to_commit_number, index.try_into()?)
@@ -400,14 +491,13 @@ impl L1Committer {
                     .try_into()
                     .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
                     .unwrap_or(0);
-                batch_gas_used += block_to_commit_header.gas_used;
+                batch_gas_used += potential_batch_block.header.gas_used;
             );
             // Get block messages and privileged transactions
             let messages = get_block_l1_messages(&receipts);
             let privileged_transactions = get_block_privileged_transactions(&txs);
 
             // Get block account updates.
-            let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
             let account_updates = if let Some(account_updates) = self
                 .rollup_store
                 .get_account_updates_by_block_number(block_to_commit_number)
@@ -420,12 +510,51 @@ impl L1Committer {
                     last_added_block_number + 1
                 );
 
-                let vm_db =
-                    StoreVmDatabase::new(self.store.clone(), block_to_commit.header.parent_hash);
-                let mut vm = self.blockchain.new_evm(vm_db)?;
-                vm.execute_block(&block_to_commit)?;
+                // Here we use the checkpoint store because we need the previous
+                // state available (i.e. not pruned) for re-execution.
+                let vm_db = StoreVmDatabase::new(
+                    one_time_checkpoint_store.clone(),
+                    potential_batch_block.header.parent_hash,
+                );
+
+                let fee_config = self
+                    .rollup_store
+                    .get_fee_config_by_block(block_to_commit_number)
+                    .await?
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "Failed to get fee config for re-execution".to_owned(),
+                    ))?;
+
+                let mut vm = Evm::new_for_l2(vm_db, fee_config)?;
+
+                vm.execute_block(&potential_batch_block)?;
+
                 vm.get_state_transitions()?
             };
+
+            // The checkpoint store's state corresponds to the parent state of
+            // the first block of the batch. Therefore, we need to apply the
+            // account updates of each block as we go, to be able to continue
+            // re-executing the next blocks in the batch.
+            {
+                let account_updates_list = one_time_checkpoint_store
+                    .apply_account_updates_batch(
+                        potential_batch_block.header.parent_hash,
+                        &account_updates,
+                    )?
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "no account updated".to_owned(),
+                    ))?;
+
+                one_time_checkpoint_blockchain.store_block(
+                    potential_batch_block.clone(),
+                    account_updates_list,
+                    BlockExecutionResult {
+                        receipts,
+                        requests: vec![],
+                    },
+                )?;
+            }
 
             // Accumulate block data with the rest of the batch.
             acc_messages.extend(messages.clone());
@@ -439,6 +568,8 @@ impl L1Committer {
                 }
             }
 
+            // It is safe to retrieve this from the main store because blocks
+            // are available there. What's not available is the state
             let parent_block_hash = self
                 .store
                 .get_block_header(first_block_of_batch)?
@@ -446,7 +577,11 @@ impl L1Committer {
                     "Failed to get_block_header() of the last added block".to_owned(),
                 ))?
                 .parent_hash;
-            let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
+
+            // Again, here the VM database should be instantiated from the checkpoint
+            // store to have access to the previous state
+            let parent_db =
+                StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_block_hash);
 
             let acc_privileged_txs_len: u64 = acc_privileged_txs.len().try_into()?;
             if acc_privileged_txs_len > PRIVILEGED_TX_BUDGET {
@@ -459,8 +594,8 @@ impl L1Committer {
 
             let result = if !self.validium {
                 // Prepare current state diff.
-                let state_diff = prepare_state_diff(
-                    block_to_commit_header,
+                let state_diff: StateDiff = prepare_state_diff(
+                    potential_batch_block.header.clone(),
                     &parent_db,
                     &acc_messages,
                     &acc_privileged_txs,
@@ -502,9 +637,8 @@ impl L1Committer {
 
             message_hashes.extend(messages.iter().map(get_l1_message_hash));
 
-            new_state_root = self
-                .store
-                .state_trie(block_to_commit.hash())?
+            new_state_root = one_time_checkpoint_store
+                .state_trie(potential_batch_block.hash())?
                 .ok_or(CommitterError::FailedToGetInformationFromStorage(
                     "Failed to get state root from storage".to_owned(),
                 ))?
@@ -558,15 +692,37 @@ impl L1Committer {
         &self,
         batch: &Batch,
     ) -> Result<(), CommitterError> {
-        let blocks =
-            fetch_batch_blocks::<CommitterError>(batch.number, &self.store, &self.rollup_store)
-                .await?;
+        let (blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
+            batch.number,
+            &self.store,
+            &self.rollup_store,
+        )
+        .await?;
 
-        let batch_witness = self
-            .blockchain
-            .generate_witness_for_blocks(&blocks)
+        let rand_suffix: u32 = rand::thread_rng().r#gen();
+        let one_time_checkpoint_path = self.checkpoints_dir.join(format!(
+            "temp_checkpoint_witness_{}_{rand_suffix}",
+            batch.number
+        ));
+        // We need to create a one-time checkpoint copy because if witness generation fails the checkpoint would be modified
+        let (_, one_time_checkpoint_blockchain) = self
+            .create_checkpoint(&self.current_checkpoint_store, &one_time_checkpoint_path)
+            .await?;
+
+        let result = one_time_checkpoint_blockchain
+            .generate_witness_for_blocks_with_fee_configs(&blocks, Some(&fee_configs))
             .await
-            .map_err(CommitterError::FailedToGenerateBatchWitness)?;
+            .map_err(CommitterError::FailedToGenerateBatchWitness);
+
+        if one_time_checkpoint_path.exists() {
+            let _ = remove_dir_all(&one_time_checkpoint_path).inspect_err(|e| {
+                error!(
+                    "Failed to remove one-time checkpoint directory at path {one_time_checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
+                )
+            });
+        }
+
+        let batch_witness = result?;
 
         // We still need to differentiate the validium case because for validium
         // we are generating the BlobsBundle with BlobsBundle::default which
@@ -593,19 +749,13 @@ impl L1Committer {
             )
         };
 
-        let BlockchainType::L2(fee_config) = self.blockchain.options.r#type else {
-            return Err(CommitterError::Unreachable(
-                "Batch witness generation is only supported for L2 blockchains".to_string(),
-            ));
-        };
-
         let prover_input = ProverInputData {
             blocks,
             execution_witness: batch_witness,
             elasticity_multiplier: self.elasticity_multiplier,
             blob_commitment,
             blob_proof,
-            fee_config,
+            fee_configs,
         };
 
         self.rollup_store
@@ -617,6 +767,80 @@ impl L1Committer {
             .await?;
 
         Ok(())
+    }
+
+    /// Updates the current checkpoint store and blockchain to the state at the
+    /// given latest batch.
+    ///
+    /// The reference to the previous checkpoint is lost after this operation,
+    /// but the directory is not deleted until the batch it serves in is verified
+    /// on L1.
+    async fn update_current_checkpoint(
+        &mut self,
+        latest_batch: &Batch,
+    ) -> Result<(), CommitterError> {
+        let new_checkpoint_path = self
+            .checkpoints_dir
+            .join(format!("checkpoint_batch_{}", latest_batch.number));
+
+        // CAUTION
+        // We need to skip checkpoint creation if the directory already exists.
+        // Sometimes the commit_next_batch task is retried after a failure, and in
+        // that case we would try to create a checkpoint again at the same path,
+        // causing a lock error under rocksdb feature.
+        if new_checkpoint_path.exists() {
+            debug!("Checkpoint at path {new_checkpoint_path:?} already exists, skipping creation");
+            return Ok(());
+        }
+
+        let (new_checkpoint_store, new_checkpoint_blockchain) = self
+            .create_checkpoint(&self.store, &new_checkpoint_path)
+            .await?;
+
+        self.current_checkpoint_store = new_checkpoint_store;
+
+        self.current_checkpoint_blockchain = new_checkpoint_blockchain;
+
+        Ok(())
+    }
+
+    /// Creates a checkpoint of the given store at the specified path.
+    ///
+    /// This function performs the following steps:
+    /// 1. Creates a checkpoint of the provided store at the specified path.
+    /// 2. Initializes a new store and blockchain for the checkpoint.
+    /// 3. Regenerates the head state in the checkpoint store.
+    /// 4. TODO: Validates that the checkpoint contains the needed state root.
+    async fn create_checkpoint(
+        &self,
+        checkpointee: &Store,
+        path: &Path,
+    ) -> Result<(Store, Arc<Blockchain>), CommitterError> {
+        checkpointee.create_checkpoint(&path).await?;
+
+        #[cfg(feature = "rocksdb")]
+        let engine_type = EngineType::RocksDB;
+        #[cfg(not(feature = "rocksdb"))]
+        let engine_type = EngineType::InMemory;
+
+        let checkpoint_store = {
+            let mut checkpoint_store_inner = Store::new(path, engine_type)?;
+
+            checkpoint_store_inner
+                .add_initial_state(self.genesis.clone())
+                .await?;
+
+            checkpoint_store_inner
+        };
+
+        let checkpoint_blockchain = Arc::new(Blockchain::new(
+            checkpoint_store.clone(),
+            self.blockchain.options.clone(),
+        ));
+
+        regenerate_head_state(&checkpoint_store, &checkpoint_blockchain).await?;
+
+        Ok((checkpoint_store, checkpoint_blockchain))
     }
 
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
@@ -634,9 +858,12 @@ impl L1Committer {
         let (commit_function_signature, values) = if self.based {
             let mut encoded_blocks: Vec<Bytes> = Vec::new();
 
-            let blocks =
-                fetch_batch_blocks::<CommitterError>(batch.number, &self.store, &self.rollup_store)
-                    .await?;
+            let (blocks, _) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
+                batch.number,
+                &self.store,
+                &self.rollup_store,
+            )
+            .await?;
 
             for block in blocks {
                 encoded_blocks.push(block.encode_to_vec().into());
@@ -810,6 +1037,11 @@ impl GenServer for L1Committer {
 
             // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
             if current_last_committed_batch > self.last_committed_batch {
+                info!(
+                    l1_batch = current_last_committed_batch,
+                    last_batch_registered = self.last_committed_batch,
+                    "Committer was not aware of new L1 committed batches, updating internal state accordingly"
+                );
                 self.last_committed_batch = current_last_committed_batch;
                 self.last_committed_batch_timestamp = current_time;
                 self.schedule_commit(self.committer_wake_up_ms, handle.clone());
@@ -819,6 +1051,14 @@ impl GenServer for L1Committer {
             let commit_time: u128 = self.commit_time_ms.into();
             let should_send_commitment =
                 current_time - self.last_committed_batch_timestamp > commit_time;
+
+            debug!(
+                last_committed_batch_at = self.last_committed_batch_timestamp,
+                will_send_commitment = should_send_commitment,
+                last_committed_batch = self.last_committed_batch,
+                "Committer woke up"
+            );
+
             #[expect(clippy::collapsible_if)]
             if should_send_commitment {
                 if self
@@ -832,7 +1072,7 @@ impl GenServer for L1Committer {
                 }
             }
         }
-        self.schedule_commit(self.commit_time_ms, handle.clone());
+        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
         CastResponse::NoReply
     }
 
@@ -936,4 +1176,78 @@ async fn estimate_blob_gas(
         .ok_or(BlobEstimationError::OverflowError)?;
 
     Ok(blob_gas)
+}
+
+/// Regenerates the state up to the head block by re-applying blocks from the
+/// last known state root.
+///
+/// Since the path-based feature was added, the database stores the state 128
+/// blocks behind the head block while the state of the blocks in between are
+/// kept in in-memory-diff-layers.
+///
+/// After the node is shut down, those in-memory layers are lost, and the database
+/// won't have the state for those blocks. It will have the blocks though.
+///
+/// When the node is started again, the state needs to be regenerated by
+/// re-applying the blocks from the last known state root up to the head block.
+///
+/// This function performs that regeneration.
+pub async fn regenerate_head_state(
+    store: &Store,
+    blockchain: &Arc<Blockchain>,
+) -> Result<(), CommitterError> {
+    let head_block_number = store.get_latest_block_number().await?;
+
+    let Some(last_header) = store.get_block_header(head_block_number)? else {
+        unreachable!("Database is empty, genesis block should be present");
+    };
+
+    let mut current_last_header = last_header;
+
+    // Find the last block with a known state root
+    while !store.has_state_root(current_last_header.state_root)? {
+        if current_last_header.number == 0 {
+            return Err(CommitterError::FailedToCreateCheckpoint(
+                "unknown state found in DB. Please run `ethrex removedb` and restart node"
+                    .to_string(),
+            ));
+        }
+        let parent_number = current_last_header.number - 1;
+
+        debug!("Need to regenerate state for block {parent_number}");
+
+        let Some(parent_header) = store.get_block_header(parent_number)? else {
+            return Err(CommitterError::FailedToCreateCheckpoint(format!(
+                "parent header for block {parent_number} not found"
+            )));
+        };
+
+        current_last_header = parent_header;
+    }
+
+    let last_state_number = current_last_header.number;
+
+    if last_state_number == head_block_number {
+        debug!("State is already up to date");
+        return Ok(());
+    }
+
+    info!("Regenerating state from block {last_state_number} to {head_block_number}");
+
+    // Re-apply blocks from the last known state root to the head block
+    for i in (last_state_number + 1)..=head_block_number {
+        debug!("Re-applying block {i} to regenerate state");
+
+        let block = store.get_block_by_number(i).await?.ok_or_else(|| {
+            CommitterError::FailedToCreateCheckpoint(format!("Block {i} not found"))
+        })?;
+
+        blockchain
+            .add_block(block)
+            .map_err(|err| CommitterError::FailedToCreateCheckpoint(err.to_string()))?;
+    }
+
+    info!("Finished regenerating state");
+
+    Ok(())
 }

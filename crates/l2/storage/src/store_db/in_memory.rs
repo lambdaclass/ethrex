@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -31,7 +31,7 @@ struct StoreInner {
     /// Map of batch number to blob
     blobs: HashMap<u64, Vec<Blob>>,
     /// Lastest sent batch proof
-    lastest_sent_batch_proof: u64,
+    latest_sent_batch_proof: u64,
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
     /// Map of signatures from the sequencer by block hashes
@@ -48,6 +48,8 @@ struct StoreInner {
     verify_txs: HashMap<u64, H256>,
     /// Map of (batch_number, prover_version) to serialized prover input data
     batch_prover_input: HashMap<(u64, String), Vec<u8>>,
+    /// Map of block number to FeeConfig
+    fee_config_by_block: HashMap<BlockNumber, FeeConfig>,
 }
 
 impl Store {
@@ -215,15 +217,12 @@ impl StoreEngineRollup for Store {
             .cloned())
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
-        Ok(self.inner()?.lastest_sent_batch_proof)
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+        Ok(self.inner()?.latest_sent_batch_proof)
     }
 
-    async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.lastest_sent_batch_proof = batch_number;
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.inner()?.latest_sent_batch_proof = batch_number;
         Ok(())
     }
 
@@ -379,6 +378,28 @@ impl StoreEngineRollup for Store {
             })?;
 
         Ok(Some(prover_input))
+    }
+
+    async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .fee_config_by_block
+            .insert(block_number, fee_config);
+        Ok(())
+    }
+
+    async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .fee_config_by_block
+            .get(&block_number)
+            .cloned())
     }
 }
 

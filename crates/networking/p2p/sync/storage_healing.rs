@@ -437,7 +437,7 @@ async fn zip_requeue_node_responses_score_peer(
         .iter()
         .zip(trie_nodes.nodes.clone())
         .map(|(node_request, node_bytes)| {
-            let node = Node::decode_raw(&node_bytes).inspect_err(|err|{
+            let node = Node::decode(&node_bytes).inspect_err(|err|{
                     info!("this peer {} request {node_request:?}, had this error {err:?}, and the raw node was {node_bytes:?}", request.peer_id)
                 })?;
 

@@ -162,7 +162,8 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .block_producer_opts
                     .coinbase_address
                     .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
-                fee_vault_address: opts.block_producer_opts.fee_vault_address,
+                base_fee_vault_address: opts.block_producer_opts.base_fee_vault_address,
+                operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
                 block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
@@ -197,6 +198,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
+                l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -232,7 +234,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
                 fee_estimate: opts.aligned_opts.fee_estimate,
-                aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -289,7 +290,7 @@ pub struct EthOptions {
         help_heading = "Eth options",
         num_args = 1..
     )]
-    pub rpc_url: Vec<String>,
+    pub rpc_url: Vec<Url>,
     #[arg(
         long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -343,7 +344,9 @@ pub struct EthOptions {
 impl Default for EthOptions {
     fn default() -> Self {
         Self {
-            rpc_url: vec!["http://localhost:8545".to_string()],
+            rpc_url: vec![
+                Url::parse("http://localhost:8545").expect("Unreachable error. URL is hardcoded"),
+            ],
             maximum_allowed_max_fee_per_gas: 10000000000,
             maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
@@ -398,6 +401,14 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub watcher_block_delay: u64,
+    #[arg(
+        long = "watcher.l1-fee-update-interval-ms",
+        value_name = "ADDRESS",
+        default_value = "60000",
+        env = "ETHREX_WATCHER_L1_FEE_UPDATE_INTERVAL_MS",
+        help_heading = "Block producer options"
+    )]
+    pub l1_fee_update_interval_ms: u64,
 }
 
 impl Default for WatcherOptions {
@@ -407,6 +418,7 @@ impl Default for WatcherOptions {
             watch_interval_ms: 1000,
             max_block_step: 5000,
             watcher_block_delay: 0,
+            l1_fee_update_interval_ms: 60000,
         }
     }
 }
@@ -437,12 +449,36 @@ pub struct BlockProducerOptions {
     )]
     pub coinbase_address: Option<Address>,
     #[arg(
-        long = "block-producer.fee-vault-address",
+        long = "block-producer.base-fee-vault-address",
         value_name = "ADDRESS",
-        env = "ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS",
+        env = "ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS",
         help_heading = "Block producer options"
     )]
-    pub fee_vault_address: Option<Address>,
+    pub base_fee_vault_address: Option<Address>,
+    #[arg(
+        long = "block-producer.operator-fee-vault-address",
+        value_name = "ADDRESS",
+        requires = "operator_fee_per_gas",
+        env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS",
+        help_heading = "Block producer options"
+    )]
+    pub operator_fee_vault_address: Option<Address>,
+    #[arg(
+        long = "block-producer.operator-fee-per-gas",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS",
+        requires = "operator_fee_vault_address",
+        help_heading = "Block producer options",
+        help = "Fee that the operator will receive for each unit of gas consumed in a block."
+    )]
+    pub operator_fee_per_gas: Option<u64>,
+    #[arg(
+        long = "block-producer.l1-fee-vault-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS",
+        help_heading = "Block producer options"
+    )]
+    pub l1_fee_vault_address: Option<Address>,
     #[arg(
         long,
         default_value = "2",
@@ -471,7 +507,10 @@ impl Default for BlockProducerOptions {
                     .parse()
                     .unwrap(),
             ),
-            fee_vault_address: None,
+            base_fee_vault_address: None,
+            operator_fee_vault_address: None,
+            operator_fee_per_gas: None,
+            l1_fee_vault_address: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
@@ -779,15 +818,6 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub fee_estimate: String,
-    #[arg(
-        long,
-        value_name = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        required_if_eq("aligned", "true"),
-        env = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        help_heading = "Aligned options",
-        help = "Path to the SP1 elf. This is used for proof verification."
-    )]
-    pub aligned_sp1_elf_path: Option<String>,
 }
 
 impl Default for AlignedOptions {
@@ -798,7 +828,6 @@ impl Default for AlignedOptions {
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
-            aligned_sp1_elf_path: None,
         }
     }
 }
@@ -810,10 +839,6 @@ impl AlignedOptions {
             .aligned_network
             .clone()
             .or(defaults.aligned_network.clone());
-        self.aligned_sp1_elf_path = self
-            .aligned_sp1_elf_path
-            .clone()
-            .or(defaults.aligned_sp1_elf_path.clone());
     }
 }
 
@@ -989,15 +1014,6 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub log_level: Level,
-    #[arg(
-        long,
-        default_value_t = false,
-        value_name = "BOOLEAN",
-        env = "PROVER_CLIENT_ALIGNED",
-        help = "Activate aligned proving system",
-        help_heading = "Prover client options"
-    )]
-    pub aligned: bool,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
     #[arg(
         long,
@@ -1015,7 +1031,6 @@ impl From<ProverClientOptions> for ProverConfig {
             backend: config.backend,
             proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
-            aligned_mode: config.aligned,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: config.sp1_server,
         }
@@ -1030,7 +1045,6 @@ impl Default for ProverClientOptions {
             ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
-            aligned: false,
             backend: Backend::Exec,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,

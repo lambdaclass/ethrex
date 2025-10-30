@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -111,10 +111,9 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
 
-    async fn set_lastest_sent_batch_proof(&self, batch_number: u64)
-    -> Result<(), RollupStoreError>;
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 
     async fn get_account_updates_by_block_number(
         &self,
@@ -160,4 +159,15 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
         prover_version: &str,
     ) -> Result<Option<ProverInputData>, RollupStoreError>;
+
+    async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError>;
+
+    async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError>;
 }
