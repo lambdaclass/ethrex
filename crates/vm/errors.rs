@@ -1,4 +1,6 @@
 use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
+use revm::context::result::EVMError as RevmError;
+use std::fmt::Display;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -46,3 +48,16 @@ impl From<InternalError> for EvmError {
         }
     }
 }
+
+impl<E: Display> From<RevmError<E>> for EvmError {
+    fn from(value: RevmError<E>) -> Self {
+        match value {
+            RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
+            RevmError::Header(err) => EvmError::Header(err.to_string()),
+            RevmError::Database(err) => EvmError::DB(err.to_string()),
+            RevmError::Custom(err) => EvmError::Custom(err),
+        }
+    }
+}
+
+impl revm::context::DBErrorMarker for EvmError {}

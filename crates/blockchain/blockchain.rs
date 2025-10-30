@@ -242,7 +242,7 @@ impl Blockchain {
             })?
             .clone();
 
-        let mut touched_account_storage_slots = BTreeMap::new();
+        let mut touched_account_storage_slots: BTreeMap<H256, Vec<H256>> = BTreeMap::new();
         // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
 
@@ -251,186 +251,188 @@ impl Blockchain {
             ChainError::WitnessGeneration("Failed to get root state node".to_string())
         })?;
 
-        let mut block_hashes = HashMap::new();
+        let mut block_hashes: BTreeMap<u64, H256> = BTreeMap::new();
         let mut codes = Vec::new();
 
-        for (i, block) in blocks.iter().enumerate() {
-            let parent_hash = block.header.parent_hash;
+        todo!();
 
-            // This assumes that the user has the necessary state stored already,
-            // so if the user only has the state previous to the first block, it
-            // will fail in the second iteration of this for loop. To ensure this,
-            // doesn't fail, later in this function we store the new state after
-            // re-execution.
-            let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+        // for (i, block) in blocks.iter().enumerate() {
+        //     let parent_hash = block.header.parent_hash;
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+        //     // This assumes that the user has the necessary state stored already,
+        //     // so if the user only has the state previous to the first block, it
+        //     // will fail in the second iteration of this for loop. To ensure this,
+        //     // doesn't fail, later in this function we store the new state after
+        //     // re-execution.
+        //     let vm_db: DynVmDatabase =
+        //         Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
 
-            let mut vm = match self.options.r#type {
-                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
-                BlockchainType::L2(_) => {
-                    let l2_config = match fee_configs {
-                        Some(fee_configs) => {
-                            fee_configs.get(i).ok_or(ChainError::WitnessGeneration(
-                                "FeeConfig not found for witness generation".to_string(),
-                            ))?
-                        }
-                        None => Err(ChainError::WitnessGeneration(
-                            "L2Config not found for witness generation".to_string(),
-                        ))?,
-                    };
-                    Evm::new_from_db_for_l2(logger.clone(), *l2_config)
-                }
-            };
+        //     let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
-            // Re-execute block with logger
-            let execution_result = vm.execute_block(block)?;
+        //     let mut vm = match self.options.r#type {
+        //         BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+        //         BlockchainType::L2(_) => {
+        //             let l2_config = match fee_configs {
+        //                 Some(fee_configs) => {
+        //                     fee_configs.get(i).ok_or(ChainError::WitnessGeneration(
+        //                         "FeeConfig not found for witness generation".to_string(),
+        //                     ))?
+        //                 }
+        //                 None => Err(ChainError::WitnessGeneration(
+        //                     "L2Config not found for witness generation".to_string(),
+        //                 ))?,
+        //             };
+        //             Evm::new_from_db_for_l2(logger.clone(), *l2_config)
+        //         }
+        //     };
 
-            // Gather account updates
-            let account_updates = vm.get_state_transitions()?;
+        //     // Re-execute block with logger
+        //     let execution_result = vm.execute_block(block)?;
 
-            for account_update in &account_updates {
-                touched_account_storage_slots.insert(
-                    account_update.address,
-                    account_update
-                        .added_storage
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<H256>>(),
-                );
-            }
+        //     // Gather account updates
+        //     let account_updates = vm.get_state_transitions()?;
 
-            // Get the used block hashes from the logger
-            let logger_block_hashes = logger
-                .block_hashes_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to get block hashes".to_string())
-                })?
-                .clone();
+        //     for account_update in &account_updates {
+        //         touched_account_storage_slots.insert(
+        //             account_update.address,
+        //             account_update
+        //                 .added_storage
+        //                 .keys()
+        //                 .cloned()
+        //                 .collect::<Vec<H256>>(),
+        //         );
+        //     }
 
-            block_hashes.extend(logger_block_hashes);
+        //     // Get the used block hashes from the logger
+        //     let logger_block_hashes = logger
+        //         .block_hashes_accessed
+        //         .lock()
+        //         .map_err(|_e| {
+        //             ChainError::WitnessGeneration("Failed to get block hashes".to_string())
+        //         })?
+        //         .clone();
 
-            // Access all the accounts needed for withdrawals
-            if let Some(withdrawals) = block.body.withdrawals.as_ref() {
-                for withdrawal in withdrawals {
-                    trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
-                        ChainError::Custom("Failed to access account from trie".to_string())
-                    })?;
-                }
-            }
+        //     block_hashes.extend(logger_block_hashes);
 
-            let mut used_storage_tries = HashMap::new();
+        //     // Access all the accounts needed for withdrawals
+        //     if let Some(withdrawals) = block.body.withdrawals.as_ref() {
+        //         for withdrawal in withdrawals {
+        //             trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
+        //                 ChainError::Custom("Failed to access account from trie".to_string())
+        //             })?;
+        //         }
+        //     }
 
-            // Access all the accounts from the initial trie
-            // Record all the storage nodes for the initial state
-            for (account, acc_keys) in logger
-                .state_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
-                })?
-                .iter()
-            {
-                // Access the account from the state trie to record the nodes used to access it
-                trie.get(&hash_address(account)).map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to access account from trie".to_string())
-                })?;
-                // Get storage trie at before updates
-                if !acc_keys.is_empty()
-                    && let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
-                {
-                    let (storage_trie_witness, storage_trie) = TrieLogger::open_trie(storage_trie);
-                    // Access all the keys
-                    for storage_key in acc_keys {
-                        let hashed_key = hash_key(storage_key);
-                        storage_trie.get(&hashed_key).map_err(|_e| {
-                            ChainError::WitnessGeneration(
-                                "Failed to access storage key".to_string(),
-                            )
-                        })?;
-                    }
-                    // Store the tries to reuse when applying account updates
-                    used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
-                }
-            }
+        //     let mut used_storage_tries = HashMap::new();
 
-            // Store all the accessed evm bytecodes
-            for code_hash in logger
-                .code_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-                })?
-                .iter()
-            {
-                let code = self
-                    .storage
-                    .get_account_code(*code_hash)
-                    .map_err(|_e| {
-                        ChainError::WitnessGeneration("Failed to get account code".to_string())
-                    })?
-                    .ok_or(ChainError::WitnessGeneration(
-                        "Failed to get account code".to_string(),
-                    ))?;
-                codes.push(code.bytecode.to_vec());
-            }
+        //     // Access all the accounts from the initial trie
+        //     // Record all the storage nodes for the initial state
+        //     for (account, acc_keys) in logger
+        //         .state_accessed
+        //         .lock()
+        //         .map_err(|_e| {
+        //             ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+        //         })?
+        //         .iter()
+        //     {
+        //         // Access the account from the state trie to record the nodes used to access it
+        //         trie.get(&hash_address(account)).map_err(|_e| {
+        //             ChainError::WitnessGeneration("Failed to access account from trie".to_string())
+        //         })?;
+        //         // Get storage trie at before updates
+        //         if !acc_keys.is_empty()
+        //             && let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
+        //         {
+        //             let (storage_trie_witness, storage_trie) = TrieLogger::open_trie(storage_trie);
+        //             // Access all the keys
+        //             for storage_key in acc_keys {
+        //                 let hashed_key = hash_key(storage_key);
+        //                 storage_trie.get(&hashed_key).map_err(|_e| {
+        //                     ChainError::WitnessGeneration(
+        //                         "Failed to access storage key".to_string(),
+        //                     )
+        //                 })?;
+        //             }
+        //             // Store the tries to reuse when applying account updates
+        //             used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
+        //         }
+        //     }
 
-            // Apply account updates to the trie recording all the necessary nodes to do so
-            let (storage_tries_after_update, account_updates_list) = self
-                .storage
-                .apply_account_updates_from_trie_with_witness(
-                    trie,
-                    &account_updates,
-                    used_storage_tries,
-                )
-                .await?;
+        //     // Store all the accessed evm bytecodes
+        //     for code_hash in logger
+        //         .code_accessed
+        //         .lock()
+        //         .map_err(|_e| {
+        //             ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
+        //         })?
+        //         .iter()
+        //     {
+        //         let code = self
+        //             .storage
+        //             .get_account_code(*code_hash)
+        //             .map_err(|_e| {
+        //                 ChainError::WitnessGeneration("Failed to get account code".to_string())
+        //             })?
+        //             .ok_or(ChainError::WitnessGeneration(
+        //                 "Failed to get account code".to_string(),
+        //             ))?;
+        //         codes.push(code.bytecode.to_vec());
+        //     }
 
-            // We cannot ensure that the users of this function have the necessary
-            // state stored, so in order for it to not assume anything, we update
-            // the storage with the new state after re-execution
-            self.store_block(block.clone(), account_updates_list, execution_result)?;
+        //     // Apply account updates to the trie recording all the necessary nodes to do so
+        //     let (storage_tries_after_update, account_updates_list) = self
+        //         .storage
+        //         .apply_account_updates_from_trie_with_witness(
+        //             trie,
+        //             &account_updates,
+        //             used_storage_tries,
+        //         )
+        //         .await?;
 
-            for (address, (witness, _storage_trie)) in storage_tries_after_update {
-                let mut witness = witness.lock().map_err(|_| {
-                    ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
-                })?;
-                let witness = std::mem::take(&mut *witness);
-                let witness = witness.into_iter().collect::<Vec<_>>();
-                used_trie_nodes.extend_from_slice(&witness);
-                touched_account_storage_slots.entry(address).or_default();
-            }
+        //     // We cannot ensure that the users of this function have the necessary
+        //     // state stored, so in order for it to not assume anything, we update
+        //     // the storage with the new state after re-execution
+        //     self.store_block(block.clone(), account_updates_list, execution_result)?;
 
-            let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
-                self.storage
-                    .state_trie(
-                        block_hashes_map
-                            .get(&block.header.number)
-                            .ok_or(ChainError::WitnessGeneration(
-                                "Block hash not found for witness generation".to_string(),
-                            ))?
-                            .to_owned(),
-                    )
-                    .map_err(|_| ChainError::ParentStateNotFound)?
-                    .ok_or(ChainError::ParentStateNotFound)?,
-            );
+        //     for (address, (witness, _storage_trie)) in storage_tries_after_update {
+        //         let mut witness = witness.lock().map_err(|_| {
+        //             ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
+        //         })?;
+        //         let witness = std::mem::take(&mut *witness);
+        //         let witness = witness.into_iter().collect::<Vec<_>>();
+        //         used_trie_nodes.extend_from_slice(&witness);
+        //         touched_account_storage_slots.entry(address).or_default();
+        //     }
 
-            // Use the updated state trie for the next block
-            trie = updated_trie;
+        //     let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
+        //         self.storage
+        //             .state_trie(
+        //                 block_hashes_map
+        //                     .get(&block.header.number)
+        //                     .ok_or(ChainError::WitnessGeneration(
+        //                         "Block hash not found for witness generation".to_string(),
+        //                     ))?
+        //                     .to_owned(),
+        //             )
+        //             .map_err(|_| ChainError::ParentStateNotFound)?
+        //             .ok_or(ChainError::ParentStateNotFound)?,
+        //     );
 
-            for state_trie_witness in current_trie_witness
-                .lock()
-                .map_err(|_| {
-                    ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
-                })?
-                .iter()
-            {
-                accumulated_state_trie_witness.insert(state_trie_witness.clone());
-            }
+        //     // Use the updated state trie for the next block
+        //     trie = updated_trie;
 
-            current_trie_witness = new_state_trie_witness;
-        }
+        //     for state_trie_witness in current_trie_witness
+        //         .lock()
+        //         .map_err(|_| {
+        //             ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+        //         })?
+        //         .iter()
+        //     {
+        //         accumulated_state_trie_witness.insert(state_trie_witness.clone());
+        //     }
+
+        //     current_trie_witness = new_state_trie_witness;
+        // }
 
         used_trie_nodes
             .extend_from_slice(&Vec::from_iter(accumulated_state_trie_witness.into_iter()));

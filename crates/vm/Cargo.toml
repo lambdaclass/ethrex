@@ -21,6 +21,13 @@ serde.workspace = true
 sha3.workspace = true
 rkyv.workspace = true
 
+revm = { version = "30.2.0", features = [
+    "optional_no_base_fee",
+    "optional_block_gas_limit",
+] }
+either = "1.15.0"
+serde_json.workspace = true
+
 bincode = "1"
 dyn-clone = "1.0"
 

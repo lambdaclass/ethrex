@@ -1,6 +1,7 @@
 use bytes::Bytes;
-use ethrex_common::types::Log;
+use ethrex_common::{H256, types::Log};
 use ethrex_levm::errors::{ExecutionReport as LevmExecutionReport, TxResult};
+use revm::{context::result::ExecutionResult as RevmExecutionResult, primitives::Log as RevmLog};
 
 #[derive(Debug)]
 pub enum ExecutionResult {
@@ -75,6 +76,54 @@ impl From<LevmExecutionReport> for ExecutionResult {
                     }
                 }
             }
+        }
+    }
+}
+
+impl From<RevmExecutionResult> for ExecutionResult {
+    fn from(val: RevmExecutionResult) -> Self {
+        match val {
+            RevmExecutionResult::Success {
+                reason: _,
+                gas_used,
+                gas_refunded,
+                logs,
+                output,
+            } => ExecutionResult::Success {
+                gas_used,
+                gas_refunded,
+                logs: logs
+                    .iter()
+                    .map(|revm_log| {
+                        let RevmLog {
+                            address,
+                            data: log_data,
+                        } = revm_log;
+
+                        Log {
+                            address: ethrex_common::Address::from_slice(address.0.as_slice()),
+                            data: log_data.data.clone().into(),
+                            topics: log_data
+                                .topics()
+                                .iter()
+                                .map(|t| H256::from_slice(t.0.as_slice()))
+                                .collect(),
+                        }
+                    })
+                    .collect(),
+                output: match output {
+                    revm::context::result::Output::Call(bytes) => bytes.into(),
+                    revm::context::result::Output::Create(bytes, _address) => bytes.into(),
+                },
+            },
+            RevmExecutionResult::Revert { gas_used, output } => ExecutionResult::Revert {
+                gas_used,
+                output: output.into(),
+            },
+            RevmExecutionResult::Halt { reason, gas_used } => ExecutionResult::Halt {
+                reason: serde_json::to_string(&reason).expect("Failed to serialize reason"),
+                gas_used,
+            },
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::backends::levm::LEVM;
+use crate::backends::{levm::LEVM, revm::REVM};
 use ethrex_common::tracing::CallTrace;
 use ethrex_common::types::Block;
 
@@ -24,14 +24,16 @@ impl Evm {
                 "Missing Transaction for Trace".to_string(),
             ))?;
 
-        LEVM::trace_tx_calls(
-            &mut self.db,
-            &block.header,
-            tx,
-            only_top_call,
-            with_log,
-            self.vm_type,
-        )
+        // REVM::trace_tx_calls(
+        //     &mut self.db,
+        //     &block.header,
+        //     tx,
+        //     only_top_call,
+        //     with_log,
+        //     self.vm_type,
+        // )
+
+        todo!()
     }
 
     /// Reruns the given block, saving the changes on the state, doesn't output any results or receipts.
@@ -43,6 +45,7 @@ impl Evm {
         block: &Block,
         stop_index: Option<usize>,
     ) -> Result<(), EvmError> {
-        LEVM::rerun_block(&mut self.db, block, stop_index, self.vm_type)
+        // REVM::rerun_block(&mut self.db, block, stop_index, self.vm_type)
+        todo!()
     }
 }

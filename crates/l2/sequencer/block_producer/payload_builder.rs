@@ -107,174 +107,174 @@ pub async fn fill_transactions(
     last_privileged_nonce: &mut Option<u64>,
     configured_block_gas_limit: u64,
 ) -> Result<(), BlockProducerError> {
-    // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
-    let mut acc_size_without_accounts = 1 + BLOCK_HEADER_LEN + 2 + 2 + 2;
-    let mut size_accounts_diffs = 0;
-    let mut account_diffs = HashMap::new();
-    let safe_bytes_per_blob: u64 = SAFE_BYTES_PER_BLOB.try_into()?;
-    let mut privileged_tx_count = 0;
+    // // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
+    // let mut acc_size_without_accounts = 1 + BLOCK_HEADER_LEN + 2 + 2 + 2;
+    // let mut size_accounts_diffs = 0;
+    // let mut account_diffs = HashMap::new();
+    // let safe_bytes_per_blob: u64 = SAFE_BYTES_PER_BLOB.try_into()?;
+    // let mut privileged_tx_count = 0;
 
-    let chain_config = store.get_chain_config();
+    // let chain_config = store.get_chain_config();
 
-    debug!("Fetching transactions from mempool");
-    // Fetch mempool transactions
-    let latest_block_number = store.get_latest_block_number().await?;
-    let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
+    // debug!("Fetching transactions from mempool");
+    // // Fetch mempool transactions
+    // let latest_block_number = store.get_latest_block_number().await?;
+    // let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
 
-    // Execute and add transactions to payload (if suitable)
-    loop {
-        // Check if we have enough gas to run more transactions
-        if context.remaining_gas < TX_GAS_COST {
-            debug!("No more gas to run transactions");
-            break;
-        };
+    // // Execute and add transactions to payload (if suitable)
+    // loop {
+    //     // Check if we have enough gas to run more transactions
+    //     if context.remaining_gas < TX_GAS_COST {
+    //         debug!("No more gas to run transactions");
+    //         break;
+    //     };
 
-        // Check if we have enough gas to run more transactions within the configured block_gas_limit
-        if context.gas_used() + TX_GAS_COST >= configured_block_gas_limit {
-            debug!("No more gas to run transactions");
-            break;
-        }
+    //     // Check if we have enough gas to run more transactions within the configured block_gas_limit
+    //     if context.gas_used() + TX_GAS_COST >= configured_block_gas_limit {
+    //         debug!("No more gas to run transactions");
+    //         break;
+    //     }
 
-        // Check if we have enough space for the StateDiff to run more transactions
-        if acc_size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
-            > safe_bytes_per_blob
-        {
-            debug!("No more StateDiff space to run transactions");
-            break;
-        };
+    //     // Check if we have enough space for the StateDiff to run more transactions
+    //     if acc_size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
+    //         > safe_bytes_per_blob
+    //     {
+    //         debug!("No more StateDiff space to run transactions");
+    //         break;
+    //     };
 
-        // Fetch the next transaction
-        let Some(head_tx) = txs.peek() else {
-            break;
-        };
+    //     // Fetch the next transaction
+    //     let Some(head_tx) = txs.peek() else {
+    //         break;
+    //     };
 
-        // Check if we have enough gas to run the transaction
-        if context.remaining_gas < head_tx.tx.gas_limit() {
-            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
-            // We don't have enough gas left for the transaction, so we skip all txs from this account
-            txs.pop();
-            continue;
-        }
+    //     // Check if we have enough gas to run the transaction
+    //     if context.remaining_gas < head_tx.tx.gas_limit() {
+    //         debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+    //         // We don't have enough gas left for the transaction, so we skip all txs from this account
+    //         txs.pop();
+    //         continue;
+    //     }
 
-        // Check if we have enough gas to run the transaction within the configured block_gas_limit
-        if context.gas_used() + head_tx.tx.gas_limit() >= configured_block_gas_limit {
-            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
-            // We don't have enough gas left for the transaction, so we skip all txs from this account
-            txs.pop();
-            continue;
-        }
+    //     // Check if we have enough gas to run the transaction within the configured block_gas_limit
+    //     if context.gas_used() + head_tx.tx.gas_limit() >= configured_block_gas_limit {
+    //         debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+    //         // We don't have enough gas left for the transaction, so we skip all txs from this account
+    //         txs.pop();
+    //         continue;
+    //     }
 
-        // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-        let tx_hash = head_tx.tx.hash();
+    //     // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
+    //     let tx_hash = head_tx.tx.hash();
 
-        // Check whether the tx is replay-protected
-        if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
-            // Ignore replay protected tx & all txs from the sender
-            // Pull transaction from the mempool
-            debug!("Ignoring replay-protected transaction: {}", tx_hash);
-            txs.pop();
-            blockchain.remove_transaction_from_pool(&tx_hash)?;
-            continue;
-        }
+    //     // Check whether the tx is replay-protected
+    //     if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
+    //         // Ignore replay protected tx & all txs from the sender
+    //         // Pull transaction from the mempool
+    //         debug!("Ignoring replay-protected transaction: {}", tx_hash);
+    //         txs.pop();
+    //         blockchain.remove_transaction_from_pool(&tx_hash)?;
+    //         continue;
+    //     }
 
-        let maybe_sender_acc_info = store
-            .get_account_info(latest_block_number, head_tx.tx.sender())
-            .await?;
+    //     let maybe_sender_acc_info = store
+    //         .get_account_info(latest_block_number, head_tx.tx.sender())
+    //         .await?;
 
-        if maybe_sender_acc_info.is_some_and(|acc_info| head_tx.nonce() < acc_info.nonce)
-            && !head_tx.is_privileged()
-        {
-            debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
-            txs.pop();
-            blockchain.remove_transaction_from_pool(&tx_hash)?;
-            continue;
-        }
+    //     if maybe_sender_acc_info.is_some_and(|acc_info| head_tx.nonce() < acc_info.nonce)
+    //         && !head_tx.is_privileged()
+    //     {
+    //         debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
+    //         txs.pop();
+    //         blockchain.remove_transaction_from_pool(&tx_hash)?;
+    //         continue;
+    //     }
 
-        // Copy remaining gas and block value before executing the transaction
-        let previous_remaining_gas = context.remaining_gas;
-        let previous_block_value = context.block_value;
+    //     // Copy remaining gas and block value before executing the transaction
+    //     let previous_remaining_gas = context.remaining_gas;
+    //     let previous_block_value = context.block_value;
 
-        // Execute tx
-        let receipt = match apply_plain_transaction(&head_tx, context) {
-            Ok(receipt) => receipt,
-            Err(e) => {
-                debug!("Failed to execute transaction: {}, {e}", tx_hash);
-                metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
-                // Ignore following txs from sender
-                txs.pop();
-                continue;
-            }
-        };
+    //     // Execute tx
+    //     let receipt = match apply_plain_transaction(&head_tx, context) {
+    //         Ok(receipt) => receipt,
+    //         Err(e) => {
+    //             debug!("Failed to execute transaction: {}, {e}", tx_hash);
+    //             metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+    //             // Ignore following txs from sender
+    //             txs.pop();
+    //             continue;
+    //         }
+    //     };
 
-        let tx_backup = context.vm.db.get_tx_backup().map_err(|e| {
-            BlockProducerError::FailedToGetDataFrom(format!("transaction backup: {e}"))
-        })?;
-        let account_diffs_in_tx =
-            get_account_diffs_in_tx(&context.vm.db, tx_backup).map_err(|e| {
-                BlockProducerError::Custom(format!("Failed to get account diffs from tx: {e}"))
-            })?;
-        let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
+    //     let tx_backup = context.vm.db.get_tx_backup().map_err(|e| {
+    //         BlockProducerError::FailedToGetDataFrom(format!("transaction backup: {e}"))
+    //     })?;
+    //     let account_diffs_in_tx =
+    //         get_account_diffs_in_tx(&context.vm.db, tx_backup).map_err(|e| {
+    //             BlockProducerError::Custom(format!("Failed to get account diffs from tx: {e}"))
+    //         })?;
+    //     let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
 
-        let (tx_size_without_accounts, new_accounts_diff_size) =
-            calculate_tx_diff_size(&merged_diffs, &head_tx, &receipt)?;
+    //     let (tx_size_without_accounts, new_accounts_diff_size) =
+    //         calculate_tx_diff_size(&merged_diffs, &head_tx, &receipt)?;
 
-        if acc_size_without_accounts + tx_size_without_accounts + new_accounts_diff_size
-            > safe_bytes_per_blob
-        {
-            debug!(
-                "No more StateDiff space to run this transactions. Skipping transaction: {:?}",
-                tx_hash
-            );
-            txs.pop();
+    //     if acc_size_without_accounts + tx_size_without_accounts + new_accounts_diff_size
+    //         > safe_bytes_per_blob
+    //     {
+    //         debug!(
+    //             "No more StateDiff space to run this transactions. Skipping transaction: {:?}",
+    //             tx_hash
+    //         );
+    //         txs.pop();
 
-            // This transaction state change is too big, we need to undo it.
-            undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-            continue;
-        }
+    //         // This transaction state change is too big, we need to undo it.
+    //         undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+    //         continue;
+    //     }
 
-        // Check we don't have an excessive number of privileged transactions
-        if head_tx.tx_type() == TxType::Privileged {
-            if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
-                debug!("Ran out of space for privileged transactions");
-                txs.pop();
-                undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-                continue;
-            }
-            let id = head_tx.nonce();
-            if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
-                debug!("Ignoring out-of-order privileged transaction");
-                txs.pop();
-                undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-                continue;
-            }
-            last_privileged_nonce.replace(id);
-            privileged_tx_count += 1;
-        }
+    //     // Check we don't have an excessive number of privileged transactions
+    //     if head_tx.tx_type() == TxType::Privileged {
+    //         if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
+    //             debug!("Ran out of space for privileged transactions");
+    //             txs.pop();
+    //             undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+    //             continue;
+    //         }
+    //         let id = head_tx.nonce();
+    //         if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
+    //             debug!("Ignoring out-of-order privileged transaction");
+    //             txs.pop();
+    //             undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+    //             continue;
+    //         }
+    //         last_privileged_nonce.replace(id);
+    //         privileged_tx_count += 1;
+    //     }
 
-        txs.shift()?;
-        // Pull transaction from the mempool
-        blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
+    //     txs.shift()?;
+    //     // Pull transaction from the mempool
+    //     blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
 
-        // We only add the messages and privileged transaction length because the accounts diffs may change
-        acc_size_without_accounts += tx_size_without_accounts;
-        size_accounts_diffs = new_accounts_diff_size;
-        // Include the new accounts diffs
-        account_diffs = merged_diffs;
-        // Add transaction to block
-        debug!("Adding transaction: {} to payload", tx_hash);
-        context.payload.body.transactions.push(head_tx.into());
-        // Save receipt for hash calculation
-        context.receipts.push(receipt);
-    }
+    //     // We only add the messages and privileged transaction length because the accounts diffs may change
+    //     acc_size_without_accounts += tx_size_without_accounts;
+    //     size_accounts_diffs = new_accounts_diff_size;
+    //     // Include the new accounts diffs
+    //     account_diffs = merged_diffs;
+    //     // Add transaction to block
+    //     debug!("Adding transaction: {} to payload", tx_hash);
+    //     context.payload.body.transactions.push(head_tx.into());
+    //     // Save receipt for hash calculation
+    //     context.receipts.push(receipt);
+    // }
 
-    metrics!(
-        context
-            .payload
-            .body
-            .transactions
-            .iter()
-            .for_each(|tx| METRICS_TX.inc_tx_with_type(MetricsTxType(tx.tx_type())))
-    );
+    // metrics!(
+    //     context
+    //         .payload
+    //         .body
+    //         .transactions
+    //         .iter()
+    //         .for_each(|tx| METRICS_TX.inc_tx_with_type(MetricsTxType(tx.tx_type())))
+    // );
 
     Ok(())
 }
