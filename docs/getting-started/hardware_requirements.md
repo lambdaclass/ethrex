@@ -23,9 +23,9 @@ Across all networks, the following apply:
 
 | Network | Disk (Minimum) | Disk (Recommended) | RAM (Minimum) | RAM (Recommended) |
 |------|------------------|--------------------|----------------|-------------------|
-| **Ethereum Mainnet** | 750 GB | 2 TB | 16 GB | 32 GB |
-| **Ethereum Sepolia** | 500 GB | 750 GB| 16 GB | 32 GB |
-| **Ethereum Hoodi** | 200 GB | 400 GB | 16 GB | 32 GB |
+| **Ethereum Mainnet** | 500 GB | 1 TB | 32 GB | 64 GB |
+| **Ethereum Sepolia** | 200 GB | 400 GB| 32 GB | 64 GB |
+| **Ethereum Hoodi** | 50 GB | 100 GB | 32 GB | 64 GB |
 
 ---
 
