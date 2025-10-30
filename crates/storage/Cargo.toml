@@ -37,9 +37,6 @@ hex-literal.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
-[lib]
-path = "./lib.rs"
-
 [lints.clippy]
 unwrap_used = "deny"
 redundant_clone = "warn"

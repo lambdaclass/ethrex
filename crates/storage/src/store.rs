@@ -1587,8 +1587,8 @@ mod tests {
     }
 
     async fn test_genesis_block(mut store: Store) {
-        const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
-        const GENESIS_HIVE: &str = include_str!("../../fixtures/genesis/hive.json");
+        const GENESIS_KURTOSIS: &str = include_str!("../../../fixtures/genesis/kurtosis.json");
+        const GENESIS_HIVE: &str = include_str!("../../../fixtures/genesis/hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
         let genesis_kurtosis: Genesis =
             serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
