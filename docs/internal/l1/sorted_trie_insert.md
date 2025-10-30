@@ -80,7 +80,7 @@ at which point the algorithm returns a hash to the root node branch.
 ### Inserting with extensions
 
 In general, each write to disk is prepared to properly handle extensions
-as the write function knows what it's writing and what was it's parent
+as the write function knows what it's writing and what was its parent
 and full path. As such, it can check if the insertion is a branch and
 if there's an extension need.
 
