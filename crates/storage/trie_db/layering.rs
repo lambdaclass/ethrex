@@ -1,4 +1,4 @@
-use ethrex_common::H256;
+use ethrex_common::{Bloom, H256};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -7,6 +7,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
+    bloom: Bloom,
     parent: H256,
     id: usize,
 }
@@ -53,9 +54,14 @@ impl TrieLayerCache {
         None
     }
 
+    pub fn get_bloom(&self, state_root: H256) -> Option<Bloom> {
+        self.layers.get(&state_root).map(|x| x.bloom)
+    }
+
     pub fn put_batch(
         &mut self,
         parent: H256,
+        parent_bloom: Bloom,
         state_root: H256,
         key_values: Vec<(Nibbles, Vec<u8>)>,
     ) {
@@ -70,16 +76,21 @@ impl TrieLayerCache {
             return;
         }
 
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
-            .into_iter()
-            .map(|(path, node)| (path.into_vec(), node))
-            .collect();
+        let mut nodes: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
+        let mut bloom = parent_bloom;
+
+        for (p, n) in key_values {
+            let nibbles = p.into_vec();
+            bloom.accrue(ethrex_common::BloomInput::Raw(&nibbles));
+            nodes.insert(nibbles, n);
+        }
 
         self.last_id += 1;
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
             parent,
             id: self.last_id,
+            bloom,
         };
         self.layers.insert(state_root, Arc::new(entry));
     }

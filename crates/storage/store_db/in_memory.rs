@@ -140,7 +140,10 @@ impl StoreEngine for Store {
             })
             .chain(update_batch.account_updates)
             .collect();
-        trie.put_batch(pre_state_root, last_state_root, key_values);
+        let parent_bloom = trie
+            .get_bloom(pre_state_root)
+            .expect("parent should have bloom");
+        trie.put_batch(pre_state_root, parent_bloom, last_state_root, key_values);
         store.trie_cache = Arc::new(trie);
 
         for block in update_batch.blocks {
