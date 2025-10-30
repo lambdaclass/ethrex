@@ -152,7 +152,7 @@ impl RocksDBBackend {
                 let _ = db
                     .drop_cf(cf_name)
                     .inspect(|_| info!("Successfully dropped column family: {}", cf_name))
-                    .inspect_err(|e| 
+                    .inspect_err(|e|
                         // Log error but don't fail initialization - the database is still usable
                         warn!("Failed to drop column family '{}': {}", cf_name, e));
             }
