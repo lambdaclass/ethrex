@@ -780,6 +780,14 @@ impl L1Committer {
         &mut self,
         latest_batch: &Batch,
     ) -> Result<(), CommitterError> {
+        // skip the update if we already have the latest batch state root
+        if self
+            .current_checkpoint_store
+            .has_state_root(latest_batch.state_root)?
+        {
+            return Ok(());
+        };
+
         let new_checkpoint_path = self
             .checkpoints_dir
             .join(format!("checkpoint_batch_{}", latest_batch.number));
@@ -792,6 +800,7 @@ impl L1Committer {
         if !new_checkpoint_path.exists() {
             self.store.create_checkpoint(&new_checkpoint_path).await?;
         }
+
         let (new_checkpoint_store, new_checkpoint_blockchain) = Self::get_checkpoint_from_path(
             self.genesis.clone(),
             self.blockchain.options.clone(),
