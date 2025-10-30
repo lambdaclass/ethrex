@@ -155,44 +155,16 @@ impl Syncer {
 
             // If the error is irrecoverable, we exit ethrex
             Err(error) => {
-                match error {
-                    SyncError::SnapshotReadError(_, _)
-                    | SyncError::SnapshotDecodeError(_)
-                    | SyncError::CodeHashesSnapshotDecodeError(_)
-                    | SyncError::AccountState(_, _)
-                    | SyncError::BytecodesNotFound
-                    | SyncError::AccountStateSnapshotsDirNotFound
-                    | SyncError::AccountStoragesSnapshotsDirNotFound
-                    | SyncError::CodeHashesSnapshotsDirNotFound
-                    | SyncError::DifferentStateRoots(_, _, _)
-                    | SyncError::NoBlockHeaders
-                    | SyncError::PeerHandler(_)
-                    | SyncError::CorruptPath
-                    | SyncError::TrieGenerationError(_)
-                    | SyncError::AccountTempDBDirNotFound
-                    | SyncError::StorageTempDBDirNotFound
-                    | SyncError::RocksDBError(_)
-                    | SyncError::BytecodeFileError
-                    | SyncError::NoLatestCanonical
-                    | SyncError::PeerTableError(_) => {
+                match error.is_recoverable() {
+                    false => {
                         // We exit the node, as we can't recover this error
                         error!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
                             %error, "Sync cycle failed, exiting as the error is irrecoverable",
                         );
-                        std::process::exit(-1);
+                        std::process::exit(2);
                     }
-                    SyncError::Chain(_)
-                    | SyncError::Store(_)
-                    | SyncError::Send(_)
-                    | SyncError::Trie(_)
-                    | SyncError::Rlp(_)
-                    | SyncError::JoinHandle(_)
-                    | SyncError::CorruptDB
-                    | SyncError::BodiesNotFound
-                    | SyncError::InvalidRangeReceived
-                    | SyncError::BlockNumber(_)
-                    | SyncError::NoBlocks => {
+                    true => {
                         // We do nothing, as the error is recoverable
                         error!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
@@ -1215,6 +1187,43 @@ pub enum SyncError {
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
+}
+
+impl SyncError {
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            SyncError::SnapshotReadError(_, _)
+            | SyncError::SnapshotDecodeError(_)
+            | SyncError::CodeHashesSnapshotDecodeError(_)
+            | SyncError::AccountState(_, _)
+            | SyncError::BytecodesNotFound
+            | SyncError::AccountStateSnapshotsDirNotFound
+            | SyncError::AccountStoragesSnapshotsDirNotFound
+            | SyncError::CodeHashesSnapshotsDirNotFound
+            | SyncError::DifferentStateRoots(_, _, _)
+            | SyncError::NoBlockHeaders
+            | SyncError::PeerHandler(_)
+            | SyncError::CorruptPath
+            | SyncError::TrieGenerationError(_)
+            | SyncError::AccountTempDBDirNotFound
+            | SyncError::StorageTempDBDirNotFound
+            | SyncError::RocksDBError(_)
+            | SyncError::BytecodeFileError
+            | SyncError::NoLatestCanonical
+            | SyncError::PeerTableError(_) => false,
+            SyncError::Chain(_)
+            | SyncError::Store(_)
+            | SyncError::Send(_)
+            | SyncError::Trie(_)
+            | SyncError::Rlp(_)
+            | SyncError::JoinHandle(_)
+            | SyncError::CorruptDB
+            | SyncError::BodiesNotFound
+            | SyncError::InvalidRangeReceived
+            | SyncError::BlockNumber(_)
+            | SyncError::NoBlocks => true,
+        }
+    }
 }
 
 impl<T> From<SendError<T>> for SyncError {
