@@ -53,7 +53,7 @@ pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
     pending_removal: HashSet<Nibbles>,
-    dirty: bool
+    dirty: bool,
 }
 
 impl Default for Trie {
@@ -69,7 +69,7 @@ impl Trie {
             db,
             root: NodeRef::default(),
             pending_removal: HashSet::new(),
-            dirty: false
+            dirty: false,
         }
     }
 
@@ -83,7 +83,7 @@ impl Trie {
                 Default::default()
             },
             pending_removal: HashSet::new(),
-            dirty: false
+            dirty: false,
         }
     }
 
@@ -99,10 +99,7 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32
-        && !self.dirty
-            && self.db().flatkeyvalue_computed(path.clone())
-        {
+        if pathrlp.len() == 32 && !self.dirty && self.db().flatkeyvalue_computed(path.clone()) {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
