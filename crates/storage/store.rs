@@ -803,10 +803,7 @@ impl Store {
         &self,
         hashed_address: H256,
     ) -> Result<BackendTrieDBLocked, StoreError> {
-        BackendTrieDBLocked::new(
-            self.backend.as_ref(),
-            Some(hashed_address),
-        )
+        BackendTrieDBLocked::new(self.backend.as_ref(), Some(hashed_address))
     }
 
     pub fn state_trie_backend(&self) -> Result<BackendTrieDB, StoreError> {
