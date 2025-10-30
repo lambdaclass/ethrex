@@ -242,7 +242,8 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         for updates in rx {
-            state_trie_hash = self.process_incoming_update_message(
+            state_trie_hash = Self::process_incoming_update_message(
+                &self.storage,
                 &mut state_trie,
                 updates,
                 &mut storage_updates_map,
@@ -267,7 +268,7 @@ impl Blockchain {
     }
 
     fn process_incoming_update_message(
-        &self,
+        storage: &Store,
         state_trie: &mut Trie,
         updates: Vec<AccountUpdate>,
         storage_updates_map: &mut StoreUpdatesMap,
@@ -334,7 +335,7 @@ impl Blockchain {
                     .entry(hashed_address_h256)
                     .or_insert_with(|| {
                         (
-                            self.storage.open_storage_trie(
+                            storage.open_storage_trie(
                                 hashed_address_h256,
                                 account_state.storage_root,
                                 parent_header.state_root,
