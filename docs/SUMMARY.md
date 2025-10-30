@@ -46,6 +46,7 @@
 - [Fundamentals](./l2/fundamentals/README.md)
   - [State diffs](./l2/fundamentals/state_diffs.md)
   - [Data availability](./l2/fundamentals/data_availability.md)
+  - [Execution witness](./l2/fundamentals/execution_witness.md)
   - [Deposits](./l2/fundamentals/deposits.md)
   - [Withdrawals](./l2/fundamentals/withdrawals.md)
   - [Smart contracts](./l2/fundamentals/contracts.md)
