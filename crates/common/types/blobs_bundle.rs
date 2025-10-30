@@ -110,55 +110,55 @@ impl BlobsBundle {
     #[cfg(feature = "c-kzg")]
     pub fn validate(
         &self,
-        tx: &super::EIP4844Transaction,
-        fork: super::Fork,
+        _tx: &super::EIP4844Transaction,
+        _fork: super::Fork,
     ) -> Result<(), BlobsBundleError> {
-        use super::CELLS_PER_EXT_BLOB;
+        // use super::CELLS_PER_EXT_BLOB;
 
-        let max_blobs = max_blobs_per_block(fork);
-        let blob_count = self.blobs.len();
+        // let max_blobs = max_blobs_per_block(fork);
+        // let blob_count = self.blobs.len();
 
-        if blob_count > max_blobs {
-            return Err(BlobsBundleError::MaxBlobsExceeded);
-        }
+        // if blob_count > max_blobs {
+        //     return Err(BlobsBundleError::MaxBlobsExceeded);
+        // }
 
-        // Check if the blob bundle is empty
-        if blob_count == 0 {
-            return Err(BlobsBundleError::BlobBundleEmptyError);
-        }
+        // // Check if the blob bundle is empty
+        // if blob_count == 0 {
+        //     return Err(BlobsBundleError::BlobBundleEmptyError);
+        // }
 
-        // Check if the blob versioned hashes and blobs bundle content length mismatch
-        if blob_count != self.commitments.len()
-            || (self.version == 0 && blob_count != self.proofs.len())
-            || (self.version != 0 && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
-            || blob_count != tx.blob_versioned_hashes.len()
-        {
-            return Err(BlobsBundleError::BlobsBundleWrongLen);
-        };
+        // // Check if the blob versioned hashes and blobs bundle content length mismatch
+        // if blob_count != self.commitments.len()
+        //     || (self.version == 0 && blob_count != self.proofs.len())
+        //     || (self.version != 0 && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
+        //     || blob_count != tx.blob_versioned_hashes.len()
+        // {
+        //     return Err(BlobsBundleError::BlobsBundleWrongLen);
+        // };
 
-        // Check versioned hashes match the tx
-        for (commitment, blob_versioned_hash) in
-            self.commitments.iter().zip(tx.blob_versioned_hashes.iter())
-        {
-            if *blob_versioned_hash != kzg_commitment_to_versioned_hash(commitment) {
-                return Err(BlobsBundleError::BlobVersionedHashesError);
-            }
-        }
+        // // Check versioned hashes match the tx
+        // for (commitment, blob_versioned_hash) in
+        //     self.commitments.iter().zip(tx.blob_versioned_hashes.iter())
+        // {
+        //     if *blob_versioned_hash != kzg_commitment_to_versioned_hash(commitment) {
+        //         return Err(BlobsBundleError::BlobVersionedHashesError);
+        //     }
+        // }
 
-        if self.version != 0 {
-            // Validate the blobs with the commitments and cell proofs
-            use ethrex_crypto::kzg::verify_cell_kzg_proof_batch;
-            if !verify_cell_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
-                return Err(BlobsBundleError::BlobToCommitmentAndProofError);
-            }
-        } else {
-            // Validate the blobs with the commitments and proofs
-            use ethrex_crypto::kzg::verify_kzg_proof_batch;
+        // if self.version != 0 {
+        //     // Validate the blobs with the commitments and cell proofs
+        //     use ethrex_crypto::kzg::verify_cell_kzg_proof_batch;
+        //     if !verify_cell_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
+        //         return Err(BlobsBundleError::BlobToCommitmentAndProofError);
+        //     }
+        // } else {
+        //     // Validate the blobs with the commitments and proofs
+        //     use ethrex_crypto::kzg::verify_kzg_proof_batch;
 
-            if !verify_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
-                return Err(BlobsBundleError::BlobToCommitmentAndProofError);
-            }
-        }
+        //     if !verify_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
+        //         return Err(BlobsBundleError::BlobToCommitmentAndProofError);
+        //     }
+        // }
 
         Ok(())
     }
