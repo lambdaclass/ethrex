@@ -86,8 +86,9 @@ fn main() -> eyre::Result<()> {
             let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
             format!("ethrex-tokio-runtime-{}", id)
         })
+        .enable_io()
         .build()
-        .expect("");
+        .expect("We should be able to open a tokio runtime");
 
     rt.block_on(ethrex())
 }
