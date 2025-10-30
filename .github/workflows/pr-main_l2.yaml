@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: sleep
-        run: sleep 60
+        run: sleep 180
   lint:
     # "Lint" is a required check, don't change the name
     name: Lint

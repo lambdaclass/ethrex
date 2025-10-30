@@ -32,39 +32,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Free Disk Space
-        uses: ./.github/actions/free-disk
-
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-        with:
-          components: rustfmt, clippy
-
-      # We don't run with workspace, as members of the workspace require l2. We run it with workspace
-      # om the l2 lint
-      - name: Run cargo check
-        run: cargo check
-
-      - name: Run cargo clippy
-        run: |
-          cargo clippy -- -D warnings
-
-      - name: Run cargo fmt
-        run: |
-          cargo fmt --all -- --check
-
-      - name: Run tooling cargo check
-        run: cargo check --workspace --all-targets
-        working-directory: tooling
-
-      - name: Run tooling cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-        working-directory: tooling
-
-      - name: Run tooling cargo fmt
-        run: cargo fmt --all -- --check
-        working-directory: tooling
-
   test:
     # "Test" is a required check, don't change the name
     name: Test
