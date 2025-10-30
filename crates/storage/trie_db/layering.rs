@@ -7,6 +7,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
+    // This per layer bloom accrues only paths that pertain to this layer.
     bloom: Bloom,
     parent: H256,
     id: usize,
@@ -18,13 +19,31 @@ pub struct TrieLayerCache {
     /// TODO: this implementation panics on overflow
     last_id: usize,
     layers: FxHashMap<H256, Arc<TrieLayer>>,
+    /// Global bloom that accrues all layer blooms.
+    ///
+    /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
+    /// layer, thus going directly to the database.
+    bloom: Bloom,
 }
 
 impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+        let key = key.as_ref();
+
+        // Fast check to know if any layer may contains the given key.
+        // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
+        if !self
+            .bloom
+            .contains_input(ethrex_common::BloomInput::Raw(key))
+        {
+            // TrieWrapper goes to db when returning None.
+            return None;
+        }
+
         let mut current_state_root = state_root;
+
         while let Some(layer) = self.layers.get(&current_state_root) {
-            if let Some(value) = layer.nodes.get(key.as_ref()) {
+            if let Some(value) = layer.nodes.get(key) {
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
@@ -54,14 +73,9 @@ impl TrieLayerCache {
         None
     }
 
-    pub fn get_bloom(&self, state_root: H256) -> Option<Bloom> {
-        self.layers.get(&state_root).map(|x| x.bloom)
-    }
-
     pub fn put_batch(
         &mut self,
         parent: H256,
-        parent_bloom: Bloom,
         state_root: H256,
         key_values: Vec<(Nibbles, Vec<u8>)>,
     ) {
@@ -77,13 +91,16 @@ impl TrieLayerCache {
         }
 
         let mut nodes: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
-        let mut bloom = parent_bloom;
+        let mut bloom = Bloom::zero();
 
         for (p, n) in key_values {
             let nibbles = p.into_vec();
             bloom.accrue(ethrex_common::BloomInput::Raw(&nibbles));
             nodes.insert(nibbles, n);
         }
+
+        // add this new bloom to the global one.
+        self.bloom.accrue_bloom(&bloom);
 
         self.last_id += 1;
         let entry = TrieLayer {
@@ -95,6 +112,14 @@ impl TrieLayerCache {
         self.layers.insert(state_root, Arc::new(entry));
     }
 
+    pub fn rebuild_bloom(&mut self) {
+        self.bloom = Bloom::zero();
+
+        for entry in self.layers.values() {
+            self.bloom.accrue_bloom(&entry.bloom);
+        }
+    }
+
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
             Ok(layer) => layer,
@@ -104,6 +129,7 @@ impl TrieLayerCache {
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
         self.layers.retain(|_, item| item.id > layer.id);
+        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
         Some(
             parent_nodes
                 .unwrap_or_default()
