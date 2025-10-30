@@ -822,6 +822,9 @@ impl L1Committer {
             .await
     }
 
+    /// Restores a checkpoint store and blockchain from the given path.
+    /// If the path does not exist, it creates a new store with the genesis state (this,
+    /// should only happen on the very first checkpoint creation).
     async fn get_checkpoint_from_path(
         genesis: Genesis,
         blockchain_opts: BlockchainOptions,
@@ -831,6 +834,10 @@ impl L1Committer {
         let engine_type = EngineType::RocksDB;
         #[cfg(not(feature = "rocksdb"))]
         let engine_type = EngineType::InMemory;
+
+        if !path.exists() {
+            info!("Creating genesis checkpoint at path {path:?}");
+        }
 
         let checkpoint_store = {
             let mut checkpoint_store_inner = Store::new(path, engine_type)?;
