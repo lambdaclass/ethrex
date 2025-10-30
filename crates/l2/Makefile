@@ -1,7 +1,7 @@
 .PHONY: help init down restart init-l1-docker down-l1-docker restart-l1-docker \
 	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
-	init-prover build-prover clean-tee clean-tee-contract-deps \
+	init-prover-sp1 init-prover-risc0 init-prover-exec build-prover clean-tee clean-tee-contract-deps \
 	test integration-test integration-test-gpu state-diff-test
 
 .DEFAULT_GOAL := help
@@ -86,10 +86,6 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deposit-rich \
@@ -118,9 +114,21 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 # L2
 # ==============================================================================
 
+ifdef SP1
+  SP1? := sp1
+else
+  SP1? :=
+endif
+
+ifdef RISC0
+  RISC0? := risc0
+else
+  RISC0? :=
+endif
+
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
-	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features l2,l2-sql,$(SP1?),$(RISC0?) --manifest-path ../../Cargo.toml -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -167,37 +175,38 @@ restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Clien
 # Prover
 # ==============================================================================
 
-init-prover: ../../target/release/ethrex ## 🚀 Initializes the Prover
-	@if [ -z "$$PROVER" ]; then \
-		PROVER="exec"; \
-	fi; \
-	BACKEND="$$PROVER" \
-	../../target/release/ethrex l2 prover \
-		--backend "$$PROVER" \
-		--proof-coordinators tcp://127.0.0.1:3900
+ifdef GPU
+  GPU? := gpu
+else
+  GPU? :=
+endif
 
-build-prover:
-	rm -f ../../target/release/ethrex
-	$(MAKE) PROVER="$(PROVER)" G="$(G)" ../../target/release/ethrex
+build-prover-sp1:
+	cargo build --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml --bin ethrex
 
-../../target/release/ethrex: $(PROVER_SRC_FILES)
-	@if [ -z "$$PROVER" ]; then \
-		echo "Warn: ProverType (PROVER) is missing. Building only with exec mode."; \
-		echo "You can provide it as an argument:"; \
-		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> G=<true>"; \
-		echo "The prover can also be run with GPU (G)"; \
-	fi; \
-	if [ -z "$$G" ]; then \
-		GPU=""; \
-	else \
-		GPU=",gpu"; \
-	fi; \
-	RUSTFLAGS='-C target-cpu=native' \
-	cargo build --release \
-		--manifest-path ../../Cargo.toml \
-		--bin ethrex \
-		--features "l2,l2-sql,$$PROVER$$GPU"
+build-prover-risc0:
+	cargo build --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml --bin ethrex
 
+build-prover-exec:
+	cargo build --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml --bin ethrex
+
+init-prover-sp1:
+	cargo run --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 \
+	--backend sp1
+
+init-prover-risc0:
+	cargo run --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 \
+	--backend risc0
+
+init-prover-exec:
+	cargo run --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 \
+	--backend exec
 
 # ==============================================================================
 # TEE
@@ -223,7 +232,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
 	docker compose up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
+	RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
 	cargo test l2 --release -- --nocapture --test-threads=1
@@ -238,7 +247,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
 	docker compose up --detach --build
 
-	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
+	RUST_LOG=info,ethrex_prover_lib=debug GPU=true make init-prover-sp1 & \
 	cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 

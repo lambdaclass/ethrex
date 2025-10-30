@@ -29,6 +29,7 @@ use std::{
     io::{BufWriter, Write},
 };
 use tokio::{task::JoinSet, time::sleep};
+use url::Url;
 
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
@@ -65,7 +66,7 @@ struct SubcommandLoad {
         default_value = "http://localhost:8545",
         help = "URL of the node being tested."
     )]
-    node: String,
+    node: Url,
 
     #[arg(long, short = 'k', help = "Path to the file containing private keys.")]
     pkeys: String,

@@ -56,6 +56,11 @@ Node options:
 
           [default: INFO]
 
+      --log.color <LOG_COLOR>
+          Possible values: auto, always, never
+
+          [default: auto]
+
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
@@ -213,6 +218,11 @@ Node options:
           Possible values: info, debug, trace, warn, error
 
           [default: INFO]
+
+      --log.color <LOG_COLOR>
+          Possible values: auto, always, never
+
+          [default: auto]
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
@@ -514,11 +524,6 @@ Aligned options:
 
           [env: ETHREX_ALIGNED_FEE_ESTIMATE=]
           [default: instant]
-
-      --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
-          Path to the SP1 elf. This is used for proof verification.
-
-          [env: ETHREX_ALIGNED_SP1_ELF_PATH=]
 
 Admin server options:
       --admin-server.addr <IP_ADDRESS>

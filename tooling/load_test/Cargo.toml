@@ -22,3 +22,4 @@ tokio = { workspace = true, features = ["full"] }
 futures = "0.3"
 sha3.workspace = true
 serde_json.workspace = true
+url.workspace = true
