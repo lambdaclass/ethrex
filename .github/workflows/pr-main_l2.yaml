@@ -65,6 +65,9 @@ jobs:
       - name: Run cargo fmt
         run: |
           cargo fmt --all -- --check
+      
+      - name: sleep 30s
+        run: sleep 30 && exit 1
 
   build-docker:
     name: Build docker image
