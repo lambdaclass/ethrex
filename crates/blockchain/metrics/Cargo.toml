@@ -22,9 +22,6 @@ axum = { workspace = true, optional = true }
 tracing-subscriber.workspace = true
 
 
-[lib]
-path = "./mod.rs"
-
 [features]
 default = ["api"]
 transactions = []

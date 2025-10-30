@@ -28,9 +28,6 @@ serde_json.workspace = true
 hex = "0.4.3"
 tokio = { workspace = true, features = ["full"] }
 
-[lib]
-path = "./blockchain.rs"
-
 [features]
 default = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
