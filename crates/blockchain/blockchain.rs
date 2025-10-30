@@ -1088,7 +1088,7 @@ impl Blockchain {
         };
 
         metrics!(
-            let _ = METRICS_BLOCKS.set_block_number(last_block_number);
+            METRICS_BLOCKS.set_block_number(last_block_number);
             METRICS_BLOCKS.set_latest_block_gas_limit(last_block_gas_limit as f64);
             // Set the latest gas used as the average gas used per block in the batch
             METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
