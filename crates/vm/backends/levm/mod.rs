@@ -88,7 +88,6 @@ impl LEVM {
         merkleizer: Sender<Vec<AccountUpdate>>,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
-        LEVM::send_state_transitions_tx(&merkleizer, db)?;
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -123,17 +122,22 @@ impl LEVM {
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
             account.info.balance += increment.into();
-            LEVM::send_state_transitions_tx(&merkleizer, db)?;
         }
+        LEVM::send_state_transitions_tx(&merkleizer, db)?;
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L1 => extract_all_requests_levm_pipeline(
+                &receipts,
+                db,
+                &block.header,
+                vm_type,
+                &merkleizer,
+            )?,
             VMType::L2(_) => Default::default(),
         };
-        LEVM::send_state_transitions_tx(&merkleizer, db)?;
 
         Ok(BlockExecutionResult { receipts, requests })
     }
@@ -529,6 +533,45 @@ pub fn extract_all_requests_levm(
     let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
         .output
         .into();
+
+    let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
+        .ok_or(EvmError::InvalidDepositRequest)?;
+    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
+    let consolidation = Requests::from_consolidation_data(consolidation_data);
+
+    Ok(vec![deposits, withdrawals, consolidation])
+}
+
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
+pub fn extract_all_requests_levm_pipeline(
+    receipts: &[Receipt],
+    db: &mut GeneralizedDatabase,
+    header: &BlockHeader,
+    vm_type: VMType,
+    merkleizer: &Sender<Vec<AccountUpdate>>,
+) -> Result<Vec<Requests>, EvmError> {
+    if let VMType::L2(_) = vm_type {
+        return Err(EvmError::InvalidEVM(
+            "extract_all_requests_levm should not be called for L2 VM".to_string(),
+        ));
+    }
+
+    let chain_config = db.store.get_chain_config()?;
+    let fork = chain_config.fork(header.timestamp);
+
+    if fork < Fork::Prague {
+        return Ok(Default::default());
+    }
+
+    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type)?
+        .output
+        .into();
+    LEVM::send_state_transitions_tx(merkleizer, db)?;
+    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
+        .output
+        .into();
+    LEVM::send_state_transitions_tx(merkleizer, db)?;
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
         .ok_or(EvmError::InvalidDepositRequest)?;
