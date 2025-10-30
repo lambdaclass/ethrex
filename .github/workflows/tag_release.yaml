@@ -166,7 +166,7 @@ jobs:
         run: |
           cd crates/l2/contracts/src/
           tar -czvf ../../../../ethrex-contracts.tar.gz .
-          
+
       - name: Upload contracts artifact
         uses: actions/upload-artifact@v4
         with:
@@ -191,7 +191,7 @@ jobs:
       - name: Format name
         run: |
           echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
-          
+
       # Pushes to ghcr.io/lambdaclass/ethrex
       - name: Build and push L1 Docker image
         id: push_l1
@@ -241,7 +241,7 @@ jobs:
           common_parent=$(git merge-base ${{ github.ref_name }} $last_tag)
           echo "PREVIOUS_TAG: $common_parent"
           echo "PREVIOUS_TAG=$common_parent" >> $GITHUB_ENV
-          
+
       - name: Update CHANGELOG
         id: changelog
         uses: requarks/changelog-action@v1
@@ -263,5 +263,5 @@ jobs:
           name: "ethrex: ${{ github.ref_name }}"
           body: >
             Installation and running instructions can be found in [our docs](https://docs.ethrex.xyz/)
-            
+
             ${{ steps.changelog.outputs.changes }}
