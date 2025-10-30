@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Sync modes - Ethrex</title>
+        <title>Snap sync internals - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,39 +237,86 @@
 }
 
 </style>
-<h1 id="sync-modes"><a class="header" href="#sync-modes">Sync Modes</a></h1>
-<h2 id="full-sync"><a class="header" href="#full-sync">Full sync</a></h2>
-<p>Full syncing works by downloading and executing every block from genesis. This means that full syncing will only work for networks that started after <a href="https://ethereum.org/en/roadmap/merge/">The Merge</a>, as ethrex only supports post merge execution.</p>
-<h2 id="snap-sync"><a class="header" href="#snap-sync">Snap sync</a></h2>
-<p>Snap syncing is a much faster alternative to full sync that works by downloading and executing only the latest blocks from the network.</p>
-<p>A snap sync cycle begins by fetching all the block headers (via eth p2p) between the current head (latest canonical block) and the sync head (block hash sent by a forkChoiceUpdate).</p>
-<p>We will then fetch the block bodies from each header and at the same time select a pivot block (sync head - 64) and start rebuilding its state via snap p2p requests, if the pivot were to become stale during this rebuild we will select a newer pivot (sync head) and restart it.</p>
-<p>After we fully rebuilt the pivot state and fetched all the block bodies we will fetch and store the receipts for the range between the current head and the pivot (including it), and at the same time store all blocks in the same range and execute all blocks after the pivot (like in full sync).</p>
-<h3 id="snap-state-rebuild"><a class="header" href="#snap-state-rebuild">Snap State Rebuild</a></h3>
-<p>During snap sync we need to fully rebuild the pivot block's state.
-We can divide snap sync into 3 core processes: State Sync, Trie Rebuild, and Healing.
-The State Sync consists of downloading the plain state of the pivot block, aka the values on the leafs of the state &amp; storage tries. For this process we will divide the state trie into segments and fetch each segment in parallel. We will also be relying on two side processes, the <code>bytecode_fetcher</code> and the <code>storage_fetcher</code> which will both remain active throughout the state sync, and fetch the bytecodes and storages of each account downloaded during the state sync.
-The Trie Rebuild process works in the background while State Sync is active. It consists of two processes running in parallel, one to rebuild the state trie and one to rebuild the storage tries. Both will read the data downloaded by the State Sync but while the state rebuild works independently, the storage rebuild will wait for the <code>storage_fetcher</code> to advertise which storages have been fully downloaded before attempting to rebuild them.
-The Healing process consists of fixing any inconsistencies leftover from the State Sync &amp; Trie Rebuild processes after they finish. As state sync can spawn across multiple cycles with different pivot blocks the state will not be consistent with the latest pivot block, so we need to fetch all the nodes that the pivot's tries have and ours don't. The <code>bytecode_fetcher</code> and <code>storage_healer</code> processes will be involved to heal the bytecodes &amp; storages of each account healed by the main state heal process.
-Also, the <code>storage_healer</code> will be spawned earlier, during state sync so that it can begin healing the storages that couldn't be fetched due to pivot staleness.</p>
-<p>This diagram illustrates all the processes involved in snap sync:</p>
-<p><img src="./diagrams/SnapSync.drawio.png" alt="SnapSync" />.</p>
-<p>And this diagram shows the interaction between the different processes involved in State Sync, Trie Rebuild and Healing:
-<img src="./diagrams/StateSyncAndHealing.drawio.png" alt="StateSyncAndHealing" />.</p>
-<p>To exemplify how queue-like processes work we will explain how the <code>bytecode_fetcher</code> works:</p>
-<p>The <code>bytecode_fetcher</code> has its own channel where it receives code hashes from an active <code>rebuild_state_trie</code> process. Once a code hash is received, it is added to a pending queue. When the queue has enough messages for a full batch it will request a batch of bytecodes via snap p2p and store them. If a bytecode could not be fetched by the request (aka, we reached the response limit) it is added back to the pending queue. After the whole state is synced <code>fetch_snap_state</code> will send an empty list to the <code>bytecode_fetcher</code> to signal the end of the requests so it can request the last (incomplete) bytecode batch and end gracefully.</p>
-<p>This diagram illustrates the process described above:</p>
-<p><img src="./diagrams/bytecode_fetcher.jpg" alt="snap_sync" /></p>
+<h1 id="healing-algorithm-explanation-and-documentation-before-path-based"><a class="header" href="#healing-algorithm-explanation-and-documentation-before-path-based">Healing Algorithm Explanation and Documentation (Before Path Based)</a></h1>
+<p>Healing is the last step of Snap Sync. Snap begins the downloading of the state and storage tries by downloading the leaves (account states and storage slots), and from those leaves we reconstruct the intermediate nodes (branches and extension). Afterwards we may be left with a malformed trie, as that step will resume the download of leaves with a new state root if the old one times out.</p>
+<p>The purpose of the healing algorithm is “heal” that trie so that it ends up in a consistent state.</p>
+<h1 id="healing-conceptually"><a class="header" href="#healing-conceptually">Healing Conceptually</a></h1>
+<p>The malformed trie is going to have large sections of the trie which are in a correct state, as we had all of the leaves in that sections and those accounts haven’t been modified in the blocks that happened concurrently to the snapsync algorithm.</p>
+<p><img src="healing/Example_1_Step_0.svg" alt="Image of a trie, where the root node is in red, indicating that it’s in an incorrect state. It points to two branches, one is correct and one was computed from faulty data, and such doesn’t exist in the latest block" /></p>
+<p>Example of a trie where 3 leaves where downloaded in block 1 and 1 was downloaded in block 2. The trie root is different from the state root of block 2, as one of the leaf nodes was modified in block 2.</p>
+<p>The algorithm attempts to rebuild the trie through downloading the missing nodes, starting from the top. If the node is present in the database that means that we have that and all of their child nodes present in the database. If not, we download the node and check if the children of the root are present, applying the algorithm recursively.</p>
+<p><img src="healing/Example_1_Step_1.svg" alt="Iteration 1 of algorithm" /></p>
+<p>Iteration 1 of algorithm</p>
+<p><img src="healing/Example_1_Step_2.svg" alt="Iteration 2 of algorithm" /></p>
+<p>Iteration 2 of algorithm</p>
+<p><img src="healing/Example_1_Step_3.svg" alt="Iteration 3 of algorithm" /></p>
+<p>Iteration 3 of algorithm</p>
+<p><img src="healing/Example_1_Step_4.svg" alt="Final state of trie after healing" /></p>
+<p>Final state of trie after healing</p>
+<h1 id="implementation"><a class="header" href="#implementation">Implementation</a></h1>
+<p>The algorithm is implemented in ethrex currently in <code>crates/networking/p2p/sync/state_healings.rs</code> and <code>crates/networking/p2p/sync/storage_healing.rs</code>. All of our code examples are from the account state trie.</p>
+<h3 id="api"><a class="header" href="#api">API</a></h3>
+<p>The API used is the ethereum capability snap/1, documented at https://github.com/ethereum/devp2p/blob/master/caps/snap.md and for healing the only method used is <code>GetTrieNodes</code>. This method allows us to ask our peers for nodes in a trie. We ask the nodes by <strong>path</strong> to the node, not by hash.</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct GetTrieNodes {    
+    pub id: u64,    
+    pub root_hash: H256,    
+    // [[acc_path, slot_path_1, slot_path_2,...]...]    
+    // The paths can be either full paths (hash) or 
+    // only the partial path (compact-encoded nibbles)    
+    pub paths: Vec&lt;Vec&lt;Bytes&gt;&gt;,    
+    pub bytes: u64,
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="staleness"><a class="header" href="#staleness">Staleness</a></h3>
+<p>The spec allows the nodes to stop responding if the request is older than 128 blocks. In that case, the response to the <code>GetTrieNodes</code> will be empty. As such, our algorithm checks periodically if the block is stale, and stops executing. In that scenario, we must be sure that the we leave the storage in a consistent state at any given time and doesn’t break our invariants.</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Current Staleness logic code
+// We check with a clock if we are stale        
+if !is_stale &amp;&amp; current_unix_time() &gt; staleness_timestamp {
+    info!("state healing is stale");            
+    is_stale = true;       
+}
+// We make sure that we have stored everything that we need to the database
+if is_stale &amp;&amp; nodes_to_heal.is_empty() &amp;&amp; inflight_tasks == 0 {
+  info!("Finished inflight tasks");            
+  db_joinset.join_all().await;            
+  break;
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="membatch"><a class="header" href="#membatch">Membatch</a></h3>
+<p>Currently, our algorithm has an invariant, which is that if we have a node in storage we have its and all of its children are present. Therefore, when we download for a node if some of it’s children are missing we can’t immediately store it on disk. Our implementation currently stores the nodes in temporary structure called membatch, which stores the node and how many of it’s children are missing. When a child gets stored, we reduce the counter of missing children of the parent. If that numbers reaches 0, we write the parent to the database.</p>
+<p>In code, the membatch is current <code>HashMap&lt;Nibbles, MembatchEntryValue&gt;</code> with the value being the following struct</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct MembatchEntryValue {
+    /// The node to be flushed into storage
+    node: Node,
+    /// How many of the nodes that are child of this are not in storage
+    children_not_in_storage_count: u64,
+    /// Which is the parent of this node
+    parent_path: Nibbles,
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="known-optimization-issues"><a class="header" href="#known-optimization-issues">Known Optimization Issues</a></h2>
+<ul>
+<li>Membatch gets cleared between iterations, while it could be preserved and the hash checked.</li>
+<li>When checking if a child is present in storage, we can also check if it’s in the membatch. If it is, we can skip that download and act like we have immediately downloaded that node.</li>
+<li>Membatch is currently a <code>HashMap</code>, a <code>BTreeMap</code> or other structures may be faster in real use.</li>
+<li>Storage healing receives as a parameter a list of accounts that need to be healed and it has get their state before it can run. Doing those reads could be more efficient.</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l1/fundamentals/networking.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l1/fundamentals/sync_modes.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../internal/l1/healing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../internal/l1/delete_accounts.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -279,11 +326,11 @@ Also, the <code>storage_healer</code> will be spawned earlier, during state sync
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l1/fundamentals/networking.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l1/fundamentals/sync_modes.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../internal/l1/healing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../internal/l1/delete_accounts.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
