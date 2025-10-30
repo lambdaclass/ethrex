@@ -61,9 +61,9 @@ pub fn compile_contract(
         .success();
 
     if !cmd_succeeded {
-        return Err(ContractCompilationError::CompilationError(
-            format!("Failed to compile {contract_path:?}").to_owned(),
-        ));
+        return Err(ContractCompilationError::CompilationError(format!(
+            "Failed to compile {contract_path:?}"
+        )));
     }
 
     Ok(())

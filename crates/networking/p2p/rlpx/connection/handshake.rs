@@ -133,7 +133,7 @@ pub(crate) async fn perform(
         Established {
             signer: context.signer,
             sink,
-            node: node.clone(),
+            node,
             storage: context.storage.clone(),
             blockchain: context.blockchain.clone(),
             capabilities: vec![],
@@ -148,7 +148,7 @@ pub(crate) async fn perform(
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
-            tx_broadcaster: context.tx_broadcaster.clone(),
+            tx_broadcaster: context.tx_broadcaster,
             current_requests: HashMap::new(),
         },
         stream,
