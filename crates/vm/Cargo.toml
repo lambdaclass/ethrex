@@ -26,9 +26,6 @@ dyn-clone = "1.0"
 
 ethereum-types.workspace = true
 
-[lib]
-path = "./lib.rs"
-
 [features]
 default = []
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
