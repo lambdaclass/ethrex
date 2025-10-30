@@ -242,12 +242,13 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         for updates in rx {
-            self.process_incoming_update_message(
+            state_trie_hash = self.process_incoming_update_message(
                 &mut state_trie,
                 updates,
                 &mut storage_updates_map,
                 parent_header,
                 &mut state_updates_map,
+                &mut code_updates,
             )?;
         }
         let state_updates = state_updates_map.into_iter().collect();
@@ -272,8 +273,8 @@ impl Blockchain {
         storage_updates_map: &mut StoreUpdatesMap,
         parent_header: &BlockHeader,
         state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
-    ) -> Result<Vec<(H256, Code)>, StoreError> {
-        let mut code_updates: Vec<(H256, Code)> = Vec::new();
+        code_updates: &mut FxHashMap<H256, Code>,
+    ) -> Result<H256, StoreError> {
         trace!("Execute block pipeline: Received {} updates", updates.len());
         // Apply the account updates over the last block's state and compute the new state root
         for update in updates {
@@ -375,7 +376,7 @@ impl Blockchain {
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
         state_updates_map.extend(state_updates);
-        Ok(code_updates)
+        Ok(state_trie_hash)
     }
 
     /// Executes a block from a given vm instance an does not clear its state
