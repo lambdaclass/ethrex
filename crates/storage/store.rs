@@ -1108,17 +1108,22 @@ impl Store {
         &self,
         storage_trie_nodes: StorageUpdates,
     ) -> Result<(), StoreError> {
-        let mut batch_items = Vec::new();
-        for (address_hash, nodes) in storage_trie_nodes {
-            for (node_hash, node_data) in nodes {
-                let mut key = Vec::with_capacity(64);
-                key.extend_from_slice(address_hash.as_bytes());
-                key.extend_from_slice(node_hash.as_ref());
-                batch_items.push((key, node_data));
+        let mut txn = self.backend.begin_write()?;
+        tokio::task::spawn_blocking(move || {
+            for (address_hash, nodes) in storage_trie_nodes {
+                for (node_path, node_data) in nodes {
+                    let key = apply_prefix(Some(address_hash), node_path);
+                    if node_data.is_empty() {
+                        txn.delete(TRIE_NODES, key.as_ref())?;
+                    } else {
+                        txn.put(TRIE_NODES, key.as_ref(), &node_data)?;
+                    }
+                }
             }
-        }
-
-        self.write_batch_async(TRIE_NODES, batch_items).await
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
