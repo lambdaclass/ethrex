@@ -789,14 +789,15 @@ impl L1Committer {
         // Sometimes the commit_next_batch task is retried after a failure, and in
         // that case we would try to create a checkpoint again at the same path,
         // causing a lock error under rocksdb feature.
-        if new_checkpoint_path.exists() {
-            debug!("Checkpoint at path {new_checkpoint_path:?} already exists, skipping creation");
-            return Ok(());
+        if !new_checkpoint_path.exists() {
+            self.store.create_checkpoint(&new_checkpoint_path).await?;
         }
-
-        let (new_checkpoint_store, new_checkpoint_blockchain) = self
-            .create_checkpoint(&self.store, &new_checkpoint_path)
-            .await?;
+        let (new_checkpoint_store, new_checkpoint_blockchain) = Self::get_checkpoint_from_path(
+            self.genesis.clone(),
+            self.blockchain.options.clone(),
+            &new_checkpoint_path,
+        )
+        .await?;
 
         self.current_checkpoint_store = new_checkpoint_store;
 
@@ -822,9 +823,9 @@ impl L1Committer {
             .await
     }
 
-    /// Restores a checkpoint store and blockchain from the given path.
+    /// Returns a checkpoint store and blockchain from the given path.
     /// If the path does not exist, it creates a new store with the genesis state (this,
-    /// should only happen on the very first checkpoint creation).
+    /// should only happen on the very first run).
     async fn get_checkpoint_from_path(
         genesis: Genesis,
         blockchain_opts: BlockchainOptions,
