@@ -505,7 +505,7 @@ mod tests {
     use secp256k1::SecretKey;
     use std::{net::SocketAddr, str::FromStr};
 
-    pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
+    pub const TEST_GENESIS: &str = include_str!("../../../../fixtures/genesis/l1.json");
 
     #[test]
     fn parse_node_from_enode_string() {
