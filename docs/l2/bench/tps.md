@@ -22,7 +22,7 @@ Common setup:
 Validium L2 (no blobs):
 
 | TPS | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
-| --- | --- | --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | 1 | missing | 4m 15s | ✅ | l2-gpu-3 |
 | 3 | 755k | 8m 49s | ✅ | ethrex-gpu-4090-1 |
 | 5 | 1.25M | 13m 12s | ❌ | ethrex-gpu-4090-1 |
@@ -32,7 +32,7 @@ Validium L2 (no blobs):
 Validium L2 (no blobs):
 
 | TPS | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
-| --- | --- | --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | 1 | 625k | 7m 27s | ✅ | l2-gpu-3 |
 | 2 | 1.25M | 10m 6s | ✅ | ethrex-gpu-4090-1 |
 | 3 | 1.87M | 21m 30s | ❌ | l2-gpu-3 |
@@ -41,14 +41,14 @@ Validium L2 (no blobs):
 Rollup L2 (publishes blobs)
 
 | TPS | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
-| --- | --- | --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | 2 | 1.38M | 10m 52s | ✅ | ethrex-gpu-4090-1 |
 | 3 | 2.10M | 17m 12s | ❌ | l2-gpu-3 |
 
 Rollup L2 (publishes blobs), with 1.000.000 genesis accounts (big state)
 
 | TPS | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
-| --- | --- | --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | 2 | 1.07M | 10m 6s | ✅ | l2-gpu-3 |
 | 3 | 1.87M | 16m 36s | ❌ | l2-gpu-3 |
 
