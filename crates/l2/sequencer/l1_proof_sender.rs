@@ -15,7 +15,7 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::EstimateGasError},
 };
 use ethrex_storage_rollup::StoreRollup;
-use guest_program::{ZKVM_SP1_PROGRAM_ELF, methods::ZKVM_RISC0_PROGRAM_ELF};
+use guest_program::{ZKVM_SP1_PROGRAM_ELF, methods::ZKVM_RISC0_PROGRAM_ID};
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
@@ -255,7 +255,10 @@ impl L1ProofSender {
                         ));
                     }
 
-                    ZKVM_RISC0_PROGRAM_ELF.to_vec()
+                    ZKVM_RISC0_PROGRAM_ID
+                        .into_iter()
+                        .flat_map(u32::to_be_bytes) // Use to_be_bytes() for big-endian if needed
+                        .collect()
                 }
                 ProverType::SP1 => {
                     if !cfg!(feature = "sp1") {
