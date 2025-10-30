@@ -31,6 +31,28 @@ impl RLPEncode for BranchNode {
         }
         <[u8] as RLPEncode>::encode(&self.value, buf);
     }
+
+    // Duplicated to prealloc the buffer and avoid calculating the payload length twice
+    fn encode_to_vec(&self) -> Vec<u8> {
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let choices_len = self.choices.iter().fold(0, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())
+        });
+        let payload_len = choices_len + value_len;
+
+        let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
+
+        encode_length(payload_len, &mut buf);
+        for child in self.choices.iter() {
+            match child.compute_hash_ref() {
+                NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+                NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => buf.extend_from_slice(&encoded[..*len as usize]),
+            }
+        }
+
+        buf
+    }
 }
 
 impl RLPEncode for ExtensionNode {
