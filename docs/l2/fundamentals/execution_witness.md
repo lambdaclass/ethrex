@@ -6,7 +6,7 @@ An execution witness contains all the initial state values (state nodes, codes, 
 
 An execution witness is created from a prior execution of the blocks. This execution can be done by a synced node, and it would expose the data to a RPC endpoint. This is the `debug_executionWitness` endpoint which is implemented by ethrex and other clients.
 
-If this endpoint is not available, the prover needs to the following:
+If this endpoint is not available, the prover needs to do the following:
 
 1. execute the blocks (also called "pre-execution") to identify which state values will be accessed.
 2. log every initial state value accessed or updated during this execution.
