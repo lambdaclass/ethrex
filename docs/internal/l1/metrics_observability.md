@@ -22,11 +22,11 @@ The gap analysis below uses a cross-client checklist we gathered after looking a
 Snapshot: October 2025.
 
 
-| Client | Dashboard snapshot | Depth (5) |
-| --- | --- | --- |
-| Geth | ![Geth dashboard](img/geth-dashboard.png) | ★★★ |
-| Nethermind | ![Nethermind dashboard](img/nethermind-dashboard.png) | ★★★★ |
-| Reth | ![Reth overview dashboard](img/reth-overview-dashboard.png) | ★★★★★ |
+| Client | Dashboard snapshot |
+| --- | --- |
+| Geth | ![Geth dashboard](img/geth-dashboard.png) |
+| Nethermind | ![Nethermind dashboard](img/nethermind-dashboard.png) |
+| Reth | ![Reth overview dashboard](img/reth-overview-dashboard.png) |
 
 Some good resources for reference:
 - [Understanding Geth's dashboard](https://geth.ethereum.org/docs/monitoring/understanding-dashboards)
@@ -38,19 +38,17 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 
 | Bucket | Geth | Nethermind | Reth | Ethrex |
 | --- | --- | --- | --- | --- |
-| Sync & head tracking | Yes | Yes | Yes | Partial (head height only) |
-| Peer connectivity | Yes | Yes | Yes | No |
-| Txpool visibility | Yes (basic) | Yes | Yes | Partial (counters, no panels) |
-| Block execution latency | Yes | Yes | Yes | Yes |
-| Throughput (MGas/s) | Partial (derived) | Yes | Yes | Yes |
-| State / DB IO | Yes | Yes | Yes | Partial (datadir size only) |
-| Engine API telemetry | Partial (metrics exist, limited panels) | Yes | Yes | No |
-| Reorg & error counters | Yes | Yes | Partial (basic) | No |
-| Pruning metrics | No | Yes | Yes | No |
-| System resources | Yes | Yes | Yes | Yes (node exporter + process) |
+| Chain sync & finality | Yes | Yes | Yes | Partial (head height only) |
+| Peer health | Yes | Yes | Yes | No |
+| Block & payload pipeline | Yes | Yes | Yes | Yes (latency + throughput) |
+| Transaction pool | Yes (basic) | Yes | Yes | Partial (counters, no panels) |
+| Engine API & RPC | Partial (metrics exist, limited panels) | Yes | Yes | No |
+| State & storage | Yes | Yes | Yes | Partial (datadir size; no pruning) |
+| Process & host health | Yes | Yes | Yes | Yes (node exporter + process) |
+| Error & anomaly counters | Yes | Yes | Partial (basic) | No |
 
 - **Block execution pipeline**
-  - Gauges exposed in `crates/blockchain/metrics/metrics_blocks.rs`: `gas_limit`, `gas_used`, `gigagas`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`, plus block-building focused gauges that need to be reviwed first (`gigagas_block_building`, `block_building_ms`, `block_building_base_fee`).
+  - Gauges exposed in `crates/blockchain/metrics/metrics_blocks.rs`: `gas_limit`, `gas_used`, `gigagas`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`, plus block-building focused gauges that need to be reviewed first (`gigagas_block_building`, `block_building_ms`, `block_building_base_fee`).
   - Updated on the hot path in `crates/blockchain/blockchain.rs`, `crates/blockchain/payload.rs`, and `crates/blockchain/fork_choice.rs`; block-building throughput updates live in `crates/blockchain/payload.rs`.
   - Exposed via `/metrics` when the `metrics` feature or CLI flag is enabled and visualised in Grafana panels "Gas Used %", "Ggas/s", "Ggas/s by Block", "Block Height", and "Block Execution Breakdown" inside `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`.
 - **Transaction pipeline**
@@ -70,9 +68,9 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 ## General pitfalls
 Before addressing the gaps listed below, we should also consider some general pitfalls in our current metrics setup:
 
-- **Namespace standardisation**: Adopt a consistent prefix (e.g., `ethrex_l1_`/`ethrex_l2_`) so future shared binaries do not collide or confuse metrics.
-- **Label cardinality guardrails**: Keep label sets low-cardinality and consistent; avoid per-peer or per-block labels when instrumenting networking/state metrics from `crates/networking/p2p`.
-- **Histogram bucket sanity**: Review bucket layouts before adding exemplars or alerts so latency histograms such as `function_duration_seconds` carry meaningful p95/p99 values instead of collapsing into the top bucket.
+- **No namespace standardisation**: Metric names and labels should follow a consistent naming convention (e.g., `ethrex_` prefix) to avoid collisions and improve clarity. We should also probably add l1/l2 prefixes where applicable.
+- **No label consistency**: We are not using labels consistently, especially in l1. We might need to take a pass to ensure similar metrics use uniform label names and values to facilitate querying and aggregation.
+- **Exemplar where applicable**: For histograms, adding exemplars can help trace high-latency events back to specific traces/logs. This is especially useful for latency-sensitive metrics like block execution time or RPC call durations where we could add block hashes as exemplars. This needs to be evaluated on a case-by-case basis and tested.
 
 ## Coverage vs Baseline Must-Haves
 
@@ -90,5 +88,6 @@ Before addressing the gaps listed below, we should also consider some general pi
 ### Next steps
 1. Implement sync & peer metrics (best-peer lag, stage progress) and add corresponding Grafana row.
 2. Wire L1 into the existing `METRICS_TX` aggregates and ship txpool panels.
-3. Instrument Engine API handlers with histograms/counters; plan storage IO metrics in parallel.
-4. Revisit histogram buckets and naming conventions once new metrics are merged, then define alert thresholds.
+3. Review block building metrics.
+4. Instrument Engine API handlers with histograms/counters; plan storage IO metrics in parallel.
+5. Revisit histogram buckets and naming conventions once new metrics are merged, then define alert thresholds.
