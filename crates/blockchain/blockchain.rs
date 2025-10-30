@@ -203,7 +203,7 @@ impl Blockchain {
             let (tx, rx) = channel();
             let execution_handle = s.spawn(move || vm.execute_block_pipeline(block, tx));
             let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
-                self.handle_merkelization(rx, &parent_header)
+                self.handle_merkleization(rx, &parent_header)
             });
             (
                 execution_handle.join().unwrap_or_else(|_| {
@@ -228,7 +228,7 @@ impl Blockchain {
     }
 
     #[instrument(level = "trace", name = "Trie update", skip_all)]
-    fn handle_merkelization(
+    fn handle_merkleization(
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
         parent_header: &BlockHeader,
