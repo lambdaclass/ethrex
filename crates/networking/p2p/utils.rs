@@ -41,7 +41,7 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
 
 /// Deletes the snap folders needed for downloading the leaves during the initial
 /// step of snap sync.
-pub fn deletes_leaves_folder(datadir: &Path) {
+pub fn delete_leaves_folder(datadir: &Path) {
     // We ignore the errors because this happen when the folder don't exist
     let _ = std::fs::remove_dir_all(get_account_state_snapshots_dir(datadir));
     let _ = std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir));

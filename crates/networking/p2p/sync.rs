@@ -9,7 +9,7 @@ use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
-    current_unix_time, deletes_leaves_folder, get_account_state_snapshots_dir,
+    current_unix_time, delete_leaves_folder, get_account_state_snapshots_dir,
     get_account_storages_snapshots_dir, get_code_hashes_snapshots_dir,
 };
 use crate::{
@@ -175,7 +175,7 @@ impl Syncer {
                     | SyncError::BytecodeFileError
                     | SyncError::NoLatestCanonical
                     | SyncError::PeerTableError(_) => {
-                        // We do nothing, as the error is recoverable
+                        // We exit the node, as we can't recover this error
                         error!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
                             %error, "Sync cycle failed, exiting as the error is irrecoverable",
@@ -242,7 +242,7 @@ impl Syncer {
 
         // We validate that we have the folders that are being used empty, as we currently assume
         // they are. If they are not empty we empty them folder
-        deletes_leaves_folder(&self.datadir);
+        delete_leaves_folder(&self.datadir);
         loop {
             debug!("Sync Log 1: In snap sync");
             debug!(
