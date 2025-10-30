@@ -706,21 +706,19 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
 pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
-
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
-    let point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
-    let scalar = calldata.get(64..96).ok_or(InternalError::Slicing)?;
+    let point = parse_bn254_g1(&calldata);
+    validate_bn254_g1_coords(&point)?;
+    let scalar = parse_bn254_scalar(&calldata);
 
-    if u256_from_big_endian(point_x) >= ALT_BN128_PRIME
-        || u256_from_big_endian(point_y) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
+    bn254_g1_mul(point, scalar)
+}
 
-    let x = ark_bn254::Fq::from_be_bytes_mod_order(point_x);
-    let y = ark_bn254::Fq::from_be_bytes_mod_order(point_y);
+#[cfg(not(feature = "sp1"))]
+pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
+    let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_big_endian());
+    let y = ark_bn254::Fq::from_be_bytes_mod_order(&point.1.to_big_endian());
 
     if x.is_zero() && y.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
@@ -731,7 +729,7 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
         return Err(PrecompileError::InvalidPoint.into());
     }
 
-    let scalar = FrArk::from_be_bytes_mod_order(scalar);
+    let scalar = FrArk::from_be_bytes_mod_order(&scalar.to_big_endian());
     if scalar.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
@@ -743,6 +741,43 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
         result.y.into_bigint().to_bytes_be(),
     ]
     .concat();
+
+    Ok(Bytes::from(out))
+}
+
+#[cfg(feature = "sp1")]
+#[inline]
+pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
+    use substrate_bn::{AffineG1, Fq, Fr, G1 as SubstrateG1, Group};
+
+    let g1: SubstrateG1 = if g1.is_zero() {
+        SubstrateG1::zero()
+    } else {
+        let (g1_x, g1_y) = (
+            Fq::from_slice(&g1.0.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+            Fq::from_slice(&g1.1.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
+        AffineG1::new(g1_x, g1_y)
+            .map_err(|_| PrecompileError::InvalidPoint)?
+            .into()
+    };
+
+    let scalar =
+        Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let result = if g1.is_zero() || scalar == Fr::one() {
+        g1
+    } else {
+        g1 * scalar
+    };
+
+    let mut x_bytes = [0u8; 32];
+    let mut y_bytes = [0u8; 32];
+    result.x().to_big_endian(&mut x_bytes);
+    result.y().to_big_endian(&mut y_bytes);
+    let out = [x_bytes, y_bytes].concat();
 
     Ok(Bytes::from(out))
 }
@@ -769,12 +804,26 @@ impl G2 {
     }
 }
 
+/// Parses first 32 bytes as BN254 scalar
 #[inline]
-fn parse_bn254_coords(buf: &[u8; 192]) -> (G1, G2) {
+fn parse_bn254_scalar(buf: &[u8]) -> U256 {
+    u256_from_big_endian(&buf[64..96])
+}
+
+/// Parses first 64 bytes as a BN254 G1 point
+#[inline]
+fn parse_bn254_g1(buf: &[u8]) -> G1 {
     let (g1_x, g1_y) = (
         u256_from_big_endian(&buf[..32]),
         u256_from_big_endian(&buf[32..64]),
     );
+
+    G1(g1_x, g1_y)
+}
+
+/// Parses 128 bytes as a BN254 G2 point, skipping the first 64 bytes
+#[inline]
+fn parse_bn254_g2(buf: &[u8]) -> G2 {
     let (g2_xy, g2_xx, g2_yy, g2_yx) = (
         u256_from_big_endian(&buf[64..96]),
         u256_from_big_endian(&buf[96..128]),
@@ -782,16 +831,21 @@ fn parse_bn254_coords(buf: &[u8; 192]) -> (G1, G2) {
         u256_from_big_endian(&buf[160..]),
     );
 
-    (G1(g1_x, g1_y), G2(g2_xx, g2_xy, g2_yx, g2_yy))
+    G2(g2_xx, g2_xy, g2_yx, g2_yy)
 }
 
 #[inline]
-fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<bool, VMError> {
+fn validate_bn254_g1_coords(g1: &G1) -> Result<(), VMError> {
     // check each element is in field
     if g1.0 >= ALT_BN128_PRIME || g1.1 >= ALT_BN128_PRIME {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
+    Ok(())
+}
 
+#[inline]
+fn validate_bn254_g2_coords(g2: &G2) -> Result<(), VMError> {
+    // check each element is in field
     if g2.0 >= ALT_BN128_PRIME
         || g2.1 >= ALT_BN128_PRIME
         || g2.2 >= ALT_BN128_PRIME
@@ -799,8 +853,7 @@ fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<bool, VMError> {
     {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
-
-    Ok(true)
+    Ok(())
 }
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
@@ -818,10 +871,10 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     for input in calldata.chunks_exact(192) {
         #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
         let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
-        let (g1, g2) = parse_bn254_coords(&input);
-        if validate_bn254_coords(&g1, &g2)? {
-            batch.push((g1, g2));
-        }
+        let (g1, g2) = (parse_bn254_g1(&input), parse_bn254_g2(&input));
+        validate_bn254_g1_coords(&g1)?;
+        validate_bn254_g2_coords(&g2)?;
+        batch.push((g1, g2));
     }
 
     let pairing_check = if batch.is_empty() {
