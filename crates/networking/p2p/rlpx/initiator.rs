@@ -1,5 +1,7 @@
 use crate::{
-    discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext,
+    discv4::{peer_table::PeerTableError, server::INITIAL_LOOKUP_INTERVAL},
+    metrics::METRICS,
+    network::P2PContext,
     rlpx::connection::server::PeerConnection,
 };
 use spawned_concurrency::{
@@ -32,7 +34,7 @@ impl RLPxInitiator {
     pub fn new(context: P2PContext) -> Self {
         Self {
             context,
-            initial_lookup_interval: Duration::from_millis(100),
+            initial_lookup_interval: INITIAL_LOOKUP_INTERVAL,
             lookup_interval: Duration::from_millis(600),
             target_peers: 50,
         }
@@ -41,7 +43,7 @@ impl RLPxInitiator {
     pub async fn spawn(context: P2PContext) {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(context);
-        let mut server = RLPxInitiator::start_on_thread(state.clone());
+        let mut server = RLPxInitiator::start(state.clone());
         let _ = server.cast(InMessage::LookForPeers).await;
     }
 

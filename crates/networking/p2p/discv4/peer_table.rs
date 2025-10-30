@@ -127,7 +127,7 @@ pub struct PeerTable {
 impl PeerTable {
     pub fn spawn(target_peers: usize) -> PeerTable {
         PeerTable {
-            handle: PeerTableServer::new(target_peers).start_on_thread(),
+            handle: PeerTableServer::new(target_peers).start(),
         }
     }
 

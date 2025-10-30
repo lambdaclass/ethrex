@@ -39,8 +39,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
-const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
+pub const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
+pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -115,7 +115,7 @@ impl DiscoveryServer {
             .new_contacts(bootnodes, local_node.node_id())
             .await?;
 
-        discovery_server.start_on_thread();
+        discovery_server.start();
         Ok(())
     }
 
