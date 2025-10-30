@@ -1,7 +1,7 @@
 # Ethrex L1 Metrics Coverage
 
 ## Scope
-This note tracks the current state of metrics and dashboard observability for the L1, highlights the gaps against a cross-client baseline. It covers runtime metrics exposed through our metrics, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
+This note tracks the current state of metrics and dashboard observability for the L1, highlights the gaps against a cross-client baseline. It covers runtime metrics exposed through our crates, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
 
 ## Baseline We Compare Against
 The gap analysis below uses a cross-client checklist we gathered after looking at Geth, Nethermind, and Reth metrics and dashboard setups; this works as a baseline of "must-have" coverage for execution clients. The key categories are:
@@ -14,29 +14,32 @@ The gap analysis below uses a cross-client checklist we gathered after looking a
 - **Process & host health**: CPU, memory, FDs, uptime, disk headroom (usually covered by node_exporter but treated as must-have).
 - **Error & anomaly counters**: explicit counters for reorgs, failed imports, sync retries, bad peer events.
 
-| Bucket | Geth | Nethermind | Reth |
-| --- | --- | --- | --- |
-| Sync & head tracking | Yes | Yes | Yes |
-| Peer connectivity | Yes | Yes | Yes |
-| Txpool visibility | Yes (basic) | Yes (detailed) | Yes |
-| Block execution latency | Yes | Yes | Yes |
-| Throughput (MGas/s) | Partial | Yes | Yes |
-| State / DB IO | Yes | Yes | Yes (high-level) |
-| Engine API telemetry | Partial | Yes | Partial |
-| Reorg & error counters | Yes | Yes | Yes |
-| Pruning metrics | N/A | Yes | Partial |
-| System resources | Yes | Yes | Yes |
-
 Some good resources for reference:
 - [Understanding Geth's dashboard](https://geth.ethereum.org/docs/monitoring/understanding-dashboards)
 - [Nethermind's metrics](https://docs.nethermind.io/monitoring/metrics/)
 - [Reth's observability](https://reth.rs/run/monitoring/#observability-with-prometheus--grafana)
 
 ## Current Instrumentation
+Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabled, and Prometheus/Grafana wiring is part of the provisioning stack. The table below stacks our current coverage against the reference clients for each essential bucket.
+
+| Bucket | Geth | Nethermind | Reth | Ethrex |
+| --- | --- | --- | --- | --- |
+| Sync & head tracking | Yes | Yes | Yes | Partial (head height only) |
+| Peer connectivity | Yes | Yes | Yes | No |
+| Txpool visibility | Yes (basic) | Yes | Yes | Partial (counters, no panels) |
+| Block execution latency | Yes | Yes | Yes | Yes |
+| Throughput (MGas/s) | Partial (derived) | Yes | Yes | Yes |
+| State / DB IO | Yes | Yes | Yes | Partial (datadir size only) |
+| Engine API telemetry | Partial (metrics exist, limited panels) | Yes | Yes | No |
+| Reorg & error counters | Yes | Yes | Partial (basic) | No |
+| Pruning metrics | No | Yes | Yes | No |
+| System resources | Yes | Yes | Yes | Yes (node exporter + process) |
+
 - **Block execution pipeline**
-  - Gauges exposed in `crates/blockchain/metrics/metrics_blocks.rs`: `gas_limit`, `gas_used`, `gigagas`, `gigagas_block_building`, `block_building_ms`, `block_building_base_fee`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`.
+  - Gauges exposed in `crates/blockchain/metrics/metrics_blocks.rs`: `gas_limit`, `gas_used`, `gigagas`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`.
+  - We have some related to block building also in `crates/blockchain/metrics/metrics_blocks.rs`: `gigagas_block_building`, `block_building_ms`, `block_building_base_fee`. These need a further look to be sure they are correct and useful.
   - Updated on the hot path in `crates/blockchain/blockchain.rs`, `crates/blockchain/payload.rs`, and `crates/blockchain/fork_choice.rs`; exposed via `/metrics` when the `metrics` feature or CLI flag is enabled.
-  - Visualised in Grafana panels "Gas Used %", "Ggas/s", "Block Height", and "Block Execution Breakdown" inside `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`.
+  - Visualised in Grafana panels "Gas Used %", "Ggas/s", "Ggas/s by Block" "Block Height", and "Block Execution Breakdown" inside `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`.
 - **Transaction pipeline**
   - `crates/blockchain/metrics/metrics_transactions.rs` defines counters and gauges: `transactions_tracker{tx_type}`, `transaction_errors_count{tx_error}`, `transactions_total`, `mempool_tx_count{type}`, `transactions_per_second`.
   - L1 currently uses the per-type success/error counters via `metrics!(METRICS_TX...)` in `crates/blockchain/payload.rs`. The aggregate gauges (`transactions_total`, `mempool_tx_count`, `transactions_per_second`) are still only fed by L2 sequencer code (`crates/l2/sequencer/...`).
