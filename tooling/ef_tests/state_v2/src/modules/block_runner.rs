@@ -144,10 +144,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     // 3. Create Blockchain and add block.
 
-    let blockchain = Blockchain::new(
-        store.clone(),
-        ethrex_blockchain::BlockchainOptions::default(),
-    );
+    let blockchain = Blockchain::new(store, ethrex_blockchain::BlockchainOptions::default());
 
     let result = blockchain.add_block_pipeline(block).await;
 
