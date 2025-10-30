@@ -88,6 +88,7 @@ impl LEVM {
         merkleizer: Sender<Vec<AccountUpdate>>,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
+        LEVM::send_state_transitions_tx(&merkleizer, db)?;
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -96,10 +97,7 @@ impl LEVM {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-            let transitions = LEVM::get_state_transitions_tx(db)?;
-            merkleizer
-                .send(transitions)
-                .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
+            LEVM::send_state_transitions_tx(&merkleizer, db)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -112,8 +110,20 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals)?;
+        for (address, increment) in block
+            .body
+            .withdrawals
+            .iter()
+            .flatten()
+            .filter(|withdrawal| withdrawal.amount > 0)
+            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+        {
+            let account = db
+                .get_account_mut(address)
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
+
+            account.info.balance += increment.into();
+            LEVM::send_state_transitions_tx(&merkleizer, db)?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
@@ -123,13 +133,20 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2(_) => Default::default(),
         };
+        LEVM::send_state_transitions_tx(&merkleizer, db)?;
 
+        Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    fn send_state_transitions_tx(
+        merkleizer: &Sender<Vec<AccountUpdate>>,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<(), EvmError> {
         let transitions = LEVM::get_state_transitions_tx(db)?;
         merkleizer
             .send(transitions)
             .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
-
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(())
     }
 
     fn setup_env(
