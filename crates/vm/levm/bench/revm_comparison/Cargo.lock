@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "kzg-rs",
  "thiserror",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1169,7 +1169,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1180,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1193,7 +1193,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1204,6 +1204,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "rustc-hash",
  "serde",
  "serde_json",
  "sha3",
@@ -1220,7 +1221,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1241,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -2723,6 +2724,12 @@ name = "ruint-macro"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustc-hex"
