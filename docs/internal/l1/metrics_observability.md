@@ -55,14 +55,14 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
   - Exposed via `/metrics` when the `metrics` feature or CLI flag is enabled and visualised in Grafana panels "Gas Used %", "Ggas/s", "Ggas/s by Block", "Block Height", and "Block Execution Breakdown" inside `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`.
 - **Transaction pipeline**
   - `crates/blockchain/metrics/metrics_transactions.rs` defines counters and gauges: `transactions_tracker{tx_type}`, `transaction_errors_count{tx_error}`, `transactions_total`, `mempool_tx_count{type}`, `transactions_per_second`.
-  - L1 currently uses the per-type success/error counters via `metrics!(METRICS_TX...)` in `crates/blockchain/payload.rs`. Aggregate setters (`set_tx_count`, `set_mempool_tx_count`, `set_transactions_per_second`) are only invoked from the L2 sequencer (`crates/l2/sequencer/metrics.rs` and `crates/l2/sequencer/block_producer.rs`).
+  - L1 currently uses the per-type success/error counters via `metrics!(METRICS_TX...)` in `crates/blockchain/payload.rs`. Aggregate setters (`set_tx_count`, `set_mempool_tx_count`, `set_transactions_per_second`) are only invoked from the L2 sequencer (`crates/l2/sequencer/metrics.rs` and `crates/l2/sequencer/block_producer.rs`), so there is no TPS gauge driven by the execution client today.
   - No Grafana panels surface these metrics yet, despite being scraped.
 - **Process & storage footprint**
   - `crates/blockchain/metrics/metrics_process.rs` registers Prometheus' process collector (available on Linux) and provides `datadir_size_bytes` when the CLI passes the datadir path.
   - Grafana reuses the emitted `datadir_size_bytes` for "Datadir Size" and relies on node_exporter panels for CPU, RSS, open FDs, and host resource graphs in the "Process & Server Info" row.
 - **Tracing-driven profiling**
   - `crates/blockchain/metrics/profiling.rs` installs a `FunctionProfilingLayer` whenever the CLI `--metrics` flag is set. Histograms (`function_duration_seconds{function_name}`) capture tracing span durations across block processing.
-  - Grafana does not yet visualise these histograms, but Prometheus scrapes them for ad-hoc queries.
+  - The current "Block Execution Breakdown" pie panel pulls straight from the gauges in `METRICS_BLOCKS` (`execution_ms`, `merkle_ms`, `store_ms`). The profiling histograms are scraped by Prometheus but are not charted in Grafana yet.
 - **Metrics API**
   - `crates/blockchain/metrics/api.rs` exposes `/metrics` and `/health`; orchestration defined in `cmd/ethrex/initializers.rs` ensures the Axum server starts alongside the node when metrics are enabled.
   - The provisioning stack (docker-compose, Makefile targets) ships Prometheus and Grafana wiring, so any new metric family automatically appears in the scrape.
@@ -70,24 +70,22 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 ## General pitfalls
 Before addressing the gaps listed below, we should also consider some general pitfalls in our current metrics setup:
 
-- **No namespace standardisation**: Metric names and labels should follow a consistent naming convention (e.g., `ethrex_` prefix) to avoid collisions and improve clarity. We should also probably add l1/l2 prefixes where applicable.
-- **No label consistency**: We are not using labels consistently, especially in l1. We might need to take a pass to ensure similar metrics use uniform label names and values to facilitate querying and aggregation.
-- **Exemplar where applicable**: For histograms, adding exemplars can help trace high-latency events back to specific traces/logs. This is especially useful for latency-sensitive metrics like block execution time or RPC call durations where we could add block hashes as exemplars. This needs to be evaluated on a case-by-case basis and tested.
+- **Namespace standardisation**: Adopt a consistent prefix (e.g., `ethrex_l1_`/`ethrex_l2_`) so future shared binaries do not collide or confuse metrics.
+- **Label cardinality guardrails**: Keep label sets low-cardinality and consistent; avoid per-peer or per-block labels when instrumenting networking/state metrics from `crates/networking/p2p`.
+- **Histogram bucket sanity**: Review bucket layouts before adding exemplars or alerts so latency histograms such as `function_duration_seconds` carry meaningful p95/p99 values instead of collapsing into the top bucket.
 
 ## Coverage vs Baseline Must-Haves
 
 | Bucket | Have today | Missing / next steps |
 | --- | --- | --- |
-| Chain sync status | `METRICS_BLOCKS.head_height` surfaced in `crates/blockchain/fork_choice.rs`; Grafana shows head height trend. | Need best-peer lag, stage progress, ETA. Counters live only in logs via `periodically_show_peer_stats_during_syncing` (`crates/networking/p2p/network.rs`). |
-| Peer connectivity & network | `net_peerCount` RPC is available. | No Prometheus gauges for active peers, peer limits, or snap capability; no networking row on the dashboard. |
-| Block & transaction throughput | `METRICS_BLOCKS` captures gas throughput and execution stage timings; per-block tx count already charted. | Add histograms (p50/p95) for execution breakdown, block import failure counters, and an L1-driven TPS gauge. |
-| Resource utilisation | Process collector + `datadir_size_bytes` in `crates/blockchain/metrics/metrics_process.rs`; node_exporter covers host basics. | Need cache hit/miss visibility, RocksDB compaction backlog, IO rate gauges. |
-| State & storage health | Only datadir size today. | Export healing/download progress, snapshot sync %, DB read/write throughput, pruning/backfill counters. |
-| Transaction pool health | Success/error counters per tx type emitted from `crates/blockchain/payload.rs`. | No exported pending depth, blob/regular split, drop reasons, or gossip throughput; aggregates exist only in L2 (`crates/l2/sequencer/metrics.rs`). |
-| Error counters & anomalies | None published. | Add Prometheus counters for failed block imports, reorg depth, RPC errors, Engine API retries, sync failures. |
-| Engine API metrics | None published. | Instrument `newPayload`, `forkChoiceUpdated`, `getPayload` handlers with histograms/counters; track payload build outcomes in `crates/blockchain/payload.rs`. |
-| Consensus / sync quality | None published. | Need finalized vs safe vs head lag, healing backlog, stage-by-stage completion gauges. |
-| JSON-RPC health | None published. | Add per-method call rate/latency/error metrics around `crates/networking/rpc` handlers and surface in Grafana. |
+| Chain sync & finality | `METRICS_BLOCKS.head_height` surfaced in `crates/blockchain/fork_choice.rs`; Grafana charts head height. | Need best-peer lag, sync stage progress, ETA, and finalized/safe head distance. Current counters live only in logs via `periodically_show_peer_stats_during_syncing` (`crates/networking/p2p/network.rs`). |
+| Peer health | `net_peerCount` RPC endpoint exists. | No Prometheus gauges for active peers, peer limits, snap-capable availability, or handshake failures; dashboard lacks a networking row. |
+| Block & payload pipeline | `METRICS_BLOCKS` tracks gas throughput and execution stage timings; `transaction_count` is exported but not visualised yet. | Add p50/p95 histograms for execution stages, block import success/failure counters, and an L1-driven TPS gauge so operators can read execution throughput without relying on L2 metrics. |
+| Transaction pool | Success/error counters per tx type emitted from `crates/blockchain/payload.rs`. | No exported pending depth, blob/regular split, drop reasons, or gossip throughput; aggregates exist only in L2 (`crates/l2/sequencer/metrics.rs`). |
+| Engine API & RPC | None published. | Instrument `newPayload`, `forkChoiceUpdated`, `getPayload` handlers with histograms/counters and wrap JSON-RPC handlers (`crates/networking/rpc`) with per-method rate/latency/error metrics, then chart them in Grafana. |
+| State & storage | Only `datadir_size_bytes` today. | Export healing/download progress, snapshot sync %, DB read/write throughput, pruning/backfill counters, and cache hit/miss ratios. |
+| Process & host health | Process collector + `datadir_size_bytes`; node_exporter covers CPU/RSS/disk. | Add cache pressure indicators (fd saturation, async task backlog) and ensure dashboards surface alert thresholds. |
+| Error & anomaly counters | None published. | Add Prometheus counters for failed block imports, reorg depth, RPC errors, Engine API retries, sync failures, and wire alerting. |
 
 ### Next steps
 1. Implement sync & peer metrics (best-peer lag, stage progress) and add corresponding Grafana row.
