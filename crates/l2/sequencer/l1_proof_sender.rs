@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::remove_dir_all,
+    path::PathBuf,
+};
 
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::{
@@ -70,6 +74,8 @@ pub struct L1ProofSender {
     l1_chain_id: u64,
     network: Network,
     fee_estimate: FeeEstimationType,
+    /// Directory where checkpoints are stored.
+    checkpoints_dir: PathBuf,
     aligned_mode: bool,
 }
 
@@ -88,6 +94,7 @@ pub struct L1ProofSenderHealth {
 }
 
 impl L1ProofSender {
+    #[allow(clippy::too_many_arguments)]
     async fn new(
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
@@ -96,6 +103,7 @@ impl L1ProofSender {
         aligned_cfg: &AlignedConfig,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
+        checkpoints_dir: PathBuf,
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_config(
             eth_cfg.rpc_url.clone(),
@@ -122,6 +130,7 @@ impl L1ProofSender {
             l1_chain_id,
             network: aligned_cfg.network.clone(),
             fee_estimate,
+            checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
         })
     }
@@ -131,6 +140,7 @@ impl L1ProofSender {
         sequencer_state: SequencerState,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
+        checkpoints_dir: PathBuf,
     ) -> Result<GenServerHandle<L1ProofSender>, ProofSenderError> {
         let state = Self::new(
             &cfg.proof_coordinator,
@@ -140,6 +150,7 @@ impl L1ProofSender {
             &cfg.aligned,
             rollup_store,
             needed_proof_types,
+            checkpoints_dir,
         )
         .await?;
         let mut l1_proof_sender = L1ProofSender::start(state);
@@ -192,6 +203,16 @@ impl L1ProofSender {
             self.rollup_store
                 .set_latest_sent_batch_proof(batch_to_send)
                 .await?;
+            let checkpoint_path = self
+                .checkpoints_dir
+                .join(format!("checkpoint_batch_{}", batch_to_send - 1));
+            if checkpoint_path.exists() {
+                let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
+                    error!(
+                        "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
+                    )
+                });
+            }
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
                 .iter()
