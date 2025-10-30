@@ -255,7 +255,8 @@ impl Node {
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
-            "{0}({1}:{2})",
+            "{0} #{1}({2}:{3})",
+            self.client_name(),
             self.node_id(),
             self.ip,
             self.tcp_port
@@ -568,7 +569,7 @@ mod tests {
         .unwrap();
         let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
 
-        let storage =
+        let mut storage =
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())

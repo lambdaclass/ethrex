@@ -139,18 +139,18 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    async fn execute_block(
+    fn execute_block(
         &self,
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
+            self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
         };
 
-        let chain_config = self.storage.get_chain_config()?;
+        let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
@@ -388,8 +388,7 @@ impl Blockchain {
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), account_updates_list, execution_result)
-                .await?;
+            self.store_block(block.clone(), account_updates_list, execution_result)?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -476,7 +475,7 @@ impl Blockchain {
             block_headers_bytes.push(header.encode_to_vec());
         }
 
-        let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
+        let chain_config = self.storage.get_chain_config();
 
         let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
 
@@ -499,7 +498,7 @@ impl Blockchain {
         })
     }
 
-    pub async fn store_block(
+    pub fn store_block(
         &self,
         block: Block,
         account_updates_list: AccountUpdatesList,
@@ -518,13 +517,12 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
-            .await
             .map_err(|e| e.into())
     }
 
-    pub async fn add_block(&self, block: Block) -> Result<(), ChainError> {
+    pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(&block).await?;
+        let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root
@@ -541,7 +539,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res).await;
+        let result = self.store_block(block, account_updates_list, res);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -580,6 +578,10 @@ impl Blockchain {
                 METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
                 METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
+                METRICS_BLOCKS.set_execution_ms(executed.duration_since(since).as_millis() as i64);
+                METRICS_BLOCKS.set_store_ms(stored.duration_since(since).as_millis() as i64);
+                METRICS_BLOCKS.set_merkle_ms(merkleized.duration_since(since).as_millis() as i64);
+                METRICS_BLOCKS.set_transaction_count(transactions_count as i64);
             );
 
             let base_log = format!(
@@ -627,10 +629,7 @@ impl Blockchain {
             return Err((ChainError::Custom("First block not found".into()), None));
         };
 
-        let chain_config: ChainConfig = self
-            .storage
-            .get_chain_config()
-            .map_err(|e| (e.into(), None))?;
+        let chain_config: ChainConfig = self.storage.get_chain_config();
 
         // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
@@ -727,7 +726,6 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
-            .await
             .map_err(|e| (e.into(), None))?;
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
@@ -879,7 +877,7 @@ impl Blockchain {
             .storage
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
-        let config = self.storage.get_chain_config()?;
+        let config = self.storage.get_chain_config();
 
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
@@ -1022,7 +1020,7 @@ impl Blockchain {
 
     /// Get the current fork of the chain, based on the latest block's timestamp
     pub async fn current_fork(&self) -> Result<Fork, StoreError> {
-        let chain_config = self.storage.get_chain_config()?;
+        let chain_config = self.storage.get_chain_config();
         let latest_block_number = self.storage.get_latest_block_number().await?;
         let latest_block = self
             .storage

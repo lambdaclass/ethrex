@@ -74,7 +74,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     pub backend: Arc<dyn StorageBackend>,
-    pub chain_config: Arc<RwLock<ChainConfig>>,
+    pub chain_config: ChainConfig,
     pub latest_block_header: Arc<RwLock<BlockHeader>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
@@ -113,12 +113,18 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    /// Add a block in a single transaction.
+    /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
+    pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
+        self.add_blocks(vec![block]).await
+    }
+
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let mut batch_items: Vec<(&str, Vec<u8>, Vec<u8>)> = Vec::new();
+            let mut txn = db.begin_write()?;
 
             // TODO: Same logic in apply_updates
             for block in blocks {
@@ -130,32 +136,25 @@ impl Store {
                     composite_key.extend_from_slice(transaction.hash().as_bytes());
                     composite_key.extend_from_slice(block_hash.as_bytes());
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    batch_items.push((TRANSACTION_LOCATIONS, composite_key, location_value));
+                    txn.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
                 }
 
                 let header_value = BlockHeaderRLP::from(block.header).into_vec();
-                batch_items.push((HEADERS, block_hash.as_bytes().to_vec(), header_value));
+                txn.put(HEADERS, block_hash.as_bytes(), &header_value)?;
 
                 let body_value = BlockBodyRLP::from(block.body).into_vec();
-                batch_items.push((BODIES, block_hash.as_bytes().to_vec(), body_value));
+                txn.put(BODIES, block_hash.as_bytes(), &body_value)?;
 
-                batch_items.push((
+                txn.put(
                     BLOCK_NUMBERS,
-                    block_hash.as_bytes().to_vec(),
-                    block_number.to_le_bytes().to_vec(),
-                ));
+                    block_hash.as_bytes(),
+                    &block_number.to_le_bytes(),
+                )?;
             }
-
-            let mut txn = db.begin_write()?;
-            txn.put_batch(batch_items)?;
             txn.commit()
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
-    pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        self.add_blocks(vec![block]).await
     }
 
     /// Add block header
@@ -174,7 +173,7 @@ impl Store {
         &self,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
+        let mut txn = self.backend.begin_write()?;
 
         for header in block_headers {
             let block_hash = header.hash();
@@ -182,13 +181,13 @@ impl Store {
             let hash_key = block_hash.as_bytes().to_vec();
             let header_value = BlockHeaderRLP::from(header).into_vec();
 
-            batch_ops.push((HEADERS, hash_key.clone(), header_value));
+            txn.put(HEADERS, &hash_key, &header_value)?;
 
             let number_key = block_number.to_le_bytes().to_vec();
-            batch_ops.push((BLOCK_NUMBERS, hash_key, number_key));
+            txn.put(BLOCK_NUMBERS, &hash_key, &number_key)?;
         }
-
-        self.write_batch_async(batch_ops).await
+        txn.commit()?;
+        Ok(())
     }
 
     /// Obtain canonical block header
@@ -343,12 +342,12 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let block_hash = block.hash();
         let block_value = BlockRLP::from(block).into_vec();
-        self.write_async(PENDING_BLOCKS, block_hash.as_bytes().to_vec(), block_value)
-            .await
+        self.write(PENDING_BLOCKS, block_hash.as_bytes().to_vec(), block_value)
     }
+
     pub async fn get_pending_block(
         &self,
         block_hash: BlockHash,
@@ -410,18 +409,19 @@ impl Store {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        let batch_items: Vec<(&'static str, Vec<u8>, Vec<u8>)> = locations
+        let batch_items: Vec<_> = locations
             .iter()
             .map(|(tx_hash, block_number, block_hash, index)| {
                 let mut composite_key = Vec::with_capacity(64);
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (*block_number, *block_hash, *index).encode_to_vec();
-                (TRANSACTION_LOCATIONS, composite_key, location_value)
+                (composite_key, location_value)
             })
             .collect();
 
-        self.write_batch_async(batch_items).await
+        self.write_batch_async(TRANSACTION_LOCATIONS, batch_items)
+            .await
     }
 
     /// Obtain transaction location (block hash and index)
@@ -491,19 +491,19 @@ impl Store {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let batch_items: Vec<(&'static str, Vec<u8>, Vec<u8>)> = receipts
+        let batch_items: Vec<_> = receipts
             .into_iter()
             .enumerate()
             .map(|(index, receipt)| {
                 let key = (block_hash, index as u64).encode_to_vec();
                 let value = receipt.encode_to_vec();
-                (RECEIPTS, key, value)
+                (key, value)
             })
             .collect();
-        self.write_batch_async(batch_items).await
+        self.write_batch_async(RECEIPTS, batch_items).await
     }
 
-    /// Obtain receipt by block hash and index
+    /// Obtain receipt for a canonical block represented by the block number.
     pub async fn get_receipt(
         &self,
         block_number: BlockNumber,
@@ -513,6 +513,15 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+        self.get_receipt_by_block_hash(block_hash, index).await
+    }
+
+    /// Obtain receipt by block hash and index
+    async fn get_receipt_by_block_hash(
+        &self,
+        block_hash: BlockHash,
+        index: Index,
+    ) -> Result<Option<Receipt>, StoreError> {
         let key = (block_hash, index).encode_to_vec();
         self.read_async(RECEIPTS, key)
             .await?
@@ -651,11 +660,8 @@ impl Store {
 
     /// Stores the chain configuration values, should only be called once after reading the genesis file
     /// Ignores previously stored values if present
-    pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        *self
-            .chain_config
-            .write()
-            .map_err(|_| StoreError::LockError)? = *chain_config;
+    pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+        self.chain_config = *chain_config;
         let key = vec![ChainDataIndex::ChainConfig as u8];
         let value = serde_json::to_string(chain_config)
             .map_err(|_| StoreError::Custom("Failed to serialize chain config".to_string()))?
@@ -769,29 +775,28 @@ impl Store {
 
     pub fn storage_trie_backend(&self, hashed_address: H256) -> Result<BackendTrieDB, StoreError> {
         let tx = self.backend.begin_write()?;
-        Ok(BackendTrieDB::new(tx, TRIE_NODES, Some(hashed_address)))
+        Ok(BackendTrieDB::new(tx, Some(hashed_address))?)
     }
 
     pub fn storage_trie_locked_backend(
         &self,
         hashed_address: H256,
     ) -> Result<BackendTrieDBLocked, StoreError> {
-        let lock = self.backend.begin_locked(TRIE_NODES)?;
-        Ok(BackendTrieDBLocked::new(lock, Some(hashed_address)))
-    }
-
-    fn state_trie_backend(&self) -> Result<BackendTrieDB, StoreError> {
-        let tx = self.backend.begin_write()?;
-        Ok(BackendTrieDB::new(
-            tx, TRIE_NODES, None, // No prefix for state trie
-        ))
-    }
-
-    fn state_trie_locked_backend(&self) -> Result<BackendTrieDBLocked, StoreError> {
-        let lock = self.backend.begin_locked(TRIE_NODES)?;
         Ok(BackendTrieDBLocked::new(
-            lock, None, // No address prefix for state trie
-        ))
+            self.backend.as_ref(),
+            Some(hashed_address),
+        )?)
+    }
+
+    pub fn state_trie_backend(&self) -> Result<BackendTrieDB, StoreError> {
+        let tx = self.backend.begin_write()?;
+        // No address prefix for state trie
+        Ok(BackendTrieDB::new(tx, None)?)
+    }
+
+    pub fn state_trie_locked_backend(&self) -> Result<BackendTrieDBLocked, StoreError> {
+        // No address prefix for state trie
+        Ok(BackendTrieDBLocked::new(self.backend.as_ref(), None)?)
     }
 
     pub async fn forkchoice_update_inner(
@@ -806,16 +811,15 @@ impl Store {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
-            let mut batch_items = Vec::new();
 
             if let Some(canonical_blocks) = new_canonical_blocks {
                 for (block_number, block_hash) in canonical_blocks {
                     let head_value = block_hash.encode_to_vec();
-                    batch_items.push((
+                    txn.put(
                         CANONICAL_BLOCK_HASHES,
-                        block_number.to_le_bytes().to_vec(),
-                        head_value,
-                    ));
+                        &block_number.to_le_bytes(),
+                        &head_value,
+                    )?;
                 }
             }
 
@@ -825,37 +829,32 @@ impl Store {
 
             // Make head canonical
             let head_value = head_hash.encode_to_vec();
-            batch_items.push((
+            txn.put(
                 CANONICAL_BLOCK_HASHES,
-                head_number.to_le_bytes().to_vec(),
-                head_value,
-            ));
+                &head_number.to_le_bytes(),
+                &head_value,
+            )?;
 
             // Update chain data
             let latest_key = [ChainDataIndex::LatestBlockNumber as u8];
-            batch_items.push((
-                CHAIN_DATA,
-                latest_key.to_vec(),
-                head_number.to_le_bytes().to_vec(),
-            ));
+            txn.put(CHAIN_DATA, &latest_key, &head_number.to_le_bytes())?;
 
             if let Some(finalized) = finalized {
-                batch_items.push((
+                txn.put(
                     CHAIN_DATA,
-                    vec![ChainDataIndex::FinalizedBlockNumber as u8],
-                    finalized.to_le_bytes().to_vec(),
-                ));
+                    &[ChainDataIndex::FinalizedBlockNumber as u8],
+                    &finalized.to_le_bytes(),
+                )?;
             }
 
             if let Some(safe) = safe {
-                batch_items.push((
+                txn.put(
                     CHAIN_DATA,
-                    vec![ChainDataIndex::SafeBlockNumber as u8],
-                    safe.to_le_bytes().to_vec(),
-                ));
+                    &[ChainDataIndex::SafeBlockNumber as u8],
+                    &safe.to_le_bytes(),
+                )?;
             }
 
-            txn.put_batch(batch_items)?;
             // This commits is used since we deleted some items. We could have a better way to do this.
             // Accept put and delete in the same batch.
             txn.commit()
@@ -1097,11 +1096,11 @@ impl Store {
                 let mut key = Vec::with_capacity(64);
                 key.extend_from_slice(address_hash.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
-                batch_items.push((TRIE_NODES, key, node_data));
+                batch_items.push((key, node_data));
             }
         }
 
-        self.write_batch_async(batch_items).await
+        self.write_batch_async(TRIE_NODES, batch_items).await
     }
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
@@ -1120,10 +1119,10 @@ impl Store {
                 .collect::<Vec<u8>>()
                 .as_slice()
                 .encode(&mut buf);
-            batch_items.push((ACCOUNT_CODES, code_hash.as_bytes().to_vec(), buf));
+            batch_items.push((code_hash.as_bytes().to_vec(), buf));
         }
 
-        self.write_batch_async(batch_items).await
+        self.write_batch_async(ACCOUNT_CODES, batch_items).await
     }
 
     // Helper methods for async operations with spawn_blocking
@@ -1192,13 +1191,14 @@ impl Store {
     /// This is the most important optimization for healing performance
     pub async fn write_batch_async(
         &self,
-        batch_ops: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
+        table: &'static str,
+        batch_ops: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let backend = self.backend.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut txn = backend.begin_write()?;
-            txn.put_batch(batch_ops)?;
+            txn.put_batch(table, batch_ops)?;
             txn.commit()
         })
         .await
@@ -1206,29 +1206,23 @@ impl Store {
     }
 
     /// Helper method for batch writes
-    /// Spawns blocking task to avoid blocking tokio runtime
-    /// This is the most important optimization for healing performance
     pub fn write_batch(
         &self,
-        batch_ops: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
+        table: &'static str,
+        batch_ops: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let backend = self.backend.clone();
         let mut txn = backend.begin_write()?;
-        txn.put_batch(batch_ops)?;
+        txn.put_batch(table, batch_ops)?;
         txn.commit()
     }
 
     pub async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
         self.write_batch_async(
+            FULLSYNC_HEADERS,
             headers
                 .into_iter()
-                .map(|header| {
-                    (
-                        FULLSYNC_HEADERS,
-                        header.number.to_le_bytes().to_vec(),
-                        header.encode_to_vec(),
-                    )
-                })
+                .map(|header| (header.number.to_le_bytes().to_vec(), header.encode_to_vec()))
                 .collect(),
         )
         .await
@@ -1262,12 +1256,12 @@ impl Store {
         txn.commit()
     }
 
-    pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    pub fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.apply_updates(update_batch)
     }
 
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let db = self.clone();
+        let db = self.backend.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
                 update_batch
@@ -1289,8 +1283,6 @@ impl Store {
 
         let _span = tracing::trace_span!("Block DB update").entered();
 
-        let mut batch_ops = Vec::new();
-
         let UpdateBatch {
             account_updates,
             storage_updates,
@@ -1311,30 +1303,23 @@ impl Store {
             .map_err(|e| {
                 StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
             })?;
+        let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
             let block_number = block.header.number;
             let block_hash = block.hash();
 
             let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            batch_ops.push((
-                HEADERS,
-                block_hash.as_bytes().to_vec(),
-                header_value_rlp.into_vec(),
-            ));
+            tx.put(HEADERS, block_hash.as_bytes(), header_value_rlp.bytes())?;
 
             let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            batch_ops.push((
-                BODIES,
-                block_hash.as_bytes().to_vec(),
-                body_value.into_vec(),
-            ));
+            tx.put(BODIES, block_hash.as_bytes(), body_value.bytes())?;
 
-            batch_ops.push((
+            tx.put(
                 BLOCK_NUMBERS,
-                block_hash.as_bytes().to_vec(),
-                block_number.to_le_bytes().to_vec(),
-            ));
+                block_hash.as_bytes(),
+                &block_number.to_le_bytes(),
+            )?;
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
@@ -1343,7 +1328,7 @@ impl Store {
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                batch_ops.push((TRANSACTION_LOCATIONS, composite_key, location_value));
+                tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
             }
         }
 
@@ -1351,7 +1336,7 @@ impl Store {
             for (index, receipt) in receipts.into_iter().enumerate() {
                 let key = (block_hash, index as u64).encode_to_vec();
                 let value = receipt.encode_to_vec();
-                batch_ops.push((RECEIPTS, key, value));
+                tx.put(RECEIPTS, &key, &value)?;
             }
         }
 
@@ -1364,7 +1349,7 @@ impl Store {
                 .collect::<Vec<u8>>()
                 .as_slice()
                 .encode(&mut buf);
-            batch_ops.push((ACCOUNT_CODES, code_hash.0.to_vec(), buf));
+            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
@@ -1373,15 +1358,17 @@ impl Store {
             .recv()
             .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
         // After top-level is added, we can make the rest of the changes visible.
-        db.write_batch(batch_ops)
+        tx.commit()?;
+
+        Ok(())
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
-        let path = path.as_ref();
+        let _path = &path;
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self::from_backend(Arc::new(RocksDBBackend::open(path)?)),
-            EngineType::InMemory => Self::from_backend(Arc::new(InMemoryBackend::open(path)?)),
+            EngineType::InMemory => Self::from_backend(Arc::new(InMemoryBackend::open()?)),
         }
     }
 
@@ -1500,7 +1487,7 @@ impl Store {
             debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
 
             let mut ctr = 0;
-            let mut batch_ops = vec![];
+            let mut write_txn = self.backend.begin_write()?;
             let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
             if last_written_account > Nibbles::default() {
                 iter.advance(last_written_account.to_bytes())?;
@@ -1511,15 +1498,12 @@ impl Store {
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
-                batch_ops.push((
-                    MISC_VALUES,
-                    "last_written".as_bytes().to_vec(),
-                    path.as_ref().to_vec(),
-                ));
-                batch_ops.push((FLATKEY_VALUES, path.as_ref().to_vec(), node.value.to_vec()));
+                write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
+                write_txn.put(FLATKEY_VALUES, path.as_ref(), &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
-                    self.write_batch(std::mem::take(&mut batch_ops))?;
+                    write_txn.commit()?;
+                    write_txn = self.backend.begin_write()?;
                 }
 
                 let mut iter_inner = self
@@ -1534,15 +1518,12 @@ impl Store {
                         return Ok(());
                     };
                     let key = apply_prefix(Some(account_hash), path);
-                    batch_ops.push((
-                        MISC_VALUES,
-                        "last_written".as_bytes().to_vec(),
-                        key.as_ref().to_vec(),
-                    ));
-                    batch_ops.push((FLATKEY_VALUES, key.as_ref().to_vec(), node.value.to_vec()));
+                    write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
+                    write_txn.put(FLATKEY_VALUES, key.as_ref(), &node.value)?;
                     ctr += 1;
                     if ctr > 10_000 {
-                        self.write_batch(std::mem::take(&mut batch_ops))?;
+                        write_txn.commit()?;
+                        write_txn = self.backend.begin_write()?;
                     }
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
@@ -1579,8 +1560,8 @@ impl Store {
                 }
                 Err(err) => return Err(err),
                 Ok(()) => {
-                    batch_ops.push((MISC_VALUES, "last_written".as_bytes().to_vec(), vec![0xff]));
-                    self.write_batch(batch_ops)?;
+                    write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
+                    write_txn.commit()?;
                     return Ok(());
                 }
             };
@@ -1672,7 +1653,7 @@ impl Store {
         let reader = std::io::BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let store = Self::new(store_path, engine_type)?;
+        let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
     }
@@ -1726,7 +1707,7 @@ impl Store {
     }
 
     pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
-        let chain_config = self.get_chain_config()?;
+        let chain_config = self.get_chain_config();
         let genesis_header = self
             .get_block_header(0)?
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
@@ -1851,7 +1832,6 @@ impl Store {
                     storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
-                storage_trie.commit()?;
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
@@ -2010,7 +1990,7 @@ impl Store {
         Ok(state_root)
     }
 
-    pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
+    pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -2104,11 +2084,8 @@ impl Store {
             .transpose()
     }
 
-    pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        Ok(*self
-            .chain_config
-            .read()
-            .map_err(|_| StoreError::LockError)?)
+    pub fn get_chain_config(&self) -> ChainConfig {
+        self.chain_config
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
@@ -2696,7 +2673,7 @@ mod tests {
             })
             .collect();
         accounts.sort_by_key(|a| a.0);
-        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
         for (address, state) in &accounts {
             trie.insert(address.0.to_vec(), state.encode_to_vec())
                 .unwrap();
@@ -2722,13 +2699,13 @@ mod tests {
             .collect();
         slots.sort_by_key(|a| a.0);
         let mut trie = store
-            .open_storage_trie(address, *EMPTY_TRIE_HASH, *EMPTY_TRIE_HASH)
+            .open_direct_storage_trie(address, *EMPTY_TRIE_HASH)
             .unwrap();
         for (slot, value) in &slots {
             trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
         }
         let storage_root = trie.hash().unwrap();
-        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
         trie.insert(
             address.0.to_vec(),
             AccountState {
@@ -2752,7 +2729,7 @@ mod tests {
         }
     }
 
-    async fn test_genesis_block(store: Store) {
+    async fn test_genesis_block(mut store: Store) {
         const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
         const GENESIS_HIVE: &str = include_str!("../../fixtures/genesis/hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
@@ -2975,10 +2952,10 @@ mod tests {
         assert_eq!(pending_block_number, stored_pending_block_number);
     }
 
-    async fn test_chain_config_storage(store: Store) {
+    async fn test_chain_config_storage(mut store: Store) {
         let chain_config = example_chain_config();
         store.set_chain_config(&chain_config).await.unwrap();
-        let retrieved_chain_config = store.get_chain_config().unwrap();
+        let retrieved_chain_config = store.get_chain_config();
         assert_eq!(chain_config, retrieved_chain_config);
     }
 

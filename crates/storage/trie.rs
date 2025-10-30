@@ -1,4 +1,5 @@
-use crate::api::{StorageLocked, StorageRwTx};
+use crate::api::tables::{FLATKEY_VALUES, MISC_VALUES, TRIE_NODES};
+use crate::api::{StorageBackend, StorageLocked, StorageRwTx};
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
@@ -9,8 +10,8 @@ use std::sync::Mutex;
 pub struct BackendTrieDB {
     /// Read-write transaction wrapped in Mutex for interior mutability
     tx: Mutex<Box<dyn StorageRwTx + 'static>>,
-    /// Table name for storing trie nodes
-    table_name: &'static str,
+    /// Last flatkeyvalue path already generated
+    last_computed_flatkeyvalue: Nibbles,
     /// Storage trie address prefix (for storage tries)
     /// None for state tries, Some(address) for storage tries
     address_prefix: Option<H256>,
@@ -19,40 +20,56 @@ pub struct BackendTrieDB {
 impl BackendTrieDB {
     pub fn new(
         tx: Box<dyn StorageRwTx + 'static>,
-        table_name: &'static str,
         address_prefix: Option<H256>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, TrieError> {
+        // TODO: move "last_written" to a constant, or merge it into CHAIN_DATA table
+        let last_computed_flatkeyvalue = tx
+            .get(MISC_VALUES, "last_written".as_bytes())
+            .unwrap()
+            .map(|v| Nibbles::from_hex(v))
+            .unwrap_or_default();
+        Ok(Self {
             tx: Mutex::new(tx),
-            table_name,
+            last_computed_flatkeyvalue,
             address_prefix,
-        }
+        })
     }
 
-    fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, node_hash)
-            .as_ref()
-            .to_vec()
+    fn make_key(&self, path: Nibbles) -> Vec<u8> {
+        apply_prefix(self.address_prefix, path).as_ref().to_vec()
     }
 }
 
 impl TrieDB for BackendTrieDB {
+    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        // TODO: this breaks TrieWrapper
+        // let key = apply_prefix(self.address_prefix, key);
+        self.last_computed_flatkeyvalue >= key
+    }
+
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let table = if key.is_leaf() {
+            FLATKEY_VALUES
+        } else {
+            TRIE_NODES
+        };
         let key = self.make_key(key);
         let tx = self.tx.lock().map_err(|_| TrieError::LockError)?;
-        tx.get(self.table_name, &key)
+        tx.get(table, &key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let mut batch = Vec::with_capacity(key_values.len());
-        for (node_hash, value) in key_values {
-            batch.push((self.table_name, self.make_key(node_hash), value));
-        }
-
         let mut tx = self.tx.lock().map_err(|_| TrieError::LockError)?;
-        tx.put_batch(batch)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
+        for (key, value) in key_values {
+            let table = if key.is_leaf() {
+                FLATKEY_VALUES
+            } else {
+                TRIE_NODES
+            };
+            tx.put_batch(table, vec![(self.make_key(key), value)])
+                .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
+        }
         tx.commit()
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
     }
@@ -68,16 +85,34 @@ impl TrieDB for BackendTrieDB {
 
 /// Read-only version with persistent locked transaction/snapshot for batch reads
 pub struct BackendTrieDBLocked {
-    lock: Box<dyn StorageLocked>,
+    trie_tx: Box<dyn StorageLocked>,
+    fkv_tx: Box<dyn StorageLocked>,
+    /// Last flatkeyvalue path already generated
+    last_computed_flatkeyvalue: Nibbles,
     address_prefix: Option<H256>,
 }
 
 impl BackendTrieDBLocked {
-    pub fn new(lock: Box<dyn StorageLocked>, address_prefix: Option<H256>) -> Self {
-        Self {
-            lock,
+    pub fn new(
+        engine: &dyn StorageBackend,
+        address_prefix: Option<H256>,
+    ) -> Result<Self, TrieError> {
+        // TODO: move "last_written" to a constant, or merge it into CHAIN_DATA table
+        let last_computed_flatkeyvalue = engine
+            .begin_read()
+            .unwrap()
+            .get(MISC_VALUES, "last_written".as_bytes())
+            .unwrap()
+            .map(|v| Nibbles::from_hex(v))
+            .unwrap_or_default();
+        let trie_tx = engine.begin_locked(TRIE_NODES).unwrap();
+        let fkv_tx = engine.begin_locked(FLATKEY_VALUES).unwrap();
+        Ok(Self {
+            trie_tx,
+            fkv_tx,
+            last_computed_flatkeyvalue,
             address_prefix,
-        }
+        })
     }
     fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
         apply_prefix(self.address_prefix, node_hash)
@@ -87,24 +122,25 @@ impl BackendTrieDBLocked {
 }
 
 impl TrieDB for BackendTrieDBLocked {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let key = self.make_key(key);
-        self.lock
-            .get(&key)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        // TODO: this breaks TrieWrapper
+        // let key = apply_prefix(self.address_prefix, key);
+        self.last_computed_flatkeyvalue >= key
     }
 
-    fn put(&self, _key: Nibbles, _value: Vec<u8>) -> Result<(), TrieError> {
-        // Read-only locked storage, should not be used for puts
-        Err(TrieError::DbError(anyhow::anyhow!(
-            "Cannot put in read-only locked storage"
-        )))
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let tx = if key.is_leaf() {
+            &self.fkv_tx
+        } else {
+            &self.trie_tx
+        };
+        let key = self.make_key(key);
+        tx.get(&key)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // Read-only locked storage, should not be used for puts
-        Err(TrieError::DbError(anyhow::anyhow!(
-            "Cannot put_batch in read-only locked storage"
-        )))
+        Err(TrieError::DbError(anyhow::anyhow!("trie is read-only")))
     }
 }

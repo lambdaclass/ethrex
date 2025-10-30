@@ -17,35 +17,19 @@
 //!   only used in snapsync stage.
 
 use crate::error::StoreError;
-use std::{fmt::Debug, path::Path};
+use std::fmt::Debug;
 
-pub use tables::LIST as TABLES;
+pub mod tables;
 
 /// Type alias for the result of a prefix iterator.
 /// Uses Box<[u8]> instead of Vec<u8> to avoid unnecessary allocations
 /// when the data comes directly from the database.
 pub type PrefixResult = Result<(Box<[u8]>, Box<[u8]>), StoreError>;
 
-/// Configuration options for table creation.
-#[derive(Debug, Clone)]
-pub struct TableOptions {
-    /// Whether the table supports duplicate keys, this means that multiple values can be stored for the same key.
-    /// This is useful for certain indexing scenarios but not supported by all backends.
-    pub dupsort: bool,
-}
-
 /// This trait provides a minimal set of operations required from a database backend.
 /// Implementations should focus on providing efficient access to the underlying storage
 /// without implementing business logic.
 pub trait StorageBackend: Debug + Send + Sync {
-    /// Opens a storage backend at the specified path.
-    fn open(path: impl AsRef<Path>) -> Result<Self, StoreError>
-    where
-        Self: Sized;
-
-    /// Creates a new table, allowing to specify [`TableOptions`].
-    fn create_table(&self, name: &'static str, options: TableOptions) -> Result<(), StoreError>;
-
     /// Removes all data from the specified table.
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;
 
@@ -59,7 +43,10 @@ pub trait StorageBackend: Debug + Send + Sync {
     ///
     /// This provides a persistent read-only view of a single table, optimized
     /// for batch read operations. The snapshot remains valid until dropped.
-    fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError>;
+    fn begin_locked(
+        &self,
+        table_name: &'static str,
+    ) -> Result<Box<dyn StorageLocked + 'static>, StoreError>;
 }
 
 /// Read-only transaction interface.
@@ -83,12 +70,15 @@ pub trait StorageRoTx {
 pub trait StorageRwTx: StorageRoTx + Send {
     /// Stores a key-value pair in the specified table.
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.put_batch(vec![(table, key.to_vec(), value.to_vec())])
+        self.put_batch(table, vec![(key.to_vec(), value.to_vec())])
     }
 
     /// Stores multiple key-value pairs in the specified table within the transaction.
-    fn put_batch(&mut self, batch: Vec<(&'static str, Vec<u8>, Vec<u8>)>)
-    -> Result<(), StoreError>;
+    fn put_batch(
+        &mut self,
+        table: &'static str,
+        batch: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError>;
 
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
@@ -103,44 +93,7 @@ pub trait StorageRwTx: StorageRoTx + Send {
 /// table, such as trie traversal operations.
 /// This is currently only used in snapsync stage.
 /// TODO: Check if we can remove this trait and use [`StorageRoTx`] instead.
-pub trait StorageLocked: Send + Sync + 'static {
+pub trait StorageLocked: Send + Sync {
     /// Retrieves a value by key from the locked table.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
-}
-
-/// Table names used by the storage engine.
-pub mod tables {
-    pub const CHAIN_DATA: &str = "chain_data";
-    pub const ACCOUNT_CODES: &str = "account_codes";
-    pub const BODIES: &str = "bodies";
-    pub const BLOCK_NUMBERS: &str = "block_numbers";
-    pub const CANONICAL_BLOCK_HASHES: &str = "canonical_block_hashes";
-    pub const HEADERS: &str = "headers";
-    pub const PENDING_BLOCKS: &str = "pending_blocks";
-    pub const TRANSACTION_LOCATIONS: &str = "transaction_locations";
-    pub const RECEIPTS: &str = "receipts";
-    pub const SNAP_STATE: &str = "snap_state";
-    pub const INVALID_CHAINS: &str = "invalid_chains";
-    pub const TRIE_NODES: &str = "trie_nodes";
-    pub const FULLSYNC_HEADERS: &str = "fullsync_headers";
-    pub const FLATKEY_VALUES: &str = "flatkey_values";
-    pub const MISC_VALUES: &str = "misc_values";
-
-    pub const LIST: [&str; 15] = [
-        CHAIN_DATA,
-        ACCOUNT_CODES,
-        BODIES,
-        BLOCK_NUMBERS,
-        CANONICAL_BLOCK_HASHES,
-        HEADERS,
-        PENDING_BLOCKS,
-        TRANSACTION_LOCATIONS,
-        RECEIPTS,
-        SNAP_STATE,
-        INVALID_CHAINS,
-        TRIE_NODES,
-        FULLSYNC_HEADERS,
-        FLATKEY_VALUES,
-        MISC_VALUES,
-    ];
 }

@@ -1,39 +1,25 @@
-use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions,
-};
+use crate::api::{PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx};
 use crate::error::StoreError;
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 type Table = BTreeMap<Vec<u8>, Vec<u8>>;
-type Database = BTreeMap<String, Table>;
+type Database = BTreeMap<&'static str, Table>;
 
 #[derive(Debug)]
 pub struct InMemoryBackend {
     inner: Arc<RwLock<Database>>,
 }
 
-impl StorageBackend for InMemoryBackend {
-    fn open(_path: impl AsRef<Path>) -> Result<Self, StoreError>
-    where
-        Self: Sized,
-    {
+impl InMemoryBackend {
+    pub fn open() -> Result<Self, StoreError> {
         Ok(Self {
-            inner: Arc::new(RwLock::new(Database::new())),
+            inner: Default::default(),
         })
     }
+}
 
-    fn create_table(&self, name: &str, _options: TableOptions) -> Result<(), StoreError> {
-        let mut db = self
-            .inner
-            .write()
-            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
-
-        db.entry(name.to_string()).or_insert_with(Table::new);
-        Ok(())
-    }
-
+impl StorageBackend for InMemoryBackend {
     fn clear_table(&self, table: &str) -> Result<(), StoreError> {
         let mut db = self
             .inner
@@ -58,17 +44,17 @@ impl StorageBackend for InMemoryBackend {
         }))
     }
 
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
+    fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError> {
         Ok(Box::new(InMemoryLocked {
             backend: self.inner.clone(),
-            table_name: table_name.to_string(),
+            table_name,
         }))
     }
 }
 
 pub struct InMemoryLocked {
     backend: Arc<RwLock<Database>>,
-    table_name: String,
+    table_name: &'static str,
 }
 
 pub struct InMemoryPrefixIter {
@@ -183,14 +169,19 @@ impl StorageRoTx for InMemoryRwTx {
 }
 
 impl StorageRwTx for InMemoryRwTx {
-    fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
+    fn put_batch(
+        &mut self,
+        table: &'static str,
+        batch: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
         let mut db = self
             .backend
             .write()
             .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
 
-        for (table, key, value) in batch {
-            let table_ref = db.entry(table.to_string()).or_insert_with(Table::new);
+        let table_ref = db.entry(table).or_insert_with(Table::new);
+
+        for (key, value) in batch {
             table_ref.insert(key, value);
         }
 
