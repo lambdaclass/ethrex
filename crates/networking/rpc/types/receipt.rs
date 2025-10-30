@@ -152,6 +152,11 @@ pub struct RpcReceiptTxInfo {
     pub gas_used: u64,
     #[serde(with = "ethrex_common::serde_utils::u64::hex_str")]
     pub effective_gas_price: u64,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::u256::hex_str_opt",
+        default = "Option::default"
+    )]
     pub blob_gas_price: Option<U256>,
     #[serde(
         skip_serializing_if = "Option::is_none",
