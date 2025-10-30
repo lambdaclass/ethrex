@@ -178,7 +178,7 @@ impl L1Committer {
             Self::get_checkpoint_from_path(
                 genesis.clone(),
                 blockchain.options.clone(),
-                Path::new(&format!("checkpoint_batch_{}", last_committed_batch)),
+                &checkpoints_dir.join(&format!("checkpoint_batch_{}", last_committed_batch)),
             )
             .await?;
 
