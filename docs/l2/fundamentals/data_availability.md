@@ -4,7 +4,7 @@ Rollups, unlike validiums, need to have their state on L1. If the only thing tha
 
 This is called the **Data Availability** problem. Sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:
 
-- For every new L2 batch, send as part of the `commit` transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all `commit` transactions, start executing them from the beginning and recontruct the state.
+- For every new L2 batch, send as part of the `commit` transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all `commit` transactions, start executing them from the beginning and reconstruct the state.
 
 This is now feasible; if we take 200 bytes as a rough estimate for the size of a single transfer between two users (see [this post](https://ethereum.stackexchange.com/questions/30175/what-is-the-size-bytes-of-a-simple-ethereum-transaction-versus-a-bitcoin-trans) for the calculation on legacy transactions) and 128 KB as [a reasonable transaction size limit](https://github.com/ethereum/go-ethereum/blob/830f3c764c21f0d314ae0f7e60d6dd581dc540ce/core/txpool/legacypool/legacypool.go#L49-L53) we get around ~650 transactions at maximum per `commit` transaction (we are assuming we use calldata here, blobs can increase this limit as each one is 128 KB and we could use multiple per transaction).
 
