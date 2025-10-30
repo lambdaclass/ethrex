@@ -883,7 +883,10 @@ impl L1Committer {
             checkpoint_store_inner
         };
 
-        // override blockchain options as the FeeConfig is shared under an ArcMutex
+        // Here we override the blockchain type with a default config
+        // to avoid using the same `Arc<Mutex>` from the main blockchain.
+        // It is fine to use the default L2Config since the corresponding
+        // one for each block is fetched from the rollup store during head state regeneration.
         blockchain_opts.r#type = BlockchainType::L2(L2Config::default());
 
         let checkpoint_blockchain =
