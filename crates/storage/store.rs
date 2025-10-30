@@ -195,10 +195,17 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
+        let latest = self
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        if block_number == latest.number {
+            return Ok(Some(latest));
+        }
         let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(None);
         };
-
         self.get_block_header_by_hash(block_hash)
     }
 
@@ -334,6 +341,15 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
+        {
+            let latest = self
+                .latest_block_header
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+            if block_hash == latest.hash() {
+                return Ok(Some(latest.clone()));
+            }
+        }
         let txn = self.backend.begin_read()?;
         let header_value = txn.get(HEADERS, block_hash.as_bytes())?;
         header_value
