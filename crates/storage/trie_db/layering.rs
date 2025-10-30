@@ -96,7 +96,6 @@ impl TrieLayerCache {
             return;
         }
 
-
         // add this new bloom to the global one.
         self.bloom
             .insert_all(key_values.iter().map(|x| x.0.as_ref()));
