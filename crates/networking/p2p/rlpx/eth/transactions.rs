@@ -283,29 +283,29 @@ impl PooledTransactions {
                     );
                     continue;
                 }
-                if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
-                    .await
-                {
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding transaction"
-                    );
-                    continue;
-                }
+                // if let Err(e) = blockchain
+                //     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
+                //     .await
+                // {
+                //     debug!(
+                //         peer=%node,
+                //         error=%e,
+                //         "Error adding transaction"
+                //     );
+                //     continue;
+                // }
             } else {
-                let regular_tx = tx
-                    .try_into()
-                    .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding transaction"
-                    );
-                    continue;
-                }
+                // let regular_tx = tx
+                //     .try_into()
+                //     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
+                // if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
+                //     debug!(
+                //         peer=%node,
+                //         error=%e,
+                //         "Error adding transaction"
+                //     );
+                //     continue;
+                // }
             }
         }
         Ok(())
