@@ -285,7 +285,7 @@ fn parse_json_file(path: &Path) -> HashMap<String, TestUnit> {
 
 /// Creats a new in-memory store and adds the genesis state
 pub async fn build_store_for_test(test: &TestUnit) -> Store {
-    let store =
+    let mut store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
     let genesis = test.get_genesis();
     store

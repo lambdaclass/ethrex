@@ -234,7 +234,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
                 fee_estimate: opts.aligned_opts.fee_estimate,
-                aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -291,7 +290,7 @@ pub struct EthOptions {
         help_heading = "Eth options",
         num_args = 1..
     )]
-    pub rpc_url: Vec<String>,
+    pub rpc_url: Vec<Url>,
     #[arg(
         long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -345,7 +344,9 @@ pub struct EthOptions {
 impl Default for EthOptions {
     fn default() -> Self {
         Self {
-            rpc_url: vec!["http://localhost:8545".to_string()],
+            rpc_url: vec![
+                Url::parse("http://localhost:8545").expect("Unreachable error. URL is hardcoded"),
+            ],
             maximum_allowed_max_fee_per_gas: 10000000000,
             maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
@@ -817,15 +818,6 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub fee_estimate: String,
-    #[arg(
-        long,
-        value_name = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        required_if_eq("aligned", "true"),
-        env = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        help_heading = "Aligned options",
-        help = "Path to the SP1 elf. This is used for proof verification."
-    )]
-    pub aligned_sp1_elf_path: Option<String>,
 }
 
 impl Default for AlignedOptions {
@@ -836,7 +828,6 @@ impl Default for AlignedOptions {
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
-            aligned_sp1_elf_path: None,
         }
     }
 }
@@ -848,10 +839,6 @@ impl AlignedOptions {
             .aligned_network
             .clone()
             .or(defaults.aligned_network.clone());
-        self.aligned_sp1_elf_path = self
-            .aligned_sp1_elf_path
-            .clone()
-            .or(defaults.aligned_sp1_elf_path.clone());
     }
 }
 
@@ -1027,15 +1014,6 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub log_level: Level,
-    #[arg(
-        long,
-        default_value_t = false,
-        value_name = "BOOLEAN",
-        env = "PROVER_CLIENT_ALIGNED",
-        help = "Activate aligned proving system",
-        help_heading = "Prover client options"
-    )]
-    pub aligned: bool,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
     #[arg(
         long,
@@ -1053,7 +1031,6 @@ impl From<ProverClientOptions> for ProverConfig {
             backend: config.backend,
             proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
-            aligned_mode: config.aligned,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: config.sp1_server,
         }
@@ -1068,7 +1045,6 @@ impl Default for ProverClientOptions {
             ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
-            aligned: false,
             backend: Backend::Exec,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
