@@ -1,4 +1,4 @@
-use ethrex_common::{Bloom, H256};
+use ethrex_common::H256;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -7,13 +7,11 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
-    // This per layer bloom accrues only paths that pertain to this layer.
-    bloom: Bloom,
     parent: H256,
     id: usize,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
@@ -23,7 +21,18 @@ pub struct TrieLayerCache {
     ///
     /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
-    bloom: Bloom,
+    bloom: fastbloom::BloomFilter,
+}
+
+impl Default for TrieLayerCache {
+    fn default() -> Self {
+        Self {
+            // todo: tune this
+            bloom: fastbloom::BloomFilter::with_num_bits(8192).expected_items(128 * 512),
+            last_id: 0,
+            layers: Default::default(),
+        }
+    }
 }
 
 impl TrieLayerCache {
@@ -32,10 +41,7 @@ impl TrieLayerCache {
 
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
-        if !self
-            .bloom
-            .contains_input(ethrex_common::BloomInput::Raw(key))
-        {
+        if !self.bloom.contains(key) {
             // TrieWrapper goes to db when returning None.
             return None;
         }
@@ -90,34 +96,31 @@ impl TrieLayerCache {
             return;
         }
 
-        let mut nodes: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
-        let mut bloom = Bloom::zero();
-
-        for (p, n) in key_values {
-            let nibbles = p.into_vec();
-            bloom.accrue(ethrex_common::BloomInput::Raw(&nibbles));
-            nodes.insert(nibbles, n);
-        }
 
         // add this new bloom to the global one.
-        self.bloom.accrue_bloom(&bloom);
+        self.bloom
+            .insert_all(key_values.iter().map(|x| x.0.as_ref()));
+
+        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
+            .into_iter()
+            .map(|(path, value)| (path.into_vec(), value))
+            .collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
             parent,
             id: self.last_id,
-            bloom,
         };
         self.layers.insert(state_root, Arc::new(entry));
     }
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
     pub fn rebuild_bloom(&mut self) {
-        self.bloom = Bloom::zero();
+        self.bloom.clear();
 
         for entry in self.layers.values() {
-            self.bloom.accrue_bloom(&entry.bloom);
+            self.bloom.insert_all(entry.nodes.iter().map(|x| x.0));
         }
     }
 
