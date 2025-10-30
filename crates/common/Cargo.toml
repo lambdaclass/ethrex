@@ -40,9 +40,6 @@ default = []
 c-kzg = ["ethrex-crypto/c-kzg"]
 risc0 = ["ethrex-crypto/risc0"]
 
-[lib]
-path = "./common.rs"
-
 [lints.clippy]
 unwrap_used = "deny"
 redundant_clone = "warn"

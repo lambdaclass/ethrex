@@ -8,25 +8,29 @@ use ethrex_common::types::{ChainConfig, Genesis, GenesisError};
 use serde::{Deserialize, Serialize};
 
 //TODO: Look for a better place to move these files
-const MAINNET_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/mainnet/bootnodes.json");
-const HOLESKY_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/holesky/bootnodes.json");
-const SEPOLIA_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/sepolia/bootnodes.json");
-const HOODI_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/hoodi/bootnodes.json");
+const MAINNET_BOOTNODES: &str =
+    include_str!("../../../../cmd/ethrex/networks/mainnet/bootnodes.json");
+const HOLESKY_BOOTNODES: &str =
+    include_str!("../../../../cmd/ethrex/networks/holesky/bootnodes.json");
+const SEPOLIA_BOOTNODES: &str =
+    include_str!("../../../../cmd/ethrex/networks/sepolia/bootnodes.json");
+const HOODI_BOOTNODES: &str = include_str!("../../../../cmd/ethrex/networks/hoodi/bootnodes.json");
 
 pub const MAINNET_GENESIS_CONTENTS: &str =
-    include_str!("../../../cmd/ethrex/networks/mainnet/genesis.json");
+    include_str!("../../../../cmd/ethrex/networks/mainnet/genesis.json");
 pub const HOLESKY_GENESIS_CONTENTS: &str =
-    include_str!("../../../cmd/ethrex/networks/holesky/genesis.json");
+    include_str!("../../../../cmd/ethrex/networks/holesky/genesis.json");
 pub const HOODI_GENESIS_CONTENTS: &str =
-    include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
+    include_str!("../../../../cmd/ethrex/networks/hoodi/genesis.json");
 pub const SEPOLIA_GENESIS_CONTENTS: &str =
-    include_str!("../../../cmd/ethrex/networks/sepolia/genesis.json");
+    include_str!("../../../../cmd/ethrex/networks/sepolia/genesis.json");
 pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str =
-    include_str!("../../../fixtures/genesis/l1-dev.json");
-pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l2.json");
+    include_str!("../../../../fixtures/genesis/l1-dev.json");
+pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str =
+    include_str!("../../../../fixtures/genesis/l2.json");
 
 pub const LOCAL_DEVNET_PRIVATE_KEYS: &str =
-    include_str!("../../../fixtures/keys/private_keys_l1.txt");
+    include_str!("../../../../fixtures/keys/private_keys_l1.txt");
 
 pub const MAINNET_CHAIN_ID: u64 = 0x1;
 pub const HOLESKY_CHAIN_ID: u64 = 0x4268;

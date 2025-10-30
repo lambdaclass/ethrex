@@ -12,8 +12,5 @@ serde_json.workspace = true
 serde.workspace = true
 hex.workspace = true
 
-[lib]
-path = "lib.rs"
-
 [lints]
 workspace = true
