@@ -1,7 +1,8 @@
 use crate::{
     call_frame::CallFrameBackup,
     constants::POST_OSAKA_GAS_LIMIT_CAP,
-    errors::{ContextResult, InternalError, TxValidationError, VMError},
+    db::gen_db::GeneralizedDatabase,
+    errors::{ContextResult, ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
     tracing::LevmCallTracer,
@@ -38,6 +39,8 @@ const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
 const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
 // isFeeToken(address token) external view override returns (bool)
 const IS_FEE_TOKEN_SELECTOR: [u8; 4] = [0x16, 0xad, 0x82, 0xd7];
+const SIMULATION_GAS_LIMIT: u64 = 21000 * 100;
+const SIMULATION_MAX_FEE: u64 = 100;
 
 pub struct L2Hook {
     pub fee_config: FeeConfig,
@@ -374,59 +377,27 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 /// Similar to default_hook preparation but allows paying fees with ERC20 tokens.
 /// Maintains separation between L1 and L2 functionality.
 fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
-    let mut db_clone = vm.db.clone(); // expensive
-    let origin = COMMON_BRIDGE_L2_ADDRESS; // We set the common bridge to restrict access to the fee token contract
-    let nonce = db_clone.get_account(origin)?.info.nonce;
-    let mut data = Vec::with_capacity(4 + 32);
-    data.extend_from_slice(&IS_FEE_TOKEN_SELECTOR);
-    data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(
-        &vm.env
-            .fee_token
-            .ok_or(VMError::Internal(InternalError::Custom(
-                "already check. TODO CHANGE THIS".to_owned(),
-            )))?
-            .0,
-    );
-    let check_allowance_tx = EIP1559Transaction {
-        // we are simulating the transaction
-        chain_id: vm.env.chain_id.as_u64(),
-        nonce,
-        max_priority_fee_per_gas: 100,
-        max_fee_per_gas: 100,
-        gas_limit: 21000 * 100,
-        to: TxKind::Call(FEE_TOKEN_REGISTRY_ADDRESS),
-        value: U256::zero(),
-        data: data.into(),
-        ..Default::default()
-    };
-    let tx_check_balance = Transaction::EIP1559Transaction(check_allowance_tx);
-    let mut env_clone = vm.env.clone();
-    // Disable fee checks and update fields
-    env_clone.base_fee_per_gas = U256::zero();
-    env_clone.block_excess_blob_gas = None;
-    env_clone.gas_price = U256::zero();
-    env_clone.origin = origin;
-    env_clone.fee_token = None;
-    env_clone.gas_limit = 21000 * 100;
+    let fee_token = vm
+        .env
+        .fee_token
+        .ok_or(VMError::Internal(InternalError::Custom(
+            "Fee token address not provided".to_owned(),
+        )))?;
 
-    let mut new_vm = VM::new(
-        env_clone,
-        &mut db_clone,
-        &tx_check_balance,
-        LevmCallTracer::disabled(),
-        VMType::L2(Default::default()),
+    let (execution_result, _) = simulate_common_bridge_call(
+        vm,
+        FEE_TOKEN_REGISTRY_ADDRESS,
+        encode_is_fee_token_call(fee_token),
     )?;
-    new_vm.hooks = vec![];
-    default_hook::set_bytecode_and_code_address(&mut new_vm)?;
-    let execution_result = new_vm.execute()?;
-    dbg!(&execution_result);
+
     if !execution_result.is_success() {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientAccountFunds,
         ));
     }
-    if execution_result.output.len() != 32 || execution_result.output[31] == 0 {
+    if execution_result.output.len() != 32
+        || execution_result.output.get(31).is_none_or(|&b| b == 0)
+    {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientAccountFunds,
         ));
@@ -548,6 +519,14 @@ fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> B
     data.into()
 }
 
+fn encode_is_fee_token_call(token: Address) -> Bytes {
+    let mut data = Vec::with_capacity(4 + 32);
+    data.extend_from_slice(&IS_FEE_TOKEN_SELECTOR);
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(&token.0);
+    data.into()
+}
+
 /// Locks the fee token amount from the payer's balance.
 fn lock_fee_token(vm: &mut VM<'_>, payer: Address, amount: U256) -> Result<(), VMError> {
     transfer_fee_token(vm, encode_fee_token_call(LOCK_FEE_SELECTOR, payer, amount))
@@ -579,41 +558,8 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
             "No fee token address provided, this is a bug".to_owned(),
         )))?;
 
-    let mut db_clone = vm.db.clone(); // expensive
-    let origin = COMMON_BRIDGE_L2_ADDRESS; // We set the common bridge to restrict access to the fee token contract
-    let nonce = db_clone.get_account(origin)?.info.nonce;
-    let fee_updates_tx = EIP1559Transaction {
-        // we are simulating the transaction
-        chain_id: vm.env.chain_id.as_u64(),
-        nonce,
-        max_priority_fee_per_gas: 100,
-        max_fee_per_gas: 100,
-        gas_limit: 21000 * 100,
-        to: TxKind::Call(fee_token),
-        value: U256::zero(),
-        data,
-        ..Default::default()
-    };
-    let tx_check_balance = Transaction::EIP1559Transaction(fee_updates_tx);
-    let mut env_clone = vm.env.clone();
-    // Disable fee checks and update fields
-    env_clone.base_fee_per_gas = U256::zero();
-    env_clone.block_excess_blob_gas = None;
-    env_clone.gas_price = U256::zero();
-    env_clone.origin = origin;
-    env_clone.fee_token = None;
-    env_clone.gas_limit = 21000 * 100;
+    let (execution_result, mut db_clone) = simulate_common_bridge_call(vm, fee_token, data)?;
 
-    let mut new_vm = VM::new(
-        env_clone,
-        &mut db_clone,
-        &tx_check_balance,
-        LevmCallTracer::disabled(),
-        VMType::L2(Default::default()),
-    )?;
-    new_vm.hooks = vec![];
-    default_hook::set_bytecode_and_code_address(&mut new_vm)?;
-    let execution_result = new_vm.execute()?;
     if !execution_result.is_success() {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientAccountFunds,
@@ -636,6 +582,52 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         .insert(fee_token, initial_state_fee_token);
 
     Ok(())
+}
+
+/// Executes an L2 call as if it originated from the common bridge, returning
+/// both the execution report and the mutated database snapshot.
+fn simulate_common_bridge_call(
+    vm: &mut VM<'_>,
+    to: Address,
+    data: Bytes,
+) -> Result<(ExecutionReport, GeneralizedDatabase), VMError> {
+    let mut db_clone = vm.db.clone(); // expensive but necessary to simulate call
+    let origin = COMMON_BRIDGE_L2_ADDRESS; // We set the common bridge to restrict access to the contract
+    let nonce = db_clone.get_account(origin)?.info.nonce;
+    let simulation_tx = EIP1559Transaction {
+        // we are simulating the transaction
+        chain_id: vm.env.chain_id.as_u64(),
+        nonce,
+        max_priority_fee_per_gas: SIMULATION_MAX_FEE,
+        max_fee_per_gas: SIMULATION_MAX_FEE,
+        gas_limit: SIMULATION_GAS_LIMIT,
+        to: TxKind::Call(to),
+        value: U256::zero(),
+        data,
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(simulation_tx);
+    let mut env_clone = vm.env.clone();
+    // Disable fee checks and update fields
+    env_clone.base_fee_per_gas = U256::zero();
+    env_clone.block_excess_blob_gas = None;
+    env_clone.gas_price = U256::zero();
+    env_clone.origin = origin;
+    env_clone.fee_token = None;
+    env_clone.gas_limit = SIMULATION_GAS_LIMIT;
+
+    let mut new_vm = VM::new(
+        env_clone,
+        &mut db_clone,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(Default::default()),
+    )?;
+    new_vm.hooks = vec![];
+    default_hook::set_bytecode_and_code_address(&mut new_vm)?;
+    let execution_result = new_vm.execute()?;
+
+    Ok((execution_result, db_clone))
 }
 
 /// Refunds the sender the unspent gas in fee tokens.

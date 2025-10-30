@@ -1,4 +1,4 @@
-use ethrex_common::H160;
+use ethrex_common::{H160, H256};
 use genesis_tool::genesis::write_genesis_as_json;
 use std::fs::File;
 use std::io::BufReader;
@@ -125,6 +125,10 @@ pub fn download_script() {
         (
             &Path::new("../../crates/l2/contracts/src/l2/L2Upgradeable.sol"),
             "UpgradeableSystemContract",
+        ),
+        (
+            &Path::new("../../crates/l2/contracts/src/l2/FeeTokenRegistry.sol"),
+            "FeeTokenRegistry",
         ),
     ];
     for (path, name) in l2_contracts {
@@ -274,7 +278,8 @@ fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
 
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, CREATE2DEPLOYER_ADDRESS, DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
-    L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS, address_to_word, get_erc1967_slot,
+    FEE_TOKEN_REGISTRY_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS,
+    address_to_word, get_erc1967_slot,
 };
 
 #[allow(clippy::enum_variant_names)]
@@ -331,6 +336,12 @@ fn l2_to_l1_messenger_runtime(out_dir: &Path) -> Vec<u8> {
     fs::read(path).expect("Failed to read bytecode file")
 }
 
+/// Bytecode of the FeeTokenRegistry contract.
+fn fee_token_registry_runtime(out_dir: &Path) -> Vec<u8> {
+    let path = out_dir.join("contracts/solc_out/FeeTokenRegistry.bytecode");
+    fs::read(path).expect("Failed to read bytecode file")
+}
+
 /// Bytecode of the Create2Deployer contract.
 fn create2deployer_runtime(out_dir: &Path) -> Vec<u8> {
     let path = out_dir.join("contracts/solc_out/Create2Deployer.bytecode");
@@ -348,6 +359,7 @@ fn add_with_proxy(
     address: Address,
     code: Vec<u8>,
     out_dir: &Path,
+    alloc: Option<HashMap<H256, U256>>,
 ) -> Result<(), SystemContractsUpdaterError> {
     let impl_address = address ^ IMPL_MASK;
 
@@ -376,6 +388,11 @@ fn add_with_proxy(
         get_erc1967_slot("eip1967.proxy.admin"),
         address_to_word(ADMIN_ADDRESS),
     );
+    if let Some(alloc) = alloc {
+        for (key, value) in alloc {
+            storage.insert(U256::from_big_endian(key.as_bytes()), value);
+        }
+    }
     genesis.alloc.insert(
         address,
         GenesisAccount {
@@ -425,6 +442,7 @@ pub fn update_genesis_file(
         COMMON_BRIDGE_L2_ADDRESS,
         common_bridge_l2_runtime(out_dir),
         out_dir,
+        None,
     )?;
 
     add_with_proxy(
@@ -432,6 +450,33 @@ pub fn update_genesis_file(
         L2_TO_L1_MESSENGER_ADDRESS,
         l2_to_l1_messenger_runtime(out_dir),
         out_dir,
+        None,
+    )?;
+
+    let test_fee_tokens = HashMap::from([
+        (
+            H256::from_slice(
+                hex::decode("c323dfda4b2fe7ed7849af4c8a1254f46e97d07606daedc1115b866ffdbeead0")
+                    .unwrap()
+                    .as_slice(),
+            ),
+            U256::one(),
+        ),
+        (
+            H256::from_slice(
+                hex::decode("0109ad0da289aadeb025bef1544ffdbc563aff9f80bec769bb9ca1205de463fa")
+                    .unwrap()
+                    .as_slice(),
+            ),
+            U256::one(),
+        ),
+    ]);
+    add_with_proxy(
+        &mut genesis,
+        FEE_TOKEN_REGISTRY_ADDRESS,
+        fee_token_registry_runtime(out_dir),
+        out_dir,
+        Some(test_fee_tokens),
     )?;
 
     for address in 0xff00..0xfffb {

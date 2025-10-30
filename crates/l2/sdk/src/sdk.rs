@@ -55,6 +55,12 @@ pub const L2_TO_L1_MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xfe,
 ]);
 
+// 0x000000000000000000000000000000000000fffc
+pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfc,
+]);
+
 // 0xee110000000000000000000000000000000011ff
 pub const ADDRESS_ALIASING: Address = H160([
     0xee, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -431,7 +437,7 @@ pub async fn create2_deploy_from_path(
     salt: &[u8],
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
-    let mut bytecode_hex = read_to_string(contract_path)?;
+    let bytecode_hex = read_to_string(contract_path)?;
     let bytecode = hex::decode(bytecode_hex.trim_start_matches("0x").trim())?;
     create2_deploy_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
 }
