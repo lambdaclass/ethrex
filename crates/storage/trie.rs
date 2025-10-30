@@ -1,5 +1,6 @@
 use crate::api::tables::{FLATKEY_VALUES, MISC_VALUES, TRIE_NODES};
 use crate::api::{StorageBackend, StorageLocked, StorageRwTx};
+use crate::error::StoreError;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
@@ -21,12 +22,11 @@ impl BackendTrieDB {
     pub fn new(
         tx: Box<dyn StorageRwTx + 'static>,
         address_prefix: Option<H256>,
-    ) -> Result<Self, TrieError> {
+    ) -> Result<Self, StoreError> {
         // TODO: move "last_written" to a constant, or merge it into CHAIN_DATA table
         let last_computed_flatkeyvalue = tx
-            .get(MISC_VALUES, "last_written".as_bytes())
-            .unwrap()
-            .map(|v| Nibbles::from_hex(v))
+            .get(MISC_VALUES, "last_written".as_bytes())?
+            .map(Nibbles::from_hex)
             .unwrap_or_default();
         Ok(Self {
             tx: Mutex::new(tx),
@@ -42,8 +42,7 @@ impl BackendTrieDB {
 
 impl TrieDB for BackendTrieDB {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        // TODO: this breaks TrieWrapper
-        // let key = apply_prefix(self.address_prefix, key);
+        let key = apply_prefix(self.address_prefix, key);
         self.last_computed_flatkeyvalue >= key
     }
 
@@ -96,17 +95,15 @@ impl BackendTrieDBLocked {
     pub fn new(
         engine: &dyn StorageBackend,
         address_prefix: Option<H256>,
-    ) -> Result<Self, TrieError> {
+    ) -> Result<Self, StoreError> {
         // TODO: move "last_written" to a constant, or merge it into CHAIN_DATA table
         let last_computed_flatkeyvalue = engine
-            .begin_read()
-            .unwrap()
-            .get(MISC_VALUES, "last_written".as_bytes())
-            .unwrap()
-            .map(|v| Nibbles::from_hex(v))
+            .begin_read()?
+            .get(MISC_VALUES, "last_written".as_bytes())?
+            .map(Nibbles::from_hex)
             .unwrap_or_default();
-        let trie_tx = engine.begin_locked(TRIE_NODES).unwrap();
-        let fkv_tx = engine.begin_locked(FLATKEY_VALUES).unwrap();
+        let trie_tx = engine.begin_locked(TRIE_NODES)?;
+        let fkv_tx = engine.begin_locked(FLATKEY_VALUES)?;
         Ok(Self {
             trie_tx,
             fkv_tx,
@@ -123,8 +120,7 @@ impl BackendTrieDBLocked {
 
 impl TrieDB for BackendTrieDBLocked {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        // TODO: this breaks TrieWrapper
-        // let key = apply_prefix(self.address_prefix, key);
+        let key = apply_prefix(self.address_prefix, key);
         self.last_computed_flatkeyvalue >= key
     }
 
