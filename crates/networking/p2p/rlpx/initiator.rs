@@ -44,7 +44,7 @@ impl RLPxInitiator {
     pub async fn spawn(context: P2PContext) {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(context);
-        let mut server = RLPxInitiator::start_on_thread(state.clone());
+        let mut server = RLPxInitiator::start(state.clone());
         let _ = server.cast(InMessage::LookForPeers).await;
     }
 
