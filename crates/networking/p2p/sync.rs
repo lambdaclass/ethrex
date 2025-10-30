@@ -1558,15 +1558,20 @@ async fn insert_storages(
 
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
-    let thread_count = std::thread::available_parallelism()
+    let mut thread_count = std::thread::available_parallelism()
         .map(|num| num.into())
         .unwrap_or(8);
+    if thread_count < 2 {
+        error!("Thread count was less than two! Clamping to two");
+        thread_count = 2;
+    }
 
     let (buffer_sender, buffer_receiver) = bounded::<Vec<(Nibbles, Node)>>(BUFFER_COUNT as usize);
     for _ in 0..BUFFER_COUNT {
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
 
+    debug!(thread_count, "Inserting storages");
     scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
@@ -1575,9 +1580,9 @@ async fn insert_storages(
             let buffer_receiver = buffer_receiver.clone();
             if counter >= thread_count - 1 {
                 let _ = receiver.recv();
-                counter -= 1;
+            } else {
+                counter += 1;
             }
-            counter += 1;
             let pool_clone = pool.clone();
             let mut iter = snapshot.raw_iterator();
             let task = Box::new(move || {

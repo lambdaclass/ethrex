@@ -3800,6 +3800,7 @@ name = "ethrex-threadpool"
 version = "0.1.0"
 dependencies = [
  "crossbeam 0.8.4",
+ "tracing",
 ]
 
 [[package]]
