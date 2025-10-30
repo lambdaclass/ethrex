@@ -62,7 +62,7 @@ so we create it and insert the leaf we just computed and insert into the branch.
 The current parent is stored in the "parent stack", and the new branch becomes the 
 current parent.
 
-![Image showing the insertion of 1 elements with a current parent branch 0x1, the current element 0x172E and next element 0x175B. 0x172E is inserted with a single write, while the current parent branch is put onto the stack, while a new current parent branch 0x17 is created](sorted_trie_insert/Sorted%20Insertion%20Scenario%202.png)
+![Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x172E and next element 0x175B. 0x172E is inserted with a single write, while the current parent branch is put onto the stack, and a new current parent branch 0x17 is created](sorted_trie_insert/Sorted%20Insertion%20Scenario%202.png)
 
 Scenario 3: The current parent is not the parent of the
 next value. This happens when the parent doesn't have
