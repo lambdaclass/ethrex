@@ -58,7 +58,8 @@ The program validates the initial state by converting the `ExecutionWitness` int
 The validation happens in several steps:
 1. The `ExecutionWitness` (collected during pre-execution) is converted to `GuestProgramState`.
 2. A `GuestProgramStateWrapper` is created to provide database functionality.
-3. The state trie root is calculated and compared against the parent block header's state root.
+3. For each state value in the database (account state and storage slots), the program verifies merkle proofs of the inclusion (or exclusion, in the case of accounts that didn't exist before this batch) of the value in the state trie
+4. The state trie root is compared against the first block's parent state root.
 
 This validation ensures that all state values needed for execution are properly linked to the initial state via their MPT proofs. Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries - a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.
 
