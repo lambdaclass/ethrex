@@ -5,7 +5,11 @@ use ethrex::{
     utils::{NodeConfigFile, get_client_version, store_node_config_file},
 };
 use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
-use std::{path::Path, time::Duration};
+use std::{
+    path::Path,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -45,8 +49,7 @@ async fn server_shutdown(
     info!("Server shutting down!");
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+async fn ethrex() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
     if let Some(subcommand) = command {
@@ -74,4 +77,17 @@ async fn main() -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+fn main() -> eyre::Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .thread_name_fn(|| {
+            static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
+            let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
+            format!("ethrex-tokio-runtime-{}", id)
+        })
+        .build()
+        .expect("");
+
+    rt.block_on(ethrex())
 }
