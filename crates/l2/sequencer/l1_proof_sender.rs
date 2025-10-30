@@ -153,13 +153,13 @@ impl L1ProofSender {
     async fn verify_and_send_proof(&self) -> Result<(), ProofSenderError> {
         let last_verified_batch =
             get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
-        let lastest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
+        let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
         let batch_to_send = if self.aligned_mode {
-            std::cmp::max(lastest_sent_batch_db, last_verified_batch) + 1
+            std::cmp::max(latest_sent_batch_db, last_verified_batch) + 1
         } else {
-            if lastest_sent_batch_db < last_verified_batch {
+            if latest_sent_batch_db < last_verified_batch {
                 // hotfix: in case the latest sent batch in DB is less than the last verified on-chain,
-                // we update the db to avoid stucking the proof_coordinator.
+                // we update the db to avoid stalling the proof_coordinator.
                 self.rollup_store
                     .set_latest_sent_batch_proof(last_verified_batch)
                     .await?;
