@@ -12,7 +12,7 @@ If this endpoint is not available, the prover needs to do the following:
 2. log every initial state value accessed or updated during this execution.
 3. retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash, using the `eth_getProof` RPC endpoint of a synced node.
 
-Steps 1 and 2 are data collection steps only - no validation is performed at this stage. The actual validation happens later inside the zkVM guest program. Step 3 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections [initial state validation](#step-1-initial-state-validation) and [final state validation](#step-3-final-state-validation) we explain what are pruned tries and in which case they get restructured.
+Steps 1 and 2 are data collection steps only - no validation is performed at this stage. The actual validation happens later inside the zkVM guest program. Step 3 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections [initial state validation](../../prover/guest_program.md#step-1-initial-state-validation) and [final state validation](../../prover/guest_program.md#step-3-final-state-validation) we explain what are pruned tries and in which case they get restructured.
 
 If a value is removed during block execution (meaning it existed initially but not finally), two pathological cases can occur where the witness lacks sufficient information to update the trie structure correctly:
 
