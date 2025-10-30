@@ -84,7 +84,7 @@ struct EthConfigObject {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EthConfigResponse {
+struct EthConfigResponse {
     current: EthConfigObject,
     next: Option<EthConfigObject>,
     last: Option<EthConfigObject>,
