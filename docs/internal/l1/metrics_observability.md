@@ -45,7 +45,7 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 | Engine API & RPC | Partial (metrics exist, limited panels) | Yes | Yes | No |
 | State & storage | Yes | Yes | Yes | Partial (datadir size; no pruning) |
 | Process & host health | Yes | Yes | Yes | Yes (node exporter + process) |
-| Error & anomaly counters | Yes | Yes | Partial (basic) | No |
+| Error & anomaly counters | Yes | Yes | Partial (basic reorgs) | No |
 
 - **Block execution pipeline**
   - Gauges exposed in `crates/blockchain/metrics/metrics_blocks.rs`: `gas_limit`, `gas_used`, `gigagas`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`, plus block-building focused gauges that need to be reviewed first (`gigagas_block_building`, `block_building_ms`, `block_building_base_fee`).
@@ -69,6 +69,7 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 Before addressing the gaps listed below, we should also consider some general pitfalls in our current metrics setup:
 
 - **No namespace standardisation**: Metric names and labels should follow a consistent naming convention (e.g., `ethrex_` prefix) to avoid collisions and improve clarity. We should also probably add l1/l2 prefixes where applicable.
+- **ethereum-metrics-exporter as part of our dashboard**: Some information is only visible through the external `ethereum-metrics-exporter` (e.g., network, client version), we are already pulling those in our dashboard but this is not ideal. We should consider integrating this key metrics directly into Ethrex.
 - **No label consistency**: We are not using labels consistently, especially in l1. We might need to take a pass to ensure similar metrics use uniform label names and values to facilitate querying and aggregation.
 - **Exemplar where applicable**: For histograms, adding exemplars can help trace high-latency events back to specific traces/logs. This is especially useful for latency-sensitive metrics like block execution time or RPC call durations where we could add block hashes as exemplars. This needs to be evaluated on a case-by-case basis and tested.
 
