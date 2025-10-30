@@ -5,6 +5,7 @@
 ### 2025-10-28
 
 - Use RocksDB-specific backend for the VM [#5073](https://github.com/lambdaclass/ethrex/pull/5073)
+- Batch BlobsBundle::validate [#4993](https://github.com/lambdaclass/ethrex/pull/4993)
 
 ### 2025-10-27
 
@@ -19,6 +20,10 @@
 
 - Instead of lazy computation of blocklist, do greedy computation of allowlist and store the result, fetch it with the DB. [#4961](https://github.com/lambdaclass/ethrex/pull/4961)
 
+### 2025-10-20
+
+- Remove duplicate subgroup check in ecpairing precompile [#4960](https://github.com/lambdaclass/ethrex/pull/4960)
+
 ### 2025-10-17
 
 - Replaces incremental iteration with a one-time precompute method that scans the entire bytecode, building a `BitVec<u8, Msb0>` where bits mark valid `JUMPDEST` positions, skipping `PUSH1..PUSH32` data bytes.
@@ -29,7 +34,6 @@
 - Improve get_closest_nodes p2p performance [#4838](https://github.com/lambdaclass/ethrex/pull/4838)
 
 ### 2025-10-13
-
 
 - Remove explicit cache-related options from RocksDB configuration and reverted optimistic transactions to reduce RAM usage [#4853](https://github.com/lambdaclass/ethrex/pull/4853)
 - Remove unnecesary mul in ecpairing [#4843](https://github.com/lambdaclass/ethrex/pull/4843)

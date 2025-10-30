@@ -23,6 +23,7 @@ use serde::Serialize;
 
 use serde_json::Value;
 use tracing::debug;
+use ethrex_storage::trie_db::generic_vm::StoreVmDatabase;
 
 pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
 pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
@@ -571,8 +572,8 @@ async fn simulate_tx(
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    let vm_db = storage.vm_db(block_header.clone())?;
-    let mut vm = blockchain.new_evm_from_db(vm_db)?;
+    let vm_db = StoreVmDatabase::new(storage, block_header.hash());
+    let mut vm = blockchain.new_evm(vm_db)?;
 
     match vm.simulate_tx_from_generic(transaction, block_header)? {
         ExecutionResult::Revert {

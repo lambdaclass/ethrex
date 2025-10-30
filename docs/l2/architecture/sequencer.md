@@ -33,7 +33,7 @@ For more information about the Proof Coordinator, the Prover, and the proving pr
 The L1 Proof Sender is responsible for interacting with Ethereum L1 to manage proof verification. Its key functionalities include:
 
 - Connecting to Ethereum L1 to send proofs for verification.
-- Dynamically determine required proof types based on active verifier contracts (`PICOVERIFIER`, `R0VERIFIER`, `SP1VERIFIER`).
+- Dynamically determine required proof types based on active verifier contracts (`REQUIRE_<prover>_PROOF`).
 - Ensure blocks are verified in the correct order by invoking the `verify(..)` function in the `OnChainProposer` contract. Upon successful verification, an event is emitted to confirm the block's verification status.
 - Operating on a configured interval defined by `proof_send_interval_ms`.
 

@@ -207,6 +207,8 @@ impl Blockchain {
 
         // Later on, we need to access block hashes by number. To avoid needing
         // to apply fork choice for each block, we cache them here.
+        // The clone is not redundant, the hash function modifies the original block.
+        #[allow(clippy::redundant_clone)]
         let mut block_hashes_map: BTreeMap<u64, H256> = blocks
             .iter()
             .cloned()
@@ -576,8 +578,8 @@ impl Blockchain {
                 METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
                 METRICS_BLOCKS.set_execution_ms(executed.duration_since(since).as_millis() as i64);
-                METRICS_BLOCKS.set_store_ms(stored.duration_since(since).as_millis() as i64);
-                METRICS_BLOCKS.set_merkle_ms(merkleized.duration_since(since).as_millis() as i64);
+                METRICS_BLOCKS.set_merkle_ms(merkleized.duration_since(executed).as_millis() as i64);
+                METRICS_BLOCKS.set_store_ms(stored.duration_since(merkleized).as_millis() as i64);
                 METRICS_BLOCKS.set_transaction_count(transactions_count as i64);
             );
 
