@@ -84,7 +84,7 @@ fn main() -> eyre::Result<()> {
         .thread_name_fn(|| {
             static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
             let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
-            format!("ethrex-tokio-runtime-{}", id)
+            format!("ethrex-rt-{}", id)
         })
         .enable_all()
         .build()
