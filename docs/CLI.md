@@ -525,11 +525,6 @@ Aligned options:
           [env: ETHREX_ALIGNED_FEE_ESTIMATE=]
           [default: instant]
 
-      --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
-          Path to the SP1 elf. This is used for proof verification.
-
-          [env: ETHREX_ALIGNED_SP1_ELF_PATH=]
-
 Admin server options:
       --admin-server.addr <IP_ADDRESS>
           [env: ETHREX_ADMIN_SERVER_LISTEN_ADDRESS=]

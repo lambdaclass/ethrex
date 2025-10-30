@@ -16,7 +16,7 @@ pub mod types;
 pub mod utils;
 pub use clients::{EngineClient, EthClient};
 
-pub use rpc::start_api;
+pub use rpc::{start_api, start_block_executor};
 
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to
 // export them in the public API of this crate.

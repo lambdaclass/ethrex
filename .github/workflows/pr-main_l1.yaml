@@ -46,6 +46,18 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+      - name: Run tooling cargo check
+        run: cargo check --workspace --all-targets
+        working-directory: tooling
+
+      - name: Run tooling cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: tooling
+
+      - name: Run tooling cargo fmt
+        run: cargo fmt --all -- --check
+        working-directory: tooling
+
   test:
     # "Test" is a required check, don't change the name
     name: Test
@@ -62,7 +74,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          make test
+          cargo test --workspace --exclude ethrex-l2
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
@@ -148,7 +160,7 @@ jobs:
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|eth|snap/Ping|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate|AccountRange|GetTrieNodes|GetByteCodes|GetStorageRanges|Findnode
+            limit: discv4|eth|snap/Ping|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate|AccountRange|GetTrieNodes|GetByteCodes|GetStorageRanges|Findnode|BlobViolations
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
