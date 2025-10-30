@@ -98,7 +98,7 @@ fn create_parent(current_node: &CenterSide, closest_nibbles: &Nibbles) -> StackE
 
 /// This function modifies a parent element to include the `current_node` element, and
 /// then adds the `current_node` to the write queue.
-/// When adding the current_node to the write queue we use create an extension if needed
+/// When adding the current_node to the write queue we create an extension if needed
 fn add_current_to_parent_and_write_queue(
     nodes_to_write: &mut Vec<(Nibbles, Node)>,
     current_node: &CenterSide,
