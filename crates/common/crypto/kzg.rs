@@ -24,11 +24,20 @@ type Blob = [u8; BYTES_PER_BLOB];
 type Commitment = Bytes48;
 type Proof = Bytes48;
 
-/// Ensures the Ethereum trusted setup is loaded so later KZG operations avoid the first-call cost.
+/// Schedules the Ethereum trusted setup to load on a background thread so later KZG operations avoid the first-call cost.
 pub fn warm_up_trusted_setup() {
     #[cfg(feature = "c-kzg")]
     {
-        std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
+        use std::sync::OnceLock;
+        use std::thread;
+
+        static WARMUP_TRIGGER: OnceLock<()> = OnceLock::new();
+
+        WARMUP_TRIGGER.get_or_init(|| {
+            let _ = thread::spawn(|| {
+                std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
+            });
+        });
     }
 }
 
