@@ -54,6 +54,13 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
   - `crates/blockchain/metrics/api.rs` exposes `/metrics` and `/health`; orchestration defined in `cmd/ethrex/initializers.rs` ensures the Axum server starts alongside the node when metrics are enabled.
   - The provisioning stack (docker-compose, Makefile targets) ships Prometheus and Grafana wiring, so any new metric family automatically appears in the scrape.
 
+## General pitfalls
+Before addressing the gaps listed below, we should also consider some general pitfalls in our current metrics setup:
+
+- **No namespace standardisation**: Metric names and labels should follow a consistent naming convention (e.g., `ethrex_` prefix) to avoid collisions and improve clarity. We should also probably add l1/l2 prefixes where applicable.
+- **No label consistency**: Similar metrics should use uniform label names and values to facilitate querying and aggregation. This is especially important for metrics that track similar concepts across different components.
+- **Exemplar where applicable**: For histograms, adding exemplars can help trace high-latency events back to specific traces/logs. This is especially useful for latency-sensitive metrics like block execution time or RPC call durations.
+
 ## Coverage vs Baseline Must-Haves
 - **Chain sync status**
   - *Have*: `head_height` and `block_number` gauges provide current execution head; dashboard shows block height trend.
