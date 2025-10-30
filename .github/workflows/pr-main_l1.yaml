@@ -17,10 +17,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint-test:
+    name: Lint test
+    runs-on: ubuntu-latest
+    steps:
+      - name: sleep
+        run: sleep 20
   lint:
     # "Lint" is a required check, don't change the name
     name: Lint
     runs-on: ubuntu-latest
+    needs: [lint-test]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
