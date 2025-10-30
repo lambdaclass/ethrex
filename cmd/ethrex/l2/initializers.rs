@@ -1,7 +1,7 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store, regenerate_head_state,
+    get_network, get_signer, init_blockchain, init_network, init_store,
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
@@ -12,6 +12,7 @@ use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
+use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     peer_handler::PeerHandler,
@@ -189,7 +190,7 @@ pub async fn init_l2(
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
-    regenerate_head_state(&store, &blockchain).await?;
+    regenerate_head_state(&store, &rollup_store, &blockchain).await?;
 
     let signer = get_signer(&datadir);
 
