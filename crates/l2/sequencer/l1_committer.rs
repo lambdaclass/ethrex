@@ -8,9 +8,8 @@ use crate::{
         },
     },
 };
-
 use bytes::Bytes;
-use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
+use ethrex_blockchain::{Blockchain, BlockchainOptions, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -159,8 +158,6 @@ impl L1Committer {
         rollup_store: StoreRollup,
         based: bool,
         sequencer_state: SequencerState,
-        initial_checkpoint_store: Store,
-        initial_checkpoint_blockchain: Arc<Blockchain>,
         genesis: Genesis,
         checkpoints_dir: PathBuf,
     ) -> Result<Self, CommitterError> {
@@ -176,6 +173,15 @@ impl L1Committer {
         let last_committed_batch =
             get_last_committed_batch(&eth_client, committer_config.on_chain_proposer_address)
                 .await?;
+
+        let (current_checkpoint_store, current_checkpoint_blockchain) =
+            Self::get_current_checkpoint(
+                last_committed_batch,
+                genesis.clone(),
+                blockchain.options.clone(),
+            )
+            .await?;
+
         Ok(Self {
             eth_client,
             blockchain,
@@ -197,22 +203,32 @@ impl L1Committer {
             cancellation_token: None,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             git_commit_hash: get_git_commit_hash(),
-            current_checkpoint_store: initial_checkpoint_store,
-            current_checkpoint_blockchain: initial_checkpoint_blockchain,
+            current_checkpoint_store,
+            current_checkpoint_blockchain,
             genesis,
             checkpoints_dir,
         })
     }
 
-    #[expect(clippy::too_many_arguments)]
+    async fn get_current_checkpoint(
+        last_committed_batch: u64,
+        genesis: Genesis,
+        blockchain_opts: BlockchainOptions,
+    ) -> Result<(Store, Arc<Blockchain>), CommitterError> {
+        let checkpoint_path = if last_committed_batch == 0 {
+            "genesis_checkpoint".to_string()
+        } else {
+            format!("checkpoint_batch_{}", last_committed_batch)
+        };
+        Self::get_checkpoint_from_path(genesis, blockchain_opts, Path::new(&checkpoint_path)).await
+    }
+
     pub async fn spawn(
         store: Store,
         blockchain: Arc<Blockchain>,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
-        initial_checkpoint_store: Store,
-        initial_checkpoint_blockchain: Arc<Blockchain>,
         genesis: Genesis,
         checkpoints_dir: PathBuf,
     ) -> Result<GenServerHandle<L1Committer>, CommitterError> {
@@ -225,8 +241,6 @@ impl L1Committer {
             rollup_store.clone(),
             cfg.based.enabled,
             sequencer_state,
-            initial_checkpoint_store,
-            initial_checkpoint_blockchain,
             genesis,
             checkpoints_dir,
         )
@@ -817,7 +831,15 @@ impl L1Committer {
         path: &Path,
     ) -> Result<(Store, Arc<Blockchain>), CommitterError> {
         checkpointee.create_checkpoint(&path).await?;
+        Self::get_checkpoint_from_path(self.genesis.clone(), self.blockchain.options.clone(), path)
+            .await
+    }
 
+    async fn get_checkpoint_from_path(
+        genesis: Genesis,
+        blockchain_opts: BlockchainOptions,
+        path: &Path,
+    ) -> Result<(Store, Arc<Blockchain>), CommitterError> {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(not(feature = "rocksdb"))]
@@ -827,7 +849,7 @@ impl L1Committer {
             let mut checkpoint_store_inner = Store::new(path, engine_type)?;
 
             checkpoint_store_inner
-                .add_initial_state(self.genesis.clone())
+                .add_initial_state(genesis.clone())
                 .await?;
 
             checkpoint_store_inner
@@ -835,7 +857,7 @@ impl L1Committer {
 
         let checkpoint_blockchain = Arc::new(Blockchain::new(
             checkpoint_store.clone(),
-            self.blockchain.options.clone(),
+            blockchain_opts.clone(),
         ));
 
         regenerate_head_state(&checkpoint_store, &checkpoint_blockchain).await?;
