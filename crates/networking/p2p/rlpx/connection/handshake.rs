@@ -161,22 +161,14 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, PeerConnectionError> {
-    let task_id = tokio::task::id();
-
-    tracing::info!(task_id = ?task_id, "send_auth - init");
     let peer_pk =
         compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
-    tracing::info!(task_id = ?task_id, "send_auth - compress_pubkey");
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
-    tracing::info!(task_id = ?task_id, "send_auth - local_nonce");
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
-    tracing::info!(task_id = ?task_id, "send_auth - local_ephemeral_key");
 
     let msg = encode_auth_message(signer, local_nonce, &peer_pk, &local_ephemeral_key)?;
-    tracing::info!(task_id = ?task_id, "send_auth - encode_auth_message");
     stream.write_all(&msg).await?;
-    tracing::info!(task_id = ?task_id, "send_auth - stream.write_all (post await)");
 
     Ok(LocalState {
         nonce: local_nonce,
