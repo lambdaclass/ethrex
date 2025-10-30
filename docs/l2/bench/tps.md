@@ -66,8 +66,8 @@ Rollup L2 (publishes blobs), with 1.000.000 genesis accounts (big state)
     1. in there I modified load tests to add a tps test
     2. and I modified the prover log level from **debug** to **info**
 3. cd `crates/l2`, build and init the prover: 
-    1. `make build-prover PROVER=sp1 G=1` 
-    2. `make init-prover PROVER=sp1 G=1`
+    1. `make build-prover-sp1 GPU=true` 
+    2. `make init-prover-sp1 GPU=true`
 4. In a different terminal (cd `crates/l2`) init L1 and L2:
     1. for this execute `make init` setting env. vars according to the L2 setup:
         1. `ETHREX_DEPLOYER_SP1_DEPLOYER_VERIFIER=true`
