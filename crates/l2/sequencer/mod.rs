@@ -40,6 +40,7 @@ pub mod errors;
 pub mod setup;
 pub mod utils;
 
+#[expect(clippy::too_many_arguments)]
 pub async fn start_l2(
     store: Store,
     rollup_store: StoreRollup,
