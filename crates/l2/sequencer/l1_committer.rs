@@ -700,6 +700,19 @@ impl L1Committer {
         &self,
         batch: &Batch,
     ) -> Result<(), CommitterError> {
+        if self
+            .rollup_store
+            .get_prover_input_by_batch_and_version(batch.number, &self.git_commit_hash)
+            .await?
+            .is_some()
+        {
+            info!(
+                "Prover input for batch {} and version {} already exists, skipping generation",
+                batch.number, self.git_commit_hash
+            );
+            return Ok(());
+        }
+
         let (blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
             batch.number,
             &self.store,
