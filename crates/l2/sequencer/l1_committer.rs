@@ -175,10 +175,10 @@ impl L1Committer {
                 .await?;
 
         let (current_checkpoint_store, current_checkpoint_blockchain) =
-            Self::get_current_checkpoint(
-                last_committed_batch,
+            Self::get_checkpoint_from_path(
                 genesis.clone(),
                 blockchain.options.clone(),
+                Path::new(&format!("checkpoint_batch_{}", last_committed_batch)),
             )
             .await?;
 
@@ -208,19 +208,6 @@ impl L1Committer {
             genesis,
             checkpoints_dir,
         })
-    }
-
-    async fn get_current_checkpoint(
-        last_committed_batch: u64,
-        genesis: Genesis,
-        blockchain_opts: BlockchainOptions,
-    ) -> Result<(Store, Arc<Blockchain>), CommitterError> {
-        let checkpoint_path = if last_committed_batch == 0 {
-            "genesis_checkpoint".to_string()
-        } else {
-            format!("checkpoint_batch_{}", last_committed_batch)
-        };
-        Self::get_checkpoint_from_path(genesis, blockchain_opts, Path::new(&checkpoint_path)).await
     }
 
     pub async fn spawn(
@@ -848,17 +835,13 @@ impl L1Committer {
         let checkpoint_store = {
             let mut checkpoint_store_inner = Store::new(path, engine_type)?;
 
-            checkpoint_store_inner
-                .add_initial_state(genesis.clone())
-                .await?;
+            checkpoint_store_inner.add_initial_state(genesis).await?;
 
             checkpoint_store_inner
         };
 
-        let checkpoint_blockchain = Arc::new(Blockchain::new(
-            checkpoint_store.clone(),
-            blockchain_opts.clone(),
-        ));
+        let checkpoint_blockchain =
+            Arc::new(Blockchain::new(checkpoint_store.clone(), blockchain_opts));
 
         regenerate_head_state(&checkpoint_store, &checkpoint_blockchain).await?;
 
