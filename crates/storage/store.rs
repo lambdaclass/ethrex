@@ -796,28 +796,28 @@ impl Store {
 
     pub fn storage_trie_backend(&self, hashed_address: H256) -> Result<BackendTrieDB, StoreError> {
         let tx = self.backend.begin_write()?;
-        Ok(BackendTrieDB::new(tx, Some(hashed_address))?)
+        BackendTrieDB::new(tx, Some(hashed_address))
     }
 
     pub fn storage_trie_locked_backend(
         &self,
         hashed_address: H256,
     ) -> Result<BackendTrieDBLocked, StoreError> {
-        Ok(BackendTrieDBLocked::new(
+        BackendTrieDBLocked::new(
             self.backend.as_ref(),
             Some(hashed_address),
-        )?)
+        )
     }
 
     pub fn state_trie_backend(&self) -> Result<BackendTrieDB, StoreError> {
         let tx = self.backend.begin_write()?;
         // No address prefix for state trie
-        Ok(BackendTrieDB::new(tx, None)?)
+        BackendTrieDB::new(tx, None)
     }
 
     pub fn state_trie_locked_backend(&self) -> Result<BackendTrieDBLocked, StoreError> {
         // No address prefix for state trie
-        Ok(BackendTrieDBLocked::new(self.backend.as_ref(), None)?)
+        BackendTrieDBLocked::new(self.backend.as_ref(), None)
     }
 
     pub async fn forkchoice_update_inner(
