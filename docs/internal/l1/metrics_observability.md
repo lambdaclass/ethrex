@@ -65,13 +65,13 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
   - `crates/blockchain/metrics/api.rs` exposes `/metrics` and `/health`; orchestration defined in `cmd/ethrex/initializers.rs` ensures the Axum server starts alongside the node when metrics are enabled.
   - The provisioning stack (docker-compose, Makefile targets) ships Prometheus and Grafana wiring, so any new metric family automatically appears in the scrape.
 
-## General pitfalls
-Before addressing the gaps listed below, we should also consider some general pitfalls in our current metrics setup:
+## General improvements
+Before addressing the gaps listed below, we should also consider some general improvements in our current metrics setup:
 
-- **No namespace standardisation**: Metric names and labels should follow a consistent naming convention (e.g., `ethrex_` prefix) to avoid collisions and improve clarity. We should also probably add l1/l2 prefixes where applicable.
-- **ethereum-metrics-exporter as part of our dashboard**: Some information is only visible through the external `ethereum-metrics-exporter` (e.g., network, client version), we are already pulling those in our dashboard but this is not ideal. We should consider integrating this key metrics directly into Ethrex.
-- **No label consistency**: We are not using labels consistently, especially in l1. We might need to take a pass to ensure similar metrics use uniform label names and values to facilitate querying and aggregation.
-- **Exemplar where applicable**: For histograms, adding exemplars can help trace high-latency events back to specific traces/logs. This is especially useful for latency-sensitive metrics like block execution time or RPC call durations where we could add block hashes as exemplars. This needs to be evaluated on a case-by-case basis and tested.
+- **Namespace standardisation**: Metric names and labels should follow a consistent naming convention (e.g., `ethrex_l1_` prefix) to avoid collisions and improve clarity. Right now we are not using prefixes.
+- **Panels dependant on `ethereum-metrics-exporter`**: Some metrics are only visible through the external `ethereum-metrics-exporter` (e.g., network, client version, consensus fork), we are already pulling those in our dashboard but this is not ideal. We should consider integrating this key metrics directly into Ethrex.
+- **Label consistency**: We are not using labels consistently, especially in l1. We might need to take a pass to ensure similar metrics use uniform label names and values to facilitate querying and aggregation if needed or decide to not use labels when appropriate.
+- **Exemplars addition**: For histograms, adding exemplars can help trace high-latency events back to specific traces/logs. This is especially useful for latency-sensitive metrics like block execution time or RPC call durations where we could add block hashes as exemplars. This needs to be evaluated on a case-by-case basis and tested.
 
 ## Coverage vs Baseline Must-Haves
 
@@ -87,8 +87,11 @@ Before addressing the gaps listed below, we should also consider some general pi
 | Error & anomaly counters | None published. | Add Prometheus counters for failed block imports, reorg depth, RPC errors, Engine API retries, sync failures, and wire alerting. |
 
 ### Next steps
-1. Implement sync & peer metrics (best-peer lag, stage progress) and add corresponding Grafana row.
-2. Wire L1 into the existing `METRICS_TX` aggregates and ship txpool panels.
-3. Review block building metrics.
-4. Instrument Engine API handlers with histograms/counters; plan storage IO metrics in parallel.
-5. Revisit histogram buckets and naming conventions once new metrics are merged, then define alert thresholds.
+1. Tackle general improvements around naming conventions and label consistency.
+2. Implement sync & peer metrics (best-peer lag, stage progress) and add corresponding Grafana row.
+3. Surface txpool metrics by wiring existing counters and charting them.
+4. Add the metrics relying on `ethereum-metrics-exporter` into the existing metrics, and avoid our dashboard dependence on it.
+5. Review block building metrics.
+6. Instrument Engine API handlers with histograms/counters; plan storage IO metrics in parallel.
+7. Revisit histogram buckets and naming conventions once new metrics are merged, then define alert thresholds.
+8. Define exemplars when appropriate.
