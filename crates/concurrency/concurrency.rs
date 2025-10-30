@@ -61,6 +61,8 @@ impl<'scope> ThreadPool<'scope> {
 
 impl<'scope> Drop for ThreadPool<'scope> {
     fn drop(&mut self) {
+        (self.nice_sender, _) = unbounded::<Box<dyn 'scope + Send + FnOnce()>>();
+        (self.priority_sender, _) = unbounded::<Box<dyn 'scope + Send + FnOnce()>>();
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }
