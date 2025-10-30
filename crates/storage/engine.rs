@@ -664,30 +664,25 @@ impl StoreEngine {
 
     pub fn storage_trie_backend(&self, hashed_address: H256) -> Result<BackendTrieDB, StoreError> {
         let tx = self.backend.begin_write()?;
-        Ok(BackendTrieDB::new(tx, Some(hashed_address))?)
+        BackendTrieDB::new(tx, Some(hashed_address))
     }
 
     pub fn storage_trie_locked_backend(
         &self,
         hashed_address: H256,
     ) -> Result<BackendTrieDBLocked, StoreError> {
-        Ok(BackendTrieDBLocked::new(
-            self.backend.as_ref(),
-            Some(hashed_address),
-        )?)
+        BackendTrieDBLocked::new(self.backend.as_ref(), Some(hashed_address))
     }
 
     pub fn state_trie_backend(&self) -> Result<BackendTrieDB, StoreError> {
         let tx = self.backend.begin_write()?;
-        // No prefix for state trie
-        Ok(BackendTrieDB::new(tx, None)?)
+        // No address prefix for state trie
+        BackendTrieDB::new(tx, None)
     }
 
     pub fn state_trie_locked_backend(&self) -> Result<BackendTrieDBLocked, StoreError> {
-        Ok(BackendTrieDBLocked::new(
-            self.backend.as_ref(),
-            None, // No address prefix for state trie
-        )?)
+        // No address prefix for state trie
+        BackendTrieDBLocked::new(self.backend.as_ref(), None)
     }
 
     pub async fn forkchoice_update(
