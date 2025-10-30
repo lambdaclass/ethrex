@@ -4,10 +4,7 @@ use ethrex_common::types::{
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use std::{
-    fmt::{Debug, Display},
-    path::PathBuf,
-};
+use std::fmt::{Debug, Display};
 
 use crate::calldata::Value;
 
@@ -82,34 +79,6 @@ impl ProverType {
             Self::TDX => Some("REQUIRE_TDX_PROOF()".to_string()),
             Self::Exec => None,
         }
-    }
-
-    /// Gets the verification key or image id for this prover backend, used for
-    /// proof verification. Aligned Layer uses a different vk in SP1's case.
-    ///
-    /// There's no need to have the following verifying keys here since
-    /// they are used by the deployer and they are not used by the sequencer.
-    pub fn vk_path(&self, aligned: bool) -> std::io::Result<Option<PathBuf>> {
-        let path = match &self {
-            Self::RISC0 => format!(
-                "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
-            // the hash as a bn254 F_r element.
-            Self::SP1 if aligned => format!(
-                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            Self::SP1 if !aligned => format!(
-                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            // other types don't have a verification key
-            _ => return Ok(None),
-        };
-        let path = std::fs::canonicalize(path)?;
-        Ok(Some(path))
     }
 }
 
