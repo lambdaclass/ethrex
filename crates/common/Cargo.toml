@@ -46,3 +46,4 @@ path = "./common.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"

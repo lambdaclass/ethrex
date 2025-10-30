@@ -41,3 +41,4 @@ metrics = ["ethrex-metrics/transactions"]
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"
