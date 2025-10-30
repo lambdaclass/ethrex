@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-30
+
+- Pipeline Merkleization and Execution [#5084](https://github.com/lambdaclass/ethrex/pull/5084)
+
 ### 2025-10-28
 
 - Batch BlobsBundle::validate [#4993](https://github.com/lambdaclass/ethrex/pull/4993)
