@@ -1550,7 +1550,7 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
             CF_ACCOUNT_TRIE_NODES,
-            CF_STORAGE_FLATKEYVALUE,
+            CF_ACCOUNT_FLATKEYVALUE,
             None,
         )?);
         Ok(Trie::open(db, state_root))
