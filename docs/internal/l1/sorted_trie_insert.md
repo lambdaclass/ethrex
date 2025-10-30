@@ -1,6 +1,6 @@
 # Sorted Trie Insertion
 
-This documentsdescribes the algorithm implemented in [crates/common/trie/trie_sorted.rs](/crates/common/trie/trie_sorted.rs)
+This document describes the algorithm implemented in [crates/common/trie/trie_sorted.rs](/crates/common/trie/trie_sorted.rs)
 which is used to speed up the insertion time in snap sync.
 During that step we are inserting all of the account state and storage
 slots downloaded into the Ethereum world state Merkle Patricia Trie.
