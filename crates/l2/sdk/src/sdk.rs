@@ -61,6 +61,12 @@ pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xfc,
 ]);
 
+// 0x000000000000000000000000000000000000fffb
+pub const FEE_TOKEN_PRICER_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfb,
+]);
+
 // 0xee110000000000000000000000000000000011ff
 pub const ADDRESS_ALIASING: Address = H160([
     0xee, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -881,6 +887,14 @@ pub async fn build_generic_tx(
         Some(gas) => gas,
         None => client.estimate_gas(tx.clone()).await?,
     });
+    if let Some(fee_token) = &overrides.fee_token
+        && r#type == TxType::FeeToken
+    {
+        let ratio = get_fee_token_ratio(fee_token, client).await?;
+        tx.gas_price *= ratio;
+        tx.max_fee_per_gas = tx.max_fee_per_gas.map(|fee| fee * ratio);
+        tx.max_priority_fee_per_gas = tx.max_priority_fee_per_gas.map(|fee| fee * ratio);
+    }
 
     Ok(tx)
 }
@@ -1091,4 +1105,27 @@ async fn _call_bytes32_variable(
         .map_err(|_| EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned()))?;
 
     Ok(arr)
+}
+
+async fn get_fee_token_ratio(
+    fee_token: &Address,
+    client: &EthClient,
+) -> Result<u64, EthClientError> {
+    let values = vec![Value::Address(*fee_token)];
+    let calldata = encode_calldata("getFeeTokenRatio(address)", &values)?;
+
+    let ratio = client
+        .call(
+            FEE_TOKEN_PRICER_ADDRESS,
+            calldata.into(),
+            Default::default(),
+        )
+        .await?;
+
+    let ratio: u64 = ratio
+        .trim_start_matches("0x")
+        .parse::<u64>()
+        .map_err(|e| EthClientError::Custom(format!("Failed to parse ratio to u64: {}", e)))?;
+
+    Ok(ratio)
 }
