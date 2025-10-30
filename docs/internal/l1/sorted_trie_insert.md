@@ -84,7 +84,7 @@ as the write function knows what it's writing and what was its parent
 and full path. As such, it can check if the insertion is a branch and
 if there's an extension need.
 
-A specific edge is the root node, which is assumed to always be a branch
+A specific edge case is the root node, which is assumed to always be a branch
 node, but the code has special case code to check if the root node has 
 a single child, in which case it changes to an extension or leaf as needed,
 while modifying the other nodes in the trie.
