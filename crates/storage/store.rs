@@ -4,7 +4,6 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, apply_prefix};
 
-use arc_swap::ArcSwap;
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
@@ -18,8 +17,11 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::collections::{BTreeMap, HashMap};
 use std::{collections::hash_map::Entry, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Mutex,
+};
 use std::{fmt::Debug, path::Path};
 use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
@@ -38,7 +40,7 @@ pub struct Store {
     /// - a cache of the (frequently requested) header
     /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
     /// - sync-related operations, which must be idempotent in order to handle reorgs
-    pub latest_block_header: Arc<ArcSwap<BlockHeader>>,
+    latest_block_header: LatestBlockHeaderCache,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -85,12 +87,12 @@ impl Store {
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
                 chain_config: Default::default(),
-                latest_block_header: Arc::new(ArcSwap::from_pointee(BlockHeader::default())),
+                latest_block_header: Default::default(),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
                 chain_config: Default::default(),
-                latest_block_header: Arc::new(ArcSwap::from_pointee(BlockHeader::default())),
+                latest_block_header: Default::default(),
             },
         };
 
@@ -179,7 +181,7 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        let latest = self.latest_block_header.load_full();
+        let latest = self.latest_block_header.get();
         if block_number == latest.number {
             return Ok(Some((*latest).clone()));
         }
@@ -191,7 +193,7 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
         {
-            let latest = self.latest_block_header.load_full();
+            let latest = self.latest_block_header.get();
             if block_hash == latest.hash() {
                 return Ok(Some((*latest).clone()));
             }
@@ -220,7 +222,7 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
         // FIXME (#4353)
-        let latest = self.latest_block_header.load_full();
+        let latest = self.latest_block_header.get();
         if block_number == latest.number {
             // The latest may not be marked as canonical yet
             return self.engine.get_block_body_by_hash(latest.hash()).await;
@@ -629,11 +631,11 @@ impl Store {
 
         // The cache can't be empty
         if let Some(number) = self.engine.get_latest_block_number().await? {
-            self.latest_block_header.store(Arc::new(
-                self.engine
-                    .get_block_header(number)?
-                    .ok_or_else(|| StoreError::MissingLatestBlockNumber)?,
-            ));
+            let latest_block_header = self
+                .engine
+                .get_block_header(number)?
+                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+            self.latest_block_header.update(latest_block_header);
         }
 
         match self.engine.get_block_header(genesis_block_number)? {
@@ -678,8 +680,7 @@ impl Store {
             .engine
             .get_block_header(number)?
             .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
-        self.latest_block_header
-            .store(Arc::new(latest_block_header));
+        self.latest_block_header.update(latest_block_header);
         Ok(())
     }
 
@@ -771,7 +772,7 @@ impl Store {
     }
 
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        Ok(self.latest_block_header.load().number)
+        Ok(self.latest_block_header.get().number)
     }
 
     pub async fn update_pending_block_number(
@@ -790,7 +791,7 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         {
-            let last = self.latest_block_header.load();
+            let last = self.latest_block_header.get();
             if last.number == block_number {
                 return Ok(Some(last.hash()));
             }
@@ -799,7 +800,7 @@ impl Store {
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
-        Ok(Some(self.latest_block_header.load().hash()))
+        Ok(Some(self.latest_block_header.get().hash()))
     }
 
     /// Updates the canonical chain.
@@ -814,13 +815,12 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
-        // Updates first the latest_block_header
-        // to avoid nonce inconsistencies #3927.
-        self.latest_block_header.store(Arc::new(
-            self.engine
-                .get_block_header_by_hash(head_hash)?
-                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?,
-        ));
+        // Updates first the latest_block_header to avoid nonce inconsistencies #3927.
+        let latest_block_header = self
+            .engine
+            .get_block_header_by_hash(head_hash)?
+            .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+        self.latest_block_header.update(latest_block_header);
         self.engine
             .forkchoice_update(
                 new_canonical_blocks,
@@ -1300,7 +1300,7 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         {
-            let last = self.latest_block_header.load();
+            let last = self.latest_block_header.get();
             if last.number == block_number {
                 return Ok(Some(last.hash()));
             }
@@ -1427,6 +1427,22 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
     Keccak256::new_with_prefix(key.to_fixed_bytes())
         .finalize()
         .to_vec()
+}
+
+#[derive(Debug, Default, Clone)]
+struct LatestBlockHeaderCache {
+    current: Arc<Mutex<Arc<BlockHeader>>>,
+}
+
+impl LatestBlockHeaderCache {
+    pub fn get(&self) -> Arc<BlockHeader> {
+        self.current.lock().expect("poisoned mutex").clone()
+    }
+
+    pub fn update(&self, header: BlockHeader) {
+        let new = Arc::new(header);
+        *self.current.lock().expect("poisoned mutex") = new;
+    }
 }
 
 #[cfg(test)]
