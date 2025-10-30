@@ -258,6 +258,28 @@ impl L1Committer {
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
+        // We need to guarantee that the checkpoint path is new
+        // to avoid causing a lock error under rocksdb feature.
+        let rand_suffix: u32 = rand::thread_rng().r#gen();
+        let one_time_checkpoint_path = self
+            .checkpoints_dir
+            .join(format!("temp_checkpoint_{batch_to_commit}_{rand_suffix}"));
+
+        // For re-execution we need to use a checkpoint to the previous state
+        // (i.e. checkpoint of the state to the latest block from the previous
+        // batch, or the state of the genesis if this is the first batch).
+        // We already have this initial checkpoint as part of the L1Committer
+        // struct, but we need to create a one-time copy of it because
+        // we still need to use the current checkpoint store later for witness
+        // generation.
+        let (one_time_checkpoint_store, one_time_checkpoint_blockchain) = self
+            .create_checkpoint(
+                &self.current_checkpoint_store,
+                &one_time_checkpoint_path,
+                &self.rollup_store,
+            )
+            .await?;
+
         let batch = match self.rollup_store.get_batch(batch_to_commit).await? {
             Some(batch) => batch,
             None => {
@@ -275,54 +297,21 @@ impl L1Committer {
                     )?;
                 let first_block_to_commit = last_block + 1;
 
-                // We need to guarantee that the checkpoint path is new
-                // to avoid causing a lock error under rocksdb feature.
-                let rand_suffix: u32 = rand::thread_rng().r#gen();
-                let one_time_checkpoint_path = self
-                    .checkpoints_dir
-                    .join(format!("temp_checkpoint_{batch_to_commit}_{rand_suffix}"));
-
-                // For re-execution we need to use a checkpoint to the previous state
-                // (i.e. checkpoint of the state to the latest block from the previous
-                // batch, or the state of the genesis if this is the first batch).
-                // We already have this initial checkpoint as part of the L1Committer
-                // struct, but we need to create a one-time copy of it because
-                // we still need to use the current checkpoint store later for witness
-                // generation.
-
-                let (one_time_checkpoint_store, one_time_checkpoint_blockchain) = self
-                    .create_checkpoint(
-                        &self.current_checkpoint_store,
-                        &one_time_checkpoint_path,
-                        &self.rollup_store,
-                    )
-                    .await?;
-
                 // Try to prepare batch
-                let result = self
-                    .prepare_batch_from_block(
-                        *last_block,
-                        batch_to_commit,
-                        one_time_checkpoint_store,
-                        one_time_checkpoint_blockchain,
-                    )
-                    .await;
-
-                if one_time_checkpoint_path.exists() {
-                    let _ = remove_dir_all(&one_time_checkpoint_path).inspect_err(|e| {
-                        error!(
-                            "Failed to remove one-time checkpoint directory at path {one_time_checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
-                        )
-                    });
-                }
-
                 let (
                     blobs_bundle,
                     new_state_root,
                     message_hashes,
                     privileged_transactions_hash,
                     last_block_of_batch,
-                ) = result?;
+                ) = self
+                    .prepare_batch_from_block(
+                        *last_block,
+                        batch_to_commit,
+                        one_time_checkpoint_store.clone(),
+                        one_time_checkpoint_blockchain,
+                    )
+                    .await?;
 
                 if *last_block == last_block_of_batch {
                     debug!("No new blocks to commit, skipping");
@@ -367,7 +356,16 @@ impl L1Committer {
         // with it, and before sending the commitment.
         // The actual checkpoint store directory is not pruned until the batch
         // it served in is verified on L1.
-        self.update_current_checkpoint(&batch).await?;
+        self.update_current_checkpoint(&batch, one_time_checkpoint_store)
+            .await?;
+
+        if one_time_checkpoint_path.exists() {
+            let _ = remove_dir_all(&one_time_checkpoint_path).inspect_err(|e| {
+                error!(
+                    "Failed to remove one-time checkpoint directory at path {one_time_checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
+                )
+            });
+        }
 
         info!(
             first_block = batch.first_block,
@@ -790,6 +788,7 @@ impl L1Committer {
     async fn update_current_checkpoint(
         &mut self,
         latest_batch: &Batch,
+        one_time_checkpoint_store: Store,
     ) -> Result<(), CommitterError> {
         let new_checkpoint_path = self
             .checkpoints_dir
@@ -805,7 +804,13 @@ impl L1Committer {
             return Ok(());
         }
 
-        self.store.create_checkpoint(&new_checkpoint_path).await?;
+        // We create a new checkpoint from the one-time checkpoint store.
+        // This is because the one-time checkpoint has the state at the latest block of the batch.
+        // Using the main store directly may lead to inconsistencies if the main store has pruned
+        // some state.
+        one_time_checkpoint_store
+            .create_checkpoint(&new_checkpoint_path)
+            .await?;
         let (new_checkpoint_store, new_checkpoint_blockchain) = Self::get_checkpoint_from_path(
             self.genesis.clone(),
             self.blockchain.options.clone(),
