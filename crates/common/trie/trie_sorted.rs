@@ -154,7 +154,7 @@ fn add_current_to_parent_and_write_queue(
 }
 
 /// flush_nodes_to_write writes the nodes into the database, and when it's done it
-/// done returns the vector used to write nodes into the channel for future use
+/// returns the vector used to write nodes into the channel for future use
 fn flush_nodes_to_write(
     mut nodes_to_write: Vec<(Nibbles, Node)>,
     db: &dyn TrieDB,
