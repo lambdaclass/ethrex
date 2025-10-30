@@ -92,7 +92,7 @@ impl Hook for L2Hook {
 }
 
 /// Finalizes the execution of a non-privileged L2 transaction.
-/// This will be execute the standard checks and requirements as the one defined in the specs or add standard L2 configs applied to general txs.
+/// This will execute the standard checks and requirements as the one defined in the specs or add standard L2 configs applied to general txs.
 /// We can set to pay the fees with an ERC20 token instead of ETH.
 fn finalize_non_privileged_execution(
     vm: &mut VM<'_>,
