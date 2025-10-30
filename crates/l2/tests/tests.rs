@@ -2139,23 +2139,12 @@ async fn test_fee_token(
         "{test}: Priority fee mismatch"
     );
 
-    if std::env::var("INTEGRATION_TEST_SKIP_FEE_VAULTS_CHECK").is_err() {
+    if std::env::var("INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK").is_err() {
         let fee_vault_address_token_balance_after_transfer =
             test_balance_of(&l2_client, fee_token_address, fee_vault).await;
         println!(
             "{test}: Fee vault address fee token balance after transfer: {fee_vault_address_token_balance_after_transfer}"
         );
-        let operator_fee_vault_address_token_balance_after_transfer =
-            test_balance_of(&l2_client, fee_token_address, operator_fee_vault).await;
-        println!(
-            "{test}: Operator fee vault address fee token balance after transfer: {operator_fee_vault_address_token_balance_after_transfer}"
-        );
-        let l1_fee_vault_address_token_balance_after_transfer =
-            test_balance_of(&l2_client, fee_token_address, l1_fee_vault).await;
-        println!(
-            "{test}: L1 fee vault address fee token balance after transfer: {l1_fee_vault_address_token_balance_after_transfer}"
-        );
-
         let base_fee_vault_delta = fee_vault_address_token_balance_after_transfer
             .checked_sub(fee_vault_address_token_balance_before_transfer)
             .expect("Base fee vault balance decreased");
@@ -2164,25 +2153,35 @@ async fn test_fee_token(
             U256::from(transfer_fees.base_fees),
             "{test}: Base fee vault mismatch"
         );
-
-        let operator_fee_vault_delta = operator_fee_vault_address_token_balance_after_transfer
-            .checked_sub(operator_fee_vault_token_balance_before_transfer)
-            .expect("Operator fee vault balance decreased");
-        assert_eq!(
-            operator_fee_vault_delta,
-            U256::from(transfer_fees.operator_fees),
-            "{test}: Operator fee vault mismatch"
-        );
-
-        let l1_fee_vault_delta = l1_fee_vault_address_token_balance_after_transfer
-            .checked_sub(l1_fee_vault_token_balance_before_transfer)
-            .expect("L1 fee vault balance decreased");
-        assert_eq!(
-            l1_fee_vault_delta,
-            U256::from(transfer_fees.l1_fees),
-            "{test}: L1 fee vault mismatch"
-        );
     }
+    let operator_fee_vault_address_token_balance_after_transfer =
+        test_balance_of(&l2_client, fee_token_address, operator_fee_vault).await;
+    println!(
+        "{test}: Operator fee vault address fee token balance after transfer: {operator_fee_vault_address_token_balance_after_transfer}"
+    );
+    let l1_fee_vault_address_token_balance_after_transfer =
+        test_balance_of(&l2_client, fee_token_address, l1_fee_vault).await;
+    println!(
+        "{test}: L1 fee vault address fee token balance after transfer: {l1_fee_vault_address_token_balance_after_transfer}"
+    );
+
+    let operator_fee_vault_delta = operator_fee_vault_address_token_balance_after_transfer
+        .checked_sub(operator_fee_vault_token_balance_before_transfer)
+        .expect("Operator fee vault balance decreased");
+    assert_eq!(
+        operator_fee_vault_delta,
+        U256::from(transfer_fees.operator_fees),
+        "{test}: Operator fee vault mismatch"
+    );
+
+    let l1_fee_vault_delta = l1_fee_vault_address_token_balance_after_transfer
+        .checked_sub(l1_fee_vault_token_balance_before_transfer)
+        .expect("L1 fee vault balance decreased");
+    assert_eq!(
+        l1_fee_vault_delta,
+        U256::from(transfer_fees.l1_fees),
+        "{test}: L1 fee vault mismatch"
+    );
 
     Ok(deploy_fees)
 }
