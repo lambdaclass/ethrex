@@ -79,6 +79,7 @@ manual_unwrap_or_default = "warn"
 as_conversions = "deny"
 unwrap_used = "deny"
 expect_used = "deny"
+redundant_clone = "warn"
 
 arithmetic_side_effects = "deny"
 panicking_overflow_checks = "warn"

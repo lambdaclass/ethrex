@@ -41,3 +41,4 @@ debug = ["ethrex-levm/debug"]
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"
