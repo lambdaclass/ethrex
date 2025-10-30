@@ -876,7 +876,7 @@ impl L1Committer {
         let checkpoint_blockchain =
             Arc::new(Blockchain::new(checkpoint_store.clone(), blockchain_opts));
 
-        regenerate_head_state(&checkpoint_store, &rollup_store, &checkpoint_blockchain).await?;
+        regenerate_head_state(&checkpoint_store, rollup_store, &checkpoint_blockchain).await?;
 
         Ok((checkpoint_store, checkpoint_blockchain))
     }
