@@ -208,7 +208,7 @@ where
             scope.execute_priority(Box::new(move || {
                 let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
             }));
-            // We wait to get a new buffer to not write too much
+            // We wait to get a new buffer to avoid writing too much
             nodes_to_write = buffer_receiver
                 .recv()
                 .expect("This channel shouldn't close");
