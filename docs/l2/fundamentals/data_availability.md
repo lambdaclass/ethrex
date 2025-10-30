@@ -32,7 +32,7 @@ While we could send state diffs through calldata, there is a (hopefully) cheaper
 
 Using EIP 4844, our state diffs would now be sent through blobs. While this is cheaper, there's a new problem to address with it. The whole point of blobs is that they're cheaper because they are only kept around for approximately two weeks and ONLY in the beacon chain, i.e. the consensus side. The execution side (and thus the EVM when running contracts) does not have access to the contents of a blob. Instead, the only thing it has access to is a **KZG commitment** of it.
 
-This is important. If you recall, the way the L1 ensured that the state diff published by the sequencer was correct was by hashing its contents and ensuring that the hash matched the given state diff hash. With the contents of the state diff now no longer accesible by the contract, we can't do that anymore, so we need another way to ensure the correct contents of the state diff (i.e. the blob).
+This is important. If you recall, the way the L1 ensured that the state diff published by the sequencer was correct was by hashing its contents and ensuring that the hash matched the given state diff hash. With the contents of the state diff now no longer accessible by the contract, we can't do that anymore, so we need another way to ensure the correct contents of the state diff (i.e. the blob).
 
 The solution is to make the prover take the KZG commitment as a public input and the KZG proof as a private input, compute the state diffs after correctly executing a batch of blocks, and verify the proof to check that the commitment binds to the correct state diffs.
 
