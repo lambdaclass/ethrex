@@ -112,6 +112,7 @@ impl TrieLayerCache {
         self.layers.insert(state_root, Arc::new(entry));
     }
 
+    /// Rebuilds the global bloom filter accruing all current existing layers.
     pub fn rebuild_bloom(&mut self) {
         self.bloom = Bloom::zero();
 
