@@ -27,11 +27,17 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xff,
 ]);
+pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfc,
+]);
 
 // lockFee(address payer, uint256 amount) public onlyFeeCollector
 const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
 // payFee(address receiver, uint256 amount) public onlyFeeCollector
 const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
+// isFeeToken(address token) external view override returns (bool)
+const IS_FEE_TOKEN_SELECTOR: [u8; 4] = [0x16, 0xad, 0x82, 0xd7];
 
 pub struct L2Hook {
     pub fee_config: FeeConfig,
@@ -368,6 +374,64 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 /// Similar to default_hook preparation but allows paying fees with ERC20 tokens.
 /// Maintains separation between L1 and L2 functionality.
 fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
+    let mut db_clone = vm.db.clone(); // expensive
+    let origin = COMMON_BRIDGE_L2_ADDRESS; // We set the common bridge to restrict access to the fee token contract
+    let nonce = db_clone.get_account(origin)?.info.nonce;
+    let mut data = Vec::with_capacity(4 + 32);
+    data.extend_from_slice(&IS_FEE_TOKEN_SELECTOR);
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(
+        &vm.env
+            .fee_token
+            .ok_or(VMError::Internal(InternalError::Custom(
+                "already check. TODO CHANGE THIS".to_owned(),
+            )))?
+            .0,
+    );
+    let check_allowance_tx = EIP1559Transaction {
+        // we are simulating the transaction
+        chain_id: vm.env.chain_id.as_u64(),
+        nonce,
+        max_priority_fee_per_gas: 100,
+        max_fee_per_gas: 100,
+        gas_limit: 21000 * 100,
+        to: TxKind::Call(FEE_TOKEN_REGISTRY_ADDRESS),
+        value: U256::zero(),
+        data: data.into(),
+        ..Default::default()
+    };
+    let tx_check_balance = Transaction::EIP1559Transaction(check_allowance_tx);
+    let mut env_clone = vm.env.clone();
+    // Disable fee checks and update fields
+    env_clone.base_fee_per_gas = U256::zero();
+    env_clone.block_excess_blob_gas = None;
+    env_clone.gas_price = U256::zero();
+    env_clone.origin = origin;
+    env_clone.fee_token = None;
+    env_clone.gas_limit = 21000 * 100;
+
+    let mut new_vm = VM::new(
+        env_clone,
+        &mut db_clone,
+        &tx_check_balance,
+        LevmCallTracer::disabled(),
+        VMType::L2(Default::default()),
+    )?;
+    new_vm.hooks = vec![];
+    default_hook::set_bytecode_and_code_address(&mut new_vm)?;
+    let execution_result = new_vm.execute()?;
+    dbg!(&execution_result);
+    if !execution_result.is_success() {
+        return Err(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ));
+    }
+    if execution_result.output.len() != 32 || execution_result.output[31] == 0 {
+        return Err(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ));
+    }
+
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
 

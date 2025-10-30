@@ -431,7 +431,8 @@ pub async fn create2_deploy_from_path(
     salt: &[u8],
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
-    let bytecode = hex::decode(read_to_string(contract_path)?)?;
+    let mut bytecode_hex = read_to_string(contract_path)?;
+    let bytecode = hex::decode(bytecode_hex.trim_start_matches("0x").trim())?;
     create2_deploy_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
 }
 

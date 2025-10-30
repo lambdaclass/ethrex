@@ -434,7 +434,7 @@ pub fn update_genesis_file(
         out_dir,
     )?;
 
-    for address in 0xff00..0xfffd {
+    for address in 0xff00..0xfffb {
         add_placeholder_proxy(&mut genesis, Address::from_low_u64_be(address), out_dir)?;
     }
 

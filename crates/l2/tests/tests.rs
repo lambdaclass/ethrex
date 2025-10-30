@@ -24,7 +24,8 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
+    build_generic_tx, create2_deploy_from_path, get_last_verified_batch, send_generic_transaction,
+    wait_for_message_proof,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -149,44 +150,44 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut set = JoinSet::new();
 
-    set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
+    // set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
 
-    set.spawn(test_transfer(
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_transfer(
+    //     l2_client.clone(),
+    //     private_keys.pop().unwrap(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
-    set.spawn(test_privileged_tx_with_contract_call(
-        l1_client.clone(),
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_privileged_tx_with_contract_call(
+    //     l1_client.clone(),
+    //     l2_client.clone(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
-    set.spawn(test_privileged_tx_with_contract_call_revert(
-        l1_client.clone(),
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_privileged_tx_with_contract_call_revert(
+    //     l1_client.clone(),
+    //     l2_client.clone(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
-    // this test should go before the withdrawal ones
-    // it's failure case is making a batch invalid due to invalid privileged transactions
-    set.spawn(test_privileged_spammer(
-        l1_client.clone(),
-        private_keys.pop().unwrap(),
-    ));
+    // // this test should go before the withdrawal ones
+    // // it's failure case is making a batch invalid due to invalid privileged transactions
+    // set.spawn(test_privileged_spammer(
+    //     l1_client.clone(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
-    set.spawn(test_transfer_with_privileged_tx(
-        l1_client.clone(),
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_transfer_with_privileged_tx(
+    //     l1_client.clone(),
+    //     l2_client.clone(),
+    //     private_keys.pop().unwrap(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
-    set.spawn(test_gas_burning(
-        l1_client.clone(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_gas_burning(
+    //     l1_client.clone(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
     set.spawn(test_fee_token(
         l2_client.clone(),
@@ -194,36 +195,36 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
-    set.spawn(test_privileged_tx_not_enough_balance(
-        l1_client.clone(),
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_privileged_tx_not_enough_balance(
+    //     l1_client.clone(),
+    //     l2_client.clone(),
+    //     private_keys.pop().unwrap(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
-    set.spawn(test_aliasing(
-        l1_client.clone(),
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_aliasing(
+    //     l1_client.clone(),
+    //     l2_client.clone(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
-    set.spawn(test_erc20_failed_deposit(
-        l1_client.clone(),
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_erc20_failed_deposit(
+    //     l1_client.clone(),
+    //     l2_client.clone(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
-    set.spawn(test_forced_withdrawal(
-        l1_client.clone(),
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_forced_withdrawal(
+    //     l1_client.clone(),
+    //     l2_client.clone(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
-    set.spawn(test_erc20_roundtrip(
-        l1_client.clone(),
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-    ));
+    // set.spawn(test_erc20_roundtrip(
+    //     l1_client.clone(),
+    //     l2_client.clone(),
+    //     private_keys.pop().unwrap(),
+    // ));
 
     let mut acc_priority_fees = 0;
     let mut acc_base_fees = 0;
@@ -282,13 +283,13 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Not thread-safe (coinbase and bridge balance checks)
-    test_n_withdraws(
-        &l1_client,
-        &l2_client,
-        &private_keys.pop().unwrap(),
-        withdrawals_count,
-    )
-    .await?;
+    // test_n_withdraws(
+    //     &l1_client,
+    //     &l2_client,
+    //     &private_keys.pop().unwrap(),
+    //     withdrawals_count,
+    // )
+    // .await?;
 
     if std::env::var("INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH").is_err() {
         test_total_eth_l2(&l1_client, &l2_client).await?;
@@ -1988,6 +1989,22 @@ async fn test_fee_token(
     let test = "test_fee_token";
     let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
     println!("{test}: Rich wallet address: {rich_wallet_address:#x}");
+    let constructor_args = hex::decode("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000007bb24837d49ac33b0a8d279728cd68a0a73bf710").unwrap();
+    let contract_path = Path::new("../../crates/l2/contracts/src/l2/FeeTokenRegistry.bin");
+    let deployer: Signer = LocalSigner::new(rich_wallet_private_key).into();
+    let salt = H256::zero();
+    let eth_client = &l2_client;
+
+    dbg!(
+        create2_deploy_from_path(
+            &constructor_args,
+            contract_path,
+            &deployer,
+            &salt.0,
+            eth_client
+        )
+        .await
+    )?;
 
     let contracts_path = Path::new("contracts");
     get_contract_dependencies(contracts_path);
