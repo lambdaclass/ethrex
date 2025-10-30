@@ -2,7 +2,7 @@ use crate::{
     engine::{
         ExchangeCapabilitiesRequest,
         fork_choice::ForkChoiceUpdatedV3,
-        payload::{GetPayloadV4Request, NewPayloadV4Request},
+        payload::{GetPayloadV5Request, NewPayloadV4Request},
     },
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
@@ -104,11 +104,11 @@ impl EngineClient {
         }
     }
 
-    pub async fn engine_get_payload_v4(
+    pub async fn engine_get_payload_v5(
         &self,
         payload_id: u64,
     ) -> Result<ExecutionPayloadResponse, EngineClientError> {
-        let request = GetPayloadV4Request { payload_id }.into();
+        let request = GetPayloadV5Request { payload_id }.into();
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
@@ -170,6 +170,7 @@ impl EngineClient {
             "engine_exchangeCapabilities".to_owned(),
             "engine_forkchoiceUpdatedV3".to_owned(),
             "engine_getPayloadV4".to_owned(),
+            "engine_getPayloadV5".to_owned(),
             "engine_newPayloadV4".to_owned(),
         ]
     }

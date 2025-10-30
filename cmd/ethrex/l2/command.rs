@@ -1,5 +1,5 @@
 use crate::{
-    cli::remove_db,
+    cli::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2, remove_db},
     initializers::{init_l1, init_store, init_tracing},
     l2::{
         self,
@@ -38,9 +38,6 @@ use tracing::{debug, info};
 const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
-
-pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
-pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 
 const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
 const UNPAUSE_CONTRACT_SELECTOR: &str = "unpause()";
@@ -205,8 +202,8 @@ pub enum Command {
         #[arg(
             long,
             value_parser = parse_private_key,
-            env = "SEQUENCER_PRIVATE_KEY", 
-            help = "The private key of the sequencer", 
+            env = "SEQUENCER_PRIVATE_KEY",
+            help = "The private key of the sequencer",
             help_heading  = "Sequencer account options",
             group = "sequencer_signing",
         )]
@@ -292,7 +289,7 @@ impl Command {
             } => {
                 create_dir_all(datadir.clone())?;
 
-                let eth_client = EthClient::new(l1_eth_rpc.as_str())?;
+                let eth_client = EthClient::new(l1_eth_rpc)?;
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality
@@ -348,10 +345,7 @@ impl Command {
                                     "Transaction {:#x} not found",
                                     log.transaction_hash
                                 ))?;
-                            l2_blob_hashes.extend(tx.blob_versioned_hashes.ok_or_eyre(format!(
-                                "Blobs not found in transaction {:#x}",
-                                log.transaction_hash
-                            ))?);
+                            l2_blob_hashes.extend(tx.tx.blob_versioned_hashes());
                         }
 
                         // Get blobs from block's slot and only keep L2 commitment's blobs
@@ -381,8 +375,10 @@ impl Command {
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
 
-                #[cfg(feature = "rollup_storage_sql")]
+                #[cfg(feature = "l2-sql")]
                 let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
+                #[cfg(not(feature = "l2-sql"))]
+                let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::InMemory;
 
                 // Init stores
                 let store = Store::new_from_genesis(
@@ -433,7 +429,6 @@ impl Command {
 
                     let account_updates_list = store
                         .apply_account_updates_from_trie_batch(trie, account_updates.values())
-                        .await
                         .map_err(|e| format!("Error applying account updates: {e}"))
                         .unwrap();
 
@@ -647,7 +642,7 @@ pub struct ContractCallOptions {
 
 impl ContractCallOptions {
     async fn call_contract(&self, selector: &str, params: Vec<Value>) -> eyre::Result<()> {
-        let client = EthClient::new(self.rpc_url.as_str())?;
+        let client = EthClient::new(self.rpc_url.clone())?;
         let signer = parse_signer(
             self.private_key,
             self.remote_signer_url.clone(),

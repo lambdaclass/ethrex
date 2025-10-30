@@ -19,7 +19,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
+    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
@@ -30,7 +30,7 @@ use ethrex_common::{
     BigEndianHash, H256, U256,
     types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
@@ -469,11 +469,13 @@ impl PeerHandler {
                     )
                     .await
                     {
-                        if are_block_headers_chained(&block_headers, &order) {
+                        if !block_headers.is_empty()
+                            && are_block_headers_chained(&block_headers, &order)
+                        {
                             return Ok(Some(block_headers));
                         } else {
                             warn!(
-                                "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
+                                "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
                             );
                         }
                     }
@@ -678,7 +680,7 @@ impl PeerHandler {
         limit: H256,
         account_state_snapshots_dir: &Path,
         pivot_header: &mut BlockHeader,
-        block_sync_state: &mut BlockSyncState,
+        block_sync_state: &mut SnapBlockSyncState,
     ) -> Result<(), PeerHandlerError> {
         METRICS
             .current_step
@@ -1306,7 +1308,14 @@ impl PeerHandler {
                 for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                     for account in accounts {
                         if !accounts_done.contains_key(account) {
-                            accounts_done.insert(*account, vec![]);
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(account)
+                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+
+                            if old_intervals.is_empty() {
+                                accounts_done.insert(*account, vec![]);
+                            }
                         }
                     }
                 }
@@ -1533,9 +1542,18 @@ impl PeerHandler {
                     .map(|storage| storage.len())
                     .sum::<usize>();
 
+                // These take into account we downloaded the same thing for different accounts
+                let effective_slots: usize = account_storages
+                    .iter()
+                    .enumerate()
+                    .map(|(i, storages)| {
+                        accounts_by_root_hash[start_index + i].1.len() * storages.len()
+                    })
+                    .sum();
+
                 METRICS
-                    .downloaded_storage_slots
-                    .fetch_add(n_slots as u64, Ordering::Relaxed);
+                    .storage_leaves_downloaded
+                    .inc_by(effective_slots as u64);
 
                 debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(
@@ -1849,7 +1867,7 @@ impl PeerHandler {
             Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
                 .nodes
                 .iter()
-                .map(|node| Node::decode_raw(node))
+                .map(|node| Node::decode(node))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| {
                     RequestStateTrieNodesError::RequestError(PeerConnectionError::RLPDecodeError(e))
@@ -2043,8 +2061,6 @@ pub enum PeerHandlerError {
     ReceiveMessageFromPeer(H256),
     #[error("Timeout while waiting for message from peer {0}")]
     ReceiveMessageFromPeerTimeout(H256),
-    #[error("No peers available")]
-    NoPeers,
     #[error("Received invalid headers")]
     InvalidHeaders,
     #[error("Storage Full")]

@@ -1,6 +1,6 @@
 use crate::{backend::Backend, config::ProverConfig, prove, to_batch_proof};
-use ethrex_l2::sequencer::proof_coordinator::{ProofData, get_commit_hash};
-use ethrex_l2_common::prover::BatchProof;
+use ethrex_l2::sequencer::{proof_coordinator::ProofData, utils::get_git_commit_hash};
+use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::input::ProgramInput;
 use std::time::Duration;
 use tokio::{
@@ -19,13 +19,13 @@ pub async fn start_prover(config: ProverConfig) {
 struct ProverData {
     batch_number: u64,
     input: ProgramInput,
+    format: ProofFormat,
 }
 
 struct Prover {
     backend: Backend,
     proof_coordinator_endpoints: Vec<Url>,
     proving_time_ms: u64,
-    aligned_mode: bool,
     commit_hash: String,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
     sp1_server: Option<Url>,
@@ -37,8 +37,7 @@ impl Prover {
             backend: cfg.backend,
             proof_coordinator_endpoints: cfg.proof_coordinators,
             proving_time_ms: cfg.proving_time_ms,
-            aligned_mode: cfg.aligned_mode,
-            commit_hash: get_commit_hash(),
+            commit_hash: get_git_commit_hash(),
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: cfg.sp1_server,
         }
@@ -73,9 +72,9 @@ impl Prover {
 
                 // If we get the input
                 // Generate the Proof
-                let Ok(batch_proof) = prove(self.backend, prover_data.input, self.aligned_mode)
-                    .and_then(|output| to_batch_proof(output, self.aligned_mode))
-                    .inspect_err(|e| error!(%endpoint, "{}", e.to_string()))
+                let Ok(batch_proof) = prove(self.backend, prover_data.input, prover_data.format)
+                    .and_then(|output| to_batch_proof(output, prover_data.format))
+                    .inspect_err(|e| error!("{}", e.to_string()))
                 else {
                     continue;
                 };
@@ -97,11 +96,12 @@ impl Prover {
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
-        let (batch_number, input) = match response {
+        let (batch_number, input, format) = match response {
             ProofData::BatchResponse {
                 batch_number,
                 input,
-            } => (batch_number, input),
+                format,
+            } => (batch_number, input, format),
             ProofData::InvalidCodeVersion { commit_hash } => {
                 return Err(format!(
                     "Invalid code version received. Server commit_hash: {}, Prover commit_hash: {}",
@@ -111,7 +111,7 @@ impl Prover {
             _ => return Err("Expecting ProofData::Response".to_owned()),
         };
 
-        let (Some(batch_number), Some(input)) = (batch_number, input) else {
+        let (Some(batch_number), Some(input), Some(format)) = (batch_number, input, format) else {
             warn!(
                 %endpoint,
                 "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
@@ -130,8 +130,9 @@ impl Prover {
                 blob_commitment: input.blob_commitment,
                 #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
-                fee_config: Some(input.fee_config),
+                fee_configs: Some(input.fee_configs),
             },
+            format,
         }))
     }
 

@@ -8,16 +8,27 @@ help: ## 📚 Show help for each of the Makefile recipes
 build: ## 🔨 Build the client
 	cargo build --workspace
 
-lint: ## 🧹 Linter check
-	# Note that we are compiling without the "gpu" feature (see #4048 for why)
-	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
-	cargo clippy --all-targets -F debug,risc0,sp1,sync-test \
-		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
+lint-l1:
+	cargo clippy --lib --bins -F debug,sync-test \
 		--release -- -D warnings
 
+lint-l2:
+	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
+		--workspace --exclude ethrex-prover --exclude guest_program \
+		--release -- -D warnings
+
+lint-gpu:
+	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
+		--workspace --exclude ethrex-prover --exclude guest_program \
+		--release -- -D warnings
+
+lint: lint-l1 lint-l2 ## 🧹 Linter check
+
 CRATE ?= *
+# CAUTION: It is important that the ethrex-l2 crate remains excluded here,
+# as its tests depend on external setup that is not handled by this Makefile.
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ethrex-l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-l2
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean

@@ -79,12 +79,10 @@ pub struct Metrics {
     pub storage_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Storage slots
-    pub downloaded_storage_slots: AtomicU64,
-    pub storage_accounts_initial: AtomicU64,
-    pub storage_accounts_healed: AtomicU64,
+    pub storage_leaves_downloaded: IntCounter,
+    pub storage_leaves_inserted: IntCounter,
     pub storage_tries_insert_end_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_insert_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub storage_tries_state_roots_computed: IntCounter,
 
     // Healing
     pub healing_empty_try_recv: AtomicU64,
@@ -485,6 +483,7 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            #[cfg(feature = "l2")]
             PeerConnectionError::RollupStoreError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("RollupStoreError - {error}"))
@@ -623,15 +622,25 @@ impl Default for Metrics {
             .register(Box::new(pings_sent_rate.clone()))
             .expect("Failed to register pings_sent_rate gauge");
 
-        let storage_tries_state_roots_computed = IntCounter::new(
-            "storage_tries_state_roots_computed",
-            "Total number of storage tries state roots computed",
+        let storage_leaves_inserted = IntCounter::new(
+            "storage_leaves_inserted",
+            "Total number of storage leaves inserted",
         )
-        .expect("Failed to create storage_tries_state_roots_computed counter");
+        .expect("Failed to create storage_leaves_inserted counter");
 
         registry
-            .register(Box::new(storage_tries_state_roots_computed.clone()))
-            .expect("Failed to register storage_tries_state_roots_computed counter");
+            .register(Box::new(storage_leaves_inserted.clone()))
+            .expect("Failed to register storage_leaves_inserted counter");
+
+        let storage_leaves_downloaded = IntCounter::new(
+            "storage_leaves_downloaded",
+            "Total number of storage leaves downloaded",
+        )
+        .expect("Failed to create storage_leaves_downloaded counter");
+
+        registry
+            .register(Box::new(storage_leaves_downloaded.clone()))
+            .expect("Failed to register storage_leaves_downloaded counter");
 
         Metrics {
             _registry: registry,
@@ -688,12 +697,10 @@ impl Default for Metrics {
             storage_tries_download_end_time: Arc::new(Mutex::new(None)),
 
             // Storage slots
-            downloaded_storage_slots: AtomicU64::new(0),
+            storage_leaves_downloaded,
 
             // Storage tries state roots
-            storage_tries_state_roots_computed,
-            storage_accounts_initial: AtomicU64::new(0),
-            storage_accounts_healed: AtomicU64::new(0),
+            storage_leaves_inserted,
             storage_tries_insert_end_time: Arc::new(Mutex::new(None)),
             storage_tries_insert_start_time: Arc::new(Mutex::new(None)),
 

@@ -165,7 +165,7 @@ where
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64); // Optimized for H256
 
     let mut left_side = StackElement::default();
-    let mut center_side: CenterSide = CenterSide::from_value(initial_value.clone());
+    let mut center_side: CenterSide = CenterSide::from_value(initial_value);
     let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
 
     while let Some(right_side) = right_side_opt {
@@ -429,6 +429,10 @@ mod test {
         let computed_data = computed_data.lock().unwrap();
         let expected_data = expected_data.lock().unwrap();
         for (k, v) in expected_data.iter() {
+            // skip flatkeyvalues, we don't want them
+            if k.last().cloned() == Some(16) {
+                continue;
+            }
             assert!(computed_data.contains_key(k));
             assert_eq!(*v, computed_data[k]);
         }

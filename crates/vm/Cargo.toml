@@ -33,6 +33,8 @@ path = "./lib.rs"
 default = []
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 debug = ["ethrex-levm/debug"]
+sp1 = ["ethrex-levm/sp1"]
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"
