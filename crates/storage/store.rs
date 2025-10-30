@@ -203,10 +203,7 @@ impl Store {
         if block_number == latest.number {
             return Ok(Some(latest));
         }
-        let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
-            return Ok(None);
-        };
-        self.get_block_header_by_hash(block_hash)
+        self.load_block_header(block_number)
     }
 
     /// Add block body
@@ -350,17 +347,7 @@ impl Store {
                 return Ok(Some(latest.clone()));
             }
         }
-        let txn = self.backend.begin_read()?;
-        let header_value = txn.get(HEADERS, block_hash.as_bytes())?;
-        let mut header = header_value
-            .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
-            .transpose()
-            .map_err(StoreError::from)?;
-        header.as_mut().inspect(|h| {
-            // Set the hash so we avoid recomputing it later
-            let _ = h.hash.set(block_hash);
-        });
-        Ok(header)
+        self.load_block_header_by_hash(block_hash)
     }
 
     pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
@@ -751,19 +738,6 @@ impl Store {
             .number)
     }
 
-    async fn load_latest_block_number_from_db(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = vec![ChainDataIndex::LatestBlockNumber as u8];
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
-    }
-
     /// Update pending block number
     pub async fn update_pending_block_number(
         &self,
@@ -819,7 +793,7 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
-        let latest = self.load_latest_block_number_from_db().await?.unwrap_or(0);
+        let latest = self.load_latest_block_number().await?.unwrap_or(0);
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
@@ -1726,12 +1700,13 @@ impl Store {
     pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
         let chain_config = self.get_chain_config();
         let genesis_header = self
-            .get_block_header(0)?
+            .load_block_header(0)?
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
         let block_number = self.get_latest_block_number().await?;
         let block_header = self
-            .get_block_header(block_number)?
-            .ok_or(StoreError::MissingLatestBlockNumber)?;
+            .latest_block_header
+            .read()
+            .map_err(|_| StoreError::LockError)?;
 
         Ok(ForkId::new(
             chain_config,
@@ -2019,16 +1994,18 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
-        if let Some(number) = self.load_latest_block_number_from_db().await? {
-            *self
+        if let Some(number) = self.load_latest_block_number().await? {
+            let latest_header = self
+                .load_block_header(number)?
+                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+            let mut latest_header_guard = self
                 .latest_block_header
                 .write()
-                .map_err(|_| StoreError::LockError)? = self
-                .get_block_header(number)?
-                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+                .map_err(|_| StoreError::LockError)?;
+            *latest_header_guard = latest_header;
         }
 
-        match self.get_block_header(genesis_block_number)? {
+        match self.load_block_header(genesis_block_number)? {
             Some(header) if header.hash() == genesis_hash => {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
@@ -2062,9 +2039,11 @@ impl Store {
 
     pub async fn load_initial_state(&self) -> Result<(), StoreError> {
         info!("Loading initial state from DB");
-        let number = self.get_latest_block_number().await?;
+        let Some(number) = self.load_latest_block_number().await? else {
+            return Err(StoreError::MissingLatestBlockNumber);
+        };
         let latest_block_header = self
-            .get_block_header(number)?
+            .load_block_header(number)?
             .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
         *self
             .latest_block_header
@@ -2126,14 +2105,18 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
+        let new_head = self
+            .load_block_header_by_hash(head_hash)?
+            .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         // Updates first the latest_block_header
         // to avoid nonce inconsistencies #3927.
-        *self
-            .latest_block_header
-            .write()
-            .map_err(|_| StoreError::LockError)? = self
-            .get_block_header_by_hash(head_hash)?
-            .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+        {
+            let mut latest_header = self
+                .latest_block_header
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+            *latest_header = new_head
+        };
         self.forkchoice_update_inner(
             new_canonical_blocks,
             head_number,
@@ -2549,6 +2532,62 @@ impl Store {
         // TODO: Check how we should support this
         Ok(())
     }
+
+    /// Loads the latest block number stored in the database, bypassing the latest block number cache
+    async fn load_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        let key = vec![ChainDataIndex::LatestBlockNumber as u8];
+        self.read_async(CHAIN_DATA, key)
+            .await?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
+    }
+
+    fn load_canonical_block_hash(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        let txn = self.backend.begin_read()?;
+        txn.get(
+            CANONICAL_BLOCK_HASHES,
+            block_number.to_le_bytes().as_slice(),
+        )?
+        .map(|bytes| H256::decode(bytes.as_slice()))
+        .transpose()
+        .map_err(StoreError::from)
+    }
+
+    fn load_block_header(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHeader>, StoreError> {
+        let Some(block_hash) = self.load_canonical_block_hash(block_number)? else {
+            return Ok(None);
+        };
+        self.load_block_header_by_hash(block_hash)
+    }
+
+    /// Load a block header, bypassing the latest header cache
+    fn load_block_header_by_hash(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockHeader>, StoreError> {
+        let txn = self.backend.begin_read()?;
+        let header_value = txn.get(HEADERS, block_hash.as_bytes())?;
+        let mut header = header_value
+            .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)?;
+        header.as_mut().inspect(|h| {
+            // Set the hash so we avoid recomputing it later
+            let _ = h.hash.set(block_hash);
+        });
+        Ok(header)
+    }
 }
 
 pub struct AccountProof {
@@ -2584,7 +2623,7 @@ impl Iterator for AncestorIterator {
 
     fn next(&mut self) -> Option<Self::Item> {
         let next_hash = self.next_hash;
-        match self.store.get_block_header_by_hash(next_hash) {
+        match self.store.load_block_header_by_hash(next_hash) {
             Ok(Some(header)) => {
                 let ret_hash = self.next_hash;
                 self.next_hash = header.parent_hash;
