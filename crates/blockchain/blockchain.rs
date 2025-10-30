@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info, trace};
+use ::tracing::{debug, info, instrument, trace};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -177,6 +177,7 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
+    #[instrument(level = "trace", name = "Execute Block", skip_all)]
     fn execute_block_pipeline(
         &self,
         block: &Block,
