@@ -174,12 +174,13 @@ pub async fn heal_storage_trie(
                 .healing_empty_try_recv
                 .store(state.empty_count as u64, Ordering::Relaxed);
             state.last_update = Instant::now();
+            let snap_peer_count = peers
+                .peer_table
+                .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
+                .await
+                .unwrap_or(0);
             debug!(
-                snap_peer_count = peers
-                    .peer_table
-                    .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
-                    .await
-                    .unwrap_or(0),
+                snap_peer_count,
                 inflight_requests = state.requests.len(),
                 download_queue_len = state.download_queue.len(),
                 maximum_depth = state.maximum_length_seen,
@@ -409,11 +410,14 @@ async fn zip_requeue_node_responses_score_peer(
     failed_downloads: &mut usize,
 ) -> Result<Option<Vec<NodeResponse>>, SyncError> {
     trace!(
-        "We are processing the nodes, we received {} nodes from our peer",
-        trie_nodes.nodes.len()
+        trie_response_len=?trie_nodes.nodes.len(),
+        "We are processing the nodes",
     );
     let Some(request) = requests.remove(&trie_nodes.id) else {
-        debug!("No matching request found for received response {trie_nodes:?}");
+        debug!(
+            ?trie_nodes,
+            "No matching request found for received response"
+        );
         return Ok(None);
     };
 
@@ -498,7 +502,7 @@ fn process_node_responses(
     to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
-        trace!("We are processing node response {:?}", node_response);
+        trace!(?node_response, "We are processing node response");
         if let Node::Leaf(_) = &node_response.node {
             *leafs_healed += 1;
             *global_leafs_healed += 1;
