@@ -708,11 +708,11 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     let calldata = fill_with_zeros(calldata, 96);
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let Some(point) = parse_bn254_g1(&calldata) else {
+    let Some(point) = parse_bn254_g1(&calldata, 0) else {
         return Err(InternalError::Slicing.into());
     };
     validate_bn254_g1_coords(&point)?;
-    let scalar = parse_bn254_scalar(&calldata);
+    let scalar = parse_bn254_scalar(&calldata, 64);
 
     bn254_g1_mul(point, scalar)
 }
@@ -799,31 +799,31 @@ impl G2 {
     }
 }
 
-/// Parses first 32 bytes as BN254 scalar
+/// Parses 32 bytes as BN254 scalar
 #[inline]
-fn parse_bn254_scalar(buf: &[u8]) -> U256 {
-    u256_from_big_endian(&buf[64..96])
+fn parse_bn254_scalar(buf: &[u8], offset: usize) -> U256 {
+    u256_from_big_endian(&buf[offset..offset + 64])
 }
 
-/// Parses first 64 bytes as a BN254 G1 point
+/// Parses 64 bytes as a BN254 G1 point
 #[inline]
-fn parse_bn254_g1(buf: &[u8]) -> Option<G1> {
+fn parse_bn254_g1(buf: &[u8], offset: usize) -> Option<G1> {
     let (g1_x, g1_y) = (
-        u256_from_big_endian(buf.get(..32)?),
-        u256_from_big_endian(buf.get(32..64)?),
+        u256_from_big_endian(buf.get(offset..offset + 32)?),
+        u256_from_big_endian(buf.get(offset + 32..offset + 64)?),
     );
 
     Some(G1(g1_x, g1_y))
 }
 
-/// Parses 128 bytes as a BN254 G2 point, skipping the first 64 bytes
+/// Parses 128 bytes as a BN254 G2 point
 #[inline]
-fn parse_bn254_g2(buf: &[u8]) -> Option<G2> {
+fn parse_bn254_g2(buf: &[u8], offset: usize) -> Option<G2> {
     let (g2_xy, g2_xx, g2_yy, g2_yx) = (
-        u256_from_big_endian(buf.get(64..96)?),
-        u256_from_big_endian(buf.get(96..128)?),
-        u256_from_big_endian(buf.get(128..160)?),
-        u256_from_big_endian(buf.get(160..)?),
+        u256_from_big_endian(buf.get(offset..offset + 32)?),
+        u256_from_big_endian(buf.get(offset + 32..offset + 64)?),
+        u256_from_big_endian(buf.get(offset + 64..offset + 96)?),
+        u256_from_big_endian(buf.get(offset + 96..offset + 128)?),
     );
 
     Some(G2(g2_xx, g2_xy, g2_yx, g2_yy))
@@ -864,7 +864,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     let mut batch = Vec::new();
     for input in calldata.chunks_exact(192) {
-        let (Some(g1), Some(g2)) = (parse_bn254_g1(&input), parse_bn254_g2(&input)) else {
+        let (Some(g1), Some(g2)) = (parse_bn254_g1(&input, 0), parse_bn254_g2(&input, 64)) else {
             return Err(InternalError::Slicing.into());
         };
         validate_bn254_g1_coords(&g1)?;
