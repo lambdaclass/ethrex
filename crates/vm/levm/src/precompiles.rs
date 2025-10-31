@@ -752,7 +752,7 @@ pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
 #[cfg(any(feature = "sp1", feature = "risc0"))]
 #[inline]
 pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
-    use substrate_bn::{AffineG1, Fq, Fr, Group};
+    use substrate_bn::{AffineG1, Fq, Fr, G1, Group};
 
     if g1.is_zero() || scalar.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
@@ -768,6 +768,11 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     let scalar =
         Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
 
+    #[cfg(feature = "risc0")]
+    // RISC0's substrate-bn patch does not implement Mul<Fr> for AffineG1, but
+    // it does implement Mul<Fr> for G1. So we convert AffineG1 to G1 first.
+    let result = G1::from(g1) * scalar;
+    #[cfg(feature = "sp1")]
     let result = g1 * scalar;
 
     let mut x_bytes = [0u8; 32];
