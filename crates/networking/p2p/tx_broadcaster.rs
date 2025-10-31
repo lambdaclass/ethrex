@@ -229,7 +229,7 @@ impl TxBroadcaster {
                 transactions: txs_to_send,
             });
             connection.outgoing_message(txs_message).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
+                debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
             self.send_tx_hashes(blob_txs.clone(), capabilities, &mut connection, peer_id)
                 .await?;
@@ -301,7 +301,7 @@ pub async fn send_tx_hashes(
                 NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
             );
             connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
+                debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
             });
         }
     }
