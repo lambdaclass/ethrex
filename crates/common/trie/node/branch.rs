@@ -426,7 +426,7 @@ mod test {
 
         let mut new_node = node.clone();
         new_node
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(trie.db.as_ref(), path, value.clone().into())
             .unwrap();
 
         assert_eq!(new_node.choices, node.choices);

@@ -1,18 +1,18 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store, regenerate_head_state,
+    get_network, get_signer, init_blockchain, init_network, init_store,
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
-use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType, L2Config};
+use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
 use ethrex_common::fd_limit::raise_fd_limit;
-use ethrex_common::types::Genesis;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
+use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     peer_handler::PeerHandler,
@@ -20,8 +20,6 @@ use ethrex_p2p::{
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
-#[cfg(feature = "rocksdb")]
-use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::SecretKey;
@@ -192,15 +190,7 @@ pub async fn init_l2(
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
-    regenerate_head_state(&store, &blockchain).await?;
-
-    let (initial_checkpoint_store, initial_checkpoint_blockchain) = initialize_checkpoint(
-        &store,
-        &checkpoints_dir.join("initial_checkpoint"),
-        genesis.clone(),
-        blockchain_opts,
-    )
-    .await?;
+    regenerate_head_state(&store, &rollup_store, &blockchain).await?;
 
     let signer = get_signer(&datadir);
 
@@ -291,8 +281,6 @@ pub async fn init_l2(
             opts.node_opts.http_addr, opts.node_opts.http_port
         ))
         .map_err(|err| eyre::eyre!("Failed to parse L2 RPC URL: {err}"))?,
-        initial_checkpoint_store,
-        initial_checkpoint_blockchain,
         genesis,
         checkpoints_dir,
     )
@@ -357,93 +345,4 @@ pub async fn get_operator_fee_config(
             None
         };
     Ok(operator_fee_config)
-}
-
-/// Initializes a checkpoint of the given store at the specified path.
-///
-/// If there's no previous checkpoint, it creates one from the current store state.
-///
-/// This function performs the following steps:
-/// 1. Creates a checkpoint of the provided store at the specified path.
-/// 2. Initializes a new store and blockchain for the checkpoint.
-/// 3. Regenerates the head state in the checkpoint store.
-/// 4. Validates that the checkpoint store's head block number and latest block match those of the original store.
-async fn initialize_checkpoint(
-    store: &Store,
-    path: &Path,
-    genesis: Genesis,
-    blockchain_opts: BlockchainOptions,
-) -> eyre::Result<(Store, Arc<Blockchain>)> {
-    // If the checkpoint is not present, create it
-    if !path.exists() {
-        store.create_checkpoint(path).await?;
-    }
-
-    // We now load the checkpoint, validate it, and regenerate its state.
-
-    #[cfg(feature = "rocksdb")]
-    let engine_type = EngineType::RocksDB;
-    #[cfg(not(feature = "rocksdb"))]
-    let engine_type = EngineType::InMemory;
-
-    let checkpoint_store = {
-        let mut checkpoint_store_inner = Store::new(path, engine_type)?;
-
-        checkpoint_store_inner
-            .add_initial_state(genesis.clone())
-            .await?;
-
-        checkpoint_store_inner
-    };
-
-    let checkpoint_blockchain =
-        Arc::new(Blockchain::new(checkpoint_store.clone(), blockchain_opts));
-
-    let checkpoint_head_block_number = checkpoint_store.get_latest_block_number().await?;
-
-    let db_head_block_number = store.get_latest_block_number().await?;
-
-    if checkpoint_head_block_number != db_head_block_number {
-        return Err(eyre::eyre!(
-            "checkpoint store head block number does not match main store head block number before regeneration"
-        ));
-    }
-
-    regenerate_head_state(&checkpoint_store, &checkpoint_blockchain).await?;
-
-    let checkpoint_latest_block_number = checkpoint_store.get_latest_block_number().await?;
-
-    let db_latest_block_number = store.get_latest_block_number().await?;
-
-    let checkpoint_latest_block_header = checkpoint_store
-        .get_block_header(checkpoint_latest_block_number)?
-        .ok_or(eyre::eyre!(
-            "latest block header ({checkpoint_latest_block_number}) not found in checkpoint store"
-        ))?;
-
-    let db_latest_block_header = store
-        .get_block_header(db_latest_block_number)?
-        .ok_or(eyre::eyre!("latest block not found in main store"))?;
-
-    // Final sanity check
-
-    if !checkpoint_store.has_state_root(checkpoint_latest_block_header.state_root)? {
-        return Err(eyre::eyre!(
-            "checkpoint store state is not regenerated properly"
-        ));
-    }
-
-    if checkpoint_latest_block_number != db_head_block_number {
-        return Err(eyre::eyre!(
-            "checkpoint store latest block number does not match main store head block number after regeneration"
-        ));
-    }
-
-    if checkpoint_latest_block_header.state_root != db_latest_block_header.state_root {
-        return Err(eyre::eyre!(
-            "checkpoint store latest block hash does not match main store latest block hash after regeneration"
-        ));
-    }
-
-    Ok((checkpoint_store, checkpoint_blockchain))
 }

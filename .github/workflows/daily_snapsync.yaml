@@ -58,6 +58,7 @@ jobs:
     name: Sync ${{ matrix.network }}
     runs-on: ethrex-sync
     strategy:
+      fail-fast: false
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:

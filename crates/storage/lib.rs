@@ -1,7 +1,6 @@
 // New unified storage interface
 pub mod api;
 pub mod backend;
-pub mod engine;
 pub mod error;
 mod layering;
 pub mod rlp;

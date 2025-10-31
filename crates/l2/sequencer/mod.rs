@@ -48,8 +48,6 @@ pub async fn start_l2(
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
     #[cfg(feature = "metrics")] l2_url: Url,
-    initial_checkpoint_store: Store,
-    initial_checkpoint_blockchain: Arc<Blockchain>,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
 ) -> Result<(), errors::SequencerError> {
@@ -107,8 +105,6 @@ pub async fn start_l2(
         rollup_store.clone(),
         cfg.clone(),
         shared_state.clone(),
-        initial_checkpoint_store,
-        initial_checkpoint_blockchain,
         genesis,
         checkpoints_dir,
     )

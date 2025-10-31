@@ -4,26 +4,9 @@ use ethrex_common::types::{
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use std::{
-    fmt::{Debug, Display},
-    path::PathBuf,
-};
+use std::fmt::{Debug, Display};
 
 use crate::calldata::Value;
-
-#[cfg(feature = "sp1")]
-const SP1_VM_PROGRAM_CODE: Option<&[u8]> = Some(include_bytes!(concat!(
-    "../../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf"
-)));
-#[cfg(not(feature = "sp1"))]
-const SP1_VM_PROGRAM_CODE: Option<&[u8]> = None;
-
-#[cfg(feature = "risc0")]
-const RISC0_VM_PROGRAM_CODE: Option<&str> = Some(include_str!(concat!(
-    "../../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk"
-)));
-#[cfg(not(feature = "risc0"))]
-const RISC0_VM_PROGRAM_CODE: Option<&str> = None;
 
 #[serde_as]
 #[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive)]
@@ -96,52 +79,6 @@ impl ProverType {
             Self::TDX => Some("REQUIRE_TDX_PROOF()".to_string()),
             Self::Exec => None,
         }
-    }
-
-    /// Fills the "vm_program_code" field of an AlignedVerificationData struct,
-    /// used for sending a proof to Aligned Layer.
-    pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
-        match self {
-            Self::RISC0 => {
-                let trimmed = RISC0_VM_PROGRAM_CODE.unwrap_or_default().trim_start_matches("0x").trim();
-                let decoded = hex::decode(trimmed).map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
-                })?;
-                Ok(Some(decoded))
-            },
-            // for sp1, Aligned requires the ELF file
-            Self::SP1 => {
-                Ok(SP1_VM_PROGRAM_CODE.map(|x| x.to_vec()))
-            }
-            ,
-            // other types are not supported by Aligned
-            _ => Ok(None),
-        }
-    }
-
-    /// Gets the verification key or image id for this prover backend, used for
-    /// proof verification. Aligned Layer uses a different vk in SP1's case.
-    pub fn vk_path(&self, aligned: bool) -> std::io::Result<Option<PathBuf>> {
-        let path = match &self {
-            Self::RISC0 => format!(
-                "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
-            // the hash as a bn254 F_r element.
-            Self::SP1 if aligned => format!(
-                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            Self::SP1 if !aligned => format!(
-                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            // other types don't have a verification key
-            _ => return Ok(None),
-        };
-        let path = std::fs::canonicalize(path)?;
-        Ok(Some(path))
     }
 }
 

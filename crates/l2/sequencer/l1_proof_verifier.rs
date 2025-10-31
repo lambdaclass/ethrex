@@ -296,11 +296,11 @@ impl L1ProofVerifier {
         let verification_data = match prover_type {
             ProverType::SP1 => AggregationModeVerificationData::SP1 {
                 vk: self.sp1_vk,
-                public_inputs: public_inputs.clone(),
+                public_inputs,
             },
             ProverType::RISC0 => AggregationModeVerificationData::Risc0 {
                 image_id: self.risc0_vk,
-                public_inputs: public_inputs.clone(),
+                public_inputs,
             },
             unsupported_type => {
                 return Err(ProofVerifierError::UnsupportedProverType(

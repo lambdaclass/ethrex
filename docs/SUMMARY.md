@@ -24,6 +24,8 @@
   - [Databases]()
   - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
+  - [Snap sync internals](./internal/l1/healing.md)
+    - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
   - [Pruning]()
 
 # Ethrex for L2 chains
@@ -85,3 +87,4 @@
 # Other resources
 
 - [Contributing to the Documentation](./CONTRIBUTING_DOCS.md)
+- [Recommended lectures](./lectures.md)

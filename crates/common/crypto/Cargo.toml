@@ -19,3 +19,6 @@ thiserror.workspace = true
 default = []
 c-kzg = ["dep:c-kzg"]
 risc0 = ["c-kzg"]
+
+[lints]
+workspace = true

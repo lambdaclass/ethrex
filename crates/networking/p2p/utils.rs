@@ -39,20 +39,18 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
     H512::from_slice(&encoded[1..])
 }
 
-/// Returns true if the folders used for the partial download of the leaves exists. if they do exist, it
-/// should be deleted. We don't auto delete them on the off chance we want to backup the files
-pub fn validate_folders(datadir: &Path) -> bool {
-    let folder_doesnt_exist = !std::fs::exists(get_account_state_snapshots_dir(datadir))
-        .is_ok_and(|exists| exists)
-        && !std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|exists| exists)
-        && !std::fs::exists(get_code_hashes_snapshots_dir(datadir)).is_ok_and(|exists| exists);
+/// Deletes the snap folders needed for downloading the leaves during the initial
+/// step of snap sync.
+pub fn delete_leaves_folder(datadir: &Path) {
+    // We ignore the errors because this can happen when the folders don't exist
+    let _ = std::fs::remove_dir_all(get_account_state_snapshots_dir(datadir));
+    let _ = std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir));
+    let _ = std::fs::remove_dir_all(get_code_hashes_snapshots_dir(datadir));
     #[cfg(feature = "rocksdb")]
-    let folder_doesnt_exist = {
-        folder_doesnt_exist
-            && !std::fs::exists(get_rocksdb_temp_accounts_dir(datadir)).is_ok_and(|exists| exists)
-            && !std::fs::exists(get_rocksdb_temp_storage_dir(datadir)).is_ok_and(|exists| exists)
+    {
+        let _ = std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir));
+        let _ = std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir));
     };
-    folder_doesnt_exist
 }
 
 pub fn get_account_storages_snapshots_dir(datadir: &Path) -> PathBuf {

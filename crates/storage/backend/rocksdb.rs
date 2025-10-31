@@ -5,6 +5,7 @@ use crate::api::{
     PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, tables::TABLES,
 };
 use crate::error::StoreError;
+use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
 };
@@ -152,7 +153,7 @@ impl RocksDBBackend {
                 let _ = db
                     .drop_cf(cf_name)
                     .inspect(|_| info!("Successfully dropped column family: {}", cf_name))
-                    .inspect_err(|e| 
+                    .inspect_err(|e|
                         // Log error but don't fail initialization - the database is still usable
                         warn!("Failed to drop column family '{}': {}", cf_name, e));
             }
@@ -203,6 +204,19 @@ impl StorageBackend for RocksDBBackend {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
 
         Ok(Box::new(RocksDBLocked { db, lock, cf }))
+    }
+
+    fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
+        let checkpoint = Checkpoint::new(&self.db)
+            .map_err(|e| StoreError::Custom(format!("Failed to create checkpoint: {e}")))?;
+
+        checkpoint.create_checkpoint(path).map_err(|e| {
+            StoreError::Custom(format!(
+                "Failed to create RocksDB checkpoint at {path:?}: {e}"
+            ))
+        })?;
+
+        Ok(())
     }
 }
 

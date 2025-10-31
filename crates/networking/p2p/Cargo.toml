@@ -65,3 +65,4 @@ l2 = ["dep:ethrex-storage-rollup"]
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"
