@@ -708,12 +708,13 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     let calldata = fill_with_zeros(calldata, 96);
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let Some(point) = parse_bn254_g1(&calldata, 0) else {
+    let (Some(scalar), Some(point)) = (
+        parse_bn254_scalar(&calldata, 0),
+        parse_bn254_g1(&calldata, 0),
+    ) else {
         return Err(InternalError::Slicing.into());
     };
     validate_bn254_g1_coords(&point)?;
-    let scalar = parse_bn254_scalar(&calldata, 64);
-
     bn254_g1_mul(point, scalar)
 }
 
@@ -801,32 +802,34 @@ impl G2 {
 
 /// Parses 32 bytes as BN254 scalar
 #[inline]
-fn parse_bn254_scalar(buf: &[u8], offset: usize) -> U256 {
-    u256_from_big_endian(&buf[offset..offset + 32])
+fn parse_bn254_scalar(buf: &[u8], offset: usize) -> Option<U256> {
+    buf.get(offset..offset.checked_add(32)?)
+        .map(u256_from_big_endian)
 }
 
 /// Parses 64 bytes as a BN254 G1 point
 #[inline]
 fn parse_bn254_g1(buf: &[u8], offset: usize) -> Option<G1> {
-    let (g1_x, g1_y) = (
-        u256_from_big_endian(buf.get(offset..offset + 32)?),
-        u256_from_big_endian(buf.get(offset + 32..offset + 64)?),
-    );
-
-    Some(G1(g1_x, g1_y))
+    let chunk = buf.get(offset..offset.checked_add(64)?)?;
+    let (x_bytes, y_bytes) = chunk.split_at_checked(32)?;
+    Some(G1(
+        u256_from_big_endian(x_bytes),
+        u256_from_big_endian(y_bytes),
+    ))
 }
 
 /// Parses 128 bytes as a BN254 G2 point
-#[inline]
 fn parse_bn254_g2(buf: &[u8], offset: usize) -> Option<G2> {
-    let (g2_xy, g2_xx, g2_yy, g2_yx) = (
-        u256_from_big_endian(buf.get(offset..offset + 32)?),
-        u256_from_big_endian(buf.get(offset + 32..offset + 64)?),
-        u256_from_big_endian(buf.get(offset + 64..offset + 96)?),
-        u256_from_big_endian(buf.get(offset + 96..offset + 128)?),
-    );
-
-    Some(G2(g2_xx, g2_xy, g2_yx, g2_yy))
+    let chunk = buf.get(offset..offset.checked_add(128)?)?;
+    let (g2_xy, rest) = chunk.split_at_checked(32)?;
+    let (g2_xx, rest) = rest.split_at_checked(32)?;
+    let (g2_yy, g2_yx) = rest.split_at_checked(32)?;
+    Some(G2(
+        u256_from_big_endian(g2_xx),
+        u256_from_big_endian(g2_xy),
+        u256_from_big_endian(g2_yx),
+        u256_from_big_endian(g2_yy),
+    ))
 }
 
 #[inline]
