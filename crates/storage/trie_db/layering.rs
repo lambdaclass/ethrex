@@ -21,14 +21,15 @@ pub struct TrieLayerCache {
     ///
     /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
-    bloom: fastbloom::BloomFilter,
+    bloom: qfilter::Filter,
 }
 
 impl Default for TrieLayerCache {
     fn default() -> Self {
         Self {
             // todo: tune this
-            bloom: fastbloom::BloomFilter::with_num_bits(8192).expected_items(128 * 512),
+            bloom: qfilter::Filter::new_resizeable(1_000_000, qfilter::Filter::MAX_CAPACITY, 0.02)
+                .expect("create filter"),
             last_id: 0,
             layers: Default::default(),
         }
@@ -97,8 +98,9 @@ impl TrieLayerCache {
         }
 
         // add this new bloom to the global one.
-        self.bloom
-            .insert_all(key_values.iter().map(|x| x.0.as_ref()));
+        for (p, _) in &key_values {
+            self.bloom.insert_duplicated(p.as_ref()).ok();
+        }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
@@ -119,7 +121,9 @@ impl TrieLayerCache {
         self.bloom.clear();
 
         for entry in self.layers.values() {
-            self.bloom.insert_all(entry.nodes.iter().map(|x| x.0));
+            for (p, _) in entry.nodes.iter() {
+                self.bloom.insert_duplicated(p).ok();
+            }
         }
     }
 
