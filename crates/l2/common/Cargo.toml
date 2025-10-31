@@ -34,7 +34,3 @@ as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
 redundant_clone = "warn"
-
-[features]
-sp1 = []
-risc0 = []
