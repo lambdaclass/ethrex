@@ -22,19 +22,10 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/runner",
-  "tooling/ef_tests/blockchain",
-  "tooling/ef_tests/state_v2",
-  "tooling/genesis",
-  "tooling/hive_report",
-  "tooling/load_test",
-  "tooling/loc",
-  "tooling/archive_sync",
   "crates/common/config",
-  "tooling/reorgs",
   "crates/concurrency",
-  "tooling/migrations",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
+exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]
@@ -132,3 +123,6 @@ rocksdb = "0.24.0"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }
+
+[workspace.lints.clippy]
+redundant_clone = "warn"

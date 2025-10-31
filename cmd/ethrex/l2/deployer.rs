@@ -740,11 +740,31 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
         read_vk(vk_path)
     } else {
         info!(?prover_type, "Using vk from local repo");
-        let vk_path = prover_type
-            .vk_path(opts.aligned)?
-            .ok_or(DeployerError::InternalError(format!(
-                "missing {prover_type} vk"
-            )))?;
+        let vk_path = {
+            let path = match &prover_type {
+                ProverType::RISC0 => format!(
+                    "{}/../../crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
+                // the hash as a bn254 F_r element.
+                ProverType::SP1 if opts.aligned => format!(
+                    "{}/../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                ProverType::SP1 if !opts.aligned => format!(
+                    "{}/../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                // other types don't have a verification key
+                _other => {
+                    return Err(DeployerError::InternalError(format!(
+                        "missing {prover_type} vk"
+                    )));
+                }
+            };
+            std::fs::canonicalize(path)?
+        };
         read_vk(
             vk_path
                 .to_str()

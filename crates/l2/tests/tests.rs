@@ -1058,7 +1058,7 @@ async fn test_send(
     )
     .await
     .with_context(|| format!("Failed to build tx for {test}"))?;
-    tx.gas = tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
+    tx.gas = tx.gas.map(|g| g * 6 / 5); // (+20%) tx reverts in some cases otherwise
     let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
