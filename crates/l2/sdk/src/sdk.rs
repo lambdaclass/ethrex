@@ -887,14 +887,6 @@ pub async fn build_generic_tx(
         Some(gas) => gas,
         None => client.estimate_gas(tx.clone()).await?,
     });
-    if let Some(fee_token) = &overrides.fee_token
-        && r#type == TxType::FeeToken
-    {
-        let ratio = get_fee_token_ratio(fee_token, client).await?;
-        tx.gas_price *= ratio;
-        tx.max_fee_per_gas = tx.max_fee_per_gas.map(|fee| fee * ratio);
-        tx.max_priority_fee_per_gas = tx.max_priority_fee_per_gas.map(|fee| fee * ratio);
-    }
 
     Ok(tx)
 }
