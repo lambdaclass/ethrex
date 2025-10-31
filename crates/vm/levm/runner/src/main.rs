@@ -4,6 +4,7 @@ use env_logger::Env;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     Address, H160, U256,
+    constants::EMPTY_TRIE_HASH,
     types::{Account, BlockHeader, Code, LegacyTransaction, Transaction},
 };
 use ethrex_levm::{
@@ -141,7 +142,11 @@ fn main() {
     // DB
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, BlockHeader::default()));
+    let header = BlockHeader {
+        state_root: *EMPTY_TRIE_HASH,
+        ..Default::default()
+    };
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header));
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
 
     // Initialize VM
