@@ -96,7 +96,7 @@ flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flame
 		--discovery.port 30303 \
 		--network $(NETWORK) \
 		--datadir $(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM) \
-		--authrpc.jwtsecret "$(DATA_PATH)/${NETWORK}_data/jwt.hex" \
+		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
 		$(BOOTNODES_FLAG) \
 
 flamegraph-%: ## Run flamegraph on either mainnet, sepolia, holesky or hoodi network. For example, to run the flamgraph on hoodi, use `flamegraph-hoodi`
