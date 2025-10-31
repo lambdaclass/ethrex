@@ -5,6 +5,7 @@
 ### 2025-10-30
 
 - Pipeline Merkleization and Execution [#5084](https://github.com/lambdaclass/ethrex/pull/5084)
+- Make trusted setup warmup non blocking [#5124](https://github.com/lambdaclass/ethrex/pull/5124)
 
 ### 2025-10-28
 
