@@ -9,7 +9,7 @@ use crate::{
     },
     utils::RpcErr,
 };
-use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     H256, U256,
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
@@ -21,6 +21,7 @@ use ethrex_storage::Store;
 use ethrex_vm::ExecutionResult;
 use serde::Serialize;
 
+use ethrex_storage::trie_db::generic_vm::StoreVmDatabase;
 use serde_json::Value;
 use tracing::debug;
 
@@ -347,8 +348,8 @@ impl RpcHandler for CreateAccessListRequest {
             _ => return Ok(Value::Null),
         };
 
-        let vm_db = StoreVmDatabase::new(context.storage.clone(), header.hash());
-        let mut vm = context.blockchain.new_evm(vm_db)?;
+        let vm_db = context.storage.vm_db(header.clone())?;
+        let mut vm = context.blockchain.new_evm_from_db(vm_db)?;
 
         // Run transaction and obtain access list
         let (gas_used, access_list, error) = vm.create_access_list(&self.transaction, &header)?;

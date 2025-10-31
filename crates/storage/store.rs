@@ -1,8 +1,8 @@
-use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, apply_prefix};
+use crate::{error::StoreError, trie_db::generic_vm::StoreVmDatabase};
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
@@ -16,6 +16,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
+use ethrex_vm::DynVmDatabase;
 use sha3::{Digest as _, Keccak256};
 use std::{collections::hash_map::Entry, sync::Arc};
 use std::{
@@ -1361,6 +1362,14 @@ impl Store {
 
     pub async fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
         self.engine.create_checkpoint(path.as_ref()).await
+    }
+
+    pub fn vm_db(&self, parent_header: BlockHeader) -> Result<DynVmDatabase, StoreError> {
+        let hash = parent_header.hash();
+        if let Some(vm_db) = self.engine.vm_db(parent_header) {
+            return vm_db;
+        }
+        Ok(Box::new(StoreVmDatabase::new(self.clone(), hash)))
     }
 }
 

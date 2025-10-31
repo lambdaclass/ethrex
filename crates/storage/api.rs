@@ -3,6 +3,7 @@ use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
     Transaction,
 };
+use ethrex_vm::DynVmDatabase;
 use std::path::Path;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -380,4 +381,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 
     async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    fn vm_db(&self, _parent_header: BlockHeader) -> Option<Result<DynVmDatabase, StoreError>> {
+        None
+    }
 }

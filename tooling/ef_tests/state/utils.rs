@@ -7,10 +7,9 @@ use crate::{
     },
     types::{EFTest, EFTestTransaction},
 };
-use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{H256, U256, types::Genesis};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{EngineType, Store, trie_db::generic_vm::StoreVmDatabase};
 use ethrex_vm::DynVmDatabase;
 
 /// Loads initial state, used for REVM as it contains RevmState.

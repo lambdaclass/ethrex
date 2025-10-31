@@ -1,9 +1,9 @@
+use crate::Store;
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, BlockHash, BlockNumber, ChainConfig, Code},
 };
-use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
 use std::{cmp::Ordering, collections::HashMap};
 use tracing::instrument;

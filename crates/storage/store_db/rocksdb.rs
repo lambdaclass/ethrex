@@ -3,6 +3,7 @@ use crate::{
     trie_db::{
         layering::{TrieLayerCache, TrieWrapper, apply_prefix},
         rocksdb_locked::RocksDBLockedTrieDB,
+        rocksdb_vm::RocksDBVM,
     },
 };
 use bytes::Bytes;
@@ -14,6 +15,7 @@ use ethrex_common::{
     },
 };
 use ethrex_trie::{Nibbles, Node, Trie};
+use ethrex_vm::DynVmDatabase;
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch, checkpoint::Checkpoint,
@@ -88,7 +90,7 @@ const CF_TRANSACTION_LOCATIONS: &str = "transaction_locations";
 /// Chain data column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `Self::chain_data_key(ChainDataIndex::ChainConfig)`
 /// - [`Vec<u8>`] = `serde_json::to_string(chain_config)`
-const CF_CHAIN_DATA: &str = "chain_data";
+pub(crate) const CF_CHAIN_DATA: &str = "chain_data";
 
 /// Snap state column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `Self::snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint)`
@@ -98,7 +100,7 @@ const CF_SNAP_STATE: &str = "snap_state";
 /// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
 /// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-const CF_TRIE_NODES: &str = "trie_nodes";
+pub(crate) const CF_TRIE_NODES: &str = "trie_nodes";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -138,8 +140,8 @@ enum FKVGeneratorControlMessage {
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    pub(crate) db: Arc<DBWithThreadMode<MultiThreaded>>,
+    pub(crate) trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
 }
@@ -502,7 +504,7 @@ impl Store {
     }
 
     // Helper method to encode ChainDataIndex as key
-    fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
+    pub(crate) fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
         (index as u8).encode_to_vec()
     }
 
@@ -1900,6 +1902,13 @@ impl StoreEngine for Store {
         })?;
 
         Ok(())
+    }
+
+    fn vm_db(&self, parent_header: BlockHeader) -> Option<Result<DynVmDatabase, StoreError>> {
+        match RocksDBVM::new(self.clone(), parent_header) {
+            Ok(vm_db) => Some(Ok(Box::new(vm_db))),
+            Err(err) => Some(Err(err)),
+        }
     }
 }
 

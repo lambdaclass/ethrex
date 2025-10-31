@@ -1,10 +1,10 @@
-use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::H256;
 use ethrex_common::{
     U256,
     types::{Fork, Genesis},
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
+use ethrex_storage::trie_db::generic_vm::StoreVmDatabase;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::DynVmDatabase;
 

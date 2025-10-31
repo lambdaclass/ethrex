@@ -5,7 +5,6 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 pub mod tracing;
-pub mod vm;
 
 use ::tracing::{debug, info, instrument, trace};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
@@ -29,6 +28,7 @@ use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::trie_db::generic_vm::StoreVmDatabase;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
@@ -48,8 +48,6 @@ use std::sync::{
 use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
-
-use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
@@ -165,8 +163,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = self.new_evm(vm_db)?;
+        let mut vm = self.new_evm_from_db(self.storage.vm_db(parent_header)?)?;
 
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
@@ -1386,6 +1383,20 @@ impl Blockchain {
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
         new_evm(&self.options.r#type, vm_db)
+    }
+
+    pub fn new_evm_from_db(&self, vm_db: DynVmDatabase) -> Result<Evm, EvmError> {
+        let evm = match &self.options.r#type {
+            BlockchainType::L1 => Evm::new_for_l1_boxed(vm_db),
+            BlockchainType::L2(l2_config) => {
+                let fee_config = *l2_config
+                    .fee_config
+                    .read()
+                    .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
+                Evm::new_for_l2_boxed(vm_db, fee_config)?
+            }
+        };
+        Ok(evm)
     }
 
     /// Get the current fork of the chain, based on the latest block's timestamp

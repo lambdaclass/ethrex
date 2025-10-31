@@ -21,7 +21,7 @@ use ethrex_common::{
 use ethrex_vm::{Evm, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{Store, error::StoreError};
+use ethrex_storage::{Store, error::StoreError, trie_db::generic_vm::StoreVmDatabase};
 
 use sha3::{Digest, Keccak256};
 
@@ -39,7 +39,6 @@ use crate::{
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
-    vm::StoreVmDatabase,
 };
 
 use thiserror::Error;
