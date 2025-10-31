@@ -818,14 +818,9 @@ impl L1Committer {
             return Ok(());
         }
 
-        self.store.create_checkpoint(&new_checkpoint_path).await?;
-        let (new_checkpoint_store, new_checkpoint_blockchain) = Self::get_checkpoint_from_path(
-            self.genesis.clone(),
-            self.blockchain.options.clone(),
-            &new_checkpoint_path,
-            &self.rollup_store,
-        )
-        .await?;
+        let (new_checkpoint_store, new_checkpoint_blockchain) = self
+            .create_checkpoint(&self.store, &new_checkpoint_path, &self.rollup_store)
+            .await?;
 
         self.current_checkpoint_store = new_checkpoint_store;
 
