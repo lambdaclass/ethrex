@@ -6,6 +6,8 @@ use ethrex_common::{
         block_execution_witness::{ExecutionWitness, GuestProgramStateError},
     },
 };
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_trie::Node;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -39,7 +41,11 @@ pub struct RpcExecutionWitness {
 impl From<ExecutionWitness> for RpcExecutionWitness {
     fn from(value: ExecutionWitness) -> Self {
         Self {
-            state: value.nodes.into_iter().map(Bytes::from).collect(),
+            state: value
+                .nodes
+                .into_iter()
+                .map(|n| Bytes::from(n.encode_to_vec()))
+                .collect(),
             keys: value.keys.into_iter().map(Bytes::from).collect(),
             codes: value.codes.into_iter().map(Bytes::from).collect(),
             headers: value
@@ -66,7 +72,14 @@ pub fn execution_witness_from_rpc_chain_config(
             .into_iter()
             .map(|b| b.to_vec())
             .collect(),
-        nodes: rpc_witness.state.into_iter().map(|b| b.to_vec()).collect(),
+        nodes: rpc_witness
+            .state
+            .into_iter()
+            .map(|b| Node::decode(&b.to_vec()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| {
+                GuestProgramStateError::Custom(format!("failed to rlp decode nodes: {e}"))
+            })?,
         keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
 

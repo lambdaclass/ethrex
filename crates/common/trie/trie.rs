@@ -4,6 +4,7 @@ pub mod logger;
 mod nibbles;
 pub mod node;
 mod node_hash;
+pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
@@ -359,11 +360,16 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
+        state_nodes: &BTreeMap<H256, Node>,
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
-        let root = Self::get_embedded_root(state_nodes, root_hash)?;
-        trie.root = root;
+        trie.root = state_nodes
+            .get(&root_hash)
+            .ok_or(TrieError::InconsistentTree(
+                InconsistentTreeError::RootNotFound(root_hash).into(),
+            ))?
+            .clone()
+            .into();
 
         Ok(trie)
     }

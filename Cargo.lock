@@ -3821,6 +3821,7 @@ dependencies = [
  "lazy_static",
  "proptest",
  "rand 0.8.5",
+ "rkyv",
  "rocksdb",
  "serde",
  "serde_json",

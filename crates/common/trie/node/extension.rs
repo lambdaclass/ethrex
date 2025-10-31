@@ -1,4 +1,5 @@
 use ethrex_rlp::encode::RLPEncode;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 
 use crate::ValueRLP;
 use crate::nibbles::Nibbles;
@@ -13,7 +14,7 @@ use super::{BranchNode, Node, NodeRef, ValueOrHash};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, RSerialize, RDeserialize, Archive)]
 pub struct ExtensionNode {
     pub prefix: Nibbles,
     pub child: NodeRef,

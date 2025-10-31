@@ -1132,6 +1132,7 @@ dependencies = [
  "ethrex-threadpool",
  "hex",
  "lazy_static",
+ "rkyv",
  "serde",
  "serde_json",
  "sha3",

@@ -8,16 +8,18 @@ pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize, with::Skip};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
 /// A reference to a node.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RSerialize, RDeserialize, Archive)]
 pub enum NodeRef {
     /// The node is embedded within the reference.
-    Node(Arc<Node>, OnceLock<NodeHash>),
+    Node(Arc<Node>, #[rkyv(with = Skip)] OnceLock<NodeHash>),
     /// The node is in the database, referenced by its hash.
     Hash(NodeHash),
 }
@@ -173,11 +175,24 @@ impl From<NodeHash> for ValueOrHash {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, RDeserialize, RSerialize, Archive)]
+#[rkyv(serialize_bounds(
+    __S: rkyv::ser::Writer + rkyv::ser::Allocator + rkyv::ser::Sharing,
+    __S::Error: rkyv::rancor::Source,
+))]
+#[rkyv(deserialize_bounds(
+    __D: rkyv::de::Pooling,
+    __D::Error: rkyv::rancor::Source
+))]
+#[rkyv(bytecheck(
+    bounds(
+        __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
+    )
+))]
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
-#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
-    Branch(Box<BranchNode>),
-    Extension(ExtensionNode),
+    Branch(#[rkyv(omit_bounds)] Box<BranchNode>),
+    Extension(#[rkyv(omit_bounds)] ExtensionNode),
     Leaf(LeafNode),
 }
 
@@ -288,4 +303,24 @@ impl Node {
 pub enum NodeRemoveResult {
     Mutated,
     New(Node),
+}
+
+impl Serialize for Node {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let rlp = self.encode_to_vec();
+        serializer.serialize_bytes(&rlp)
+    }
+}
+impl<'de> Deserialize<'de> for Node {
+    fn deserialize<D>(d: D) -> Result<Node, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let rlp: Vec<u8> = Deserialize::deserialize(d)?;
+        Node::decode(&rlp)
+            .map_err(|e| serde::de::Error::custom(format!("could not decode rlp bytes: {e}")))
+    }
 }

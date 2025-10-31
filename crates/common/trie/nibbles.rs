@@ -1,4 +1,5 @@
 use std::{cmp, mem};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -10,7 +11,7 @@ use ethrex_rlp::{
 // TODO: move path-tracking logic somewhere else
 // PERF: try using a stack-allocated array
 /// Struct representing a list of nibbles (half-bytes)
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, RDeserialize, RSerialize, Archive)]
 pub struct Nibbles {
     data: Vec<u8>,
     /// Parts of the path that have already been consumed (used for tracking

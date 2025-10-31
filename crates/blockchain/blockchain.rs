@@ -397,7 +397,7 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
                 })?;
                 let witness = std::mem::take(&mut *witness);
-                let witness = witness.into_iter().collect::<Vec<_>>();
+                let witness = witness.into_values().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
                 touched_account_storage_slots.entry(address).or_default();
             }
@@ -426,20 +426,22 @@ impl Blockchain {
                 })?
                 .iter()
             {
-                accumulated_state_trie_witness.insert(state_trie_witness.clone());
+                accumulated_state_trie_witness
+                    .insert(state_trie_witness.0.clone(), state_trie_witness.1.clone());
             }
 
             current_trie_witness = new_state_trie_witness;
         }
 
-        used_trie_nodes
-            .extend_from_slice(&Vec::from_iter(accumulated_state_trie_witness.into_iter()));
+        used_trie_nodes.extend_from_slice(&Vec::from_iter(
+            accumulated_state_trie_witness.into_values(),
+        ));
 
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty()
             && let Some(root) = root_node
         {
-            used_trie_nodes.push(root.encode_to_vec());
+            used_trie_nodes.push((*root).clone());
         }
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();

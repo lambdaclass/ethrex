@@ -1,6 +1,7 @@
 use std::mem;
 
 use ethrex_rlp::encode::RLPEncode;
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 
 use crate::{
     InconsistentTreeError, TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles,
@@ -11,7 +12,7 @@ use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, RSerialize, RDeserialize, Archive)]
 pub struct BranchNode {
     pub choices: [NodeRef; 16],
     pub value: ValueRLP,

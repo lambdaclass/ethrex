@@ -7,12 +7,12 @@ use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
-    utils::{decode_hex, keccak},
+    utils::decode_hex,
 };
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, NodeRLP, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -30,7 +30,7 @@ pub struct GuestProgramState {
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
     /// It is used to rebuild the state trie and storage tries.
-    pub nodes_hashed: BTreeMap<H256, NodeRLP>,
+    pub nodes_hashed: BTreeMap<H256, Node>,
     /// Map of code hashes to their corresponding bytecode.
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
@@ -67,8 +67,7 @@ pub struct GuestProgramState {
 ///
 /// It is essentially an `RpcExecutionWitness` but it also contains `ChainConfig`,
 /// and `first_block_number`.
-#[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Default, Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
 pub struct ExecutionWitness {
     // Contract bytecodes needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
@@ -81,8 +80,7 @@ pub struct ExecutionWitness {
     // The chain config.
     pub chain_config: ChainConfig,
     /// RLP-encoded trie nodes needed for stateless execution.
-    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
-    pub nodes: Vec<Vec<u8>>,
+    pub nodes: Vec<Node>,
     /// Flattened map of account addresses and storage keys whose values
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
@@ -141,10 +139,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         let nodes_hashed = value
             .nodes
             .into_iter()
-            .map(|node| {
-                let node = node.to_vec();
-                (keccak(&node), node)
-            })
+            .map(|node| (node.compute_hash().finalize(), node))
             .collect();
 
         // hash codes
