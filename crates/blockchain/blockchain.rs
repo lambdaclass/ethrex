@@ -849,10 +849,12 @@ impl Blockchain {
         let result = self.store_block(block, account_updates_list, res);
         let stored = Instant::now();
 
-        let instants = std::array::from_fn(move |i| match i {
-            _ if i < instants.len() => instants[i],
-            _ if i == instants.len() => stored,
-            _ => unreachable!(),
+        let instants = std::array::from_fn(move |i| {
+            if i < instants.len() {
+                instants[i]
+            } else {
+                stored
+            }
         });
         if self.options.perf_logs_enabled {
             Self::print_add_block_pipeline_logs(
