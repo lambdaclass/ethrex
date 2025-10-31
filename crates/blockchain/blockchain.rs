@@ -315,6 +315,7 @@ impl Blockchain {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_incoming_update_message(
         storage: &Store,
         state_trie: &mut Trie,
