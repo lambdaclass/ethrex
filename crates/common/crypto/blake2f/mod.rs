@@ -10,7 +10,9 @@ type Blake2Func = fn(usize, &mut [u64; 8], &[u64; 16], &[u64; 2], bool);
 
 static BLAKE2_FUNC: LazyLock<Blake2Func> = LazyLock::new(|| {
     #[cfg(target_arch = "aarch64")]
-    if std::arch::is_aarch64_feature_detected!("neon") {
+    if std::arch::is_aarch64_feature_detected!("neon")
+        && std::arch::is_aarch64_feature_detected!("sha3")
+    {
         return self::aarch64::blake2b_f;
     }
 
