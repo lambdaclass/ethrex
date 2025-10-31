@@ -324,7 +324,7 @@ impl GenServer for TxBroadcaster {
                 debug!(received = "BroadcastTxs");
 
                 let _ = self.broadcast_txs().await.inspect_err(|_| {
-                    error!("Failed to broadcast transactions");
+                    debug!("Failed to broadcast transactions");
                 });
 
                 CastResponse::NoReply
