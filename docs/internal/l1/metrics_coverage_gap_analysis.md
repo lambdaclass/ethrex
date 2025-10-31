@@ -1,4 +1,4 @@
-# Ethrex L1 Metrics Coverage
+# Ethrex L1 Metrics Coverage Gap Analysis
 
 ## Scope
 This note tracks the current state of metrics and dashboard observability for the L1, highlights the gaps against a cross-client baseline. It covers runtime metrics exposed through our crates, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
