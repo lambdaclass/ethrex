@@ -2118,13 +2118,14 @@ async fn test_fee_token(
 
     let transfer_fees =
         get_fees_details_l2(&transfer_receipt, &l2_client, get_fee_token_diff_size()).await?;
+    let fee_token_ratio = fetch_fee_token_ratio(&l2_client, fee_token_address).await?;
 
     let sender_fee_token_spent = sender_token_balance_before_transfer
         .checked_sub(sender_token_balance_after_transfer)
         .expect("Sender fee token balance increased unexpectedly");
     assert_eq!(
         sender_fee_token_spent,
-        U256::from(transfer_fees.total()),
+        U256::from(transfer_fees.total()) * fee_token_ratio,
         "{test}: Sender fee token spend mismatch"
     );
 
@@ -2135,7 +2136,7 @@ async fn test_fee_token(
         .expect("Coinbase fee token balance decreased");
     assert_eq!(
         coinbase_delta,
-        U256::from(transfer_fees.priority_fees),
+        U256::from(transfer_fees.priority_fees) * fee_token_ratio,
         "{test}: Priority fee mismatch"
     );
 
@@ -2150,7 +2151,7 @@ async fn test_fee_token(
             .expect("Base fee vault balance decreased");
         assert_eq!(
             base_fee_vault_delta,
-            U256::from(transfer_fees.base_fees),
+            U256::from(transfer_fees.base_fees) * fee_token_ratio,
             "{test}: Base fee vault mismatch"
         );
     }
@@ -2170,7 +2171,7 @@ async fn test_fee_token(
         .expect("Operator fee vault balance decreased");
     assert_eq!(
         operator_fee_vault_delta,
-        U256::from(transfer_fees.operator_fees),
+        U256::from(transfer_fees.operator_fees) * fee_token_ratio,
         "{test}: Operator fee vault mismatch"
     );
 
@@ -2179,7 +2180,7 @@ async fn test_fee_token(
         .expect("L1 fee vault balance decreased");
     assert_eq!(
         l1_fee_vault_delta,
-        U256::from(transfer_fees.l1_fees),
+        U256::from(transfer_fees.l1_fees) * fee_token_ratio,
         "{test}: L1 fee vault mismatch"
     );
 
@@ -2682,4 +2683,22 @@ fn dummy_modified_storage_slots(modified_storage_slots: u64) -> BTreeMap<H256, U
         storage.insert(H256::random(), U256::zero());
     }
     storage
+}
+
+async fn fetch_fee_token_ratio(client: &EthClient, fee_token: Address) -> Result<U256> {
+    let calldata =
+        encode_calldata("getFeeTokenRatio(address)", &[Value::Address(fee_token)])?.into();
+
+    let response = client
+        .call(
+            ethrex_l2_sdk::FEE_TOKEN_PRICER_ADDRESS,
+            calldata,
+            Default::default(),
+        )
+        .await
+        .context("Failed to fetch fee token ratio from pricer")?;
+
+    let ratio_hex = response.trim_start_matches("0x");
+
+    U256::from_str_radix(ratio_hex, 16).context("Failed to parse fee token ratio")
 }
