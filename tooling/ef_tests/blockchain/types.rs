@@ -605,5 +605,6 @@ pub enum BlockExpectedException {
     IncorrectBlockFormat,
     InvalidRequest,
     SystemContractCallFailed,
+    RlpBlockLimitExceeded,
     Other, //TODO: Implement exceptions
 }
