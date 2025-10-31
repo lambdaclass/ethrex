@@ -620,11 +620,11 @@ impl Store {
                 batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
                 ctr += 1;
                 if ctr > 10_000 {
+                    self.db.write(std::mem::take(&mut batch))?;
                     *self
                         .last_computed_flatkeyvalue
                         .lock()
                         .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
-                    self.db.write(std::mem::take(&mut batch))?;
                 }
 
                 let mut iter_inner = self
@@ -643,11 +643,11 @@ impl Store {
                     batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
                     ctr += 1;
                     if ctr > 10_000 {
+                        self.db.write(std::mem::take(&mut batch))?;
                         *self
                             .last_computed_flatkeyvalue
                             .lock()
                             .map_err(|_| StoreError::LockError)? = key.as_ref().to_vec();
-                        self.db.write(std::mem::take(&mut batch))?;
                     }
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
@@ -685,11 +685,11 @@ impl Store {
                 Err(err) => return Err(err),
                 Ok(()) => {
                     batch.put_cf(&cf_misc, "last_written", [0xff]);
+                    self.db.write(batch)?;
                     *self
                         .last_computed_flatkeyvalue
                         .lock()
                         .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
-                    self.db.write(batch)?;
                     return Ok(());
                 }
             };
