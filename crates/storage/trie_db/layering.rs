@@ -144,7 +144,7 @@ impl TrieLayerCache {
 
         filter.clear();
 
-        let blooms = self
+        let mut blooms: Vec<_> = self
             .layers
             .values()
             .par_bridge()
@@ -161,21 +161,26 @@ impl TrieLayerCache {
                 }
                 Some(bloom)
             })
-            .collect_vec_list();
+            .collect();
 
-        let mut bloom_is_poisoned = false;
-        if let Some(filter) = &mut self.bloom {
-            for b in blooms.iter().flatten().filter_map(|b| b.as_ref()) {
-                if let Err(qfilter::Error::CapacityExceeded) = filter.merge(false, b) {
-                    tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                    bloom_is_poisoned = true;
-                    break;
-                }
+        let Some(mut ret) = blooms.pop().flatten() else {
+            tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
+            self.bloom = None;
+            return;
+        };
+        for bloom in blooms.iter() {
+            let Some(bloom) = bloom else {
+                tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
+                self.bloom = None;
+                return;
+            };
+            if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
+                tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                self.bloom = None;
+                return;
             }
         }
-        if bloom_is_poisoned {
-            self.bloom = None; // drop the bloom to save memory
-        }
+        self.bloom = Some(ret);
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
