@@ -3763,6 +3763,7 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
+ "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",
  "serde",

@@ -20,10 +20,10 @@ pub struct TrieLayerCache {
 }
 
 impl TrieLayerCache {
-    pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.get(&current_state_root) {
-            if let Some(value) = layer.nodes.get(key.as_ref()) {
+            if let Some(value) = layer.nodes.get(key) {
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
@@ -128,7 +128,7 @@ impl TrieDB for TrieWrapper {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self.inner.get(self.state_root, key.clone()) {
+        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
         self.db.get(key)

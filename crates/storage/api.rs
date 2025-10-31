@@ -1,12 +1,12 @@
 use ethereum_types::H256;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
-    Transaction,
+    AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index,
+    Receipt, Transaction,
 };
 use std::path::Path;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
-use crate::UpdateBatch;
+use crate::{AccountUpdatesList, UpdateBatch};
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
@@ -380,4 +380,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 
     async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    fn apply_account_updates_from_trie_batch(
+        &self,
+        state_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> Result<AccountUpdatesList, StoreError>;
 }

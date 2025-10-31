@@ -1327,6 +1327,7 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "rustc-hash",
+ "rayon",
  "serde",
  "serde_json",
  "sha3",
