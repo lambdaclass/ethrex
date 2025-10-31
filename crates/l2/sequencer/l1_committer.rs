@@ -698,6 +698,19 @@ impl L1Committer {
         &self,
         batch: &Batch,
     ) -> Result<(), CommitterError> {
+        if self
+            .rollup_store
+            .get_prover_input_by_batch_and_version(batch.number, &self.git_commit_hash)
+            .await?
+            .is_some()
+        {
+            info!(
+                "Prover input for batch {} and version {} already exists, skipping generation",
+                batch.number, self.git_commit_hash
+            );
+            return Ok(());
+        }
+
         let (blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
             batch.number,
             &self.store,
@@ -808,16 +821,13 @@ impl L1Committer {
         // This is because the one-time checkpoint has the state at the latest block of the batch.
         // Using the main store directly may lead to inconsistencies if the main store has pruned
         // some state.
-        one_time_checkpoint_store
-            .create_checkpoint(&new_checkpoint_path)
+        let (new_checkpoint_store, new_checkpoint_blockchain) = self
+            .create_checkpoint(
+                &one_time_checkpoint_store,
+                &new_checkpoint_path,
+                &self.rollup_store,
+            )
             .await?;
-        let (new_checkpoint_store, new_checkpoint_blockchain) = Self::get_checkpoint_from_path(
-            self.genesis.clone(),
-            self.blockchain.options.clone(),
-            &new_checkpoint_path,
-            &self.rollup_store,
-        )
-        .await?;
 
         self.current_checkpoint_store = new_checkpoint_store;
 
@@ -875,7 +885,10 @@ impl L1Committer {
             checkpoint_store_inner
         };
 
-        // override blockchain options as the FeeConfig is shared under an ArcMutex
+        // Here we override the blockchain type with a default config
+        // to avoid using the same `Arc<Mutex>` from the main blockchain.
+        // It is fine to use the default L2Config since the corresponding
+        // one for each block is fetched from the rollup store during head state regeneration.
         blockchain_opts.r#type = BlockchainType::L2(L2Config::default());
 
         let checkpoint_blockchain =
