@@ -131,7 +131,7 @@ pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Resu
             return Ok(serde_json::to_value(true)?);
         }
 
-        if matches!(cast_result, Err(_)) || start.elapsed() >= runtime {
+        if cast_result.is_err() || start.elapsed() >= runtime {
             return Ok(serde_json::to_value(false)?);
         }
         std::thread::sleep(Duration::from_millis(100));
