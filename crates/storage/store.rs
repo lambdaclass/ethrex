@@ -40,7 +40,7 @@ use std::{
     path::Path,
     sync::{
         Arc, Mutex,
-        mpsc::{SyncSender, sync_channel},
+        mpsc::{SyncSender, TryRecvError, sync_channel},
     },
 };
 use tracing::{debug, error, info, instrument};
@@ -747,29 +747,6 @@ impl Store {
             .transpose()
     }
 
-    pub fn storage_trie_backend(&self, hashed_address: H256) -> Result<BackendTrieDB, StoreError> {
-        let tx = self.backend.begin_write()?;
-        BackendTrieDB::new(tx, Some(hashed_address))
-    }
-
-    pub fn storage_trie_locked_backend(
-        &self,
-        hashed_address: H256,
-    ) -> Result<BackendTrieDBLocked, StoreError> {
-        BackendTrieDBLocked::new(self.backend.as_ref(), Some(hashed_address))
-    }
-
-    pub fn state_trie_backend(&self) -> Result<BackendTrieDB, StoreError> {
-        let tx = self.backend.begin_write()?;
-        // No address prefix for state trie
-        BackendTrieDB::new(tx, None)
-    }
-
-    pub fn state_trie_locked_backend(&self) -> Result<BackendTrieDBLocked, StoreError> {
-        // No address prefix for state trie
-        BackendTrieDBLocked::new(self.backend.as_ref(), None)
-    }
-
     pub async fn forkchoice_update_inner(
         &self,
         new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
@@ -1355,7 +1332,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
         };
-        let store_clone = store.clone();
+        let backend_clone = store.backend.clone();
         std::thread::spawn(move || {
             let mut rx = fkv_rx;
             loop {
@@ -1369,7 +1346,7 @@ impl Store {
                 }
             }
             info!("Generation of FlatKeyValue started.");
-            match store_clone.flatkeyvalue_generator(&mut rx) {
+            match flatkeyvalue_generator(backend_clone.as_ref(), &mut rx) {
                 Ok(_) => info!("FlatKeyValue generation finished."),
                 Err(err) => error!("Error while generating FlatKeyValue: {err}"),
             }
@@ -1418,126 +1395,14 @@ impl Store {
                             )
                             .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
                     }
-                    Err(err) => error!("Error while reading diff layer: {err}"),
+                    Err(err) => {
+                        error!("Error while reading diff layer: {err}");
+                        return;
+                    }
                 }
             }
         });
         Ok(store)
-    }
-
-    fn flatkeyvalue_generator(
-        &self,
-        control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
-    ) -> Result<(), StoreError> {
-        let last_written = self
-            .read(MISC_VALUES, "last_written".as_bytes().to_vec())?
-            .unwrap_or_default();
-        if last_written == vec![0xff] {
-            return Ok(());
-        }
-        self.delete(FLATKEY_VALUES, last_written)?;
-
-        loop {
-            let root = self
-                .read(TRIE_NODES, vec![])?
-                .ok_or(StoreError::MissingLatestBlockNumber)?;
-            let root: Node = ethrex_trie::Node::decode(&root)?;
-            let state_root = root.compute_hash().finalize();
-
-            let last_written = self
-                .read(MISC_VALUES, "last_written".as_bytes().to_vec())?
-                .unwrap_or_default();
-            let last_written_account = last_written
-                .get(0..64)
-                .map(|v| Nibbles::from_hex(v.to_vec()))
-                .unwrap_or_default();
-            let mut last_written_storage = last_written
-                .get(66..130)
-                .map(|v| Nibbles::from_hex(v.to_vec()))
-                .unwrap_or_default();
-
-            debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
-
-            let mut ctr = 0;
-            let mut write_txn = self.backend.begin_write()?;
-            let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
-            if last_written_account > Nibbles::default() {
-                iter.advance(last_written_account.to_bytes())?;
-            }
-            let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
-                let Node::Leaf(node) = node else {
-                    return Ok(());
-                };
-                let account_state = AccountState::decode(&node.value)?;
-                let account_hash = H256::from_slice(&path.to_bytes());
-                write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-                write_txn.put(FLATKEY_VALUES, path.as_ref(), &node.value)?;
-                ctr += 1;
-                if ctr > 10_000 {
-                    write_txn.commit()?;
-                    write_txn = self.backend.begin_write()?;
-                }
-
-                let mut iter_inner = self
-                    .open_direct_storage_trie(account_hash, account_state.storage_root)?
-                    .into_iter();
-                if last_written_storage > Nibbles::default() {
-                    iter_inner.advance(last_written_storage.to_bytes())?;
-                    last_written_storage = Nibbles::default();
-                }
-                iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
-                    let Node::Leaf(node) = node else {
-                        return Ok(());
-                    };
-                    let key = apply_prefix(Some(account_hash), path);
-                    write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                    write_txn.put(FLATKEY_VALUES, key.as_ref(), &node.value)?;
-                    ctr += 1;
-                    if ctr > 10_000 {
-                        write_txn.commit()?;
-                        write_txn = self.backend.begin_write()?;
-                    }
-                    if let Ok(value) = control_rx.try_recv() {
-                        match value {
-                            FKVGeneratorControlMessage::Stop => {
-                                return Err(StoreError::PivotChanged);
-                            }
-                            _ => {
-                                return Err(StoreError::Custom("Unexpected message".to_string()));
-                            }
-                        }
-                    }
-                    Ok(())
-                })?;
-                if let Ok(value) = control_rx.try_recv() {
-                    match value {
-                        FKVGeneratorControlMessage::Stop => return Err(StoreError::PivotChanged),
-                        _ => {
-                            return Err(StoreError::Custom("Unexpected message".to_string()));
-                        }
-                    }
-                }
-                Ok(())
-            });
-            match res {
-                Err(StoreError::PivotChanged) => {
-                    if let Ok(value) = control_rx.recv() {
-                        match value {
-                            FKVGeneratorControlMessage::Continue => {}
-                            _ => {
-                                return Err(StoreError::Custom("Unexpected messafe".to_string()));
-                            }
-                        }
-                    }
-                }
-                Err(err) => return Err(err),
-                Ok(()) => {
-                    write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
-                    write_txn.commit()?;
-                    return Ok(());
-                }
-            };
-        }
     }
 
     fn apply_trie_updates(
@@ -2378,7 +2243,7 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(self.state_trie_backend()?),
+            db: Box::new(state_trie_backend(self.backend.as_ref())?),
             prefix: None,
         };
         Ok(Trie::open(Box::new(trie_db), state_root))
@@ -2388,7 +2253,10 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        Ok(Trie::open(Box::new(self.state_trie_backend()?), state_root))
+        Ok(Trie::open(
+            Box::new(state_trie_backend(self.backend.as_ref())?),
+            state_root,
+        ))
     }
 
     /// Obtain a state trie locked for reads from the given state root
@@ -2396,7 +2264,7 @@ impl Store {
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         Ok(Trie::open(
-            Box::new(self.state_trie_locked_backend()?),
+            Box::new(state_trie_locked_backend(self.backend.as_ref())?),
             state_root,
         ))
     }
@@ -2416,7 +2284,7 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(self.state_trie_backend()?),
+            db: Box::new(state_trie_backend(self.backend.as_ref())?),
             prefix: Some(account_hash),
         };
         Ok(Trie::open(Box::new(trie_db), storage_root))
@@ -2430,7 +2298,7 @@ impl Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         Ok(Trie::open(
-            Box::new(self.storage_trie_backend(account_hash)?),
+            Box::new(storage_trie_backend(self.backend.as_ref(), account_hash)?),
             storage_root,
         ))
     }
@@ -2443,7 +2311,10 @@ impl Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         Ok(Trie::open(
-            Box::new(self.storage_trie_locked_backend(account_hash)?),
+            Box::new(storage_trie_locked_backend(
+                self.backend.as_ref(),
+                account_hash,
+            )?),
             storage_root,
         ))
     }
@@ -2546,6 +2417,155 @@ impl Store {
         });
         Ok(header)
     }
+}
+
+// NOTE: we don't receive `Store` here to avoid cyclic dependencies
+// with the other end of `control_rx`
+fn flatkeyvalue_generator(
+    backend: &dyn StorageBackend,
+    control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+) -> Result<(), StoreError> {
+    let read_tx = backend.begin_read()?;
+    let last_written = read_tx
+        .get(MISC_VALUES, "last_written".as_bytes())?
+        .unwrap_or_default();
+    if last_written == vec![0xff] {
+        return Ok(());
+    }
+
+    loop {
+        let root = read_tx
+            .get(TRIE_NODES, &[])?
+            .ok_or(StoreError::MissingLatestBlockNumber)?;
+        let root: Node = ethrex_trie::Node::decode(&root)?;
+        let state_root = root.compute_hash().finalize();
+
+        let last_written = read_tx
+            .get(MISC_VALUES, "last_written".as_bytes())?
+            .unwrap_or_default();
+        let last_written_account = last_written
+            .get(0..64)
+            .map(|v| Nibbles::from_hex(v.to_vec()))
+            .unwrap_or_default();
+        let mut last_written_storage = last_written
+            .get(66..130)
+            .map(|v| Nibbles::from_hex(v.to_vec()))
+            .unwrap_or_default();
+
+        debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
+
+        let mut ctr = 0;
+        let mut write_txn = backend.begin_write()?;
+        let mut iter = Trie::open(Box::new(state_trie_backend(backend)?), state_root).into_iter();
+        if last_written_account > Nibbles::default() {
+            iter.advance(last_written_account.to_bytes())?;
+        }
+        let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
+            let Node::Leaf(node) = node else {
+                return Ok(());
+            };
+            let account_state = AccountState::decode(&node.value)?;
+            let account_hash = H256::from_slice(&path.to_bytes());
+            write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
+            write_txn.put(FLATKEY_VALUES, path.as_ref(), &node.value)?;
+            ctr += 1;
+            if ctr > 10_000 {
+                write_txn.commit()?;
+                write_txn = backend.begin_write()?;
+            }
+
+            let mut iter_inner = Trie::open(
+                Box::new(storage_trie_backend(backend, account_hash)?),
+                account_state.storage_root,
+            )
+            .into_iter();
+            if last_written_storage > Nibbles::default() {
+                iter_inner.advance(last_written_storage.to_bytes())?;
+                last_written_storage = Nibbles::default();
+            }
+            iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
+                let Node::Leaf(node) = node else {
+                    return Ok(());
+                };
+                let key = apply_prefix(Some(account_hash), path);
+                write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
+                write_txn.put(FLATKEY_VALUES, key.as_ref(), &node.value)?;
+                ctr += 1;
+                if ctr > 10_000 {
+                    write_txn.commit()?;
+                    write_txn = backend.begin_write()?;
+                }
+                fkv_check_for_stop_msg(control_rx)?;
+                Ok(())
+            })?;
+            fkv_check_for_stop_msg(control_rx)?;
+            Ok(())
+        });
+        match res {
+            Err(StoreError::PivotChanged) => {
+                if let Ok(value) = control_rx.recv() {
+                    match value {
+                        FKVGeneratorControlMessage::Continue => {}
+                        _ => {
+                            return Err(StoreError::Custom("Unexpected message".to_string()));
+                        }
+                    }
+                }
+            }
+            Err(err) => return Err(err),
+            Ok(()) => {
+                write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
+                write_txn.commit()?;
+                return Ok(());
+            }
+        };
+    }
+}
+
+fn fkv_check_for_stop_msg(
+    control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+) -> Result<(), StoreError> {
+    match control_rx.try_recv() {
+        Ok(FKVGeneratorControlMessage::Stop) => {
+            return Err(StoreError::PivotChanged);
+        }
+        Ok(_) => {
+            return Err(StoreError::Custom("Unexpected message".to_string()));
+        }
+        Err(TryRecvError::Disconnected) => {
+            return Err(StoreError::Custom("Store was closed.".to_string()));
+        }
+        Err(TryRecvError::Empty) => {}
+    }
+    Ok(())
+}
+
+fn storage_trie_backend(
+    backend: &dyn StorageBackend,
+    hashed_address: H256,
+) -> Result<BackendTrieDB, StoreError> {
+    let tx = backend.begin_write()?;
+    BackendTrieDB::new(tx, Some(hashed_address))
+}
+
+fn storage_trie_locked_backend(
+    backend: &dyn StorageBackend,
+    hashed_address: H256,
+) -> Result<BackendTrieDBLocked, StoreError> {
+    BackendTrieDBLocked::new(backend, Some(hashed_address))
+}
+
+fn state_trie_backend(backend: &dyn StorageBackend) -> Result<BackendTrieDB, StoreError> {
+    let tx = backend.begin_write()?;
+    // No address prefix for state trie
+    BackendTrieDB::new(tx, None)
+}
+
+fn state_trie_locked_backend(
+    backend: &dyn StorageBackend,
+) -> Result<BackendTrieDBLocked, StoreError> {
+    // No address prefix for state trie
+    BackendTrieDBLocked::new(backend, None)
 }
 
 pub struct AccountProof {
