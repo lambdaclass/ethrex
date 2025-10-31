@@ -568,7 +568,7 @@ impl Store {
             .last_computed_flatkeyvalue
             .lock()
             .map_err(|_| StoreError::LockError)? = last_written.clone();
-        if last_written == vec![0xff; 64] {
+        if last_written.first() == Some(&0xff) {
             return Ok(());
         }
 
