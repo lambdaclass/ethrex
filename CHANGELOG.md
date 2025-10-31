@@ -2,9 +2,14 @@
 
 ## Perf
 
+### 2025-10-30
+
+- Make trusted setup warmup non blocking [#5124](https://github.com/lambdaclass/ethrex/pull/5124)
+
 ### 2025-10-28
 
 - Batch BlobsBundle::validate [#4993](https://github.com/lambdaclass/ethrex/pull/4993)
+- Remove latest_block_header lock [#5050](https://github.com/lambdaclass/ethrex/pull/5050)
 
 ### 2025-10-27
 
