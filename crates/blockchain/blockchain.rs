@@ -258,7 +258,7 @@ impl Blockchain {
             let parent_hash = block.header.parent_hash;
             let parent_header = self
                 .storage
-                .get_block_header_by_hash(first_block_header.parent_hash)
+                .get_block_header_by_hash(parent_hash)
                 .map_err(ChainError::StoreError)?
                 .ok_or(ChainError::ParentNotFound)?;
 
