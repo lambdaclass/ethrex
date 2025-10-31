@@ -548,7 +548,7 @@ impl Syncer {
             let mut last_valid_hash = H256::default();
             for block in blocks {
                 let block_hash = block.hash();
-                blockchain.add_block(block).map_err(|e| {
+                blockchain.add_block_pipeline(block).map_err(|e| {
                     (
                         e,
                         Some(BatchBlockProcessingFailure {

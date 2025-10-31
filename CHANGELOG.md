@@ -5,6 +5,7 @@
 ### 2025-10-30
 
 - Add bloom filters to snapshot layers [#5112](https://github.com/lambdaclass/ethrex/pull/5112)
+- Pipeline Merkleization and Execution [#5084](https://github.com/lambdaclass/ethrex/pull/5084)
 
 ### 2025-10-28
 
