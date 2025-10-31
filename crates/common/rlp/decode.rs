@@ -507,7 +507,7 @@ pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
 /// Receives an RLP item (either string (prefix between 0x80 and 0xB8 or bytes (prefix between 0xb8 and 0xbf)) and returns its payload
 pub fn get_rlp_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
     let prefix = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
-    if (RLP_NULL..=RLP_NULL+55).contains(prefix) {
+    if (RLP_NULL..=RLP_NULL + 55).contains(prefix) {
         rlp.get(1..).ok_or(RLPDecodeError::InvalidLength)
     } else if (0xb8..=0xbf).contains(prefix) {
         let offset: usize = (prefix - 0xb8 + 1).into();
