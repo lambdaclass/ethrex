@@ -3121,4 +3121,13 @@ mod tests {
         assert_eq!(generic_tx.access_list[0].address, access_list[0].0);
         assert_eq!(generic_tx.access_list[0].storage_keys, access_list[0].1);
     }
+
+    #[test]
+    fn encode_decode_low_size_tx() {
+        let tx = Transaction::EIP2930Transaction(EIP2930Transaction::default());
+        let encoded = tx.encode_to_vec();
+        let decoded_tx = Transaction::decode(&encoded).unwrap();
+        assert_eq!(tx, decoded_tx);
+
+    }
 }
