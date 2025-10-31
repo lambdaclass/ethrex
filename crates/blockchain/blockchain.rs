@@ -38,6 +38,7 @@ use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{
     Arc, Mutex, RwLock,
@@ -284,6 +285,7 @@ impl Blockchain {
         let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
+        let mut account_states: FxHashMap<H256, AccountState> = Default::default();
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
@@ -295,6 +297,7 @@ impl Blockchain {
                 parent_header,
                 &mut state_updates_map,
                 &mut code_updates,
+                &mut account_states,
             )?;
         }
         let state_updates = state_updates_map.into_iter().collect();
@@ -320,11 +323,13 @@ impl Blockchain {
         parent_header: &BlockHeader,
         state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
         code_updates: &mut FxHashMap<H256, Code>,
+        account_states: &mut FxHashMap<H256, AccountState>,
     ) -> Result<H256, StoreError> {
         trace!("Execute block pipeline: Received {} updates", updates.len());
         // Apply the account updates over the last block's state and compute the new state root
         for update in updates {
             let hashed_address = hash_address(&update.address);
+            let hashed_address_h256 = H256::from_slice(&hashed_address);
             trace!(
                 "Execute block pipeline: Update cycle for {}",
                 hex::encode(&hashed_address)
@@ -332,27 +337,39 @@ impl Blockchain {
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(&hashed_address)?;
+                account_states.remove(&hashed_address_h256);
                 continue;
             }
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
-                Some(encoded_state) => {
+            let account_state = match account_states.entry(hashed_address_h256) {
+                Entry::Occupied(occupied_entry) => {
                     trace!(
-                        "Found account state in trie for {}",
+                        "Found account state in cache for {}",
                         hex::encode(&hashed_address)
                     );
-                    AccountState::decode(&encoded_state)?
+                    occupied_entry.into_mut()
                 }
-                None => {
-                    trace!(
-                        "Created account state in trie for {}",
-                        hex::encode(&hashed_address)
-                    );
-                    AccountState::default()
+                Entry::Vacant(vacant_entry) => {
+                    let account_state = match state_trie.get(&hashed_address)? {
+                        Some(encoded_state) => {
+                            trace!(
+                                "Found account state in trie for {}",
+                                hex::encode(&hashed_address)
+                            );
+                            AccountState::decode(&encoded_state)?
+                        }
+                        None => {
+                            trace!(
+                                "Created account state in trie for {}",
+                                hex::encode(&hashed_address)
+                            );
+                            AccountState::default()
+                        }
+                    };
+                    vacant_entry.insert(account_state)
                 }
             };
-            let hashed_address_h256 = H256::from_slice(&hashed_address);
             if update.removed_storage {
                 account_state.storage_root = *EMPTY_TRIE_HASH;
                 storage_updates_map.remove(&hashed_address_h256);
