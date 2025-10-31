@@ -123,6 +123,6 @@ Compares used versus total RAM to highlight when machines approach memory limits
 
 ## Block building (WIP)
 
-This collapsed row offers a combined view of the block building base fee, gigagas per second during payload construction, and the time the builder spends assembling blocks. This panels are works in progress, collapsed by default, and may be refined over time.
+This collapsed row offers a combined view of the block building base fee, gigagas per second during payload construction, and the time the builder spends assembling blocks. These panels are works in progress, collapsed by default, and may be refined over time.
 
 ![Block building wip](img/block_building_wip.png)
