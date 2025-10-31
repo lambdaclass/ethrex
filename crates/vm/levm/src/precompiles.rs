@@ -708,14 +708,14 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     let calldata = fill_with_zeros(calldata, 96);
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let (Some(scalar), Some(point)) = (
+    let (Some(scalar), Some(g1)) = (
         parse_bn254_scalar(&calldata, 0),
         parse_bn254_g1(&calldata, 0),
     ) else {
         return Err(InternalError::Slicing.into());
     };
-    validate_bn254_g1_coords(&point)?;
-    bn254_g1_mul(point, scalar)
+    validate_bn254_g1_coords(&g1)?;
+    bn254_g1_mul(g1, scalar)
 }
 
 #[cfg(not(feature = "sp1"))]
