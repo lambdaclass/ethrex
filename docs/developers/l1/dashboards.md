@@ -2,6 +2,8 @@
 
 Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is `prometheus`, and the `job` variable defaults to `ethrex L1`, which is the job configured by default in our provisioning.
 
+![Overview](img/overview.png)
+
 ## How to use it
 Use the `network` variable (discovered via the consensus config metric) to scope the view, then pick one or more `instance` entries. Every panel honors these selectors. Tip: several panels rely on Grafana transforms such as Organize fields, Join by field, Filter by value, and Group by—keep those in mind if you customize the layout.
 
@@ -72,52 +74,51 @@ This row repeats a pie chart for each instance showing how execution time splits
 Row panels showing process-level and host-level metrics to help you monitor resource usage and spot potential issues.
 
 ### Uptime
-Displays time since the Ethrex process started to highlight restarts or crash loops.
+Displays time since the Ethrex process started. _[need proper instance labels]_ 
+
 ![Uptime](img/uptime.png)
-![alt text](image.png)
 
 ### Threads
-Shows the number of OS threads in use, which helps catch runaway concurrency early.
-![Threads](<add-image-path>)
+Shows the number of tokio process threads in use. _[need proper instance labels]_
+
+![Threads](img/threads.png)
 
 ### Open FDs
-Reports current file descriptor usage so you can compare against limits.
-![Open FDs](<add-image-path>)
+Reports current file descriptor usage so you can compare against limits. _[need proper instance labels]_
+
+![Open FDs](img/open_fds.png)
 
 ### Open FDs Historic
 Time-series view of descriptor usage to spot gradual leaks or sudden bursts tied to workload changes.
-![Open FDs Historic](<add-image-path>)
+
+![Open FDs Historic](img/open_fds_historic.png)
 
 ### Datadir Size
-Tracks database footprint growth, helping you plan disk needs and confirm pruning behavior.
-![Datadir Size](<add-image-path>)
+Tracks database footprint growth, helping planning disk needs and confirm pruning/compaction behavior.
+![Datadir Size](img/datadir_size.png)
 
 ### Node CPU (avg. cores used)
 Shows effective CPU cores consumed by each instance, separating sustained computation from short-lived bursts.
-![Node CPU](<add-image-path>)
+
+![Node CPU](img/node_cpu.png)
 
 ### Node Memory (RSS)
 Follows the resident memory footprint of the Ethrex process so you can investigate leaks or pressure.
-![Node Memory](<add-image-path>)
+
+![Node Memory](img/node_memory.png)
 
 ### Host CPU Utilization (%)
 Uses node exporter metrics to track whole-host CPU load and distinguish client strain from other processes on the server.
-![Host CPU Utilization](<add-image-path>)
+
+![Host CPU Utilization](img/host_cpu_utilization.png)
 
 ### Host RAM (GiB) - Used vs Total
 Compares used versus total RAM to highlight when machines approach memory limits and need attention.
-![Host RAM](<add-image-path>)
+
+![Host RAM](img/host_ram.png)
 
 ## Block building (WIP)
 
-### Block building base_fee
-Shows the base fee the local payload builder is applying so you can relate builder policy to observed tips.
-![Block building base_fee](<add-image-path>)
+This collapsed row offers a combined view of the block building base fee, gigagas per second during payload construction, and the time the builder spends assembling blocks. This panels are works in progress, collapsed by default, and may be refined over time.
 
-### Blockbuilding Ggas/s
-Measures gigagas per second during block construction to highlight builder throughput differences.
-![Blockbuilding Ggas/s](<add-image-path>)
-
-### Block building time taken in ms
-Reports how long it takes to assemble each block, making it easier to spot proposer delays or slow payload pipelines.
-![Block building time](<add-image-path>)
+![Block building wip](img/block_building_wip.png)
