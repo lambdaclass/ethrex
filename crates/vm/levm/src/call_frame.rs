@@ -10,7 +10,7 @@ use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fmt,
 };
 
@@ -286,7 +286,7 @@ impl CallFrameBackup {
             .entry(address)
             .or_insert_with(|| LevmAccount {
                 info: account.info.clone(),
-                storage: BTreeMap::new(),
+                storage: Default::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,
             });
