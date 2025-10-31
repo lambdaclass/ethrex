@@ -18,6 +18,8 @@ use ethrex_common::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
+#[cfg(feature = "l2")]
+use ethrex_trie::Node;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 
@@ -262,7 +264,7 @@ struct StatelessResult {
     // We return them to avoid recomputing when comparing the initial state
     // with the final state after block execution.
     #[cfg(feature = "l2")]
-    pub nodes_hashed: BTreeMap<H256, Vec<u8>>,
+    pub nodes_hashed: BTreeMap<H256, Node>,
     #[cfg(feature = "l2")]
     pub codes_hashed: BTreeMap<H256, Vec<u8>>,
     #[cfg(feature = "l2")]
