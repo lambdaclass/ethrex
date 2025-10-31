@@ -43,8 +43,6 @@ const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
 const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
 // isFeeToken(address token) external view override returns (bool)
 const IS_FEE_TOKEN_SELECTOR: [u8; 4] = [0x16, 0xad, 0x82, 0xd7];
-// getFeeTokenRatio(address feeToken) external view override returns (uint256)
-const GET_FEE_TOKEN_RATIO_SELECTOR: [u8; 4] = [0xc6, 0xab, 0x85, 0xd8];
 const SIMULATION_GAS_LIMIT: u64 = 21000 * 100;
 const SIMULATION_MAX_FEE: u64 = 100;
 
@@ -556,14 +554,6 @@ fn encode_is_fee_token_call(token: Address) -> Bytes {
     data.extend_from_slice(&token.0);
     data.into()
 }
-
-// fn encode_get_fee_token_ratio_call(token: Address) -> Bytes {
-//     let mut data = Vec::with_capacity(4 + 32);
-//     data.extend_from_slice(&GET_FEE_TOKEN_RATIO_SELECTOR);
-//     data.extend_from_slice(&[0u8; 12]);
-//     data.extend_from_slice(&token.0);
-//     data.into()
-// }
 
 /// Locks the fee token amount from the payer's balance.
 fn lock_fee_token(vm: &mut VM<'_>, payer: Address, amount: U256) -> Result<(), VMError> {
