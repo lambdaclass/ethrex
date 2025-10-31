@@ -122,6 +122,8 @@ pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Resu
     let start = Instant::now();
     let runtime = Duration::from_secs(10);
 
+    // This loop is necessary because connections are asynchronous, so to check if the connection with the peer was actually
+    // established we need to wait.
     loop {
         let cast_result = server
             .cast(InMessage::Initiate { node: node.clone() })
