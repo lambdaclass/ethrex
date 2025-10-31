@@ -708,9 +708,9 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     let calldata = fill_with_zeros(calldata, 96);
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let (Some(scalar), Some(g1)) = (
-        parse_bn254_scalar(&calldata, 0),
+    let (Some(g1), Some(scalar)) = (
         parse_bn254_g1(&calldata, 0),
+        parse_bn254_scalar(&calldata, 64),
     ) else {
         return Err(InternalError::Slicing.into());
     };
