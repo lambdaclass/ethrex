@@ -8,6 +8,7 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::H160;
 use ethrex_common::types::TxType;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::{
@@ -22,7 +23,6 @@ use ethrex_levm::EVMConfig;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
-use ethrex_levm::hooks::l2_hook::FEE_TOKEN_RATIO_ADDRESS;
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -31,7 +31,12 @@ use ethrex_levm::{
     vm::VM,
 };
 use std::cmp::min;
+// getFeeTokenRatio(address feeToken) external view override returns (uint256)
 const GET_FEE_TOKEN_RATIO_SELECTOR: [u8; 4] = [0xc6, 0xab, 0x85, 0xd8];
+pub const FEE_TOKEN_RATIO_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfb,
+]);
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
