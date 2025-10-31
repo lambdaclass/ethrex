@@ -98,7 +98,7 @@ Time-series view of descriptor usage to spot gradual leaks or sudden bursts tied
 ![Open FDs Historic](img/open_fds_historic.png)
 
 ### Datadir Size
-Tracks database footprint growth, helping planning disk needs and confirm pruning/compaction behavior.
+Tracks database footprint growth, helping you plan disk needs and confirming pruning/compaction behavior.
 ![Datadir Size](img/datadir_size.png)
 
 ### Node CPU (avg. cores used)
