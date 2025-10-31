@@ -11,27 +11,45 @@ participants:
     cl_image: consensys/teku:25.6.0
     validator_count: 32
     ethereum_metrics_exporter_enabled: true
-  # Not working on Mac
-  # - el_type: ethrex
-  #   el_image: ethrex:local
-  #   cl_type: prysm
-  # cl_image: gcr.io/offchainlabs/prysm/beacon-chain:v6.0.4
-  # validator_count: 32
-  # ethereum_metrics_exporter_enabled: true
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: prysm
+    cl_image: gcr.io/offchainlabs/prysm/beacon-chain:v6.1.4
+    validator_count: 32
+    ethereum_metrics_exporter_enabled: true
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: lodestar
+    cl_image: chainsafe/lodestar:v1.35.0
+    validator_count: 32
+    ethereum_metrics_exporter_enabled: true
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: grandine
+    cl_image: sifrai/grandine:1.1.5
+    validator_count: 32
+    ethereum_metrics_exporter_enabled: true
 
 network_params:
   seconds_per_slot: 3
 
 additional_services:
-  - spamoor
+  # - spamoor
   - dora
   - prometheus_grafana
+  - assertoor
 
-spamoor_params:
-  spammers:
-    - scenario: erctx
-      config:
-        throughput: 750
+# spamoor_params:
+#   spammers:
+#     - scenario: erctx
+#       config:
+#         throughput: 750
 
 grafana_params:
   additional_dashboards: ["./ethrex_l1_perf.json"]
+
+assertoor_params:
+  run_stability_check: false
+  run_block_proposal_check: true
+  tests:
+    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
