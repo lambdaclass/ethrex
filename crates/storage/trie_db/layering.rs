@@ -137,12 +137,6 @@ impl TrieLayerCache {
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
     pub fn rebuild_bloom(&mut self) {
-        let Some(filter) = &mut self.bloom else {
-            // do not rebuild if already poisoned
-            return;
-        };
-
-        filter.clear();
 
         let mut blooms: Vec<_> = self
             .layers
