@@ -32,5 +32,3 @@ In particular, you might want to run
 ```
 
 to know how advanced the progress is.
-
-A value of 0xff marks it's complete.

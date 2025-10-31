@@ -568,12 +568,12 @@ impl Store {
             .last_computed_flatkeyvalue
             .lock()
             .map_err(|_| StoreError::LockError)? = last_written.clone();
-        if last_written == vec![0xff] {
+        if last_written == vec![0xff; 64] {
             return Ok(());
         }
 
         self.db
-            .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff])?;
+            .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff; 64])?;
 
         loop {
             let root = self
@@ -677,7 +677,7 @@ impl Store {
                 }
                 Err(err) => return Err(err),
                 Ok(()) => {
-                    batch.put_cf(&cf_misc, "last_written", [0xff]);
+                    batch.put_cf(&cf_misc, "last_written", [0xff; 64]);
                     self.db.write(batch)?;
                     return Ok(());
                 }
