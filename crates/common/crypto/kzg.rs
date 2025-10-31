@@ -28,9 +28,7 @@ type Proof = Bytes48;
 pub fn warm_up_trusted_setup() {
     #[cfg(feature = "c-kzg")]
     {
-        use std::thread;
-
-        let _ = thread::Builder::new().name("kzg-warmup".into()).spawn(|| {
+        let _ = std::thread::Builder::new().name("kzg-warmup".into()).spawn(|| {
             std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
         });
     }
