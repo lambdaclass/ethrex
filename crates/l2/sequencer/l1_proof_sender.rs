@@ -15,6 +15,7 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::EstimateGasError},
 };
 use ethrex_storage_rollup::StoreRollup;
+use guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
@@ -153,10 +154,17 @@ impl L1ProofSender {
     async fn verify_and_send_proof(&self) -> Result<(), ProofSenderError> {
         let last_verified_batch =
             get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+        let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
         let batch_to_send = if self.aligned_mode {
-            let last_sent_batch = self.rollup_store.get_latest_sent_batch_proof().await?;
-            std::cmp::max(last_sent_batch, last_verified_batch) + 1
+            std::cmp::max(latest_sent_batch_db, last_verified_batch) + 1
         } else {
+            if latest_sent_batch_db < last_verified_batch {
+                // hotfix: in case the latest sent batch in DB is less than the last verified on-chain,
+                // we update the db to avoid stalling the proof_coordinator.
+                self.rollup_store
+                    .set_latest_sent_batch_proof(last_verified_batch)
+                    .await?;
+            }
             last_verified_batch + 1
         };
 
@@ -246,10 +254,33 @@ impl L1ProofSender {
                 return Err(ProofSenderError::AlignedWrongProofFormat);
             };
 
-            let Some(vm_program_code) = prover_type.aligned_vm_program_code()? else {
-                return Err(ProofSenderError::UnexpectedError(format!(
-                    "no vm_program_code for {prover_type}"
-                )));
+            let vm_program_code = match prover_type {
+                ProverType::RISC0 => {
+                    if !cfg!(feature = "risc0") {
+                        return Err(ProofSenderError::UnexpectedError(
+                            "Trying to send RISC0 proof but RISC0 feature is disabled".to_string(),
+                        ));
+                    }
+
+                    let trimmed = ZKVM_RISC0_PROGRAM_VK.trim_start_matches("0x").trim();
+                    hex::decode(trimmed).map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
+                    })?
+                }
+                ProverType::SP1 => {
+                    if !cfg!(feature = "sp1") {
+                        return Err(ProofSenderError::UnexpectedError(
+                            "Trying to send SP1 proof but SP1 feature is disabled".to_string(),
+                        ));
+                    }
+
+                    ZKVM_SP1_PROGRAM_ELF.to_vec()
+                }
+                _other => {
+                    return Err(ProofSenderError::UnexpectedError(format!(
+                        "no vm_program_code for {prover_type}"
+                    )));
+                }
             };
 
             let pub_input = Some(batch_proof.public_values());
