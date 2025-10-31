@@ -30,7 +30,7 @@ struct StoreInner {
     state_roots: HashMap<u64, H256>,
     /// Map of batch number to blob
     blobs: HashMap<u64, Vec<Blob>>,
-    /// Lastest sent batch proof
+    /// latest sent batch proof
     latest_sent_batch_proof: u64,
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
