@@ -348,7 +348,7 @@ impl Store {
             trie_cache: Default::default(),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
-            last_computed_flatkeyvalue: Default::default(),
+            last_computed_flatkeyvalue: Arc::new(Mutex::new(vec![0u8; 64])),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
