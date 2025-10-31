@@ -29,7 +29,7 @@ use tokio::{
     sync::mpsc::{Sender, error::TrySendError},
     task::yield_now,
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 
@@ -429,7 +429,19 @@ async fn zip_requeue_node_responses_score_peer(
     }
 
     if request.requests.len() < nodes_size {
-        panic!("The node responded with more data than us!");
+        *failed_downloads += 1;
+        peer_handler
+            .record_failure(
+                request.peer_id,
+                &format!(
+                    "Peer {} sent more nodes than requested ({} > {}); ignoring extras",
+                    request.peer_id,
+                    nodes_size,
+                    request.requests.len()
+                ),
+            )
+            .await;
+        // Defensive handling: continue processing; extra nodes will be dropped by the zip below.
     }
 
     if let Ok(nodes) = request

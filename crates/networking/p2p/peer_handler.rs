@@ -146,6 +146,16 @@ impl PeerHandler {
         Self { peer_table }
     }
 
+    /// Records a peer failure with a warning message.
+    /// This centralizes peer penalty logic for consistency across call sites.
+    pub async fn record_failure(&self, peer_id: H256, msg: &str) {
+        warn!("{}", msg);
+        self.peer_scores
+            .lock()
+            .await
+            .record_failure(peer_id);
+    }
+    
     /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
     /// This should only be used in tests as it won't be able to interact with the node's connected peers
     pub fn dummy() -> PeerHandler {
