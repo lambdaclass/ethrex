@@ -32,7 +32,7 @@ pub fn blake2b_f(rounds: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f
 mod tests {
     use super::*;
     #[test]
-    fn test_12r() {
+    fn blake2b_smoke() {
         let mut h = [1, 2, 3, 4, 5, 6, 7, 8];
         blake2b_f(
             12,
