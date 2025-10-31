@@ -718,7 +718,8 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     bn254_g1_mul(g1, scalar)
 }
 
-#[cfg(not(feature = "sp1"))]
+#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+#[inline]
 pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
     let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_big_endian());
     let y = ark_bn254::Fq::from_be_bytes_mod_order(&point.1.to_big_endian());
@@ -748,7 +749,7 @@ pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
     Ok(Bytes::from(out))
 }
 
-#[cfg(feature = "sp1")]
+#[cfg(any(feature = "sp1", feature = "risc0"))]
 #[inline]
 pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     use substrate_bn::{AffineG1, Fq, Fr, Group};
