@@ -5,7 +5,7 @@ Our Grafana dashboard provides a comprehensive overview of key metrics to help d
 ![Overview](img/overview.png)
 
 ## How to use it
-Use the `network` variable (discovered via the consensus config metric) to scope the view, then pick one or more `instance` entries. Every panel honors these selectors. Tip: several panels rely on Grafana transforms such as Organize fields, Join by field, Filter by value, and Group by—keep those in mind if you customize the layout.
+Use the `network` variable (discovered via the consensus config metric) to scope the view by network, then pick one or more `instance` entries. Every panel honors these selectors. Tip: several panels rely on Grafana transforms such as Organize fields, Join by field, Filter by value, and Group by—keep those in mind if you customize the layout.
 
 ![dashboard variables](img/variables.png)
 
@@ -29,6 +29,8 @@ Highlights the active fork reported by `ethereum-metrics-exporter`, which is a u
 ## Block processing
 
 Row panels showing key block processing metrics across all selected instances.
+
+![Block Processing row](img/block_processing_row.png)
 
 ### Gas Used %
 Tracks how much of the block gas limit is consumed across instances, surfacing heavy traffic or underfilled blocks at a glance.
@@ -72,6 +74,8 @@ This row repeats a pie chart for each instance showing how execution time splits
 ## Process and server info
 
 Row panels showing process-level and host-level metrics to help you monitor resource usage and spot potential issues.
+
+![Process & Server info row](img/process_and_server_info_row.png)
 
 ### Uptime
 Displays time since the Ethrex process started. _[need proper instance labels]_ 
