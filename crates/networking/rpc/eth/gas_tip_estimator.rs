@@ -1,6 +1,6 @@
 use ethrex_common::{H256, types::MIN_GAS_TIP};
 use ethrex_storage::Store;
-use tracing::error;
+use tracing::debug;
 
 use crate::utils::RpcErr;
 
@@ -63,10 +63,9 @@ impl GasTipEstimator {
         // These are the blocks we'll use to estimate the price.
         let block_range = block_range_lower_bound..=latest_block_number;
         if block_range.is_empty() {
-            error!(
-                "Calculated block range from block {} \
-                up to block {} for gas price estimation is empty",
-                block_range_lower_bound, latest_block_number
+            debug!(
+                block_range_lower_bound,
+                latest_block_number, "Calculated block range for gas price estimation is empty",
             );
             return Err(RpcErr::Internal("Error calculating gas price".to_string()));
         }
@@ -77,8 +76,11 @@ impl GasTipEstimator {
         // that returns a block range to not query them one-by-one.
         for block_num in block_range {
             let Some(block_body) = storage.get_block_body(block_num).await? else {
-                error!(
-                    "Block body for block number {block_num} is missing but is below the latest known block!"
+                // TODO: check what to do when we have little info, for example when we just finished snap syncing
+                // There it's expected we miss the number
+                debug!(
+                    block_num,
+                    "Block body is missing but is below the latest known block!"
                 );
                 return Err(RpcErr::Internal(
                     "Error calculating gas price: missing data".to_string(),
