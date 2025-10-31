@@ -380,4 +380,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 
     async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError>;
 }

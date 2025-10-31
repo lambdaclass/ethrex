@@ -40,18 +40,29 @@ impl StoreVmDatabase {
     }
 }
 
+impl StoreVmDatabase {
+    fn get_state_root(&self) -> Result<H256, EvmError> {
+        Ok(self
+            .store
+            .get_block_header_by_hash(self.block_hash)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+            .ok_or_else(|| EvmError::DB("parent header missing".to_string()))?
+            .state_root)
+    }
+}
+
 impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.store
-            .get_account_state_by_hash(self.block_hash, address)
+            .get_account_state_by_root(self.get_state_root()?, address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
-            .get_storage_at_hash(self.block_hash, address, key)
+            .get_storage_at_root(self.get_state_root()?, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
