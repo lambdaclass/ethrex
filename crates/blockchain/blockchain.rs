@@ -315,6 +315,8 @@ impl Blockchain {
         })
     }
 
+    /// Processes a batch of account updates, applying them to the state trie and storage tries,
+    /// and returns the new state root.
     #[allow(clippy::too_many_arguments)]
     fn process_incoming_update_message(
         storage: &Store,
