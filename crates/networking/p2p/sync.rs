@@ -149,6 +149,7 @@ impl Syncer {
             Ok(()) => {
                 info!(
                     time_elapsed_s = start_time.elapsed().as_secs(),
+                    %sync_head,
                     "Sync cycle finished successfully",
                 );
             }
@@ -160,6 +161,7 @@ impl Syncer {
                         // We exit the node, as we can't recover this error
                         error!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
+                            %sync_head,
                             %error, "Sync cycle failed, exiting as the error is irrecoverable",
                         );
                         std::process::exit(2);
@@ -168,6 +170,7 @@ impl Syncer {
                         // We do nothing, as the error is recoverable
                         error!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
+                            %sync_head,
                             %error, "Sync cycle failed, retrying",
                         );
                     }
