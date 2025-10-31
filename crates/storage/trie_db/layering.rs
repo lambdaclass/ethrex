@@ -11,19 +11,45 @@ struct TrieLayer {
     id: usize,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
     layers: FxHashMap<H256, Arc<TrieLayer>>,
+    /// Global bloom that accrues all layer blooms.
+    ///
+    /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
+    /// layer, thus going directly to the database.
+    bloom: fastbloom::BloomFilter,
+}
+
+impl Default for TrieLayerCache {
+    fn default() -> Self {
+        Self {
+            // todo: tune this
+            bloom: fastbloom::BloomFilter::with_num_bits(8192).expected_items(128 * 512),
+            last_id: 0,
+            layers: Default::default(),
+        }
+    }
 }
 
 impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+        let key = key.as_ref();
+
+        // Fast check to know if any layer may contains the given key.
+        // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
+        if !self.bloom.contains(key) {
+            // TrieWrapper goes to db when returning None.
+            return None;
+        }
+
         let mut current_state_root = state_root;
+
         while let Some(layer) = self.layers.get(&current_state_root) {
-            if let Some(value) = layer.nodes.get(key.as_ref()) {
+            if let Some(value) = layer.nodes.get(key) {
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
@@ -70,9 +96,13 @@ impl TrieLayerCache {
             return;
         }
 
+        // add this new bloom to the global one.
+        self.bloom
+            .insert_all(key_values.iter().map(|x| x.0.as_ref()));
+
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
-            .map(|(path, node)| (path.into_vec(), node))
+            .map(|(path, value)| (path.into_vec(), value))
             .collect();
 
         self.last_id += 1;
@@ -84,6 +114,15 @@ impl TrieLayerCache {
         self.layers.insert(state_root, Arc::new(entry));
     }
 
+    /// Rebuilds the global bloom filter accruing all current existing layers.
+    pub fn rebuild_bloom(&mut self) {
+        self.bloom.clear();
+
+        for entry in self.layers.values() {
+            self.bloom.insert_all(entry.nodes.iter().map(|x| x.0));
+        }
+    }
+
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
             Ok(layer) => layer,
@@ -93,6 +132,7 @@ impl TrieLayerCache {
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
         self.layers.retain(|_, item| item.id > layer.id);
+        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
         Some(
             parent_nodes
                 .unwrap_or_default()
