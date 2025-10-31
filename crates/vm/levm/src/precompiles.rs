@@ -708,7 +708,9 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     let calldata = fill_with_zeros(calldata, 96);
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let point = parse_bn254_g1(&calldata);
+    let Some(point) = parse_bn254_g1(&calldata) else {
+        return Err(InternalError::Slicing.into());
+    };
     validate_bn254_g1_coords(&point)?;
     let scalar = parse_bn254_scalar(&calldata);
 
@@ -805,26 +807,26 @@ fn parse_bn254_scalar(buf: &[u8]) -> U256 {
 
 /// Parses first 64 bytes as a BN254 G1 point
 #[inline]
-fn parse_bn254_g1(buf: &[u8]) -> G1 {
+fn parse_bn254_g1(buf: &[u8]) -> Option<G1> {
     let (g1_x, g1_y) = (
-        u256_from_big_endian(&buf[..32]),
-        u256_from_big_endian(&buf[32..64]),
+        u256_from_big_endian(buf.get(..32)?),
+        u256_from_big_endian(buf.get(32..64)?),
     );
 
-    G1(g1_x, g1_y)
+    Some(G1(g1_x, g1_y))
 }
 
 /// Parses 128 bytes as a BN254 G2 point, skipping the first 64 bytes
 #[inline]
-fn parse_bn254_g2(buf: &[u8]) -> G2 {
+fn parse_bn254_g2(buf: &[u8]) -> Option<G2> {
     let (g2_xy, g2_xx, g2_yy, g2_yx) = (
-        u256_from_big_endian(&buf[64..96]),
-        u256_from_big_endian(&buf[96..128]),
-        u256_from_big_endian(&buf[128..160]),
-        u256_from_big_endian(&buf[160..]),
+        u256_from_big_endian(buf.get(64..96)?),
+        u256_from_big_endian(buf.get(96..128)?),
+        u256_from_big_endian(buf.get(128..160)?),
+        u256_from_big_endian(buf.get(160..)?),
     );
 
-    G2(g2_xx, g2_xy, g2_yx, g2_yy)
+    Some(G2(g2_xx, g2_xy, g2_yx, g2_yy))
 }
 
 #[inline]
@@ -862,9 +864,9 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     let mut batch = Vec::new();
     for input in calldata.chunks_exact(192) {
-        #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
-        let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
-        let (g1, g2) = (parse_bn254_g1(&input), parse_bn254_g2(&input));
+        let (Some(g1), Some(g2)) = (parse_bn254_g1(&input), parse_bn254_g2(&input)) else {
+            return Err(InternalError::Slicing.into());
+        };
         validate_bn254_g1_coords(&g1)?;
         validate_bn254_g2_coords(&g2)?;
         batch.push((g1, g2));
