@@ -538,7 +538,7 @@ impl Blockchain {
             let potential_rlp_block_size =
                 context.payload_size + head_tx.encode_canonical_to_vec().len() as u64;
             if context
-                .chain_config()?
+                .chain_config()
                 .is_osaka_activated(context.payload.header.timestamp)
                 && potential_rlp_block_size > MAX_RLP_BLOCK_SIZE
             {
