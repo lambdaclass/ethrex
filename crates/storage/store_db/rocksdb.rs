@@ -572,7 +572,7 @@ impl Store {
             *self
                 .last_computed_flatkeyvalue
                 .lock()
-                .map_err(|_| StoreError::LockError)? = vec![0xff];
+                .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
             return Ok(());
         }
 
