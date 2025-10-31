@@ -53,14 +53,6 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 // TODO: use finalized hash to determine when to commit
 const COMMIT_THRESHOLD: usize = 128;
 
-pub type TriedUpdateWorkerTx = std::sync::mpsc::SyncSender<(
-    std::sync::mpsc::SyncSender<Result<(), StoreError>>,
-    H256,
-    H256,
-    Vec<(Nibbles, Vec<u8>)>,
-    Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
-)>;
-
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
 enum FKVGeneratorControlMessage {
@@ -74,7 +66,7 @@ pub struct Store {
     pub chain_config: ChainConfig,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
-    trie_update_worker_tx: TriedUpdateWorkerTx,
+    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
     /// Keeps the latest canonical block hash
     /// It's wrapped in an Arc to allow for cheap reads with infrequent writes
     /// Reading an out-of-date value is acceptable, since it's only used as:
@@ -1240,17 +1232,16 @@ impl Store {
         // Capacity one ensures sender just notifies and goes on
         let (notify_tx, notify_rx) = sync_channel(1);
         let wait_for_new_layer = notify_rx;
-        trie_upd_worker_tx
-            .send((
-                notify_tx,
-                parent_state_root,
-                last_state_root,
-                account_updates,
-                storage_updates,
-            ))
-            .map_err(|e| {
-                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-            })?;
+        let trie_update = TrieUpdate {
+            parent_state_root,
+            account_updates,
+            storage_updates,
+            result_sender: notify_tx,
+            child_state_root: last_state_root,
+        };
+        trie_upd_worker_tx.send(trie_update).map_err(|e| {
+            StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+        })?;
         let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
@@ -1379,23 +1370,13 @@ impl Store {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
-                    Ok((
-                        notify,
-                        parent_state_root,
-                        child_state_root,
-                        account_updates,
-                        storage_updates,
-                    )) => {
+                    Ok(trie_update) => {
                         // FIXME: what should we do on error?
                         let _ = apply_trie_updates(
                             backend.as_ref(),
                             &flatkeyvalue_control_tx,
                             &trie_cache,
-                            notify,
-                            parent_state_root,
-                            child_state_root,
-                            account_updates,
-                            storage_updates,
+                            trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
                     }
@@ -2348,19 +2329,32 @@ impl Store {
     }
 }
 
+type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
+
+struct TrieUpdate {
+    result_sender: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+    parent_state_root: H256,
+    child_state_root: H256,
+    account_updates: TrieNodesUpdate,
+    storage_updates: Vec<(H256, TrieNodesUpdate)>,
+}
+
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
 // with the other end of `fkv_ctl`
-#[expect(clippy::too_many_arguments)]
 fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     trie_cache: &Arc<Mutex<Arc<TrieLayerCache>>>,
-    notify: SyncSender<Result<(), StoreError>>,
-    parent_state_root: H256,
-    child_state_root: H256,
-    account_updates: Vec<(Nibbles, Vec<u8>)>,
-    storage_updates: StorageUpdates,
+    trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
+    let TrieUpdate {
+        result_sender,
+        parent_state_root,
+        child_state_root,
+        account_updates,
+        storage_updates,
+    } = trie_update;
+
     // Phase 1: update the in-memory diff-layers only, then notify block production.
     let new_layer = storage_updates
         .into_iter()
@@ -2381,7 +2375,9 @@ fn apply_trie_updates(
     let trie = Arc::new(trie_mut);
     *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
     // Update finished, signal block processing.
-    notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
+    result_sender
+        .send(Ok(()))
+        .map_err(|_| StoreError::LockError)?;
 
     // Phase 2: update disk layer.
     let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
