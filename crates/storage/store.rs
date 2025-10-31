@@ -35,17 +35,14 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitn
 use ethrex_trie::{Node, NodeRLP};
 use sha3::{Digest, Keccak256};
 use std::{
-    collections::hash_map::Entry,
+    collections::{BTreeMap, HashMap, hash_map::Entry},
+    fmt::Debug,
+    path::Path,
     sync::{
         Arc, Mutex,
         mpsc::{SyncSender, sync_channel},
     },
 };
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::Path,
-};
-use std::{fmt::Debug, sync::RwLock};
 use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -75,10 +72,16 @@ enum FKVGeneratorControlMessage {
 pub struct Store {
     pub backend: Arc<dyn StorageBackend>,
     pub chain_config: ChainConfig,
-    pub latest_block_header: Arc<RwLock<BlockHeader>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
+    /// Keeps the latest canonical block hash
+    /// It's wrapped in an Arc to allow for cheap reads with infrequent writes
+    /// Reading an out-of-date value is acceptable, since it's only used as:
+    /// - a cache of the (frequently requested) header
+    /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
+    /// - sync-related operations, which must be idempotent in order to handle reorgs
+    latest_block_header: LatestBlockHeaderCache,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -195,13 +198,9 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        let latest = self
-            .latest_block_header
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
+        let latest = self.latest_block_header.get();
         if block_number == latest.number {
-            return Ok(Some(latest));
+            return Ok(Some((*latest).clone()));
         }
         self.load_block_header(block_number)
     }
@@ -338,14 +337,9 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        {
-            let latest = self
-                .latest_block_header
-                .read()
-                .map_err(|_| StoreError::LockError)?;
-            if block_hash == latest.hash() {
-                return Ok(Some(latest.clone()));
-            }
+        let latest = self.latest_block_header.get();
+        if block_hash == latest.hash() {
+            return Ok(Some((*latest).clone()));
         }
         self.load_block_header_by_hash(block_hash)
     }
@@ -641,14 +635,9 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        {
-            let last = self
-                .latest_block_header
-                .read()
-                .map_err(|_| StoreError::LockError)?;
-            if last.number == block_number {
-                return Ok(Some(last.hash()));
-            }
+        let last = self.latest_block_header.get();
+        if last.number == block_number {
+            return Ok(Some(last.hash()));
         }
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
@@ -731,11 +720,7 @@ impl Store {
 
     /// Obtain latest block number
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        Ok(self
-            .latest_block_header
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .number)
+        Ok(self.latest_block_header.get().number)
     }
 
     /// Update pending block number
@@ -1051,14 +1036,9 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        {
-            let last = self
-                .latest_block_header
-                .read()
-                .map_err(|_| StoreError::LockError)?;
-            if last.number == block_number {
-                return Ok(Some(last.hash()));
-            }
+        let last = self.latest_block_header.get();
+        if last.number == block_number {
+            return Ok(Some(last.hash()));
         }
         let txn = self.backend.begin_read()?;
         txn.get(
@@ -1355,6 +1335,7 @@ impl Store {
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
+        // Ignore unused variable warning when compiling without DB features
         let _path = &path;
         match engine_type {
             #[cfg(feature = "rocksdb")]
@@ -1369,7 +1350,7 @@ impl Store {
         let store = Self {
             backend,
             chain_config: Default::default(),
-            latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+            latest_block_header: Default::default(),
             trie_cache: Default::default(),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
@@ -1702,17 +1683,13 @@ impl Store {
         let genesis_header = self
             .load_block_header(0)?
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
-        let block_number = self.get_latest_block_number().await?;
-        let block_header = self
-            .latest_block_header
-            .read()
-            .map_err(|_| StoreError::LockError)?;
+        let block_header = self.latest_block_header.get();
 
         Ok(ForkId::new(
             chain_config,
             genesis_header,
             block_header.timestamp,
-            block_number,
+            block_header.number,
         ))
     }
 
@@ -1994,15 +1971,12 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
+        // The cache can't be empty
         if let Some(number) = self.load_latest_block_number().await? {
-            let latest_header = self
+            let latest_block_header = self
                 .load_block_header(number)?
                 .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
-            let mut latest_header_guard = self
-                .latest_block_header
-                .write()
-                .map_err(|_| StoreError::LockError)?;
-            *latest_header_guard = latest_header;
+            self.latest_block_header.update(latest_block_header);
         }
 
         match self.load_block_header(genesis_block_number)? {
@@ -2045,10 +2019,7 @@ impl Store {
         let latest_block_header = self
             .load_block_header(number)?
             .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
-        *self
-            .latest_block_header
-            .write()
-            .map_err(|_| StoreError::LockError)? = latest_block_header;
+        self.latest_block_header.update(latest_block_header);
         Ok(())
     }
 
@@ -2085,12 +2056,7 @@ impl Store {
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
-        Ok(Some(
-            self.latest_block_header
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .hash(),
-        ))
+        Ok(Some(self.latest_block_header.get().hash()))
     }
 
     /// Updates the canonical chain.
@@ -2105,18 +2071,11 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
+        // Updates first the latest_block_header to avoid nonce inconsistencies #3927.
         let new_head = self
             .load_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
-        // Updates first the latest_block_header
-        // to avoid nonce inconsistencies #3927.
-        {
-            let mut latest_header = self
-                .latest_block_header
-                .write()
-                .map_err(|_| StoreError::LockError)?;
-            *latest_header = new_head
-        };
+        self.latest_block_header.update(new_head);
         self.forkchoice_update_inner(
             new_canonical_blocks,
             head_number,
@@ -2652,6 +2611,22 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
     Keccak256::new_with_prefix(key.to_fixed_bytes())
         .finalize()
         .to_vec()
+}
+
+#[derive(Debug, Default, Clone)]
+struct LatestBlockHeaderCache {
+    current: Arc<Mutex<Arc<BlockHeader>>>,
+}
+
+impl LatestBlockHeaderCache {
+    pub fn get(&self) -> Arc<BlockHeader> {
+        self.current.lock().expect("poisoned mutex").clone()
+    }
+
+    pub fn update(&self, header: BlockHeader) {
+        let new = Arc::new(header);
+        *self.current.lock().expect("poisoned mutex") = new;
+    }
 }
 
 #[cfg(test)]
