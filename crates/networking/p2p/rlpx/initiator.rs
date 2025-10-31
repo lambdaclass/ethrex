@@ -1,5 +1,8 @@
 use crate::{
-    discv4::{peer_table::PeerTableError, server::INITIAL_LOOKUP_INTERVAL},
+    discv4::{
+        peer_table::PeerTableError,
+        server::{INITIAL_LOOKUP_INTERVAL, LOOKUP_INTERVAL},
+    },
     metrics::METRICS,
     network::P2PContext,
     rlpx::connection::server::PeerConnection,
@@ -34,8 +37,9 @@ impl RLPxInitiator {
     pub fn new(context: P2PContext) -> Self {
         Self {
             context,
+            // We use the same lookup intervals as Discovery to try to get both process to check at the same rate
             initial_lookup_interval: INITIAL_LOOKUP_INTERVAL,
-            lookup_interval: Duration::from_millis(600),
+            lookup_interval: LOOKUP_INTERVAL,
             target_peers: 50,
         }
     }
@@ -44,29 +48,10 @@ impl RLPxInitiator {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(context);
         let mut server = RLPxInitiator::start(state.clone());
-        let _ = server.cast(InMessage::LookForPeers).await;
+        let _ = server.cast(InMessage::LookForPeer).await;
     }
 
-    // async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
-    //     debug!("Looking for peers");
-    //     if !self.context.table.target_peers_reached().await? {
-    //         let contacts = self
-    //             .context
-    //             .table
-    //             .get_contacts_to_initiate(self.new_connections_per_lookup)
-    //             .await?;
-    //         for contact in contacts {
-    //             PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
-    //             METRICS.record_new_rlpx_conn_attempt().await;
-    //         }
-    //     } else {
-    //         debug!("Target peer connections reached, no need to initiate new connections.");
-    //     }
-    //     Ok(())
-    // }
-
-    async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
-        debug!("Looking for peers");
+    async fn look_for_peer(&mut self) -> Result<(), RLPxInitiatorError> {
         if !self.context.table.target_peers_reached().await? {
             if let Some(contact) = self.context.table.get_contact_to_initiate().await? {
                 PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
@@ -92,7 +77,7 @@ impl RLPxInitiator {
 
 #[derive(Debug, Clone)]
 pub enum InMessage {
-    LookForPeers,
+    LookForPeer,
     Shutdown,
 }
 
@@ -118,17 +103,16 @@ impl GenServer for RLPxInitiator {
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            Self::CastMsg::LookForPeers => {
-                debug!(received = "Look for peers");
+            Self::CastMsg::LookForPeer => {
                 let _ = self
-                    .look_for_peers()
+                    .look_for_peer()
                     .await
                     .inspect_err(|e| error!(err=?e, "Error looking for peers"));
 
                 send_after(
                     self.get_lookup_interval().await,
                     handle.clone(),
-                    Self::CastMsg::LookForPeers,
+                    Self::CastMsg::LookForPeer,
                 );
 
                 CastResponse::NoReply

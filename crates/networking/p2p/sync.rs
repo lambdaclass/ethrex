@@ -1562,7 +1562,6 @@ async fn insert_storages(
         .map(|num| num.into())
         .unwrap_or(8);
 
-    info!("Available parallelism: {}", thread_count);
     let (buffer_sender, buffer_receiver) = bounded::<Vec<(Nibbles, Node)>>(BUFFER_COUNT as usize);
     for _ in 0..BUFFER_COUNT {
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));

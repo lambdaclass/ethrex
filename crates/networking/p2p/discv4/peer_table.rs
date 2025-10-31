@@ -17,7 +17,6 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tracing::debug;
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
@@ -320,21 +319,7 @@ impl PeerTable {
         }
     }
 
-    /// Get all contacts available to initiate a connection
-    pub async fn get_contacts_to_initiate(
-        &mut self,
-        amount: usize,
-    ) -> Result<Vec<Contact>, PeerTableError> {
-        match self
-            .handle
-            .call(CallMessage::GetContactsToInitiate(amount))
-            .await?
-        {
-            OutMessage::Contacts(contacts) => Ok(contacts),
-            _ => unreachable!(),
-        }
-    }
-
+    /// Provide a contact to initiate a connection
     pub async fn get_contact_to_initiate(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactToInitiate).await? {
             OutMessage::Contact(contact) => Ok(Some(contact)),
@@ -343,7 +328,7 @@ impl PeerTable {
         }
     }
 
-    /// Get all contacts available for lookup
+    /// Provide a contact to perform Discovery lookup
     pub async fn get_contact_for_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactForLookup).await? {
             OutMessage::Contact(contact) => Ok(Some(contact)),
@@ -583,36 +568,6 @@ impl PeerTableServer {
         }
     }
 
-    fn get_contacts_to_initiate(&mut self, max_amount: usize) -> Vec<Contact> {
-        let mut contacts = Vec::new();
-        let mut tried_connections = 0;
-
-        for contact in self.contacts.values() {
-            let node_id = contact.node.node_id();
-            if !self.peers.contains_key(&node_id)
-                && !self.already_tried_peers.contains(&node_id)
-                && contact.knows_us
-                && !contact.unwanted
-            {
-                self.already_tried_peers.insert(node_id);
-
-                contacts.push(contact.clone());
-
-                tried_connections += 1;
-                if tried_connections >= max_amount {
-                    break;
-                }
-            }
-        }
-
-        if tried_connections < max_amount {
-            debug!("Resetting list of tried peers.");
-            self.already_tried_peers.clear();
-        }
-
-        contacts
-    }
-
     fn get_contact_to_initiate(&mut self) -> Option<Contact> {
         for contact in self.contacts.values() {
             let node_id = contact.node.node_id();
@@ -844,7 +799,6 @@ enum CallMessage {
     PeerCountByCapabilities { capabilities: Vec<Capability> },
     TargetReached,
     TargetPeersReached,
-    GetContactsToInitiate(usize),
     GetContactToInitiate,
     GetContactForLookup,
     GetContactsToRevalidate(Duration),
@@ -921,9 +875,6 @@ impl GenServer for PeerTableServer {
             CallMessage::TargetPeersReached => CallResponse::Reply(Self::OutMsg::TargetReached(
                 self.peers.len() >= self.target_peers,
             )),
-            CallMessage::GetContactsToInitiate(amount) => CallResponse::Reply(
-                Self::OutMsg::Contacts(self.get_contacts_to_initiate(amount)),
-            ),
             CallMessage::GetContactToInitiate => CallResponse::Reply(
                 self.get_contact_to_initiate()
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
