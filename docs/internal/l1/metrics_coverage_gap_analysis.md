@@ -15,7 +15,7 @@ The gap analysis below uses a cross-client checklist we gathered after looking a
 - **Block & payload pipeline**: gas throughput, execution breakdown timings, block import failures, payload build latency.
 - **Transaction pool**: pending depth per type, drop/evict counters, gossip ingress/egress rate, TPS trend.
 - **Engine API & RPC**: call success ratios, latency histograms for Engine and JSON-RPC methods, error taxonomy.
-- **State & storage**: db size, read/write bytes, cache hit/miss, heal backlog, pruning progress.
+- **State & storage**: db size, read/write bytes, cache hit/miss, heal backlog, pruning.
 - **Process & host health**: CPU, memory, FDs, uptime, disk headroom (usually covered by node_exporter but treated as must-have).
 - **Error & anomaly counters**: explicit counters for reorgs, failed imports, sync retries, bad peer events.
 
@@ -82,7 +82,7 @@ Before addressing the gaps listed below, we should also consider some general im
 | Block & payload pipeline | `METRICS_BLOCKS` tracks gas throughput and execution stage timings; `transaction_count` is exported but not visualised yet. | Add p50/p95 histograms for execution stages, block import success/failure counters, and an L1-driven TPS gauge so operators can read execution throughput without relying on L2 metrics. |
 | Transaction pool | Success/error counters per tx type emitted from `crates/blockchain/payload.rs`. | No exported pending depth, blob/regular split, drop reasons, or gossip throughput; aggregates exist only in L2 (`crates/l2/sequencer/metrics.rs`). |
 | Engine API & RPC | None published. | Instrument `newPayload`, `forkChoiceUpdated`, `getPayload` handlers with histograms/counters and wrap JSON-RPC handlers (`crates/networking/rpc`) with per-method rate/latency/error metrics, then chart them in Grafana. |
-| State & storage | Only `datadir_size_bytes` today. | Export healing/download progress, snapshot sync %, DB read/write throughput, pruning/backfill counters, and cache hit/miss ratios. |
+| State & storage | Only `datadir_size_bytes` today. | Export healing/download progress, snapshot sync %, DB read/write throughput, pruning/backfill counters (we need to check what makes sense here), and cache hit/miss ratios. |
 | Process & host health | Process collector + `datadir_size_bytes`; node_exporter covers CPU/RSS/disk. | Add cache pressure indicators (fd saturation, async task backlog) and ensure dashboards surface alert thresholds. |
 | Error & anomaly counters | None published. | Add Prometheus counters for failed block imports, reorg depth, RPC errors, Engine API retries, sync failures, and wire alerting. |
 
@@ -91,7 +91,9 @@ Before addressing the gaps listed below, we should also consider some general im
 2. Implement sync & peer metrics (best-peer lag, stage progress) and add corresponding Grafana row.
 3. Surface txpool metrics by wiring existing counters and charting them.
 4. Add the metrics relying on `ethereum-metrics-exporter` into the existing metrics, and avoid our dashboard dependence on it.
-5. Review block building metrics.
-6. Instrument Engine API handlers with histograms/counters; plan storage IO metrics in parallel.
-7. Revisit histogram buckets and naming conventions once new metrics are merged, then define alert thresholds.
-8. Investigate exemplar usage where appropriate.
+5. Instrument Engine API handlers with histograms/counters.
+6. State and Storage metrics, specially related to snapsync, pruning, db and cache.
+7. Process health improvements, specially related to read/write latencies and probably tokio tasks.
+8. Review block building metrics.
+9. Revisit histogram buckets and naming conventions once new metrics are merged, then define alert thresholds.
+10. Investigate exemplar usage where appropriate.
