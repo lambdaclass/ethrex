@@ -802,7 +802,7 @@ impl G2 {
 /// Parses 32 bytes as BN254 scalar
 #[inline]
 fn parse_bn254_scalar(buf: &[u8], offset: usize) -> U256 {
-    u256_from_big_endian(&buf[offset..offset + 64])
+    u256_from_big_endian(&buf[offset..offset + 32])
 }
 
 /// Parses 64 bytes as a BN254 G1 point
