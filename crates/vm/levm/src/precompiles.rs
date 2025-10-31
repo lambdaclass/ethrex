@@ -748,30 +748,23 @@ pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
 #[cfg(feature = "sp1")]
 #[inline]
 pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
-    use substrate_bn::{AffineG1, Fq, Fr, G1 as SubstrateG1, Group};
+    use substrate_bn::{AffineG1, Fq, Fr, Group};
 
-    let g1: SubstrateG1 = if g1.is_zero() {
-        SubstrateG1::zero()
-    } else {
-        let (g1_x, g1_y) = (
-            Fq::from_slice(&g1.0.to_big_endian())
-                .map_err(|_| PrecompileError::ParsingInputError)?,
-            Fq::from_slice(&g1.1.to_big_endian())
-                .map_err(|_| PrecompileError::ParsingInputError)?,
-        );
-        AffineG1::new(g1_x, g1_y)
-            .map_err(|_| PrecompileError::InvalidPoint)?
-            .into()
-    };
+    if g1.is_zero() || scalar.is_zero() {
+        return Ok(Bytes::from([0u8; 64].to_vec()));
+    }
+
+    let (g1_x, g1_y) = (
+        Fq::from_slice(&g1.0.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&g1.1.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
+    );
+
+    let g1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
 
     let scalar =
         Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let result = if g1.is_zero() || scalar == Fr::one() {
-        g1
-    } else {
-        g1 * scalar
-    };
+    let result = g1 * scalar;
 
     let mut x_bytes = [0u8; 32];
     let mut y_bytes = [0u8; 32];
