@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-30
+
+= Add bloom filters to snapshot layers [#5112](https://github.com/lambdaclass/ethrex/pull/5112)
+
 ### 2025-10-28
 
 - Batch BlobsBundle::validate [#4993](https://github.com/lambdaclass/ethrex/pull/4993)
