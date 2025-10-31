@@ -867,7 +867,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     let mut batch = Vec::new();
     for input in calldata.chunks_exact(192) {
-        let (Some(g1), Some(g2)) = (parse_bn254_g1(&input, 0), parse_bn254_g2(&input, 64)) else {
+        let (Some(g1), Some(g2)) = (parse_bn254_g1(input, 0), parse_bn254_g2(input, 64)) else {
             return Err(InternalError::Slicing.into());
         };
         validate_bn254_g1_coords(&g1)?;
