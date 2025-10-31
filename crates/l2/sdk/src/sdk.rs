@@ -1107,7 +1107,7 @@ async fn _call_bytes32_variable(
     Ok(arr)
 }
 
-async fn get_fee_token_ratio(
+pub async fn get_fee_token_ratio(
     fee_token: &Address,
     client: &EthClient,
 ) -> Result<u64, EthClientError> {

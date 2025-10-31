@@ -24,7 +24,8 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
+    build_generic_tx, get_fee_token_ratio, get_last_verified_batch, send_generic_transaction,
+    wait_for_message_proof,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -2118,7 +2119,9 @@ async fn test_fee_token(
 
     let transfer_fees =
         get_fees_details_l2(&transfer_receipt, &l2_client, get_fee_token_diff_size()).await?;
-    let fee_token_ratio = fetch_fee_token_ratio(&l2_client, fee_token_address).await?;
+    let fee_token_ratio = get_fee_token_ratio(&fee_token_address, &l2_client)
+        .await
+        .unwrap();
 
     let sender_fee_token_spent = sender_token_balance_before_transfer
         .checked_sub(sender_token_balance_after_transfer)
@@ -2683,22 +2686,4 @@ fn dummy_modified_storage_slots(modified_storage_slots: u64) -> BTreeMap<H256, U
         storage.insert(H256::random(), U256::zero());
     }
     storage
-}
-
-async fn fetch_fee_token_ratio(client: &EthClient, fee_token: Address) -> Result<U256> {
-    let calldata =
-        encode_calldata("getFeeTokenRatio(address)", &[Value::Address(fee_token)])?.into();
-
-    let response = client
-        .call(
-            ethrex_l2_sdk::FEE_TOKEN_PRICER_ADDRESS,
-            calldata,
-            Default::default(),
-        )
-        .await
-        .context("Failed to fetch fee token ratio from pricer")?;
-
-    let ratio_hex = response.trim_start_matches("0x");
-
-    U256::from_str_radix(ratio_hex, 16).context("Failed to parse fee token ratio")
 }
