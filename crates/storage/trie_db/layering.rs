@@ -22,31 +22,46 @@ pub struct TrieLayerCache {
     ///
     /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
-    bloom: qfilter::Filter,
+    bloom: Option<qfilter::Filter>,
+    bloom_is_poisson: bool,
 }
 
 impl Default for TrieLayerCache {
     fn default() -> Self {
+        // Try to create the bloom filter, if it fails use poisson mode.
+        let (filter, bloom_is_poisson) = {
+            if let Ok(filter) = Self::create_filter() {
+                (Some(filter), false)
+            } else {
+                (None, true)
+            }
+        };
+
         Self {
-            bloom: create_filter(),
+            bloom: filter,
             last_id: 0,
             layers: Default::default(),
+            bloom_is_poisson,
         }
     }
 }
 
-// todo: tune this
-fn create_filter() -> qfilter::Filter {
-    qfilter::Filter::new_resizeable(100_000, 100_000_000, 0.02).expect("create filter")
-}
-
 impl TrieLayerCache {
+    // TODO: tune this
+    fn create_filter() -> Result<qfilter::Filter, qfilter::Error> {
+        qfilter::Filter::new_resizeable(100_000, 100_000_000, 0.02)
+            .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
+    }
+
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         let key = key.as_ref();
 
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
-        if !self.bloom.contains(key) {
+        if !self.bloom_is_poisson
+            && let Some(filter) = &self.bloom
+            && !filter.contains(key)
+        {
             // TrieWrapper goes to db when returning None.
             return None;
         }
@@ -102,8 +117,19 @@ impl TrieLayerCache {
         }
 
         // add this new bloom to the global one.
-        for (p, _) in &key_values {
-            self.bloom.insert(p.as_ref()).ok();
+        if let Some(filter) = &mut self.bloom {
+            for (p, _) in &key_values {
+                if !self.bloom_is_poisson {
+                    if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
+                        tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
+                        self.bloom_is_poisson = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if self.bloom_is_poisson {
+            self.bloom = None; // drop the bloom to save memory
         }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
@@ -122,23 +148,44 @@ impl TrieLayerCache {
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
     pub fn rebuild_bloom(&mut self) {
-        self.bloom.clear();
+        // do not rebuild if already poisson
+        if self.bloom_is_poisson {
+            return;
+        }
+        if let Some(filter) = &mut self.bloom {
+            filter.clear();
+        }
 
         let blooms = self
             .layers
             .values()
             .par_bridge()
             .map(|entry| {
-                let mut bloom = create_filter();
+                let Ok(mut bloom) = Self::create_filter() else {
+                    tracing::warn!("TrieLayerCache: rebuild_bloom could not create filter");
+                    return None;
+                };
                 for (p, _) in entry.nodes.iter() {
-                    bloom.insert(p).ok();
+                    if let Err(qfilter::Error::CapacityExceeded) = bloom.insert(p) {
+                        tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                        return None;
+                    }
                 }
-                bloom
+                Some(bloom)
             })
             .collect_vec_list();
 
-        for b in blooms.iter().flatten() {
-            self.bloom.merge(false, b).expect("capacity over");
+        if let Some(filter) = &mut self.bloom {
+            for b in blooms.iter().flatten().filter_map(|b| b.as_ref()) {
+                if let Err(qfilter::Error::CapacityExceeded) = filter.merge(false, b) {
+                    tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                    self.bloom_is_poisson = true;
+                    break;
+                }
+            }
+        }
+        if self.bloom_is_poisson {
+            self.bloom = None; // drop the bloom to save memory
         }
     }
 
