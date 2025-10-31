@@ -16,9 +16,9 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn log_global_allocator() {
     if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
-        tracing::info!("Global allocator: jemalloc (tikv-jemallocator)");
+        tracing::debug!("Global allocator: jemalloc (tikv-jemallocator)");
     } else {
-        tracing::info!("Global allocator: system (std::alloc::System)");
+        tracing::debug!("Global allocator: system (std::alloc::System)");
     }
 }
 
