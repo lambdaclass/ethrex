@@ -3128,6 +3128,5 @@ mod tests {
         let encoded = tx.encode_to_vec();
         let decoded_tx = Transaction::decode(&encoded).unwrap();
         assert_eq!(tx, decoded_tx);
-
     }
 }
