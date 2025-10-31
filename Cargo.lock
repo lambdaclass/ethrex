@@ -249,12 +249,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arc-swap"
-version = "1.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
-
-[[package]]
 name = "ark-bn254"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3760,7 +3754,6 @@ name = "ethrex-storage"
 version = "5.0.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "async-trait",
  "bincode",
  "bytes",
