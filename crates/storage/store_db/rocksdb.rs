@@ -343,12 +343,23 @@ impl Store {
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
 
+        let cf_misc = db
+            .cf_handle(CF_MISC_VALUES)
+            .ok_or_else(|| StoreError::Custom("column not found".to_string()))?;
+        let mut last_written = db
+            .get_cf(&cf_misc, "last_written")?
+            .unwrap_or_else(|| vec![0u8; 64]);
+        if last_written == vec![0xff] {
+            last_written = vec![0xff; 64];
+        }
+        drop(cf_misc); // dropped to remove borrow on db
+
         let store = Self {
             db: Arc::new(db),
             trie_cache: Default::default(),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
-            last_computed_flatkeyvalue: Arc::new(Mutex::new(vec![0u8; 64])),
+            last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -564,15 +575,7 @@ impl Store {
             .db
             .get_cf(&cf_misc, "last_written")?
             .unwrap_or_default();
-        *self
-            .last_computed_flatkeyvalue
-            .lock()
-            .map_err(|_| StoreError::LockError)? = last_written.clone();
         if last_written == vec![0xff] {
-            *self
-                .last_computed_flatkeyvalue
-                .lock()
-                .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
             return Ok(());
         }
 
