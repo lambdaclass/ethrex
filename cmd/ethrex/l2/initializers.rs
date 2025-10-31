@@ -376,7 +376,7 @@ async fn initialize_checkpoint(
 ) -> eyre::Result<(Store, Arc<Blockchain>)> {
     // If the checkpoint is not present, create it
     if !path.exists() {
-        store.create_checkpoint(path).await?;
+        store.create_checkpoint(path)?;
     }
 
     // We now load the checkpoint, validate it, and regenerate its state.

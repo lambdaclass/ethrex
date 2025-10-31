@@ -17,7 +17,7 @@
 //!   only used in snapsync stage.
 
 use crate::error::StoreError;
-use std::fmt::Debug;
+use std::{fmt::Debug, path::Path};
 
 pub mod tables;
 
@@ -47,6 +47,10 @@ pub trait StorageBackend: Debug + Send + Sync {
         &self,
         table_name: &'static str,
     ) -> Result<Box<dyn StorageLocked + 'static>, StoreError>;
+
+    // TODO: remove this and provide historic data via diff-layers
+    /// Creates a checkpoint of the current database state at the specified path.
+    fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
 }
 
 /// Read-only transaction interface.

@@ -1,6 +1,7 @@
 use crate::api::{PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx};
 use crate::error::StoreError;
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 type Table = BTreeMap<Vec<u8>, Vec<u8>>;
@@ -49,6 +50,12 @@ impl StorageBackend for InMemoryBackend {
             backend: self.inner.clone(),
             table_name,
         }))
+    }
+
+    fn create_checkpoint(&self, _path: &Path) -> Result<(), StoreError> {
+        // Checkpoints are not supported for the InMemory DB
+        // Silently ignoring the request to create a checkpoint is harmless
+        Ok(())
     }
 }
 

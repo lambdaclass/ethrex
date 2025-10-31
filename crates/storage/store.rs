@@ -2528,9 +2528,8 @@ impl Store {
             .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
     }
 
-    pub async fn create_checkpoint(&self, _path: impl AsRef<Path>) -> Result<(), StoreError> {
-        // TODO: Check how we should support this
-        Ok(())
+    pub fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
+        self.backend.create_checkpoint(path.as_ref())
     }
 
     /// Loads the latest block number stored in the database, bypassing the latest block number cache

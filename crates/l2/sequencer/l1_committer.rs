@@ -816,7 +816,7 @@ impl L1Committer {
         checkpointee: &Store,
         path: &Path,
     ) -> Result<(Store, Arc<Blockchain>), CommitterError> {
-        checkpointee.create_checkpoint(&path).await?;
+        checkpointee.create_checkpoint(path)?;
 
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
