@@ -1352,7 +1352,9 @@ impl Store {
             }
             // rx channel is dropped, closing it
         });
-        let store_clone = store.clone();
+        let backend = store.backend.clone();
+        let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
+        let trie_cache = store.trie_cache.clone();
         /*
             When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
             This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
@@ -1385,15 +1387,17 @@ impl Store {
                         storage_updates,
                     )) => {
                         // FIXME: what should we do on error?
-                        let _ = store_clone
-                            .apply_trie_updates(
-                                notify,
-                                parent_state_root,
-                                child_state_root,
-                                account_updates,
-                                storage_updates,
-                            )
-                            .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
+                        let _ = apply_trie_updates(
+                            backend.as_ref(),
+                            &flatkeyvalue_control_tx,
+                            &trie_cache,
+                            notify,
+                            parent_state_root,
+                            child_state_root,
+                            account_updates,
+                            storage_updates,
+                        )
+                        .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
                     }
                     Err(err) => {
                         error!("Error while reading diff layer: {err}");
@@ -1403,81 +1407,6 @@ impl Store {
             }
         });
         Ok(store)
-    }
-
-    fn apply_trie_updates(
-        &self,
-        notify: SyncSender<Result<(), StoreError>>,
-        parent_state_root: H256,
-        child_state_root: H256,
-        account_updates: Vec<(Nibbles, Vec<u8>)>,
-        storage_updates: StorageUpdates,
-    ) -> Result<(), StoreError> {
-        let fkv_ctl = &self.flatkeyvalue_control_tx;
-        let trie_cache = &self.trie_cache;
-
-        // Phase 1: update the in-memory diff-layers only, then notify block production.
-        let new_layer = storage_updates
-            .into_iter()
-            .flat_map(|(account_hash, nodes)| {
-                nodes
-                    .into_iter()
-                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-            })
-            .chain(account_updates)
-            .collect();
-        // Read-Copy-Update the trie cache with a new layer.
-        let trie = trie_cache
-            .lock()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
-        let mut trie_mut = (*trie).clone();
-        trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
-        let trie = Arc::new(trie_mut);
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
-        // Update finished, signal block processing.
-        notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
-
-        // Phase 2: update disk layer.
-        let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
-            // Nothing to commit to disk, move on.
-            return Ok(());
-        };
-        // Stop the flat-key-value generator thread, as the underlying trie is about to change.
-        // Ignore the error, if the channel is closed it means there is no worker to notify.
-        let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
-
-        // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-        let mut trie_mut = (*trie).clone();
-
-        let last_written = self
-            .read(MISC_VALUES, "last_written".as_bytes().to_vec())?
-            .unwrap_or_default();
-        // Commit removes the bottom layer and returns it, this is the mutation step.
-        let nodes = trie_mut.commit(root).unwrap_or_default();
-        let mut result = Ok(());
-        for (key, value) in nodes {
-            let is_leaf = key.len() == 65 || key.len() == 131;
-
-            if is_leaf && key > last_written {
-                continue;
-            }
-            let table = if is_leaf { FLATKEY_VALUES } else { TRIE_NODES };
-            if value.is_empty() {
-                result = self.delete(table, key);
-            } else {
-                result = self.write(table, key, value);
-            }
-            if result.is_err() {
-                break;
-            }
-        }
-        // We want to send this message even if there was an error during the batch write
-        let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
-        result?;
-        // Phase 3: update diff layers with the removal of bottom layer.
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
-        Ok(())
     }
 
     pub async fn new_from_genesis(
@@ -2417,6 +2346,85 @@ impl Store {
         });
         Ok(header)
     }
+}
+
+// NOTE: we don't receive `Store` here to avoid cyclic dependencies
+// with the other end of `fkv_ctl`
+#[expect(clippy::too_many_arguments)]
+fn apply_trie_updates(
+    backend: &dyn StorageBackend,
+    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    trie_cache: &Arc<Mutex<Arc<TrieLayerCache>>>,
+    notify: SyncSender<Result<(), StoreError>>,
+    parent_state_root: H256,
+    child_state_root: H256,
+    account_updates: Vec<(Nibbles, Vec<u8>)>,
+    storage_updates: StorageUpdates,
+) -> Result<(), StoreError> {
+    // Phase 1: update the in-memory diff-layers only, then notify block production.
+    let new_layer = storage_updates
+        .into_iter()
+        .flat_map(|(account_hash, nodes)| {
+            nodes
+                .into_iter()
+                .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+        })
+        .chain(account_updates)
+        .collect();
+    // Read-Copy-Update the trie cache with a new layer.
+    let trie = trie_cache
+        .lock()
+        .map_err(|_| StoreError::LockError)?
+        .clone();
+    let mut trie_mut = (*trie).clone();
+    trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+    let trie = Arc::new(trie_mut);
+    *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
+    // Update finished, signal block processing.
+    notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
+
+    // Phase 2: update disk layer.
+    let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
+        // Nothing to commit to disk, move on.
+        return Ok(());
+    };
+    // Stop the flat-key-value generator thread, as the underlying trie is about to change.
+    // Ignore the error, if the channel is closed it means there is no worker to notify.
+    let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
+
+    // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
+    let mut trie_mut = (*trie).clone();
+
+    let mut write_tx = backend.begin_write()?;
+
+    let last_written = write_tx
+        .get(MISC_VALUES, "last_written".as_bytes())?
+        .unwrap_or_default();
+    // Commit removes the bottom layer and returns it, this is the mutation step.
+    let nodes = trie_mut.commit(root).unwrap_or_default();
+    let mut result = Ok(());
+    for (key, value) in nodes {
+        let is_leaf = key.len() == 65 || key.len() == 131;
+
+        if is_leaf && key > last_written {
+            continue;
+        }
+        let table = if is_leaf { FLATKEY_VALUES } else { TRIE_NODES };
+        if value.is_empty() {
+            result = write_tx.delete(table, &key);
+        } else {
+            result = write_tx.put(table, &key, &value);
+        }
+        if result.is_err() {
+            break;
+        }
+    }
+    // We want to send this message even if there was an error during the batch write
+    let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
+    result?;
+    // Phase 3: update diff layers with the removal of bottom layer.
+    *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+    Ok(())
 }
 
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
