@@ -2431,7 +2431,6 @@ version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
@@ -2443,6 +2442,7 @@ dependencies = [
  "serde_json",
  "sha3",
  "thiserror 2.0.16",
+ "tokio",
  "tracing",
 ]
 
