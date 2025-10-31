@@ -3764,6 +3764,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "qfilter",
+ "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",
  "serde",

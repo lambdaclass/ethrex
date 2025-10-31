@@ -1,4 +1,5 @@
 use ethrex_common::H256;
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -27,13 +28,16 @@ pub struct TrieLayerCache {
 impl Default for TrieLayerCache {
     fn default() -> Self {
         Self {
-            // todo: tune this
-            bloom: qfilter::Filter::new_resizeable(1_000_000, 100_000_000, 0.02)
-                .expect("create filter"),
+            bloom: create_filter(),
             last_id: 0,
             layers: Default::default(),
         }
     }
+}
+
+// todo: tune this
+fn create_filter() -> qfilter::Filter {
+    qfilter::Filter::new_resizeable(100_000, 100_000_000, 0.02).expect("create filter")
 }
 
 impl TrieLayerCache {
@@ -99,7 +103,7 @@ impl TrieLayerCache {
 
         // add this new bloom to the global one.
         for (p, _) in &key_values {
-            self.bloom.insert_duplicated(p.as_ref()).ok();
+            self.bloom.insert(p.as_ref()).ok();
         }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
@@ -120,10 +124,21 @@ impl TrieLayerCache {
     pub fn rebuild_bloom(&mut self) {
         self.bloom.clear();
 
-        for entry in self.layers.values() {
-            for (p, _) in entry.nodes.iter() {
-                self.bloom.insert_duplicated(p).ok();
-            }
+        let blooms = self
+            .layers
+            .values()
+            .par_bridge()
+            .map(|entry| {
+                let mut bloom = create_filter();
+                for (p, _) in entry.nodes.iter() {
+                    bloom.insert(p).ok();
+                }
+                bloom
+            })
+            .collect_vec_list();
+
+        for b in blooms.iter().flatten() {
+            self.bloom.merge(false, b).expect("capacity over");
         }
     }
 
