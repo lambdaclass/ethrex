@@ -3,6 +3,7 @@ pub mod helpers;
 mod tracing;
 
 use super::BlockExecutionResult;
+use crate::DynVmDatabase;
 use crate::backends::revm::db::EvmState;
 use crate::backends::revm::helpers::spec_id;
 use crate::errors::EvmError;
@@ -19,8 +20,8 @@ use revm::context::transaction::{
 };
 use revm::context::{BlockEnv, TxEnv, transaction::AccessList as RevmAccessList};
 use revm::context_interface::block::BlobExcessGasAndPrice;
-use revm::database::AccountStatus;
 use revm::database::states::bundle_state::BundleRetention;
+use revm::database::{AccountStatus, State};
 use revm::primitives::Bytes;
 use revm::primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE;
 use revm::primitives::{
@@ -140,6 +141,7 @@ impl REVM {
             BEACON_ROOTS_ADDRESS.address,
             SYSTEM_ADDRESS,
         )?;
+
         Ok(())
     }
     pub fn process_block_hash_history(
@@ -346,13 +348,12 @@ pub fn run_without_commit(
     );
     let chain_config = state.inner.database.get_chain_config()?;
     #[allow(unused_mut)]
-    let mut evm_builder = Context::mainnet()
-        .with_block(block_env)
-        .with_tx(tx_env.clone())
-        .with_db(&mut state.inner);
+    let mut evm_builder =
+        Context::<BlockEnv, TxEnv, _, &mut State<DynVmDatabase>>::new(&mut state.inner, spec_id)
+            .with_block(block_env)
+            .with_tx(tx_env.clone());
 
     evm_builder.modify_cfg(|cfg| {
-        cfg.spec = spec_id;
         cfg.disable_base_fee = true;
         cfg.disable_block_gas_limit = true;
         cfg.chain_id = chain_config.chain_id;
@@ -376,14 +377,13 @@ fn run_evm(
     let tx_result = {
         let chain_spec = state.database.get_chain_config()?;
         #[allow(unused_mut)]
-        let mut evm_builder = Context::mainnet()
-            .with_block(block_env)
-            .with_tx(tx_env.clone())
-            .with_db(state);
+        let mut evm_builder =
+            Context::<BlockEnv, TxEnv, _, &mut State<DynVmDatabase>>::new(state, spec_id)
+                .with_block(block_env)
+                .with_tx(tx_env.clone());
 
         evm_builder.modify_cfg(|cfg| {
             cfg.chain_id = chain_spec.chain_id;
-            cfg.spec = spec_id;
         });
 
         let mut evm = evm_builder.build_mainnet();
@@ -605,7 +605,8 @@ pub(crate) fn generic_system_contract_revm(
         kind: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
         // So we add the base cost that will be taken in the execution.
-        gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
+        // gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
+        gas_limit: 16777216,
         data: calldata,
         ..Default::default()
     };
@@ -614,18 +615,15 @@ pub(crate) fn generic_system_contract_revm(
     block_env.gas_limit = u64::MAX; // System calls, have no constraint on the block's gas limit.
 
     // let mut evm_builder = Context::new(state, spec_id)
-    let mut evm_builder = Context::mainnet()
-        .with_tx(tx_env.clone())
-        .with_db(state)
-        .with_block(block_env);
-
-    evm_builder.modify_cfg(|cfg| {
-        cfg.spec = spec_id;
-    });
+    let mut evm_builder =
+        Context::<BlockEnv, TxEnv, _, &mut State<DynVmDatabase>>::new(state, spec_id)
+            .with_block(block_env)
+            .with_tx(tx_env.clone());
 
     let mut evm = evm_builder.build_mainnet();
 
     let transaction_result = evm.transact(tx_env)?;
+
     let mut result_state = transaction_result.state;
     result_state.remove(SYSTEM_ADDRESS.as_ref());
     result_state.remove(&evm.block.beneficiary);
