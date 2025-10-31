@@ -678,6 +678,10 @@ impl Store {
                 Err(err) => return Err(err),
                 Ok(()) => {
                     batch.put_cf(&cf_misc, "last_written", [0xff; 64]);
+                    *self
+                        .last_computed_flatkeyvalue
+                        .lock()
+                        .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
                     self.db.write(batch)?;
                     return Ok(());
                 }
