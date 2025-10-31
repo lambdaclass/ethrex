@@ -205,7 +205,8 @@ impl Store {
         // Get existing column families to know which ones to drop later
         let existing_cfs = match DBWithThreadMode::<MultiThreaded>::list_cf(&db_options, path) {
             Ok(cfs) => {
-                info!("Found existing column families: {:?}", cfs);
+                info!("Database already exists, loading column families");
+                debug!(column_families=?cfs, "Found existing database");
                 cfs
             }
             Err(_) => {
