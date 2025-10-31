@@ -84,7 +84,7 @@ impl RLPxInitiator {
     pub async fn dummy(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(P2PContext::dummy(peer_table).await);
-        RLPxInitiator::start_on_thread(state.clone())
+        RLPxInitiator::start_on_thread(state)
     }
 }
 

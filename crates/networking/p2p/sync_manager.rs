@@ -96,6 +96,11 @@ impl SyncManager {
         }
     }
 
+    /// Disables snapsync mode
+    pub fn disable_snap(&self) {
+        self.snap_enabled.store(false, Ordering::Relaxed);
+    }
+
     /// Updates the last fcu head. This may be used on the next sync cycle if needed
     fn set_head(&self, fcu_head: H256) {
         if let Ok(mut latest_fcu_head) = self.last_fcu_head.try_lock() {
