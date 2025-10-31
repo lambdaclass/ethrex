@@ -1,5 +1,6 @@
 use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
+use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
 use ethrex_common::utils::keccak;
 use ethrex_common::{
@@ -357,7 +358,11 @@ impl BlockFetcher {
         // This is copied from the L1Committer, this should be reviewed.
         let mut acc_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
         for block in batch {
-            let vm_db = StoreVmDatabase::new(self.store.clone(), block.header.parent_hash);
+            let parent_header = self
+                .store
+                .get_block_header_by_hash(block.header.parent_hash)?
+                .ok_or(BlockFetcherError::ChainError(ChainError::ParentNotFound))?;
+            let vm_db = StoreVmDatabase::new(self.store.clone(), parent_header);
             let mut vm = self.blockchain.new_evm(vm_db)?;
             vm.execute_block(block)
                 .map_err(BlockFetcherError::EvmError)?;
@@ -376,8 +381,12 @@ impl BlockFetcher {
         }
 
         let parent_block_hash = first_block.header.parent_hash;
+        let parent_header = self
+            .store
+            .get_block_header_by_hash(parent_block_hash)?
+            .ok_or(BlockFetcherError::ChainError(ChainError::ParentNotFound))?;
 
-        let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
+        let parent_db = StoreVmDatabase::new(self.store.clone(), parent_header);
 
         let state_diff = prepare_state_diff(
             last_block.header.clone(),

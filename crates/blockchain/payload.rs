@@ -234,7 +234,11 @@ impl PayloadBuildContext {
                 .unwrap_or_default(),
         );
 
-        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let parent_header = storage
+            .get_block_header_by_hash(payload.header.parent_hash)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+            .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
+        let vm_db = StoreVmDatabase::new(storage.clone(), parent_header);
         let vm = new_evm(blockchain_type, vm_db)?;
 
         Ok(PayloadBuildContext {
