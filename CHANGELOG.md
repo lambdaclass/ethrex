@@ -2,6 +2,9 @@
 
 ## Perf
 
+### 2025-10-31
+- Reduce overhead of trie opening [#5145](https://github.com/lambdaclass/ethrex/pull/5145)
+
 ### 2025-10-28
 
 - Batch BlobsBundle::validate [#4993](https://github.com/lambdaclass/ethrex/pull/4993)
