@@ -3635,7 +3635,6 @@ version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common 5.0.0",
