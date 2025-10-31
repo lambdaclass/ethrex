@@ -28,7 +28,7 @@ impl Default for TrieLayerCache {
     fn default() -> Self {
         Self {
             // todo: tune this
-            bloom: qfilter::Filter::new_resizeable(1_000_000, qfilter::Filter::MAX_CAPACITY, 0.02)
+            bloom: qfilter::Filter::new_resizeable(1_000_000, 100_000_000, 0.02)
                 .expect("create filter"),
             last_id: 0,
             layers: Default::default(),
