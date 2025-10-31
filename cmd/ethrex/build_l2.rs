@@ -1,5 +1,5 @@
+use ethrex_common::genesis_utils::write_genesis_as_json;
 use ethrex_common::{H160, H256};
-use genesis_tool::genesis::write_genesis_as_json;
 use std::fs::File;
 use std::io::BufReader;
 use std::{
@@ -8,7 +8,6 @@ use std::{
 };
 
 use ethrex_common::{U256, types::GenesisAccount};
-
 use std::collections::HashMap;
 
 use bytes::Bytes;
