@@ -455,10 +455,7 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
             .into_iter()
             .map(|hash| B256::from(hash.0))
             .collect(),
-        max_fee_per_blob_gas: tx
-            .max_fee_per_blob_gas()
-            .expect("Failed to get max fee per blob gas")
-            .as_u128(),
+        max_fee_per_blob_gas: tx.max_fee_per_blob_gas().unwrap_or_default().as_u128(),
         // EIP7702
         // https://eips.ethereum.org/EIPS/eip-7702
         // The latest version of revm(19.3.0) is needed to run with the latest changes.
@@ -483,7 +480,7 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
                     })
                     .collect::<Vec<either::Either<SignedAuthorization, RecoveredAuthorization>>>()
             })
-            .expect("Failed to create authorization list"),
+            .unwrap_or_default(),
     }
 }
 
@@ -527,10 +524,7 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
             .iter()
             .map(|hash| B256::from(hash.0))
             .collect(),
-        max_fee_per_blob_gas: tx
-            .max_fee_per_blob_gas
-            .expect("Failed to get max fee per blob gas")
-            .as_u128(),
+        max_fee_per_blob_gas: tx.max_fee_per_blob_gas.unwrap_or_default().as_u128(),
         // EIP7702
         // https://eips.ethereum.org/EIPS/eip-7702
         // The latest version of revm(19.3.0) is needed to run with the latest changes.
@@ -558,7 +552,7 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
                     })
                     .collect::<Vec<either::Either<SignedAuthorization, RecoveredAuthorization>>>()
             })
-            .expect("Failed to create authorization list"),
+            .unwrap_or_default(),
     }
 }
 
