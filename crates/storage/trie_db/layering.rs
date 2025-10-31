@@ -23,13 +23,16 @@ pub struct TrieLayerCache {
     /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
     bloom: Option<qfilter::Filter>,
-    bloom_is_poisson: bool,
+    /// In case a bloom filter insert or merge fails, we need to mark the bloom filter as poisoned
+    /// so we never use it again, because if we don't we may be misled into believing a key is not present
+    /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
+    bloom_is_poisoned: bool,
 }
 
 impl Default for TrieLayerCache {
     fn default() -> Self {
         // Try to create the bloom filter, if it fails use poisson mode.
-        let (filter, bloom_is_poisson) = {
+        let (filter, bloom_is_poisoned) = {
             if let Ok(filter) = Self::create_filter() {
                 (Some(filter), false)
             } else {
@@ -41,7 +44,7 @@ impl Default for TrieLayerCache {
             bloom: filter,
             last_id: 0,
             layers: Default::default(),
-            bloom_is_poisson,
+            bloom_is_poisoned,
         }
     }
 }
@@ -58,7 +61,7 @@ impl TrieLayerCache {
 
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
-        if !self.bloom_is_poisson
+        if !self.bloom_is_poisoned
             && let Some(filter) = &self.bloom
             && !filter.contains(key)
         {
@@ -119,16 +122,16 @@ impl TrieLayerCache {
         // add this new bloom to the global one.
         if let Some(filter) = &mut self.bloom {
             for (p, _) in &key_values {
-                if !self.bloom_is_poisson {
+                if !self.bloom_is_poisoned {
                     if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
                         tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
-                        self.bloom_is_poisson = true;
+                        self.bloom_is_poisoned = true;
                         break;
                     }
                 }
             }
         }
-        if self.bloom_is_poisson {
+        if self.bloom_is_poisoned {
             self.bloom = None; // drop the bloom to save memory
         }
 
@@ -149,7 +152,7 @@ impl TrieLayerCache {
     /// Rebuilds the global bloom filter accruing all current existing layers.
     pub fn rebuild_bloom(&mut self) {
         // do not rebuild if already poisson
-        if self.bloom_is_poisson {
+        if self.bloom_is_poisoned {
             return;
         }
         if let Some(filter) = &mut self.bloom {
@@ -179,12 +182,12 @@ impl TrieLayerCache {
             for b in blooms.iter().flatten().filter_map(|b| b.as_ref()) {
                 if let Err(qfilter::Error::CapacityExceeded) = filter.merge(false, b) {
                     tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                    self.bloom_is_poisson = true;
+                    self.bloom_is_poisoned = true;
                     break;
                 }
             }
         }
-        if self.bloom_is_poisson {
+        if self.bloom_is_poisoned {
             self.bloom = None; // drop the bloom to save memory
         }
     }
