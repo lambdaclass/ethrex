@@ -53,6 +53,8 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::error::ChainError;
+use ethrex_common::types::Block;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -67,7 +69,12 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tokio::net::TcpListener;
+use tokio::sync::{
+    Mutex as TokioMutex,
+    mpsc::{UnboundedSender, unbounded_channel},
+    oneshot,
+};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, Registry, reload};
@@ -164,6 +171,7 @@ pub struct RpcApiContext {
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     pub gas_ceil: u64,
+    pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +203,21 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
+pub fn start_block_executor(
+    blockchain: Arc<Blockchain>,
+) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
+    let (block_worker_channel, mut block_receiver) =
+        unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
+    std::thread::spawn(move || {
+        while let Some((notify, block)) = block_receiver.blocking_recv() {
+            let _ = notify
+                .send(blockchain.add_block(block))
+                .inspect_err(|_| tracing::error!("failed to notify caller"));
+        }
+    });
+    block_worker_channel
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
@@ -215,6 +238,7 @@ pub async fn start_api(
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let block_worker_channel = start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         storage,
         blockchain,
@@ -231,6 +255,7 @@ pub async fn start_api(
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
         gas_ceil,
+        block_worker_channel,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -530,7 +555,7 @@ pub async fn map_admin_requests(
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
-        "admin_addPeer" => admin::add_peers(&mut context, req).await,
+        "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -604,7 +629,7 @@ mod tests {
     async fn admin_nodeinfo_request() {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())
@@ -693,7 +718,7 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","nonce":"0x0","to":"0x0100000000000000000000000000000000000000","value":"0xa"},"0x00"]}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         // Setup initial storage
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let genesis = read_execution_api_genesis_file();
         storage
@@ -740,17 +765,13 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0","method":"net_version","params":[],"id":67}"#;
         let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
         // Setup initial storage
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())
             .await
             .unwrap();
-        let chain_id = storage
-            .get_chain_config()
-            .expect("failed to get chain_id")
-            .chain_id
-            .to_string();
+        let chain_id = storage.get_chain_config().chain_id.to_string();
         let context = default_context_with_storage(storage).await;
         // Process request
         let result = map_http_requests(&request, context).await;

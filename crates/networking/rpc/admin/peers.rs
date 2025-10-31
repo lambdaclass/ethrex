@@ -4,12 +4,14 @@ use core::net::SocketAddr;
 use ethrex_common::H256;
 use ethrex_p2p::{
     discv4::peer_table::PeerData,
+    peer_handler::PeerHandler,
     rlpx::{initiator::InMessage, p2p::Capability},
     types::Node,
 };
 use serde::Serialize;
 use serde_json::Value;
-use tracing::info;
+use tokio::time::{Duration, Instant};
+
 /// Serializable peer data returned by the node's rpc
 #[derive(Serialize)]
 pub struct RpcPeer {
@@ -94,8 +96,7 @@ pub async fn peers(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
     Ok(serde_json::to_value(peers)?)
 }
 
-pub async fn add_peers(context: &mut RpcApiContext, request: &RpcRequest) -> Result<Value, RpcErr> {
-    let mut server = context.peer_handler.initiator.clone();
+fn parse(request: &RpcRequest) -> Result<Node, RpcErr> {
     let params = request
         .params
         .clone()
@@ -111,30 +112,40 @@ pub async fn add_peers(context: &mut RpcApiContext, request: &RpcRequest) -> Res
         .as_str()
         .ok_or(RpcErr::WrongParam("Expected string".to_string()))?;
 
-    let node = Node::from_enode_url(url).map_err(|error| RpcErr::BadParams(error.to_string()))?;
+    Node::from_enode_url(url).map_err(|error| RpcErr::BadParams(error.to_string()))
+}
 
-    match server
-        .cast(InMessage::Initiate { node: node.clone() })
-        .await
-    {
-        Err(_) => {
-            info!("ACA salió mal");
-            Ok(serde_json::to_value(false)?)
+pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Result<Value, RpcErr> {
+    let mut server = context.peer_handler.initiator.clone();
+    let node = parse(request)?;
+
+    let start = Instant::now();
+    let runtime = Duration::from_secs(10);
+
+    loop {
+        let cast_result = server
+            .cast(InMessage::Initiate { node: node.clone() })
+            .await;
+
+        if peer_is_conected(&mut context.peer_handler, &node.enode_url()).await {
+            return Ok(serde_json::to_value(true)?);
         }
-        Ok(_) => {
-            info!("ACA salió bien");
-            Ok(serde_json::to_value(
-                context
-                    .peer_handler
-                    .read_connected_peers()
-                    .await
-                    .into_iter()
-                    .map(|peer| peer.node.enode_url())
-                    .collect::<Vec<_>>()
-                    .contains(&node.enode_url()),
-            )?)
+
+        if matches!(cast_result, Err(_)) || start.elapsed() >= runtime {
+            return Ok(serde_json::to_value(false)?);
         }
+        std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+async fn peer_is_conected(peer_handler: &mut PeerHandler, enode_url: &String) -> bool {
+    peer_handler
+        .read_connected_peers()
+        .await
+        .into_iter()
+        .map(|peer| peer.node.enode_url())
+        .collect::<Vec<_>>()
+        .contains(enode_url)
 }
 
 // TODO: Adapt the test to the new P2P architecture.
