@@ -21,6 +21,7 @@ use ethrex_levm::EVMConfig;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::hooks::l2_hook::FEE_TOKEN_RATIO_ADDRESS;
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -93,6 +94,32 @@ impl LEVM {
             block_header.base_fee_per_gas.unwrap_or_default(),
             &vm_type,
         )?;
+        let fee_ratio = if let Some(fee_token) = tx.fee_token() {
+            const GET_FEE_TOKEN_RATIO_SELECTOR: [u8; 4] = [0xc6, 0xab, 0x85, 0xd8];
+            let mut data = GET_FEE_TOKEN_RATIO_SELECTOR.to_vec();
+            data.extend_from_slice(&[0u8; 12]);
+            data.extend_from_slice(fee_token.as_bytes());
+            dbg!("ASdasdfa");
+            let tx_query = EIP1559Transaction {
+                to: TxKind::Call(FEE_TOKEN_RATIO_ADDRESS),
+                chain_id: chain_config.chain_id,
+                data: Bytes::from(data),
+                gas_limit: 1_000_000,
+                nonce: 0,
+                ..Default::default()
+            };
+            dbg!("mklhlkmh");
+            let a = LEVM::simulate_tx_from_generic(
+                &GenericTransaction::from(tx_query),
+                block_header,
+                &mut db.clone(),
+                vm_type,
+            )?;
+            Some(U256::from_big_endian(&a.output()))
+        } else {
+            None
+        };
+        dbg!(fee_ratio);
 
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
@@ -117,6 +144,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
+            fee_ratio,
         };
 
         Ok(env)
@@ -570,6 +598,7 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
+        fee_ratio: None,
     })
 }
 

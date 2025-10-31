@@ -145,11 +145,7 @@ fn finalize_non_privileged_execution(
 
     default_hook::delete_self_destruct_accounts(vm)?;
 
-    let fee_token_ratio = if let Some(fee_token) = vm.env.fee_token {
-        get_fee_token_ratio(vm, fee_token)?.as_u64()
-    } else {
-        1u64
-    };
+    let fee_token_ratio = vm.env.fee_ratio.map(|ratio| ratio.as_u64()).unwrap_or(1u64);
 
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
         pay_to_l1_fee_vault(
@@ -435,7 +431,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
         ));
     }
 
-    let fee_token_ratio = get_fee_token_ratio(vm, fee_token)?;
+    let fee_token_ratio = vm.env.fee_ratio.unwrap_or(U256::one());
 
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
@@ -561,13 +557,13 @@ fn encode_is_fee_token_call(token: Address) -> Bytes {
     data.into()
 }
 
-fn encode_get_fee_token_ratio_call(token: Address) -> Bytes {
-    let mut data = Vec::with_capacity(4 + 32);
-    data.extend_from_slice(&GET_FEE_TOKEN_RATIO_SELECTOR);
-    data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&token.0);
-    data.into()
-}
+// fn encode_get_fee_token_ratio_call(token: Address) -> Bytes {
+//     let mut data = Vec::with_capacity(4 + 32);
+//     data.extend_from_slice(&GET_FEE_TOKEN_RATIO_SELECTOR);
+//     data.extend_from_slice(&[0u8; 12]);
+//     data.extend_from_slice(&token.0);
+//     data.into()
+// }
 
 /// Locks the fee token amount from the payer's balance.
 fn lock_fee_token(vm: &mut VM<'_>, payer: Address, amount: U256) -> Result<(), VMError> {
@@ -783,27 +779,4 @@ fn pay_to_l1_fee_vault(
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
     }
     Ok(())
-}
-
-fn get_fee_token_ratio(vm: &mut VM<'_>, fee_token: Address) -> Result<U256, VMError> {
-    let (execution_result, _) = simulate_common_bridge_call(
-        vm,
-        FEE_TOKEN_RATIO_ADDRESS,
-        encode_get_fee_token_ratio_call(fee_token),
-    )?;
-
-    if !execution_result.is_success() {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ));
-    }
-    if execution_result.output.len() != 32 {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ));
-    }
-
-    let fee_token_ratio = U256::from_big_endian(&execution_result.output);
-
-    Ok(fee_token_ratio)
 }
