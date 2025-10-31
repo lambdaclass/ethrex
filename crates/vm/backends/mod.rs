@@ -154,8 +154,8 @@ impl Evm {
         tx: &GenericTransaction,
         header: &BlockHeader,
     ) -> Result<ExecutionResult, EvmError> {
-        // REVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type)
-        todo!()
+        let spec_id = spec_id(&self.db.chain_config()?, header.timestamp);
+        revm::helpers::simulate_tx_from_generic(tx, header, &mut self.db, spec_id)
     }
 
     pub fn create_access_list(
