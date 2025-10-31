@@ -52,7 +52,7 @@ Scatter view that ties throughput to the specific block number once all selected
 
 ![Ggas by Block](img/ggas_by_block.png)
 
-_**Limitations**: This panel is useful only shows data when all selected instances agree on the same head block, and it doesn't handle reorgs gracefully, here are a couple of things to have in mind when looking at it:_
+_**Limitations**: This panel only shows data when all selected instances agree on the same head block, and it doesn't handle reorgs gracefully. Here are a couple of things to have in mind when looking at it:_
 - During reorgs, we might see weird shapes in the data, with lines at a certain block connected to past ones when more than one slot reorgs happen.
 - We could see double measurements for the same block number if reorgs on the same block occur.
 - Mean could vary when adding or removing instances, as only blocks agreed upon by all selected instances are shown.
