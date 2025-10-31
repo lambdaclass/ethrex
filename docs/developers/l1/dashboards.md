@@ -39,29 +39,42 @@ Charts gigagas per second to compare execution throughput between nodes and reve
 ![Ggas/s](img/ggas_per_sec.png)
 
 ### Block Height
-Plots the head block seen by each instance so you can immediately detect stalled sync or lagging peers.
+Plots the head block seen by each instance so you can immediately detect stalled sync or lagging nodes.
 
 ![Block Height](img/block_height.png)
 
 ### Ggas/s by Block
 Scatter view that ties throughput to the specific block number once all selected instances agree on the same head, making block-level investigations straightforward.
-![Ggas by Block](<add-image-path>)
+
+![Ggas by Block](img/ggas_by_block.png)
+
+_**Limitations**: This panel is useful only shows data when all selected instances agree on the same head block, and it doesn't handle reorgs gracefully, here are a couple of things to have in mind when looking at it:_
+- During reorgs, we might see weird shapes in the data, with lines at a certain block connected to past ones when more than one slot reorgs happen.
+- We could see double measurements for the same block number if reorgs on the same block occur.
+- Mean could vary when adding or removing instances, as only blocks agreed upon by all selected instances are shown.
+
 
 ### Block Time
 Estimates per-block execution time and lines it up with block numbers, helping you correlate latency spikes with particular blocks.
-![Block Time](<add-image-path>)
+
+![Block Time](img/block_time.png)
+
+_**Limitations**: This panel has the same limitations as the "Ggas/s by Block" panel above, as it relies on the same logic to align blocks across instances._
 
 ## Block execution breakdown
 
-### Block Execution Breakdown - per instance
-Repeats a pie chart for each instance showing how execution time splits between storage reads, account reads, and non-database work so you can confirm performance tuning effects.
-![Block Execution Breakdown](<add-image-path>)
+This row repeats a pie chart for each instance showing how execution time splits between storage reads, account reads, and non-database work so you can confirm performance tuning effects.
+
+![Block Execution Breakdown](img/block_execution_breakdown.png)
 
 ## Process and server info
 
+Row panels showing process-level and host-level metrics to help you monitor resource usage and spot potential issues.
+
 ### Uptime
 Displays time since the Ethrex process started to highlight restarts or crash loops.
-![Uptime](<add-image-path>)
+![Uptime](img/uptime.png)
+![alt text](image.png)
 
 ### Threads
 Shows the number of OS threads in use, which helps catch runaway concurrency early.
