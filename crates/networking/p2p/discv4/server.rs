@@ -206,8 +206,9 @@ impl DiscoveryServer {
         Ok(())
     }
 
+    /// Generate and store a FindNodeMessage with a random key. We then send the same message on Disovery lookup.
+    /// We change this message every CHANGE_FIND_NODE_MESSAGE_INTERVAL.
     fn random_message(signer: &SecretKey) -> BytesMut {
-        // Storing a FindNode message to send to all contacts to optimize message creation and encoding
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
         let random_priv_key = SecretKey::new(&mut OsRng);
         let random_pub_key = public_key_from_signing_key(&random_priv_key);
