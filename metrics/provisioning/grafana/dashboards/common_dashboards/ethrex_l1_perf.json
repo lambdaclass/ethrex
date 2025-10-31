@@ -2496,26 +2496,9 @@
           "text": "",
           "value": ""
         },
-        "definition": "label_values({__name__=~\"(gigagas|eth_con_beacon_slot)\"},instance)",
+        "definition": "label_values(eth_con_spec_config_name,name)",
         "includeAll": true,
         "multi": true,
-        "name": "instance",
-        "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values({__name__=~\"(gigagas|eth_con_beacon_slot)\"},instance)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery"
-        },
-        "refresh": 1,
-        "regex": "/^(?<text>[^:]+)(?::\\d+)?$/",
-        "type": "query"
-      },
-      {
-        "current": {
-          "text": "",
-          "value": ""
-        },
-        "definition": "label_values(eth_con_spec_config_name,name)",
         "name": "network",
         "options": [],
         "query": {
@@ -2525,6 +2508,25 @@
         },
         "refresh": 1,
         "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "definition": "label_values(eth_con_spec_config_name{name=~\"$network\"},instance)",
+        "includeAll": true,
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(eth_con_spec_config_name{name=~\"$network\"},instance)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "/^(?<text>[^:]+)(?::\\d+)?$/",
         "type": "query"
       },
       {

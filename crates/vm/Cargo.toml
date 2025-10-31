@@ -34,6 +34,7 @@ default = []
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 debug = ["ethrex-levm/debug"]
 sp1 = ["ethrex-levm/sp1"]
+risc0 = ["ethrex-levm/risc0"]
 
 [lints.clippy]
 unwrap_used = "deny"
