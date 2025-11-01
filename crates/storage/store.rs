@@ -1313,9 +1313,7 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self::from_backend(Arc::new(RocksDBBackend::open(path)?)),
             #[cfg(feature = "fjall")]
-            EngineType::Fjall => Self::from_engine(Arc::new(StoreEngine::new(Arc::new(
-                FjallBackend::open(path)?,
-            ))?)),
+            EngineType::Fjall => Self::from_backend(Arc::new(FjallBackend::open(path)?)),
             EngineType::InMemory => Self::from_backend(Arc::new(InMemoryBackend::open()?)),
         }
     }
