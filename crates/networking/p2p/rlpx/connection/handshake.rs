@@ -63,7 +63,7 @@ pub(crate) async fn perform(
     eth_version: Arc<RwLock<EthCapVersion>>,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), PeerConnectionError> {
     let (context, node, framed) = match state {
-        ConnectionState::Initiator(Initiator { context, node, .. }) => {
+        ConnectionState::Initiator(Initiator { context, node }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,

@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-31
+
+- Improved discovery and peer initialization [#5147](https://github.com/lambdaclass/ethrex/pull/5147)
+
 ### 2025-10-30
 
 - Pipeline Merkleization and Execution [#5084](https://github.com/lambdaclass/ethrex/pull/5084)
