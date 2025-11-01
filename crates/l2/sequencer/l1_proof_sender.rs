@@ -95,7 +95,7 @@ pub struct L1ProofSenderHealth {
 }
 
 impl L1ProofSender {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn new(
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
