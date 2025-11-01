@@ -82,6 +82,8 @@ pub struct DiscoveryServer {
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
     peer_table: PeerTable,
+    /// The last `FindNode` message sent, cached due to message
+    /// signatures being expensive.
     find_node_message: BytesMut,
 }
 
