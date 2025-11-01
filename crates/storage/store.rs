@@ -1,5 +1,5 @@
 #[cfg(feature = "rocksdb")]
-use crate::backend::rocksdb::RocksDBBackend;
+use crate::backend::{canopydb::CanopyDBBackend, rocksdb::RocksDBBackend};
 use crate::{
     api::{
         StorageBackend,
@@ -83,6 +83,8 @@ pub enum EngineType {
     InMemory,
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    // TODO: add
+    // CanopyDB,
 }
 
 pub struct UpdateBatch {
@@ -1307,7 +1309,7 @@ impl Store {
         let _path = &path;
         match engine_type {
             #[cfg(feature = "rocksdb")]
-            EngineType::RocksDB => Self::from_backend(Arc::new(RocksDBBackend::open(path)?)),
+            EngineType::RocksDB => Self::from_backend(Arc::new(CanopyDBBackend::open(path)?)),
             EngineType::InMemory => Self::from_backend(Arc::new(InMemoryBackend::open()?)),
         }
     }
