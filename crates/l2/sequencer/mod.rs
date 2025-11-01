@@ -19,7 +19,6 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
-#[cfg(feature = "metrics")]
 use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -47,7 +46,7 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
-    #[cfg(feature = "metrics")] l2_url: Url,
+    _l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
 ) -> Result<(), errors::SequencerError> {
@@ -145,7 +144,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
+    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), _l2_url)
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
