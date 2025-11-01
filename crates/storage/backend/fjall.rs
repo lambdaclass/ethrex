@@ -61,6 +61,10 @@ impl StorageBackend for FjallBackend {
         let snapshot = self.get_partition(table_name)?.snapshot();
         Ok(Box::new(FjallLockedTx { snapshot }))
     }
+
+    fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 // Helper method to initialize a single partition
