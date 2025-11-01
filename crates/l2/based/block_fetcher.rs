@@ -13,7 +13,7 @@ use ethrex_l2_common::{
     privileged_transactions::compute_privileged_transactions_hash,
     state_diff::prepare_state_diff,
 };
-use ethrex_l2_sdk::{get_last_committed_batch, get_last_fetched_l1_block};
+use ethrex_l2_sdk::{get_l1_active_fork, get_last_committed_batch, get_last_fetched_l1_block};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
@@ -93,6 +93,7 @@ pub struct BlockFetcher {
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
     fetch_block_step: U256,
+    osaka_activation_time: Option<u64>,
 }
 
 impl BlockFetcher {
@@ -118,6 +119,7 @@ impl BlockFetcher {
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
             last_l1_block_fetched,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
+            osaka_activation_time: cfg.eth.osaka_activation_time,
         })
     }
 
@@ -388,8 +390,11 @@ impl BlockFetcher {
         )
         .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
-        let (blobs_bundle, _) =
-            generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
+        let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
+            .await
+            .map_err(BlockFetcherError::EthClientError)?;
+        let (blobs_bundle, _) = generate_blobs_bundle(&state_diff, l1_fork)
+            .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
         Ok(Batch {
             number: batch_number.as_u64(),
