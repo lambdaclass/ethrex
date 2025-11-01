@@ -8,6 +8,7 @@
 
 ### 2025-10-30
 
+- Add bloom filters to snapshot layers [#5112](https://github.com/lambdaclass/ethrex/pull/5112)
 - Make trusted setup warmup non blocking [#5124](https://github.com/lambdaclass/ethrex/pull/5124)
 
 ### 2025-10-28
