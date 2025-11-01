@@ -211,6 +211,10 @@ impl L1ProofSender {
             self.rollup_store
                 .set_latest_sent_batch_proof(batch_to_send)
                 .await?;
+
+            // Remove checkpoint from batch sent - 1.
+            // That checkpoint was needed to generate the proof for the batch we just sent.
+            // The checkpoint for the batch we have just sent is needed for the next batch.
             let checkpoint_path = self
                 .checkpoints_dir
                 .join(batch_checkpoint_name(batch_to_send - 1));
