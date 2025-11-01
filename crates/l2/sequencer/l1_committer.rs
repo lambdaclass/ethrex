@@ -410,7 +410,10 @@ impl L1Committer {
             batch.number,
         );
 
-        self.generate_and_store_batch_prover_input(&batch).await?;
+        if let Err(e) = self.generate_and_store_batch_prover_input(&batch).await {
+            let _ = self.rollup_store.revert_to_batch(batch.number - 1).await;
+            return Err(e);
+        }
 
         // We need to update the current checkpoint after generating the witness
         // with it, and before sending the commitment.
