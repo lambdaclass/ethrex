@@ -34,7 +34,7 @@ use super::{
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::errors::ProofSenderError,
+    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
 };
 use aligned_sdk::{
     common::{
@@ -213,11 +213,11 @@ impl L1ProofSender {
                 .await?;
             let checkpoint_path = self
                 .checkpoints_dir
-                .join(format!("checkpoint_batch_{}", batch_to_send - 1));
+                .join(batch_checkpoint_name(batch_to_send - 1));
             if checkpoint_path.exists() {
                 let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
                     error!(
-                        "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {}", e.to_string()
+                        "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {e}"
                     )
                 });
             }
