@@ -31,10 +31,13 @@ path = "./lib.rs"
 
 [features]
 default = []
+
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
-debug = ["ethrex-levm/debug"]
+
 sp1 = ["ethrex-levm/sp1"]
-risc0 = ["ethrex-levm/risc0"]
+risc0 = ["ethrex-levm/risc0", "c-kzg"]
+
+debug = ["ethrex-levm/debug"]
 
 [lints.clippy]
 unwrap_used = "deny"
