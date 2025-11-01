@@ -2,6 +2,7 @@ name: L2 (without proving)
 on:
   push:
     branches: ["main"]
+  merge_group:
   pull_request:
     branches: ["**"]
 
@@ -21,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
+    if: ${{ github.event_name != 'merge_group' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
