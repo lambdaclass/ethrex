@@ -15,7 +15,7 @@ use ethrex_levm::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
-use std::collections::BTreeMap;
+use rustc_hash::FxHashMap;
 use std::hint::black_box;
 use std::sync::Arc;
 
@@ -55,26 +55,25 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
 
-    let cache = BTreeMap::from([
-        (
-            Address::from_low_u64_be(CONTRACT_ADDRESS),
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(bytecode.clone()),
-                0,
-                BTreeMap::new(),
-            ),
+    let mut cache = FxHashMap::default();
+    cache.insert(
+        Address::from_low_u64_be(CONTRACT_ADDRESS),
+        Account::new(
+            U256::MAX,
+            Code::from_bytecode(bytecode.clone()),
+            0,
+            FxHashMap::default(),
         ),
-        (
-            Address::from_low_u64_be(SENDER_ADDRESS),
-            Account::new(
-                U256::MAX,
-                Code::from_bytecode(Bytes::new()),
-                0,
-                BTreeMap::new(),
-            ),
+    );
+    cache.insert(
+        Address::from_low_u64_be(SENDER_ADDRESS),
+        Account::new(
+            U256::MAX,
+            Code::from_bytecode(Bytes::new()),
+            0,
+            FxHashMap::default(),
         ),
-    ]);
+    );
 
     GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
 }

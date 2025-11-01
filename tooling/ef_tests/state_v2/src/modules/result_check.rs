@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use ethrex_common::H256;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
@@ -15,6 +13,7 @@ use ethrex_levm::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_vm::backends;
+use rustc_hash::FxHashMap;
 
 use crate::modules::{
     error::RunnerError,
@@ -52,7 +51,7 @@ pub struct AccountMismatch {
     pub balance_diff: Option<(U256, U256)>,
     pub nonce_diff: Option<(u64, u64)>,
     pub code_diff: Option<(H256, H256)>,
-    pub storage_diff: Option<(BTreeMap<H256, U256>, BTreeMap<H256, U256>)>,
+    pub storage_diff: Option<(FxHashMap<H256, U256>, FxHashMap<H256, U256>)>,
 }
 
 /// Verify if the test has reached the expected results: if an exception was expected, check it was the corresponding
@@ -307,7 +306,7 @@ fn verify_matching_accounts(
     actual_account: &LevmAccount,
     expected_account: &AccountState,
 ) -> Option<AccountMismatch> {
-    let mut formatted_expected_storage = BTreeMap::new();
+    let mut formatted_expected_storage = FxHashMap::default();
     for (key, value) in &expected_account.storage {
         let formatted_key = H256::from(key.to_big_endian());
         formatted_expected_storage.insert(formatted_key, *value);

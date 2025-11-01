@@ -53,6 +53,7 @@ pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
     pending_removal: HashSet<Nibbles>,
+    dirty: bool,
 }
 
 impl Default for Trie {
@@ -68,6 +69,7 @@ impl Trie {
             db,
             root: NodeRef::default(),
             pending_removal: HashSet::new(),
+            dirty: false,
         }
     }
 
@@ -81,6 +83,7 @@ impl Trie {
                 Default::default()
             },
             pending_removal: HashSet::new(),
+            dirty: false,
         }
     }
 
@@ -96,10 +99,7 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32
-            && !self.pending_removal.contains(&path)
-            && self.db().flatkeyvalue_computed(path.clone())
-        {
+        if pathrlp.len() == 32 && !self.dirty && self.db().flatkeyvalue_computed(path.clone()) {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
@@ -128,6 +128,7 @@ impl Trie {
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
+        self.dirty = true;
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -155,6 +156,7 @@ impl Trie {
         if path.len() == 32 {
             self.pending_removal.insert(Nibbles::from_bytes(path));
         }
+        self.dirty = true;
 
         // If the trie is not empty, call the root node's removal logic.
         let (is_trie_empty, value) = self

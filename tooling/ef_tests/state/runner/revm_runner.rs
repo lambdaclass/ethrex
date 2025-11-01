@@ -424,7 +424,7 @@ pub async fn ensure_post_state(
         // We only want to compare account updates when no exception is expected.
         None => {
             let mut db = load_initial_state_levm(test).await;
-            db.current_accounts_state = levm_cache;
+            db.current_accounts_state = levm_cache.into_iter().collect();
             let levm_account_updates = db.get_state_transitions()
                 .map_err(|_| {
                     InternalError::Custom(format!("Error at LEVM::get_state_transitions() thrown in REVM runner line: {} when executing ensure_post_state()",line!()).to_owned())

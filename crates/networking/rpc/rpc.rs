@@ -211,7 +211,7 @@ pub fn start_block_executor(
     std::thread::spawn(move || {
         while let Some((notify, block)) = block_receiver.blocking_recv() {
             let _ = notify
-                .send(blockchain.add_block(block))
+                .send(blockchain.add_block_pipeline(block))
                 .inspect_err(|_| tracing::error!("failed to notify caller"));
         }
     });
