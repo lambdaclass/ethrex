@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::remove_dir_all,
+    path::PathBuf,
+};
 
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::{
@@ -30,7 +34,7 @@ use super::{
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::errors::ProofSenderError,
+    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
 };
 use aligned_sdk::{
     common::{
@@ -71,6 +75,8 @@ pub struct L1ProofSender {
     l1_chain_id: u64,
     network: Network,
     fee_estimate: FeeEstimationType,
+    /// Directory where checkpoints are stored.
+    checkpoints_dir: PathBuf,
     aligned_mode: bool,
 }
 
@@ -89,6 +95,7 @@ pub struct L1ProofSenderHealth {
 }
 
 impl L1ProofSender {
+    #[expect(clippy::too_many_arguments)]
     async fn new(
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
@@ -97,6 +104,7 @@ impl L1ProofSender {
         aligned_cfg: &AlignedConfig,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
+        checkpoints_dir: PathBuf,
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_config(
             eth_cfg.rpc_url.clone(),
@@ -123,6 +131,7 @@ impl L1ProofSender {
             l1_chain_id,
             network: aligned_cfg.network.clone(),
             fee_estimate,
+            checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
         })
     }
@@ -132,6 +141,7 @@ impl L1ProofSender {
         sequencer_state: SequencerState,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
+        checkpoints_dir: PathBuf,
     ) -> Result<GenServerHandle<L1ProofSender>, ProofSenderError> {
         let state = Self::new(
             &cfg.proof_coordinator,
@@ -141,6 +151,7 @@ impl L1ProofSender {
             &cfg.aligned,
             rollup_store,
             needed_proof_types,
+            checkpoints_dir,
         )
         .await?;
         let mut l1_proof_sender = L1ProofSender::start(state);
@@ -200,6 +211,20 @@ impl L1ProofSender {
             self.rollup_store
                 .set_latest_sent_batch_proof(batch_to_send)
                 .await?;
+
+            // Remove checkpoint from batch sent - 1.
+            // That checkpoint was needed to generate the proof for the batch we just sent.
+            // The checkpoint for the batch we have just sent is needed for the next batch.
+            let checkpoint_path = self
+                .checkpoints_dir
+                .join(batch_checkpoint_name(batch_to_send - 1));
+            if checkpoint_path.exists() {
+                let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
+                    error!(
+                        "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {e}"
+                    )
+                });
+            }
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
                 .iter()

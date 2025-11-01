@@ -105,7 +105,7 @@ pub async fn start_l2(
         cfg.clone(),
         shared_state.clone(),
         genesis,
-        checkpoints_dir,
+        checkpoints_dir.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -126,6 +126,7 @@ pub async fn start_l2(
         shared_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
+        checkpoints_dir,
     )
     .await
     .inspect_err(|err| {

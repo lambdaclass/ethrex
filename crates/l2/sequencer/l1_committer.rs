@@ -4,7 +4,8 @@ use crate::{
     sequencer::{
         errors::CommitterError,
         utils::{
-            self, fetch_blocks_with_respective_fee_configs, get_git_commit_hash, system_now_ms,
+            self, batch_checkpoint_name, fetch_blocks_with_respective_fee_configs,
+            get_git_commit_hash, system_now_ms,
         },
     },
 };
@@ -1312,8 +1313,4 @@ pub async fn regenerate_head_state(
     info!("Finished regenerating state");
 
     Ok(())
-}
-
-fn batch_checkpoint_name(batch_number: u64) -> String {
-    format!("checkpoint_batch_{batch_number}")
 }
