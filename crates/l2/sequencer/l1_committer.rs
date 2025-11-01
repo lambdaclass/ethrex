@@ -748,7 +748,6 @@ impl L1Committer {
             batch.number
         ));
         // We need to create a one-time checkpoint copy because if witness generation fails the checkpoint would be modified
-        info!(batch = batch.number, "WITNESS OTC");
         let (_, one_time_checkpoint_blockchain) = self
             .create_checkpoint(
                 &self.current_checkpoint_store,
