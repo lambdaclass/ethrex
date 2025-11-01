@@ -50,7 +50,7 @@ jobs:
     name: Lint L2
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -93,7 +93,7 @@ jobs:
     name: Build docker image
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -120,7 +120,7 @@ jobs:
     name: Build docker image L2
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -147,7 +147,7 @@ jobs:
     name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
       matrix:
         include:
@@ -338,7 +338,7 @@ jobs:
     name: Integration Test - TDX
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -446,7 +446,7 @@ jobs:
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -508,7 +508,7 @@ jobs:
     name: Integration Test - L2 Dev
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -575,7 +575,7 @@ jobs:
         integration-test-l2-dev,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' && github.event_name != 'merge_group' }}
     steps:
       - name: Check if any job failed
         run: |
