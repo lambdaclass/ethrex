@@ -91,4 +91,6 @@ If the tests are failing, first ensure that both the ethrex L2 node and the ethr
 
 ## Troubleshooting
 
-TODO
+> [!NOTE]
+> This is a placeholder for future troubleshooting tips.
+> Please report any issues you encounter while running the integration tests to help us improve this section.
