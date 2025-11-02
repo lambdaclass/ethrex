@@ -26,6 +26,8 @@ For this, we are using the `ethrex l2 --dev` command, which does this job for us
 --no-monitor
 ```
 
+Read the note below for explanations about the flags used.
+
 > [!NOTE]
 > ethrex's MPT implementation is path-based, and the database commit threshold is set to `128`. In simple words, the latter implies that the database only stores the state 128 blocks before the current one (e.g., if the current block is block 256, then the database stores the state at block 128), while the state of the blocks within lives in in-memory diff layers (which are lost during node shutdowns).
 > In ethrex L2, this has a direct impact since if our sequencer seals batches with more than 128 blocks, it won't be able to retrieve the state previous to the first block of the batch being sealed because it was pruned; therefore, it won't be able to commit.
