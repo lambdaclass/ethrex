@@ -6,6 +6,8 @@ In this section, we will explain how to run integration tests for ethrex L2 with
 
 - Install the latest ethrex release or pre-release binary following the instructions in the [Install ethrex (binary distribution)](https://docs.ethrex.xyz/getting-started/installation/binary_distribution.html) section.
 - For running the tests, you'll need a fresh clone of [ethrex](https://github.com/lambdaclass/ethrex/).
+- (Optional for troubleshooting) An Ethereum utility tool like [rex](https://github.com/lambdaclass/rex).
+- (Optional for troubleshooting) [`jq`](https://jqlang.org/download/) for JSON processing.
 
 ## Setting up the environment
 
@@ -81,7 +83,41 @@ Once you run `make test`, you should see the output of the tests being executed 
 
 ### How long do the tests take to run?
 
-The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 minutes to complete, depending the timing in which you performed the steps.
+The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 to 45 minutes to complete, depending the timing in which you performed the steps.
+
+### I think my tests are taking too long, how can I debug this?
+
+If your tests are taking significantly longer than expected, you are likely watching the `Retrying to get message proof for tx ...` counter in the tests terminal increase without progressing. Let's unveil what is happening here. This message indicates that the transaction has been included in an L2 block, but that block has not yet been included in a batch. There's no current way to fairly estimate when the block including the transaction will be included in a batch, but we can see how far is the block from being included.
+
+Using the hash of the transaction shown in the log message, you can check the status of the transaction using an Ethereum utility tool like `rex`. Run the following commands in a new terminal:
+
+1. Get the block number where the transaction was included (replace `<TX_HASH>` with the actual transaction hash):
+   ```shell
+   rex l2 tx <TX_HASH>
+   ```
+2. As the block is assumed to not be included in a batch yet, we need to check which blocks have been included in the latest batch. `rex` does not have a command for this yet, so we will use `curl` to make a JSON-RPC call to the ethrex L2 node. Run the following command:
+   ```shell
+   curl -X POST http://localhost:1729 \
+   -H "Content-Type: application/json" \
+   -d '{
+   "jsonrpc":"2.0",
+   "method":"ethrex_batchNumber",
+   "params": [],
+   "id":1
+   }' | jq .result
+   ```
+3. Once you have the batch number, you can get the range of blocks included in that batch by running the following command (replace `<BATCH_NUMBER>` with the actual batch number obtained in the previous step, in hex format, e.g., `0x1`):
+   ```shell
+   curl -X POST http://localhost:1729 \
+   -H "Content-Type: application/json" \
+   -d '{
+       "jsonrpc":"2.0",
+       "method":"ethrex_getBatchByNumber",
+       "params": ["<BATCH_NUMBER>", false],
+       "id":1
+   }' | jq .result.first_block,.result.last_block
+   ```
+4. Compare the block number obtained in step 1 with the range of blocks obtained in step 3 to see how far the block is from being included in a batch. To have a rough estimate, take into account the mean of blocks that are being included into the batches and consider that a batch is sealed approximately every 150 seconds (2 minutes and 30 seconds) based on the current configuration.
 
 ### Should I worry about the periodic warning logs of the L2 prover?
 
