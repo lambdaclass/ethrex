@@ -194,11 +194,13 @@ pub async fn fill_transactions(
         let previous_remaining_gas = context.remaining_gas;
         let previous_block_value = context.block_value;
 
+        let head_tx_hash = head_tx.tx.hash();
+
         // Execute tx
-        let receipt = match apply_plain_transaction(&head_tx, context) {
+        let receipt = match apply_plain_transaction(head_tx.clone(), context) {
             Ok(receipt) => receipt,
             Err(e) => {
-                debug!("Failed to execute transaction: {}, {e}", tx_hash);
+                debug!("Failed to execute transaction: {}, {e}", head_tx_hash);
                 metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                 // Ignore following txs from sender
                 txs.pop();
@@ -223,7 +225,7 @@ pub async fn fill_transactions(
         {
             debug!(
                 "No more StateDiff space to run this transactions. Skipping transaction: {:?}",
-                tx_hash
+                head_tx_hash
             );
             txs.pop();
 
@@ -253,7 +255,7 @@ pub async fn fill_transactions(
 
         txs.shift()?;
         // Pull transaction from the mempool
-        blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
+        blockchain.remove_transaction_from_pool(&head_tx_hash)?;
 
         // We only add the messages and privileged transaction length because the accounts diffs may change
         acc_size_without_accounts += tx_size_without_accounts;
@@ -261,7 +263,7 @@ pub async fn fill_transactions(
         // Include the new accounts diffs
         account_diffs = merged_diffs;
         // Add transaction to block
-        debug!("Adding transaction: {} to payload", tx_hash);
+        debug!("Adding transaction: {} to payload", head_tx_hash);
         context.payload.body.transactions.push(head_tx.into());
         // Save receipt for hash calculation
         context.receipts.push(receipt);

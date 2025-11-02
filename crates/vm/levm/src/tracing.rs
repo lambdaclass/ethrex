@@ -51,7 +51,7 @@ impl LevmCallTracer {
         to: Address,
         value: U256,
         gas: u64,
-        input: &Bytes, // For avoiding cloning when calling (cleaner code)
+        input: Bytes,
     ) {
         if !self.active {
             return;
@@ -67,7 +67,7 @@ impl LevmCallTracer {
             to,
             value,
             gas,
-            input: input.clone(),
+            input,
             ..Default::default()
         };
 
@@ -99,31 +99,38 @@ impl LevmCallTracer {
     /// Exits trace call using the ContextResult.
     pub fn exit_context(
         &mut self,
-        ctx_result: &ContextResult,
+        ctx_result: ContextResult,
         is_top_call: bool,
     ) -> Result<(), InternalError> {
         if !self.active {
             return Ok(());
         }
+
         if self.only_top_call && !is_top_call {
             // We just want to register top call
             return Ok(());
         }
+
         if is_top_call {
             // After finishing transaction execution clear all logs of callframes that reverted.
             clear_reverted_logs(self.current_callframe_mut()?);
         }
-        let (gas_used, output) = (ctx_result.gas_used, ctx_result.output.clone());
 
-        let (error, revert_reason) = match ctx_result.result {
+        let ContextResult {
+            result: ctx_result,
+            gas_used: ctx_gas_used,
+            output: ctx_output,
+        } = ctx_result;
+
+        let (error, revert_reason) = match ctx_result {
             TxResult::Revert(ref err) => {
-                let reason = String::from_utf8(ctx_result.output.to_vec()).ok();
+                let reason = String::from_utf8(ctx_output.to_vec()).ok();
                 (Some(err.to_string()), reason)
             }
             _ => (None, None),
         };
 
-        self.exit(gas_used, output, error, revert_reason)
+        self.exit(ctx_gas_used, ctx_output, error, revert_reason)
     }
 
     /// Exits trace call when CALL or CREATE opcodes return early or in case SELFDESTRUCT is called.
@@ -140,7 +147,7 @@ impl LevmCallTracer {
 
     /// Registers log when opcode log is executed.
     /// Note: Logs of callframes that reverted will be removed at end of execution.
-    pub fn log(&mut self, log: &Log) -> Result<(), InternalError> {
+    pub fn log(&mut self, log: Log) -> Result<(), InternalError> {
         if !self.active || !self.with_log {
             return Ok(());
         }
@@ -150,17 +157,16 @@ impl LevmCallTracer {
         }
         let callframe = self.current_callframe_mut()?;
 
-        let log = CallLog {
-            address: log.address,
-            topics: log.topics.clone(),
-            data: log.data.clone(),
-            position: match callframe.calls.len().try_into() {
+        let call_log = CallLog::new(
+            log,
+            match callframe.calls.len().try_into() {
                 Ok(pos) => pos,
                 Err(_) => return Err(InternalError::TypeConversion),
             },
-        };
+        );
 
-        callframe.logs.push(log);
+        callframe.logs.push(call_log);
+
         Ok(())
     }
 

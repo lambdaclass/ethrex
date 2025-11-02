@@ -54,7 +54,7 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx(tx.clone(), tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -97,7 +97,7 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx(tx.clone(), tx_sender, &block.header, db, vm_type)?;
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
             cumulative_gas_used += report.gas_used;
@@ -201,7 +201,7 @@ impl LEVM {
 
     pub fn execute_tx(
         // The transaction to execute.
-        tx: &Transaction,
+        tx: Transaction,
         // The transactions recovered address
         tx_sender: Address,
         // The block header for the current block.
@@ -209,7 +209,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let env = Self::setup_env(&tx, tx_sender, block_header, db, vm_type)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -481,7 +481,7 @@ pub fn generic_system_contract_levm(
         )));
     };
 
-    let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(contract_address),
         value: U256::zero(),
         data: calldata,
@@ -735,5 +735,5 @@ fn vm_from_generic<'a>(
         }),
     };
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+    VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)
 }

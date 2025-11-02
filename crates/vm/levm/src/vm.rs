@@ -332,23 +332,27 @@ impl<'a> VM<'a> {
     pub fn new(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
-        tx: &Transaction,
+        tx: Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
-        let mut substate = Substate::initialize(&env, tx)?;
+        let mut substate = Substate::initialize(&env, &tx)?;
 
-        let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
+        let (callee, is_create) = Self::get_tx_callee(&tx, db, &env, &mut substate)?;
 
         let fork = env.config.fork;
+
+        let tx_data = tx.data().clone();
+
+        let tx_value = tx.value();
 
         let mut vm = Self {
             call_frames: Vec::new(),
             substate,
             db,
-            tx: tx.clone(),
+            tx,
             hooks: get_hooks(&vm_type),
             substate_backups: Vec::new(),
             storage_original_values: BTreeMap::new(),
@@ -361,8 +365,8 @@ impl<'a> VM<'a> {
                 callee,
                 Address::default(), // Will be assigned at the end of prepare_execution
                 Code::default(),    // Will be assigned at the end of prepare_execution
-                tx.value(),
-                tx.data().clone(),
+                tx_value,
+                tx_data,
                 false,
                 env.gas_limit,
                 0,
@@ -388,7 +392,7 @@ impl<'a> VM<'a> {
             callee,
             vm.tx.value(),
             vm.env.gas_limit,
-            vm.tx.data(),
+            vm.tx.data().clone(),
         );
 
         #[cfg(feature = "debug")]
@@ -478,7 +482,7 @@ impl<'a> VM<'a> {
             }
 
             // Handle interaction between child and parent callframe.
-            self.handle_return(&result)?;
+            self.handle_return(result)?;
         }
     }
 
@@ -531,13 +535,13 @@ impl<'a> VM<'a> {
                 .finalize_execution(self, &mut ctx_result)?;
         }
 
-        self.tracer.exit_context(&ctx_result, true)?;
+        self.tracer.exit_context(ctx_result.clone(), true)?;
 
         let report = ExecutionReport {
-            result: ctx_result.result.clone(),
+            result: ctx_result.result,
             gas_used: ctx_result.gas_used,
             gas_refunded: self.substate.refunded_gas,
-            output: std::mem::take(&mut ctx_result.output),
+            output: ctx_result.output,
             logs: self.substate.extract_logs(),
         };
 

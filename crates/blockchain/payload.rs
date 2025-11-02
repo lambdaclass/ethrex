@@ -559,11 +559,13 @@ impl Blockchain {
                 continue;
             }
 
+            let tx_type = head_tx.tx.tx_type();
+
             // Execute tx
-            let receipt = match self.apply_transaction(&head_tx, context) {
+            let receipt = match self.apply_transaction(head_tx.clone(), context) {
                 Ok(receipt) => {
                     txs.shift()?;
-                    metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
+                    metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(tx_type)));
                     receipt
                 }
                 // Ignore following txs from sender
@@ -587,10 +589,10 @@ impl Blockchain {
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
     fn apply_transaction(
         &self,
-        head: &HeadTransaction,
+        head: HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
-        match **head {
+        match *head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
             _ => apply_plain_transaction(head, context),
         }
@@ -599,7 +601,7 @@ impl Blockchain {
     /// Runs a blob transaction, updates the gas count & blob data and returns the receipt
     fn apply_blob_transaction(
         &self,
-        head: &HeadTransaction,
+        head: HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
@@ -681,11 +683,11 @@ impl Blockchain {
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
 pub fn apply_plain_transaction(
-    head: &HeadTransaction,
+    head: HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
     let (report, gas_used) = context.vm.execute_tx(
-        &head.tx,
+        head.tx.transaction().clone(),
         &context.payload.header,
         &mut context.remaining_gas,
         head.tx.sender(),

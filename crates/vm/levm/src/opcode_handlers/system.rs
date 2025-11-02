@@ -104,7 +104,8 @@ impl<'a> VM<'a> {
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_offset, args_size)?;
 
-        self.tracer.enter(CALL, from, to, value, gas_limit, &data);
+        self.tracer
+            .enter(CALL, from, to, value, gas_limit, data.clone());
 
         self.generic_call(
             gas_limit,
@@ -202,7 +203,7 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
-            .enter(CALLCODE, from, code_address, value, gas_limit, &data);
+            .enter(CALLCODE, from, code_address, value, gas_limit, data.clone());
 
         self.generic_call(
             gas_limit,
@@ -319,8 +320,14 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         // In this trace the `from` is the current contract, we don't want the `from` to be, for example, the EOA that sent the transaction
-        self.tracer
-            .enter(DELEGATECALL, to, code_address, value, gas_limit, &data);
+        self.tracer.enter(
+            DELEGATECALL,
+            to,
+            code_address,
+            value,
+            gas_limit,
+            data.clone(),
+        );
 
         self.generic_call(
             gas_limit,
@@ -415,7 +422,7 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
-            .enter(STATICCALL, from, to, value, gas_limit, &data);
+            .enter(STATICCALL, from, to, value, gas_limit, data.clone());
 
         self.generic_call(
             gas_limit,
@@ -575,7 +582,7 @@ impl<'a> VM<'a> {
         }
 
         self.tracer
-            .enter(SELFDESTRUCT, to, beneficiary, balance, 0, &Bytes::new());
+            .enter(SELFDESTRUCT, to, beneficiary, balance, 0, Bytes::new());
 
         self.tracer.exit_early(0, None)?;
 
@@ -636,8 +643,14 @@ impl<'a> VM<'a> {
             Some(_) => CallType::CREATE2,
             None => CallType::CREATE,
         };
-        self.tracer
-            .enter(call_type, deployer, new_address, value, gas_limit, &code);
+        self.tracer.enter(
+            call_type,
+            deployer,
+            new_address,
+            value,
+            gas_limit,
+            code.clone(),
+        );
 
         let new_depth = self
             .current_call_frame
@@ -805,7 +818,7 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
             }
 
-            self.tracer.exit_context(&ctx_result, false)?;
+            self.tracer.exit_context(ctx_result, false)?;
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
@@ -857,8 +870,8 @@ impl<'a> VM<'a> {
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
     ///
     /// Returns the pc increment.
-    pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
-        self.handle_state_backup(ctx_result)?;
+    pub fn handle_return(&mut self, ctx_result: ContextResult) -> Result<(), VMError> {
+        self.handle_state_backup(&ctx_result)?;
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
@@ -875,13 +888,15 @@ impl<'a> VM<'a> {
     pub fn handle_return_call(
         &mut self,
         executed_call_frame: CallFrame,
-        ctx_result: &ContextResult,
+        ctx_result: ContextResult,
     ) -> Result<(), VMError> {
         let CallFrame {
             gas_limit,
             ret_offset,
             ret_size,
             memory: old_callframe_memory,
+            call_frame_backup: execute_callframe_backup,
+            stack: mut executed_callframe_stack,
             ..
         } = executed_call_frame;
 
@@ -917,7 +932,7 @@ impl<'a> VM<'a> {
         match &ctx_result.result {
             TxResult::Success => {
                 self.current_call_frame.stack.push1(SUCCESS)?;
-                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(execute_callframe_backup)?;
             }
             TxResult::Revert(_) => {
                 self.current_call_frame.stack.push1(FAIL)?;
@@ -926,9 +941,9 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_context(ctx_result, false)?;
 
-        let mut stack = executed_call_frame.stack;
-        stack.clear();
-        self.stack_pool.push(stack);
+        executed_callframe_stack.clear();
+
+        self.stack_pool.push(executed_callframe_stack);
 
         Ok(())
     }
@@ -937,13 +952,14 @@ impl<'a> VM<'a> {
     pub fn handle_return_create(
         &mut self,
         executed_call_frame: CallFrame,
-        ctx_result: &ContextResult,
+        ctx_result: ContextResult,
     ) -> Result<(), VMError> {
         let CallFrame {
             gas_limit,
             to,
-            call_frame_backup,
+            call_frame_backup: executed_callframe_backup,
             memory: old_callframe_memory,
+            stack: mut executed_callframe_stack,
             ..
         } = executed_call_frame;
 
@@ -961,10 +977,10 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
 
         // What to do, depending on TxResult
-        match ctx_result.result.clone() {
+        match &ctx_result.result {
             TxResult::Success => {
                 parent_call_frame.stack.push1(address_to_word(to))?;
-                self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(executed_callframe_backup)?;
             }
             TxResult::Revert(err) => {
                 // If revert we have to copy the return_data
@@ -978,9 +994,9 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_context(ctx_result, false)?;
 
-        let mut stack = executed_call_frame.stack;
-        stack.clear();
-        self.stack_pool.push(stack);
+        executed_callframe_stack.clear();
+
+        self.stack_pool.push(executed_callframe_stack);
 
         Ok(())
     }

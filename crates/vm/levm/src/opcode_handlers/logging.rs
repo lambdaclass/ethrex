@@ -41,7 +41,7 @@ impl<'a> VM<'a> {
             data: current_call_frame.memory.load_range(offset, size)?,
         };
 
-        self.tracer.log(&log)?;
+        self.tracer.log(log.clone())?;
 
         self.substate.add_log(log);
 

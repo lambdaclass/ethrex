@@ -28,7 +28,7 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type)?;
+            Self::execute_tx(tx.clone(), sender, &block.header, db, vm_type)?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -45,13 +45,13 @@ impl LEVM {
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
-        tx: &Transaction,
+        tx: Transaction,
         only_top_call: bool,
         with_log: bool,
         vm_type: VMType,
     ) -> Result<CallTrace, EvmError> {
         let env = Self::setup_env(
-            tx,
+            &tx,
             tx.sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?,

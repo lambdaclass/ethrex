@@ -251,7 +251,7 @@ impl BlockBody {
     }
 
     pub fn get_transactions_with_sender(
-        &self,
+        &'_ self,
     ) -> Result<Vec<(&Transaction, Address)>, secp256k1::Error> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.

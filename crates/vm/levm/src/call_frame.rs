@@ -428,7 +428,7 @@ impl<'a> VM<'a> {
     //   - Do the same for every individual storage slot.
     pub fn merge_call_frame_backup_with_parent(
         &mut self,
-        child_call_frame_backup: &CallFrameBackup,
+        child_call_frame_backup: CallFrameBackup,
     ) -> Result<(), VMError> {
         let parent_backup_accounts = &mut self
             .current_call_frame

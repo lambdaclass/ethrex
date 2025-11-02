@@ -22,7 +22,8 @@ impl Evm {
             .get(tx_index)
             .ok_or(EvmError::Custom(
                 "Missing Transaction for Trace".to_string(),
-            ))?;
+            ))?
+            .clone();
 
         LEVM::trace_tx_calls(
             &mut self.db,

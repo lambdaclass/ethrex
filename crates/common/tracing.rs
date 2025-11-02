@@ -3,6 +3,8 @@ use ethereum_types::H256;
 use ethereum_types::{Address, U256};
 use serde::Serialize;
 
+use crate::types::Log;
+
 /// Collection of traces of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
 pub type CallTrace = Vec<CallTraceFrame>;
@@ -64,4 +66,15 @@ pub struct CallLog {
     #[serde(with = "crate::serde_utils::bytes")]
     pub data: Bytes,
     pub position: u64,
+}
+
+impl CallLog {
+    pub fn new(log: Log, position: u64) -> Self {
+        CallLog {
+            address: log.address,
+            topics: log.topics,
+            data: log.data,
+            position,
+        }
+    }
 }

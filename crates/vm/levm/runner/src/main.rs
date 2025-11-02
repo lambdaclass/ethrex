@@ -149,7 +149,7 @@ fn main() {
     let mut vm = VM::new(
         env,
         &mut db,
-        &Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())),
+        Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())),
         LevmCallTracer::disabled(),
         VMType::L1,
     )

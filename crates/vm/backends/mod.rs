@@ -93,24 +93,28 @@ impl Evm {
     #[allow(clippy::too_many_arguments)]
     pub fn execute_tx(
         &mut self,
-        tx: &Transaction,
+        tx: Transaction,
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
+        let tx_type = tx.tx_type();
+
         let execution_report =
             LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
 
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
+        let gas_used = execution_report.gas_used;
+
         let receipt = Receipt::new(
-            tx.tx_type(),
+            tx_type,
             execution_report.is_success(),
             block_header.gas_limit - *remaining_gas,
-            execution_report.logs.clone(),
+            execution_report.logs,
         );
 
-        Ok((receipt, execution_report.gas_used))
+        Ok((receipt, gas_used))
     }
 
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
