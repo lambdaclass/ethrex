@@ -6,8 +6,10 @@ In this section, we will explain how to run integration tests for ethrex L2 with
 
 - Install the latest ethrex release or pre-release binary following the instructions in the [Install ethrex (binary distribution)](https://docs.ethrex.xyz/getting-started/installation/binary_distribution.html) section.
 - For running the tests, you'll need a fresh clone of [ethrex](https://github.com/lambdaclass/ethrex/).
-- (Optional for troubleshooting) An Ethereum utility tool like [rex](https://github.com/lambdaclass/rex).
-- (Optional for troubleshooting) [`jq`](https://jqlang.org/download/) for JSON processing.
+- (Optional for troubleshooting)
+    - An Ethereum utility tool like [rex](https://github.com/lambdaclass/rex).
+    - [`jq`](https://jqlang.org/download/) for JSON processing.
+    - [`curl`](https://curl.se/download.html) for making HTTP requests.
 
 ## Setting up the environment
 
