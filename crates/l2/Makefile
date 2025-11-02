@@ -137,7 +137,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \
-	--metrics \
+	--metrics.enabled \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--datadir ${ethrex_L2_DEV_DB} \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \

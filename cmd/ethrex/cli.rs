@@ -90,7 +90,7 @@ pub struct Options {
     )]
     pub metrics_port: String,
     #[arg(
-        long = "metrics",
+        long = "metrics.enabled",
         action = ArgAction::SetTrue,
         help = "Enable metrics collection and exposition",
         help_heading = "Node options"
