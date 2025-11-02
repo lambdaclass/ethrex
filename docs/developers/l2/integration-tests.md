@@ -71,6 +71,24 @@ Finally, in another terminal (should be a third one at this point), change your 
 make test
 ```
 
+## FAQ
+
+### What should I expect?
+
+Once you run `make test`, you should see the output of the tests being executed one after another. The tests will interact with the ethrex L2 node and the ethrex L2 prover that you started previously. If everything is set up correctly, all tests should pass successfully.
+
+### How long do the tests take to run?
+
+The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 minutes to complete, depending the timing in which you performed the steps.
+
+### Should I worry about the periodic warning logs of the L2 prover?
+
+Logs are being constantly improved to provide better clarity. However, during the execution of the integration tests, you might notice periodic warning logs from the L2 prover indicating that there are no new batches to prove. These warnings are expected behavior in this testing scenario and can be safely ignored.
+
+### The tests are failing, what should I do?
+
+If the tests are failing, first ensure that both the ethrex L2 node and the ethrex L2 prover are running correctly without any errors. Check their logs for any issues. If everything seems fine, try restarting both services and rerun the tests. Ensure that your configuration files (e.g., `.env`) are correctly set up and that all required environment variables are defined. If the problem persists, consider reaching out to the ethrex community or support channels for further assistance.
+
 ## Troubleshooting
 
 TODO
