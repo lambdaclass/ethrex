@@ -4,7 +4,7 @@ In this section, we will explain how to run integration tests for ethrex L2 with
 
 ## Prerequisites
 
-- This guide assumes that you have ethrex L2 installed. If you haven't done so, follow one of the installation methods in the [installation guide](https://docs.ethrex.xyz/getting-started/installation/).
+- Install the latest ethrex release or pre-release binary following the instructions in the [Install ethrex (binary distribution)](https://docs.ethrex.xyz/getting-started/installation/binary_distribution.html) section.
 - For running the tests, you'll need a fresh clone of [ethrex](https://github.com/lambdaclass/ethrex/).
 
 ## Setting up the environment
@@ -16,9 +16,14 @@ Our integration tests assume that there is an ethrex L1 node, an ethrex L2 node,
 For this, we are using the `ethrex l2 --dev` command, which does this job for us. In one console, run the following:
 
 ```
-ethrex l2 --dev \
+./ethrex l2 --dev \
 --committer.commit-time 150000 \
---block-producer.block-time 1000
+--block-producer.block-time 1000 \
+--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+--block-producer.l1-fee-vault-address 0x45681AE1768a8936FB87aB11453B4755e322ceec \
+--block-producer.operator-fee-per-gas 1000000000 \
+--no-monitor
 ```
 
 > [!NOTE]
@@ -26,6 +31,15 @@ ethrex l2 --dev \
 > In ethrex L2, this has a direct impact since if our sequencer seals batches with more than 128 blocks, it won't be able to retrieve the state previous to the first block of the batch being sealed because it was pruned; therefore, it won't be able to commit.
 > To solve this, after a batch is sealed, we create a checkpoint of the database at that point to ensure the state needed at the time of commitment is available for the sequencer.
 > For this test to be valuable, we need to ensure this edge case is covered. To do so, we set up an L2 with batches of approximately 150 blocks. We achieve this by setting the flag `--block-producer.block-time` to 1 second, which specifies the interval in milliseconds for our builder to build an L2 block. This means the L2 block builder will build blocks every 1 second. We also set the flag `--committer.commit-time` to 150 seconds (2 minutes and 30 seconds), which specifies the interval in milliseconds in which we want to commit to the L1. This ensures that enough blocks are included in each batch.
+> The L2's gas pricing mechanism is tested in the integration tests, so we need to set the following flags to ensure the L2 gas pricing mechanism is active:
+>
+> - `--block-producer.base-fee-vault-address`
+> - `--block-producer.operator-fee-vault-address`
+> - `--block-producer.l1-fee-vault-address`
+> - `--block-producer.operator-fee-per-gas`
+>
+> Read more about ethrex L2 gas pricing mechanism [here](https://docs.ethrex.xyz/l2/fundamentals/transaction_fees.html).
+> We set the flag `--no-monitor` to disable the built-in monitoring dashboard since it is not needed for running the integration tests.
 
 So far, we have an ethrex L1 and an ethrex L2 node up and running. We only miss the ethrex L2 prover, which we are going to spin up in `exec` mode, meaning that it won't generate ZK proofs.
 
@@ -34,7 +48,7 @@ So far, we have an ethrex L1 and an ethrex L2 node up and running. We only miss 
 In another terminal, run the following to spin up an ethrex L2 prover in exec mode:
 
 ```
-ethrex l2 prover \
+./ethrex l2 prover \
 --backend exec \
 --proof-coordinators http://localhost:3900
 ```
