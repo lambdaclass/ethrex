@@ -1,8 +1,9 @@
 use ethrex_common::H256;
 use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::slice::ParallelSliceMut;
 use rustc_hash::FxHashMap;
-use std::hash::BuildHasher;
 use std::sync::Arc;
+use std::{collections::HashSet, hash::BuildHasher};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -154,17 +155,19 @@ impl TrieLayerCache {
         let mut bloom = Self::create_filter();
 
         // Parallelize key hashing ourselves because populate from xorfilter doesn't.
-        let key_hashes = self
+        let mut key_hashes: Vec<u64> = self
             .layers
             .values()
             .flat_map(|x| x.nodes.keys())
             .par_bridge()
             .map(|key| bloom.hash_builder.hash_one(key))
-            .collect_vec_list();
+            .collect();
 
-        for keys in key_hashes {
-            bloom.populate_keys(&keys);
-        }
+        // xorfilter needs "few" or no unique keys, so we need to do this.
+        key_hashes.par_sort_unstable();
+        key_hashes.dedup();
+
+        bloom.populate_keys(&key_hashes);
 
         if let Err(e) = bloom.build() {
             tracing::warn!("TrieLayerCache: rebuild_bloom error: {e}");
