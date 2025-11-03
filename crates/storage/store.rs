@@ -1858,7 +1858,7 @@ impl Store {
             let account = AccountState::decode(&encoded_account)?;
             account.storage_root
         };
-        let storage_trie = self.open_storage_trie(account_hash, storage_root, state_root)?;
+        let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
 
         let hashed_key = hash_key(&storage_key);
         storage_trie
