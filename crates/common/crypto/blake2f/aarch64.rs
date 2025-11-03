@@ -16,7 +16,10 @@ const BLAKE2B_IV: [u64; 12] = [
     0x5BE0CD19137E2179,
 ];
 
-pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: bool) {
+pub fn blake2b_f<XAR>(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: bool)
+where
+    XAR: XorAndRotate,
+{
     unsafe {
         // Initialize local work vector.
         let uint64x2x4_t(h0, h1, h2, h3) = vld1q_u64_x4(h.as_ptr().cast::<u64>().add(0));
@@ -40,7 +43,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 let r0b = uint64x2x2_t(vtrn2q_u64(m0, m1), vtrn2q_u64(m2, m3));
                 let r0c = uint64x2x2_t(vtrn1q_u64(m7, m4), vtrn1q_u64(m5, m6));
                 let r0d = uint64x2x2_t(vtrn2q_u64(m7, m4), vtrn2q_u64(m5, m6));
-                inner(&mut a, &mut b, &mut c, &mut d, r0a, r0b, r0c, r0d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r0a, r0b, r0c, r0d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
@@ -53,7 +56,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 let r1b = uint64x2x2_t(vtrn1q_u64(m5, m4), vextq_u64::<1>(m7, m3));
                 let r1c = uint64x2x2_t(vtrn2q_u64(m2, m0), vcopyq_laneq_u64::<1, 1>(m0, m5));
                 let r1d = uint64x2x2_t(vextq_u64::<1>(m1, m6), vcopyq_laneq_u64::<1, 1>(m1, m3));
-                inner(&mut a, &mut b, &mut c, &mut d, r1a, r1b, r1c, r1d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r1a, r1b, r1c, r1d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
@@ -66,7 +69,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 let r2b = uint64x2x2_t(vtrn1q_u64(m4, m0), vcopyq_laneq_u64::<1, 1>(m1, m6));
                 let r2c = uint64x2x2_t(vextq_u64::<1>(m4, m5), vtrn2q_u64(m1, m3));
                 let r2d = uint64x2x2_t(vtrn1q_u64(m2, m7), vcopyq_laneq_u64::<1, 1>(m3, m0));
-                inner(&mut a, &mut b, &mut c, &mut d, r2a, r2b, r2c, r2d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r2a, r2b, r2c, r2d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
@@ -79,7 +82,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 let r3b = uint64x2x2_t(vtrn2q_u64(m4, m0), vtrn1q_u64(m6, m7));
                 let r3c = uint64x2x2_t(vextq_u64::<1>(m7, m1), vextq_u64::<1>(m2, m2));
                 let r3d = uint64x2x2_t(vtrn1q_u64(m4, m3), vtrn1q_u64(m5, m0));
-                inner(&mut a, &mut b, &mut c, &mut d, r3a, r3b, r3c, r3d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r3a, r3b, r3c, r3d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
@@ -95,7 +98,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 );
                 let r4c = uint64x2x2_t(vextq_u64::<1>(m1, m7), vextq_u64::<1>(m5, m3));
                 let r4d = uint64x2x2_t(vtrn2q_u64(m6, m0), vtrn1q_u64(m6, m4));
-                inner(&mut a, &mut b, &mut c, &mut d, r4a, r4b, r4c, r4d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r4a, r4b, r4c, r4d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
@@ -108,7 +111,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 let r5b = uint64x2x2_t(vtrn1q_u64(m6, m5), vtrn2q_u64(m5, m1));
                 let r5c = uint64x2x2_t(vextq_u64::<1>(m0, m2), vtrn2q_u64(m3, m7));
                 let r5d = uint64x2x2_t(vtrn2q_u64(m4, m6), vextq_u64::<1>(m2, m7));
-                inner(&mut a, &mut b, &mut c, &mut d, r5a, r5b, r5c, r5d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r5a, r5b, r5c, r5d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
@@ -121,7 +124,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 let r6b = uint64x2x2_t(vtrn2q_u64(m2, m7), vextq_u64::<1>(m6, m5));
                 let r6c = uint64x2x2_t(vtrn1q_u64(m4, m0), vcopyq_laneq_u64::<1, 1>(m3, m4));
                 let r6d = uint64x2x2_t(vtrn2q_u64(m5, m3), vextq_u64::<1>(m1, m1));
-                inner(&mut a, &mut b, &mut c, &mut d, r6a, r6b, r6c, r6d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r6a, r6b, r6c, r6d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
@@ -134,7 +137,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 let r7b = uint64x2x2_t(vextq_u64::<1>(m5, m7), vtrn2q_u64(m0, m4));
                 let r7c = uint64x2x2_t(vcopyq_laneq_u64::<1, 1>(m1, m2), vextq_u64::<1>(m7, m4));
                 let r7d = uint64x2x2_t(vtrn1q_u64(m5, m0), vtrn1q_u64(m2, m3));
-                inner(&mut a, &mut b, &mut c, &mut d, r7a, r7b, r7c, r7d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r7a, r7b, r7c, r7d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
@@ -147,7 +150,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 let r8b = uint64x2x2_t(vtrn2q_u64(m7, m4), vextq_u64::<1>(m1, m4));
                 let r8c = uint64x2x2_t(vtrn1q_u64(m5, m6), vtrn2q_u64(m6, m0));
                 let r8d = uint64x2x2_t(vextq_u64::<1>(m2, m1), vextq_u64::<1>(m3, m2));
-                inner(&mut a, &mut b, &mut c, &mut d, r8a, r8b, r8c, r8d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r8a, r8b, r8c, r8d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
@@ -160,68 +163,68 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
                 let r9b = uint64x2x2_t(vtrn1q_u64(m1, m2), vcopyq_laneq_u64::<1, 1>(m3, m2));
                 let r9c = uint64x2x2_t(vtrn2q_u64(m6, m7), vtrn2q_u64(m4, m1));
                 let r9d = uint64x2x2_t(vcopyq_laneq_u64::<1, 1>(m0, m5), vtrn1q_u64(m7, m6));
-                inner(&mut a, &mut b, &mut c, &mut d, r9a, r9b, r9c, r9d);
+                inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r9a, r9b, r9c, r9d);
                 r = match r.checked_sub(1) {
                     Some(x) => x,
                     None => break 'process,
                 };
 
                 loop {
-                    inner(&mut a, &mut b, &mut c, &mut d, r0a, r0b, r0c, r0d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r0a, r0b, r0c, r0d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
                     };
 
-                    inner(&mut a, &mut b, &mut c, &mut d, r1a, r1b, r1c, r1d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r1a, r1b, r1c, r1d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
                     };
 
-                    inner(&mut a, &mut b, &mut c, &mut d, r2a, r2b, r2c, r2d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r2a, r2b, r2c, r2d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
                     };
 
-                    inner(&mut a, &mut b, &mut c, &mut d, r3a, r3b, r3c, r3d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r3a, r3b, r3c, r3d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
                     };
 
-                    inner(&mut a, &mut b, &mut c, &mut d, r4a, r4b, r4c, r4d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r4a, r4b, r4c, r4d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
                     };
 
-                    inner(&mut a, &mut b, &mut c, &mut d, r5a, r5b, r5c, r5d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r5a, r5b, r5c, r5d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
                     };
 
-                    inner(&mut a, &mut b, &mut c, &mut d, r6a, r6b, r6c, r6d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r6a, r6b, r6c, r6d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
                     };
 
-                    inner(&mut a, &mut b, &mut c, &mut d, r7a, r7b, r7c, r7d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r7a, r7b, r7c, r7d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
                     };
 
-                    inner(&mut a, &mut b, &mut c, &mut d, r8a, r8b, r8c, r8d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r8a, r8b, r8c, r8d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
                     };
 
-                    inner(&mut a, &mut b, &mut c, &mut d, r9a, r9b, r9c, r9d);
+                    inner::<XAR>(&mut a, &mut b, &mut c, &mut d, r9a, r9b, r9c, r9d);
                     r = match r.checked_sub(1) {
                         Some(x) => x,
                         None => break 'process,
@@ -244,7 +247,7 @@ pub fn blake2b_f(r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: boo
 
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn inner(
+fn inner<XAR>(
     a: &mut uint64x2x2_t,
     b: &mut uint64x2x2_t,
     c: &mut uint64x2x2_t,
@@ -253,21 +256,23 @@ fn inner(
     d1: uint64x2x2_t,
     d2: uint64x2x2_t,
     d3: uint64x2x2_t,
-) {
+) where
+    XAR: XorAndRotate,
+{
     unsafe {
         // G(d0)
         *a = uint64x2x2_t(vaddq_u64(a.0, b.0), vaddq_u64(a.1, b.1));
         *a = uint64x2x2_t(vaddq_u64(a.0, d0.0), vaddq_u64(a.1, d0.1));
-        *d = uint64x2x2_t(vxarq_u64::<32>(d.0, a.0), vxarq_u64::<32>(d.1, a.1));
+        *d = XAR::xar::<32, 32>(*d, *a);
         *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.1, d.1));
-        *b = uint64x2x2_t(vxarq_u64::<24>(b.0, c.0), vxarq_u64::<24>(b.1, c.1));
+        *b = XAR::xar::<24, 40>(*b, *c);
 
         // G(d1)
         *a = uint64x2x2_t(vaddq_u64(a.0, b.0), vaddq_u64(a.1, b.1));
         *a = uint64x2x2_t(vaddq_u64(a.0, d1.0), vaddq_u64(a.1, d1.1));
-        *d = uint64x2x2_t(vxarq_u64::<16>(d.0, a.0), vxarq_u64::<16>(d.1, a.1));
+        *d = XAR::xar::<16, 48>(*d, *a);
         *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.1, d.1));
-        *b = uint64x2x2_t(vxarq_u64::<63>(b.0, c.0), vxarq_u64::<63>(b.1, c.1));
+        *b = XAR::xar::<63, 1>(*b, *c);
 
         // Apply diagonalization.
         *a = uint64x2x2_t(vextq_u64::<1>(a.1, a.0), vextq_u64::<1>(a.0, a.1));
@@ -277,20 +282,48 @@ fn inner(
         // G(d2)
         *a = uint64x2x2_t(vaddq_u64(a.0, b.0), vaddq_u64(a.1, b.1));
         *a = uint64x2x2_t(vaddq_u64(a.0, d2.0), vaddq_u64(a.1, d2.1));
-        *d = uint64x2x2_t(vxarq_u64::<32>(d.0, a.0), vxarq_u64::<32>(d.1, a.1));
+        *d = XAR::xar::<32, 32>(*d, *a);
         *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.1, d.1));
-        *b = uint64x2x2_t(vxarq_u64::<24>(b.0, c.0), vxarq_u64::<24>(b.1, c.1));
+        *b = XAR::xar::<24, 40>(*b, *c);
 
         // G(d3)
         *a = uint64x2x2_t(vaddq_u64(a.0, b.0), vaddq_u64(a.1, b.1));
         *a = uint64x2x2_t(vaddq_u64(a.0, d3.0), vaddq_u64(a.1, d3.1));
-        *d = uint64x2x2_t(vxarq_u64::<16>(d.0, a.0), vxarq_u64::<16>(d.1, a.1));
+        *d = XAR::xar::<16, 48>(*d, *a);
         *c = uint64x2x2_t(vaddq_u64(c.0, d.0), vaddq_u64(c.1, d.1));
-        *b = uint64x2x2_t(vxarq_u64::<63>(b.0, c.0), vxarq_u64::<63>(b.1, c.1));
+        *b = XAR::xar::<63, 1>(*b, *c);
 
         // Revert diagonalization.
         *a = uint64x2x2_t(vextq_u64::<1>(a.0, a.1), vextq_u64::<1>(a.1, a.0));
         *c = uint64x2x2_t(vextq_u64::<1>(c.1, c.0), vextq_u64::<1>(c.0, c.1));
         *d = uint64x2x2_t(d.1, d.0);
+    }
+}
+
+pub trait XorAndRotate {
+    fn xar<const N_SHR: i32, const N_SHL: i32>(a: uint64x2x2_t, b: uint64x2x2_t) -> uint64x2x2_t;
+}
+
+pub struct XarSha3;
+impl XorAndRotate for XarSha3 {
+    #[inline(always)]
+    fn xar<const N_SHR: i32, const N_SHL: i32>(a: uint64x2x2_t, b: uint64x2x2_t) -> uint64x2x2_t {
+        debug_assert_eq!(N_SHR + N_SHL, u64::BITS as i32);
+        unsafe { uint64x2x2_t(vxarq_u64::<N_SHR>(a.0, b.0), vxarq_u64::<N_SHR>(a.1, b.1)) }
+    }
+}
+
+pub struct XarNeon;
+impl XorAndRotate for XarNeon {
+    #[inline(always)]
+    fn xar<const N_SHR: i32, const N_SHL: i32>(a: uint64x2x2_t, b: uint64x2x2_t) -> uint64x2x2_t {
+        debug_assert_eq!(N_SHR + N_SHL, u64::BITS as i32);
+        unsafe {
+            let (t0, t1) = (veorq_u64(a.0, b.0), veorq_u64(a.1, b.1));
+            uint64x2x2_t(
+                vorrq_u64(vshlq_n_u64::<N_SHL>(t0), vshrq_n_u64::<N_SHR>(t0)),
+                vorrq_u64(vshlq_n_u64::<N_SHL>(t1), vshrq_n_u64::<N_SHR>(t1)),
+            )
+        }
     }
 }

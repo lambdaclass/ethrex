@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-03
+
+- Improve `blake2b` NEON implementation compatibility [#5158](https://github.com/lambdaclass/ethrex/pull/5158)
+
 ### 2025-10-31
 - Reduce overhead of trie opening [#5145](https://github.com/lambdaclass/ethrex/pull/5145)
 - Improved discovery and peer initialization [#5147](https://github.com/lambdaclass/ethrex/pull/5147)
