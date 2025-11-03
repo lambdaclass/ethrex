@@ -99,6 +99,9 @@ pub async fn apply_fork_choice(
 
     // Finished all validations.
 
+    let safe_number = safe_res.as_ref().map(|h| h.number);
+    let finalized_number = finalized_res.as_ref().map(|h| h.number);
+
     store
         .forkchoice_update(
             Some(new_canonical_blocks),
@@ -111,8 +114,18 @@ pub async fn apply_fork_choice(
 
     metrics!(
         use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+        use ethrex_metrics::metrics_sync::METRICS_SYNC;
 
         let _ = METRICS_BLOCKS.set_head_height(head.number);
+        let _ = METRICS_SYNC.set_head_block(head.number);
+
+        if let Some(safe) = safe_number {
+            let _ = METRICS_SYNC.set_safe_block(safe);
+        }
+
+        if let Some(finalized) = finalized_number {
+            let _ = METRICS_SYNC.set_finalized_block(finalized);
+        }
     );
 
     Ok(head)

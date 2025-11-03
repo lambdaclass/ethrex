@@ -197,6 +197,13 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let current_step = METRICS.current_step.get();
             let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
+            // Update sync metrics
+            #[cfg(feature = "metrics")]
+            {
+                use ethrex_blockchain::metrics::metrics_sync::METRICS_SYNC;
+                let _ = METRICS_SYNC.set_active_peers(peer_number as u64);
+            }
+
             // Headers metrics
             let headers_to_download = METRICS.headers_to_download.load(Ordering::Relaxed);
             let headers_downloaded = METRICS.downloaded_headers.load(Ordering::Relaxed);
@@ -394,6 +401,14 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable)
                         .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
+
+        // Update sync metrics
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_blockchain::metrics::metrics_sync::METRICS_SYNC;
+            let _ = METRICS_SYNC.set_active_peers(active_peers as u64);
+        }
+
         info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
         interval.tick().await;
     }
