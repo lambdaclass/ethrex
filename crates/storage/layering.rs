@@ -17,6 +17,8 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
+    /// Number of layers after which we should commit to the database.
+    commit_threshold: usize,
     layers: FxHashMap<H256, Arc<TrieLayer>>,
     /// Global bloom that accrues all layer blooms.
     ///
@@ -37,11 +39,22 @@ impl Default for TrieLayerCache {
             bloom,
             last_id: 0,
             layers: Default::default(),
+            commit_threshold: 128,
         }
     }
 }
 
 impl TrieLayerCache {
+    pub fn new(commit_threshold: usize) -> Self {
+        let bloom = Self::create_filter().ok();
+        Self {
+            bloom,
+            last_id: 0,
+            layers: Default::default(),
+            commit_threshold,
+        }
+    }
+
     // TODO: tune this
     fn create_filter() -> Result<qfilter::Filter, qfilter::Error> {
         qfilter::Filter::new_resizeable(100_000, 100_000_000, 0.02)
@@ -81,12 +94,12 @@ impl TrieLayerCache {
     }
 
     // TODO: use finalized hash to know when to commit
-    pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
+    pub fn get_commitable(&self, mut state_root: H256) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
             counter += 1;
-            if counter > commit_threshold {
+            if counter > self.commit_threshold {
                 return Some(state_root);
             }
         }
