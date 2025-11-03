@@ -49,6 +49,7 @@ pub struct EthConfig {
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
     pub max_retry_delay: u64,
+    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]

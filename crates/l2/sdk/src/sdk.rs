@@ -2,6 +2,7 @@ use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
 use ethrex_common::types::FeeTokenTransaction;
+use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
@@ -37,10 +38,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x2eccdb10130eb3f3679bfe60aa19375d82ab5c31
+// 0xb107952dd0e2fe75d03be146ef5f45b91194fa99
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x2e, 0xcc, 0xdb, 0x10, 0x13, 0x0e, 0xb3, 0xf3, 0x67, 0x9b, 0xfe, 0x60, 0xaa, 0x19, 0x37, 0x5d,
-    0x82, 0xab, 0x5c, 0x31,
+    0xb1, 0x07, 0x95, 0x2d, 0xd0, 0xe2, 0xfe, 0x75, 0xd0, 0x3b, 0xe1, 0x46, 0xef, 0x5f, 0x45, 0xb9,
+    0x11, 0x94, 0xfa, 0x99,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -88,7 +89,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x2eccdb10130eb3f3679bfe60aa19375d82ab5c31
+/// BRIDGE_ADDRESS or 0xb107952dd0e2fe75d03be146ef5f45b91194fa99
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
@@ -876,6 +877,7 @@ pub async fn build_generic_tx(
             .collect(),
         fee_token: overrides.fee_token,
         from,
+        wrapper_version: overrides.wrapper_version,
         ..Default::default()
     };
     tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
@@ -1020,6 +1022,26 @@ pub async fn get_pending_privileged_transactions(
     )
     .await?;
     from_hex_string_to_h256_array(&response)
+}
+
+// TODO: This is a work around for now, issue: https://github.com/lambdaclass/ethrex/issues/4828
+pub async fn get_l1_active_fork(
+    client: &EthClient,
+    activation_time: Option<u64>,
+) -> Result<Fork, EthClientError> {
+    let Some(osaka_activation_time) = activation_time else {
+        return Ok(Fork::Osaka);
+    };
+    let current_timestamp = client
+        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
+        .await?
+        .header
+        .timestamp;
+    if current_timestamp < osaka_activation_time {
+        Ok(Fork::Prague)
+    } else {
+        Ok(Fork::Osaka)
+    }
 }
 
 async fn _generic_call(
