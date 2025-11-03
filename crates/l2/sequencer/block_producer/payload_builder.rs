@@ -205,6 +205,7 @@ pub async fn fill_transactions(
 
             // This transaction state change is too big, we need to undo it.
             undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+            context.payload.body.transactions.pop();
             continue;
         }
 
