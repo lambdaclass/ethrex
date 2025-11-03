@@ -381,5 +381,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
 
-    fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError>;
+    fn flatkeyvalue_computed(&self, _account: H256) -> Result<bool, StoreError> {
+        Ok(false)
+    }
 }

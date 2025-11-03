@@ -739,10 +739,6 @@ impl StoreEngine for Store {
         // Silently ignoring the request to create a checkpoint is harmless
         Ok(())
     }
-
-    fn flatkeyvalue_computed(&self, _account: H256) -> Result<bool, StoreError> {
-        Ok(false)
-    }
 }
 
 impl Debug for Store {
