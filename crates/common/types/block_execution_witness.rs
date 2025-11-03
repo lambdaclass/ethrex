@@ -12,7 +12,6 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::rkyv::RLPNodeRemote;
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use rkyv::with::Map;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
