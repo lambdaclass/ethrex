@@ -1,7 +1,7 @@
 use crate::types::Node;
 use crate::{
     discv4::{
-        peer_table::{PeerTable, PeerTableError},
+        peer_table::PeerTableError,
         server::{INITIAL_LOOKUP_INTERVAL, LOOKUP_INTERVAL},
     },
     metrics::METRICS,
@@ -14,6 +14,9 @@ use spawned_concurrency::{
 };
 use std::time::Duration;
 use tracing::{debug, error, info};
+
+#[cfg(any(test, feature = "test-utils"))]
+use crate::discv4::peer_table::PeerTable;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RLPxInitiatorError {
@@ -76,6 +79,7 @@ impl RLPxInitiator {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub async fn dummy(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(P2PContext::dummy(peer_table).await);

@@ -67,6 +67,7 @@ impl SyncManager {
         sync_manager
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     /// Creates a dummy SyncManager for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
     pub async fn dummy() -> Self {

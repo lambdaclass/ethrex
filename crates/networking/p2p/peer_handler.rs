@@ -1,6 +1,8 @@
+#[cfg(any(test, feature = "test-utils"))]
+use crate::discv4::peer_table::TARGET_PEERS;
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
-    discv4::peer_table::{PeerData, PeerTable, PeerTableError, TARGET_PEERS},
+    discv4::peer_table::{PeerData, PeerTable, PeerTableError},
     metrics::{CurrentStepValue, METRICS},
     rlpx::{
         connection::server::PeerConnection,
@@ -152,6 +154,7 @@ impl PeerHandler {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
     /// This should only be used in tests as it won't be able to interact with the node's connected peers
     pub async fn dummy() -> PeerHandler {
