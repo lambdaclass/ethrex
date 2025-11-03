@@ -41,7 +41,7 @@ pub struct StoreInner {
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
     trie_cache: Arc<TrieLayerCache>,
     // Contains account trie nodes
-    state_trie_nodes: NodeMap,
+    pub state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores invalid blocks and their latest valid ancestor
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
