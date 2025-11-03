@@ -2044,7 +2044,7 @@ impl Store {
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         let mut iter = self
-            .open_locked_storage_trie(hashed_address, storage_root)?
+            .open_locked_storage_trie(hashed_address, state_root, storage_root)?
             .into_iter();
         iter.advance(starting_slot.0.to_vec())?;
         Ok(Some(iter.content().map_while(|(path, value)| {
@@ -2184,10 +2184,17 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        Ok(Trie::open(
-            Box::new(state_trie_locked_backend(self.backend.as_ref())?),
+        let trie_db = TrieWrapper {
             state_root,
-        ))
+            inner: self
+                .trie_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
+            db: Box::new(state_trie_locked_backend(self.backend.as_ref())?),
+            prefix: None,
+        };
+        Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
     /// Obtain a storage trie from the given address and storage_root.
@@ -2229,15 +2236,20 @@ impl Store {
     pub fn open_locked_storage_trie(
         &self,
         account_hash: H256,
+        state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        Ok(Trie::open(
-            Box::new(storage_trie_locked_backend(
-                self.backend.as_ref(),
-                account_hash,
-            )?),
-            storage_root,
-        ))
+        let trie_db = TrieWrapper {
+            state_root,
+            inner: self
+                .trie_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
+            db: Box::new(storage_trie_locked_backend(self.backend.as_ref(), account_hash)?),
+            prefix: Some(account_hash),
+        };
+        Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
     pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {
