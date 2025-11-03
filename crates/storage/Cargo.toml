@@ -28,11 +28,12 @@ tokio = { workspace = true, features = ["rt"] }
 qfilter = "0.2.5"
 rayon.workspace = true
 
-canopydb = "0.2.4"
+canopydb = { version = "0.2.4", optional = true }
 
 [features]
 default = []
 rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb"]
+canopydb = ["dep:canopydb"]
 
 [dev-dependencies]
 hex.workspace = true

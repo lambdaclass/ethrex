@@ -43,7 +43,7 @@ use tracing_subscriber::{
 };
 
 // Compile-time check to ensure that at least one of the database features is enabled.
-#[cfg(not(feature = "rocksdb"))]
+#[cfg(all(not(feature = "rocksdb"), not(feature = "canopydb")))]
 const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
@@ -120,6 +120,8 @@ pub fn open_store(datadir: &Path) -> Store {
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
+        #[cfg(feature = "canopydb")]
+        let engine_type = EngineType::CanopyDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type).expect("Failed to create Store")
