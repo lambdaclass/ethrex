@@ -11,11 +11,11 @@ use crate::{
 use bytes::Bytes;
 use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_blockchain::{Blockchain, BlockchainOptions, L2Config, fork_choice::apply_fork_choice};
-use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, Block, blobs_bundle, bytes_from_blob, fee_config::FeeConfig},
 };
+use ethrex_common::{types::BlobsBundle, utils::keccak};
 use ethrex_config::networks::Network;
 use ethrex_l2::utils::state_reconstruct::get_batch;
 use ethrex_l2_common::calldata::Value;
@@ -143,6 +143,12 @@ pub enum Command {
         blobs_dir: PathBuf,
         #[arg(short = 's', long, help = "The path to the store.")]
         store_path: PathBuf,
+        #[arg(
+            short = 'o',
+            long,
+            help = "If true, assumes Osaka has been activated on L1."
+        )]
+        osaka_activated: bool,
     },
     #[command(about = "Reverts unverified batches.")]
     RevertBatch {
@@ -205,8 +211,8 @@ pub enum Command {
         #[arg(
             long,
             value_parser = parse_private_key,
-            env = "SEQUENCER_PRIVATE_KEY", 
-            help = "The private key of the sequencer", 
+            env = "SEQUENCER_PRIVATE_KEY",
+            help = "The private key of the sequencer",
             help_heading  = "Sequencer account options",
             group = "sequencer_signing",
         )]
@@ -292,7 +298,7 @@ impl Command {
             } => {
                 create_dir_all(datadir.clone())?;
 
-                let eth_client = EthClient::new(l1_eth_rpc.as_str())?;
+                let eth_client = EthClient::new(l1_eth_rpc)?;
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality
@@ -373,6 +379,7 @@ impl Command {
                 genesis,
                 blobs_dir,
                 store_path,
+                osaka_activated,
             } => {
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
@@ -451,7 +458,7 @@ impl Command {
                         };
                         let blockchain = Blockchain::new(store.clone(), opts);
 
-                        blockchain.add_block(block.clone()).await?;
+                        blockchain.add_block(block.clone())?;
 
                         let block_hash = block.hash();
 
@@ -472,9 +479,19 @@ impl Command {
                     let blob = blobs_bundle::blob_from_bytes(Bytes::copy_from_slice(&blob))
                         .expect("Failed to create blob from bytes; blob was just read from file");
 
-                    let batch =
-                        get_batch(&store, &blocks, U256::from(batch_number), None, Some(blob))
-                            .await?;
+                    let wrapper_version = if osaka_activated { Some(1) } else { None };
+
+                    let blobs_bundle =
+                        BlobsBundle::create_from_blobs(&vec![blob], wrapper_version)?;
+
+                    let batch = get_batch(
+                        &store,
+                        &blocks,
+                        U256::from(batch_number),
+                        None,
+                        blobs_bundle,
+                    )
+                    .await?;
 
                     rollup_store.seal_batch(batch).await?;
 
@@ -610,7 +627,7 @@ pub struct ContractCallOptions {
 
 impl ContractCallOptions {
     async fn call_contract(&self, selector: &str, params: Vec<Value>) -> eyre::Result<()> {
-        let client = EthClient::new(self.rpc_url.as_str())?;
+        let client = EthClient::new(self.rpc_url.clone())?;
         let signer = parse_signer(
             self.private_key,
             self.remote_signer_url.clone(),

@@ -30,8 +30,8 @@ struct StoreInner {
     state_roots: HashMap<u64, H256>,
     /// Map of batch number to blob
     blobs: HashMap<u64, Vec<Blob>>,
-    /// Lastest sent batch proof
-    lastest_sent_batch_proof: u64,
+    /// latest sent batch proof
+    latest_sent_batch_proof: u64,
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
     /// Map of signatures from the sequencer by block hashes
@@ -217,15 +217,12 @@ impl StoreEngineRollup for Store {
             .cloned())
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
-        Ok(self.inner()?.lastest_sent_batch_proof)
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+        Ok(self.inner()?.latest_sent_batch_proof)
     }
 
-    async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.lastest_sent_batch_proof = batch_number;
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.inner()?.latest_sent_batch_proof = batch_number;
         Ok(())
     }
 

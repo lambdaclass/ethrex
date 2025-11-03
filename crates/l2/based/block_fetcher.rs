@@ -1,6 +1,7 @@
 use std::{cmp::min, sync::Arc, time::Duration};
 
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
+use ethrex_common::types::BlobsBundle;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256, types::Block};
 
@@ -261,7 +262,7 @@ impl BlockFetcher {
 
     async fn store_batch(&mut self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
-            self.blockchain.add_block(block.clone()).await?;
+            self.blockchain.add_block(block.clone())?;
 
             let block_hash = block.hash();
 
@@ -291,7 +292,14 @@ impl BlockFetcher {
         batch_number: U256,
         commit_tx: H256,
     ) -> Result<(), BlockFetcherError> {
-        let batch = get_batch(&self.store, batch, batch_number, Some(commit_tx), None).await?;
+        let batch = get_batch(
+            &self.store,
+            batch,
+            batch_number,
+            Some(commit_tx),
+            BlobsBundle::default(),
+        )
+        .await?;
 
         self.rollup_store.seal_batch(batch).await?;
 

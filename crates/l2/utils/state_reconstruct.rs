@@ -1,7 +1,7 @@
 /// Utility functions for state reconstruction.
 /// Used by the based block fetcher and reconstruct command.
 use ethereum_types::H256;
-use ethrex_common::types::{Blob, BlobsBundle};
+use ethrex_common::types::BlobsBundle;
 use ethrex_common::{
     U256,
     types::{Block, BlockNumber, PrivilegedL2Transaction, Transaction, batch::Batch},
@@ -19,7 +19,7 @@ pub async fn get_batch(
     batch: &[Block],
     batch_number: U256,
     commit_tx: Option<H256>,
-    blob: Option<Blob>,
+    blobs_bundle: BlobsBundle,
 ) -> Result<Batch, UtilsError> {
     let privileged_transactions: Vec<PrivilegedL2Transaction> = batch
         .iter()
@@ -55,14 +55,6 @@ pub async fn get_batch(
             "This block should be in the store".to_owned(),
         ))?
         .hash_no_commit();
-
-    // Based don't use blobs
-
-    let blobs_bundle = if let Some(blob) = blob {
-        BlobsBundle::create_from_blobs(&vec![blob])?
-    } else {
-        BlobsBundle::default()
-    };
 
     Ok(Batch {
         number: batch_number.as_u64(),

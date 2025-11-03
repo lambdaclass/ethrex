@@ -8,7 +8,7 @@ use std::{
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
         ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
@@ -128,7 +128,7 @@ pub fn create_payload(
     let parent_block = storage
         .get_block_header_by_hash(args.parent)?
         .ok_or_else(|| ChainError::ParentNotFound)?;
-    let chain_config = storage.get_chain_config()?;
+    let chain_config = storage.get_chain_config();
     let fork = chain_config.fork(args.timestamp);
     let gas_limit = calc_gas_limit(parent_block.gas_limit, args.gas_ceil);
     let excess_blob_gas = chain_config
@@ -217,6 +217,7 @@ pub struct PayloadBuildContext {
     pub store: Store,
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
+    pub payload_size: u64,
 }
 
 impl PayloadBuildContext {
@@ -225,9 +226,7 @@ impl PayloadBuildContext {
         storage: &Store,
         blockchain_type: &BlockchainType,
     ) -> Result<Self, EvmError> {
-        let config = storage
-            .get_chain_config()
-            .map_err(|e| EvmError::DB(e.to_string()))?;
+        let config = storage.get_chain_config();
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -239,6 +238,7 @@ impl PayloadBuildContext {
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
         let vm = new_evm(blockchain_type, vm_db)?;
 
+        let payload_size = payload.encode_to_vec().len() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
@@ -252,6 +252,7 @@ impl PayloadBuildContext {
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
+            payload_size,
         })
     }
 
@@ -269,10 +270,8 @@ impl PayloadBuildContext {
         self.payload.header.number
     }
 
-    fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.store
-            .get_chain_config()
-            .map_err(|e| EvmError::DB(e.to_string()))
+    fn chain_config(&self) -> ChainConfig {
+        self.store.get_chain_config()
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {
@@ -489,7 +488,7 @@ impl Blockchain {
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-        let chain_config = context.chain_config()?;
+        let chain_config = context.chain_config();
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
@@ -532,6 +531,20 @@ impl Blockchain {
                 txs.pop();
                 continue;
             }
+
+            // Check adding a transaction wouldn't exceed the Osaka block size limit of 10 MiB
+            // if inclusion of the transaction puts the block size over the size limit
+            // we don't add any more txs to the payload.
+            let potential_rlp_block_size =
+                context.payload_size + head_tx.encode_canonical_to_vec().len() as u64;
+            if context
+                .chain_config()
+                .is_osaka_activated(context.payload.header.timestamp)
+                && potential_rlp_block_size > MAX_RLP_BLOCK_SIZE
+            {
+                break;
+            }
+            context.payload_size = potential_rlp_block_size;
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
             let tx_hash = head_tx.tx.hash();
@@ -591,7 +604,7 @@ impl Blockchain {
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
         let tx_hash = head.tx.hash();
-        let chain_config = context.chain_config()?;
+        let chain_config = context.chain_config();
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
@@ -618,7 +631,7 @@ impl Blockchain {
 
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         if !context
-            .chain_config()?
+            .chain_config()
             .is_prague_activated(context.payload.header.timestamp)
         {
             return Ok(());

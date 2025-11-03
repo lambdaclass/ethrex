@@ -7,13 +7,12 @@ use bls12_381::{
 };
 use bytes::{Buf, Bytes};
 use ethrex_common::H160;
-use ethrex_common::utils::{keccak, u256_from_big_endian_const};
+use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H256, U256, serde_utils::bool, types::Fork, types::Fork::*,
     utils::u256_from_big_endian,
 };
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use k256::elliptic_curve::Field;
 use lambdaworks_math::cyclic_group::IsGroup;
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{
@@ -53,8 +52,8 @@ use crate::{
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
         BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
-        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
-        G2_MUL_COST, POINT_EVALUATION_COST,
+        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, G1_MUL_COST, G2_MUL_COST,
+        POINT_EVALUATION_COST,
     },
 };
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
@@ -375,6 +374,65 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
+#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    use sha3::Keccak256;
+
+    use crate::gas_cost::ECRECOVER_COST;
+
+    increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
+
+    const INPUT_LEN: usize = 128;
+    const WORD: usize = 32;
+
+    let input = fill_with_zeros(calldata, INPUT_LEN);
+
+    // len(raw_hash) == 32, len(raw_v) == 32, len(raw_sig) == 64
+    let (raw_hash, tail) = input.split_at(WORD);
+    let (raw_v, raw_sig) = tail.split_at(WORD);
+
+    // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
+    let recovery_id_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
+        Ok(27) => 0_i32,
+        Ok(28) => 1_i32,
+        _ => return Ok(Bytes::new()),
+    };
+
+    // Recovery id from the adjusted byte.
+    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(recovery_id_byte) else {
+        return Ok(Bytes::new());
+    };
+
+    let Ok(recoverable_signature) =
+        secp256k1::ecdsa::RecoverableSignature::from_compact(raw_sig, recovery_id)
+    else {
+        return Ok(Bytes::new());
+    };
+
+    let message = secp256k1::Message::from_digest(
+        raw_hash
+            .try_into()
+            .map_err(|_err| InternalError::msg("Invalid message length for ecrecover"))?,
+    );
+
+    let Ok(public_key) = recoverable_signature.recover(&message) else {
+        return Ok(Bytes::new());
+    };
+
+    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
+    let public_key_hash = Keccak256::digest(&public_key.serialize_uncompressed()[1..]);
+
+    // Address is the last 20 bytes of the hash.
+    #[expect(clippy::indexing_slicing)]
+    let recovered_address_bytes = &public_key_hash[12..];
+
+    let mut out = [0u8; 32];
+
+    out[12..32].copy_from_slice(recovered_address_bytes);
+
+    Ok(Bytes::copy_from_slice(&out))
+}
+
 /// ## ECRECOVER precompile.
 /// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
 ///
@@ -384,7 +442,13 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
+#[cfg(any(feature = "sp1", feature = "risc0"))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    use ethrex_common::utils::keccak;
+    use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+
+    use crate::gas_cost::ECRECOVER_COST;
+
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
     const INPUT_LEN: usize = 128;
@@ -835,7 +899,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     Ok(Bytes::from_owner(result))
 }
 
-#[cfg(feature = "sp1")]
+#[cfg(any(feature = "sp1", feature = "risc0"))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
@@ -891,9 +955,11 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     Ok(result == substrate_bn::Gt::one())
 }
 
-#[cfg(not(feature = "sp1"))]
+#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+    use lambdaworks_math::errors::PairingError;
+
     type Fq = BN254FieldElement;
     type Fq2 = BN254TwistCurveFieldElement;
     type LambdaworksG1 = BN254Curve;
@@ -936,18 +1002,11 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
             LambdaworksG2::create_point_from_affine(g2_x, g2_y)
                 .map_err(|_| PrecompileError::InvalidPoint)?
         };
-        if !g2.is_in_subgroup() {
-            return Err(PrecompileError::PointNotInSubgroup.into());
-        }
-
-        if g1.is_neutral_element() || g2.is_neutral_element() {
-            continue;
-        }
         valid_batch.push((g1, g2));
     }
     let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
     let result = BN254AtePairing::compute_batch(&valid_batch_refs)
-        .map_err(|_| PrecompileError::BN254AtePairingError)?;
+        .map_err(|PairingError::PointNotInSubgroup| PrecompileError::PointNotInSubgroup)?;
 
     Ok(result == QuadraticExtensionFieldElement::one())
 }

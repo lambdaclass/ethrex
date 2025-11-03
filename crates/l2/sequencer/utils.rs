@@ -2,12 +2,11 @@ use aligned_sdk::common::types::Network;
 use ethrex_common::types::Block;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H160, H256, types::TxType};
+use ethrex_common::{Address, H256, types::TxType};
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_committed_batch, get_last_verified_batch,
-    send_tx_bump_gas_exponential_backoff,
+    build_generic_tx, get_last_committed_batch, send_tx_bump_gas_exponential_backoff,
 };
 use ethrex_rpc::{
     EthClient,
@@ -17,17 +16,10 @@ use ethrex_storage::Store;
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use rand::Rng;
-use std::time::{Duration, SystemTime};
-use std::{str::FromStr, time::UNIX_EPOCH};
+use reqwest::Url;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
-
-const DEV_MODE_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0xAA,
-]);
-
-use super::errors::SequencerError;
 
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
@@ -83,7 +75,7 @@ pub async fn send_verify_tx(
 }
 
 pub async fn get_needed_proof_types(
-    rpc_urls: Vec<String>,
+    rpc_urls: Vec<Url>,
     on_chain_proposer_address: Address,
 ) -> Result<Vec<ProverType>, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
@@ -95,6 +87,7 @@ pub async fn get_needed_proof_types(
         };
         let calldata = keccak(getter)[..4].to_vec();
 
+        // response is a boolean 0x00..01 or 0x00..00
         let response = eth_client
             .call(
                 on_chain_proposer_address,
@@ -102,16 +95,13 @@ pub async fn get_needed_proof_types(
                 Overrides::default(),
             )
             .await?;
-        // trim to 20 bytes, also removes 0x prefix
-        let trimmed_response = &response[26..];
 
-        let address = Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
-            EthClientError::Custom(format!(
-                "Failed to parse OnChainProposer response {response}"
-            ))
-        })?;
-
-        if address != DEV_MODE_ADDRESS {
+        let required_proof_type = response
+            .chars()
+            .last()
+            .ok_or(EthClientError::InternalError("empty response".to_string()))?
+            == '1';
+        if required_proof_type {
             info!("{prover_type} proof needed");
             needed_proof_types.push(prover_type);
         }
@@ -123,25 +113,13 @@ pub async fn get_needed_proof_types(
     Ok(needed_proof_types)
 }
 
-pub async fn get_latest_sent_batch(
-    needed_proof_types: Vec<ProverType>,
-    rollup_store: &StoreRollup,
-    eth_client: &EthClient,
-    on_chain_proposer_address: Address,
-) -> Result<u64, SequencerError> {
-    if needed_proof_types.contains(&ProverType::Aligned) {
-        Ok(rollup_store.get_lastest_sent_batch_proof().await?)
-    } else {
-        Ok(get_last_verified_batch(eth_client, on_chain_proposer_address).await?)
-    }
-}
-
 pub fn resolve_aligned_network(network: &str) -> Network {
     match network {
         "devnet" => Network::Devnet,
         "holesky" => Network::Holesky,
         "holesky-stage" => Network::HoleskyStage,
         "mainnet" => Network::Mainnet,
+        "hoodi" => Network::Hoodi,
         _ => Network::Devnet, // TODO: Implement custom networks
     }
 }
@@ -215,4 +193,8 @@ where
 /// Returns the git commit hash of the current build.
 pub fn get_git_commit_hash() -> String {
     env!("VERGEN_GIT_SHA").to_string()
+}
+
+pub fn batch_checkpoint_name(batch_number: u64) -> String {
+    format!("checkpoint_batch_{batch_number}")
 }

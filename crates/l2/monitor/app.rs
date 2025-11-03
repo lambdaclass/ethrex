@@ -16,6 +16,7 @@ use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
 };
+use reqwest::Url;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{
@@ -71,6 +72,8 @@ pub struct EthrexMonitorWidget {
     pub rollup_store: StoreRollup,
     pub last_scroll: Instant,
     pub overview_selected_widget: usize,
+
+    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -185,11 +188,20 @@ impl EthrexMonitorWidget {
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
     ) -> Result<Self, MonitorError> {
-        let eth_client = EthClient::new(cfg.eth.rpc_url.first().ok_or(MonitorError::RPCListEmpty)?)
-            .map_err(MonitorError::EthClientError)?;
+        let eth_client = EthClient::new(
+            cfg.eth
+                .rpc_url
+                .first()
+                .ok_or(MonitorError::RPCListEmpty)?
+                .clone(),
+        )
+        .map_err(MonitorError::EthClientError)?;
         // TODO: De-hardcode the rollup client URL
-        let rollup_client =
-            EthClient::new("http://localhost:1729").map_err(MonitorError::EthClientError)?;
+        #[allow(clippy::expect_used)]
+        let rollup_client = EthClient::new(
+            Url::parse("http://localhost:1729").expect("Unreachable error. URL is hardcoded"),
+        )
+        .map_err(MonitorError::EthClientError)?;
 
         let mut monitor_widget = EthrexMonitorWidget {
             title: if cfg.based.enabled {
@@ -215,6 +227,7 @@ impl EthrexMonitorWidget {
             rollup_store,
             last_scroll: Instant::now(),
             overview_selected_widget: 0,
+            osaka_activation_time: cfg.eth.osaka_activation_time,
         };
         monitor_widget.selected_table().selected(true);
         monitor_widget.on_tick().await?;
@@ -324,7 +337,11 @@ impl EthrexMonitorWidget {
             .await?;
         self.mempool.on_tick(&self.rollup_client).await?;
         self.batches_table
-            .on_tick(&self.eth_client, &self.rollup_store)
+            .on_tick(
+                &self.eth_client,
+                &self.rollup_store,
+                self.osaka_activation_time,
+            )
             .await?;
         self.blocks_table.on_tick(&self.store).await?;
         self.l1_to_l2_messages

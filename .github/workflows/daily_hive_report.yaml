@@ -188,7 +188,7 @@ jobs:
           fi
 
       - name: Generate the hive report
-        run: cargo run -p hive_report > results.md
+        run: cargo run --manifest-path tooling/Cargo.toml -p hive_report > results.md
 
       - name: Upload daily result
         uses: actions/upload-artifact@v4
