@@ -30,6 +30,25 @@ impl NodeRef {
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
+            NodeRef::Hash(_) => db
+                .get(path)?
+                .filter(|rlp| !rlp.is_empty())
+                .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
+                .transpose(),
+        }
+    }
+
+    /// Gets a shared reference to the inner node.
+    pub fn get_node_checked(
+        &self,
+        db: &dyn TrieDB,
+        path: Nibbles,
+    ) -> Result<Option<Arc<Node>>, TrieError> {
+        match self {
+            NodeRef::Node(node, _) => Ok(Some(node.clone())),
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
+            }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
