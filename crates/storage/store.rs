@@ -795,8 +795,6 @@ impl Store {
                 )?;
             }
 
-            // This commits is used since we deleted some items. We could have a better way to do this.
-            // Accept put and delete in the same batch.
             txn.commit()
         })
         .await
@@ -2415,7 +2413,9 @@ fn apply_trie_updates(
             break;
         }
     }
-    write_tx.commit()?;
+    if result.is_ok() {
+        result = write_tx.commit();
+    }
     // We want to send this message even if there was an error during the batch write
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
