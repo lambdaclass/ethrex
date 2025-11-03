@@ -2415,6 +2415,7 @@ fn apply_trie_updates(
             break;
         }
     }
+    write_tx.commit()?;
     // We want to send this message even if there was an error during the batch write
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
