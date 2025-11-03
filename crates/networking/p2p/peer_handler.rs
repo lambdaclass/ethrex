@@ -203,7 +203,7 @@ impl PeerHandler {
 
         let sync_head_number_retrieval_start = SystemTime::now();
 
-        debug!("Retrieving sync head block number from peers");
+        trace!("Retrieving sync head block number from peers");
 
         let mut retries = 1;
 
@@ -251,7 +251,7 @@ impl PeerHandler {
             .elapsed()
             .unwrap_or_default();
 
-        debug!("Sync head block number retrieved");
+        trace!("Sync head block number retrieved");
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
