@@ -29,7 +29,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         .arg(OUTPUT_PATH)
         .arg("--stats")
         .stdin(Stdio::inherit())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::inherit())
         .output()?;
     let duration = start.elapsed();
 
