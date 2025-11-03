@@ -1,4 +1,5 @@
 use ethrex_common::H256;
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -11,19 +12,71 @@ struct TrieLayer {
     id: usize,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
+    /// Number of layers after which we should commit to the database.
+    commit_threshold: usize,
     layers: FxHashMap<H256, Arc<TrieLayer>>,
+    /// Global bloom that accrues all layer blooms.
+    ///
+    /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
+    /// layer, thus going directly to the database.
+    ///
+    /// In case a bloom filter insert or merge fails, we need to mark the bloom filter as poisoned
+    /// so we never use it again, because if we don't we may be misled into believing a key is not present
+    /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
+    bloom: Option<qfilter::Filter>,
+}
+
+impl Default for TrieLayerCache {
+    fn default() -> Self {
+        // Try to create the bloom filter, if it fails use poison mode.
+        let bloom = Self::create_filter().ok();
+        Self {
+            bloom,
+            last_id: 0,
+            layers: Default::default(),
+            commit_threshold: 128,
+        }
+    }
 }
 
 impl TrieLayerCache {
+    pub fn new(commit_threshold: usize) -> Self {
+        let bloom = Self::create_filter().ok();
+        Self {
+            bloom,
+            last_id: 0,
+            layers: Default::default(),
+            commit_threshold,
+        }
+    }
+
+    // TODO: tune this
+    fn create_filter() -> Result<qfilter::Filter, qfilter::Error> {
+        qfilter::Filter::new_resizeable(100_000, 100_000_000, 0.02)
+            .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
+    }
+
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+        let key = key.as_ref();
+
+        // Fast check to know if any layer may contains the given key.
+        // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
+        if let Some(filter) = &self.bloom
+            && !filter.contains(key)
+        {
+            // TrieWrapper goes to db when returning None.
+            return None;
+        }
+
         let mut current_state_root = state_root;
+
         while let Some(layer) = self.layers.get(&current_state_root) {
-            if let Some(value) = layer.nodes.get(key.as_ref()) {
+            if let Some(value) = layer.nodes.get(key) {
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
@@ -41,12 +94,12 @@ impl TrieLayerCache {
     }
 
     // TODO: use finalized hash to know when to commit
-    pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
+    pub fn get_commitable(&self, mut state_root: H256) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
             counter += 1;
-            if counter > commit_threshold {
+            if counter > self.commit_threshold {
                 return Some(state_root);
             }
         }
@@ -70,9 +123,20 @@ impl TrieLayerCache {
             return;
         }
 
+        // add this new bloom to the global one.
+        if let Some(filter) = &mut self.bloom {
+            for (p, _) in &key_values {
+                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
+                    tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
+                    self.bloom = None;
+                    break;
+                }
+            }
+        }
+
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
-            .map(|(path, node)| (path.into_vec(), node))
+            .map(|(path, value)| (path.into_vec(), value))
             .collect();
 
         self.last_id += 1;
@@ -84,6 +148,47 @@ impl TrieLayerCache {
         self.layers.insert(state_root, Arc::new(entry));
     }
 
+    /// Rebuilds the global bloom filter accruing all current existing layers.
+    pub fn rebuild_bloom(&mut self) {
+        let mut blooms: Vec<_> = self
+            .layers
+            .values()
+            .par_bridge()
+            .map(|entry| {
+                let Ok(mut bloom) = Self::create_filter() else {
+                    tracing::warn!("TrieLayerCache: rebuild_bloom could not create filter");
+                    return None;
+                };
+                for (p, _) in entry.nodes.iter() {
+                    if let Err(qfilter::Error::CapacityExceeded) = bloom.insert(p) {
+                        tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                        return None;
+                    }
+                }
+                Some(bloom)
+            })
+            .collect();
+
+        let Some(mut ret) = blooms.pop().flatten() else {
+            tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
+            self.bloom = None;
+            return;
+        };
+        for bloom in blooms.iter() {
+            let Some(bloom) = bloom else {
+                tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
+                self.bloom = None;
+                return;
+            };
+            if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
+                tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                self.bloom = None;
+                return;
+            }
+        }
+        self.bloom = Some(ret);
+    }
+
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
             Ok(layer) => layer,
@@ -93,6 +198,7 @@ impl TrieLayerCache {
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
         self.layers.retain(|_, item| item.id > layer.id);
+        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
         Some(
             parent_nodes
                 .unwrap_or_default()

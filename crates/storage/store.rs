@@ -50,8 +50,12 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
 
-// TODO: use finalized hash to determine when to commit
-const COMMIT_THRESHOLD: usize = 128;
+// We use one constant for in-memory and another for on-disk backends.
+// This is due to tests requiring state older than 128 blocks.
+// TODO: unify these
+#[allow(unused)]
+const DB_COMMIT_THRESHOLD: usize = 128;
+const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -797,8 +801,6 @@ impl Store {
                 )?;
             }
 
-            // This commits is used since we deleted some items. We could have a better way to do this.
-            // Accept put and delete in the same batch.
             txn.commit()
         })
         .await
@@ -1309,19 +1311,28 @@ impl Store {
         let _path = &path;
         match engine_type {
             #[cfg(feature = "rocksdb")]
-            EngineType::RocksDB => Self::from_backend(Arc::new(CanopyDBBackend::open(path)?)),
-            EngineType::InMemory => Self::from_backend(Arc::new(InMemoryBackend::open()?)),
+            EngineType::RocksDB => {
+                Self::from_backend(Arc::new(CanopyDBBackend::open(path)?), DB_COMMIT_THRESHOLD)
+            }
+            EngineType::InMemory => Self::from_backend(
+                Arc::new(InMemoryBackend::open()?),
+                IN_MEMORY_COMMIT_THRESHOLD,
+            ),
         }
     }
 
-    fn from_backend(backend: Arc<dyn StorageBackend>) -> Result<Self, StoreError> {
+    fn from_backend(
+        backend: Arc<dyn StorageBackend>,
+        commit_threshold: usize,
+    ) -> Result<Self, StoreError> {
+        debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
         let store = Self {
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Default::default(),
+            trie_cache: Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
         };
@@ -1516,19 +1527,19 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
 
         Ok(Some(self.apply_account_updates_from_trie_batch(
-            state_trie,
+            &mut state_trie,
             account_updates,
         )?))
     }
 
     pub fn apply_account_updates_from_trie_batch<'a>(
         &self,
-        mut state_trie: Trie,
+        state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
@@ -1721,18 +1732,21 @@ impl Store {
         }
         let (state_root, state_nodes) = genesis_state_trie.collect_changes_since_last_hash();
 
-        // TODO: replace this with a Store method
-        genesis_state_trie.db().put_batch(
-            nodes
-                .into_iter()
-                .flat_map(|(account_hash, nodes)| {
-                    nodes
-                        .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                })
-                .chain(state_nodes)
-                .collect(),
-        )?;
+        let batch = nodes
+            .into_iter()
+            .flat_map(|(account_hash, nodes)| {
+                nodes
+                    .into_iter()
+                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+            })
+            .chain(state_nodes)
+            .map(|(k, v)| (k.into_vec(), v))
+            .collect();
+
+        let mut write_txn = self.backend.begin_write()?;
+        write_txn.put_batch(TRIE_NODES, batch)?;
+        write_txn.commit()?;
+
         Ok(state_root)
     }
 
@@ -2382,7 +2396,7 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?;
 
     // Phase 2: update disk layer.
-    let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
+    let Some(root) = trie.get_commitable(parent_state_root) else {
         // Nothing to commit to disk, move on.
         return Ok(());
     };
@@ -2416,6 +2430,9 @@ fn apply_trie_updates(
         if result.is_err() {
             break;
         }
+    }
+    if result.is_ok() {
+        result = write_tx.commit();
     }
     // We want to send this message even if there was an error during the batch write
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
