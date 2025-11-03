@@ -1730,18 +1730,21 @@ impl Store {
         }
         let (state_root, state_nodes) = genesis_state_trie.collect_changes_since_last_hash();
 
-        // TODO: replace this with a Store method
-        genesis_state_trie.db().put_batch(
-            nodes
-                .into_iter()
-                .flat_map(|(account_hash, nodes)| {
-                    nodes
-                        .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                })
-                .chain(state_nodes)
-                .collect(),
-        )?;
+        let batch = nodes
+            .into_iter()
+            .flat_map(|(account_hash, nodes)| {
+                nodes
+                    .into_iter()
+                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+            })
+            .chain(state_nodes)
+            .map(|(k, v)| (k.into_vec(), v))
+            .collect();
+
+        let mut write_txn = self.backend.begin_write()?;
+        write_txn.put_batch(TRIE_NODES, batch)?;
+        write_txn.commit()?;
+
         Ok(state_root)
     }
 
