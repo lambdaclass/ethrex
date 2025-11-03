@@ -9,14 +9,15 @@ use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
-    current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
-    get_code_hashes_snapshots_dir, validate_folders,
+    current_unix_time, delete_leaves_folder, get_account_state_snapshots_dir,
+    get_account_storages_snapshots_dir, get_code_hashes_snapshots_dir,
 };
 use crate::{
     metrics::METRICS,
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+use ethrex_common::types::Code;
 use ethrex_common::{
     BigEndianHash, H256, U256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
@@ -29,7 +30,7 @@ use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::{
     array,
     cmp::min,
@@ -147,15 +148,34 @@ impl Syncer {
         match self.sync_cycle(sync_head, store).await {
             Ok(()) => {
                 info!(
-                    "Sync cycle finished, time elapsed: {} secs",
-                    start_time.elapsed().as_secs()
+                    time_elapsed_s = start_time.elapsed().as_secs(),
+                    %sync_head,
+                    "Sync cycle finished successfully",
                 );
             }
-            // TODO #2767: If the error is irrecoverable, we should exit ethrex
-            Err(error) => error!(
-                "Sync cycle failed due to {error}, time elapsed: {} secs ",
-                start_time.elapsed().as_secs()
-            ),
+
+            // If the error is irrecoverable, we exit ethrex
+            Err(error) => {
+                match error.is_recoverable() {
+                    false => {
+                        // We exit the node, as we can't recover this error
+                        error!(
+                            time_elapsed_s = start_time.elapsed().as_secs(),
+                            %sync_head,
+                            %error, "Sync cycle failed, exiting as the error is irrecoverable",
+                        );
+                        std::process::exit(2);
+                    }
+                    true => {
+                        // We do nothing, as the error is recoverable
+                        error!(
+                            time_elapsed_s = start_time.elapsed().as_secs(),
+                            %sync_head,
+                            %error, "Sync cycle failed, retrying",
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -196,18 +216,8 @@ impl Syncer {
         };
 
         // We validate that we have the folders that are being used empty, as we currently assume
-        // they are.
-        if !validate_folders(&self.datadir) {
-            // Temp std::process::exit until #2767 is done
-            error!(
-                "One of the folders used for temporary leaves during snap is still used. Delete them in {}",
-                &self.datadir.to_str().unwrap_or_default()
-            );
-            std::process::exit(1);
-            // Cloning a single string, the node should stop after this
-            // return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
-        }
-
+        // they are. If they are not empty we empty the folder
+        delete_leaves_folder(&self.datadir);
         loop {
             debug!("Sync Log 1: In snap sync");
             debug!(
@@ -547,7 +557,7 @@ impl Syncer {
             let mut last_valid_hash = H256::default();
             for block in blocks {
                 let block_hash = block.hash();
-                blockchain.add_block(block).await.map_err(|e| {
+                blockchain.add_block_pipeline(block).map_err(|e| {
                     (
                         e,
                         Some(BatchBlockProcessingFailure {
@@ -750,10 +760,6 @@ impl Syncer {
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
             *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
-            METRICS.storage_accounts_initial.store(
-                storage_accounts.accounts_with_storage_root.len() as u64,
-                Ordering::Relaxed,
-            );
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
@@ -836,10 +842,6 @@ impl Syncer {
                 info!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
-            METRICS.storage_accounts_healed.store(
-                storage_accounts.healed_accounts.len() as u64,
-                Ordering::Relaxed,
-            );
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -853,7 +855,6 @@ impl Syncer {
                 accounts_with_storage,
                 &account_storages_snapshots_dir,
                 &self.datadir,
-                &pivot_header,
             )
             .await?;
 
@@ -949,7 +950,10 @@ impl Syncer {
 
                         store
                             .write_account_code_batch(
-                                code_hashes_to_download.drain(..).zip(bytecodes).collect(),
+                                code_hashes_to_download
+                                    .drain(..)
+                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                                    .collect(),
                             )
                             .await?;
                     }
@@ -967,7 +971,10 @@ impl Syncer {
                 .ok_or(SyncError::BytecodesNotFound)?;
             store
                 .write_account_code_batch(
-                    code_hashes_to_download.into_iter().zip(bytecodes).collect(),
+                    code_hashes_to_download
+                        .drain(..)
+                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                        .collect(),
                 )
                 .await?;
         }
@@ -1017,7 +1024,6 @@ fn compute_storage_roots(
     store: Store,
     account_hash: H256,
     key_value_pairs: &[(H256, U256)],
-    pivot_hash: H256,
 ) -> Result<StorageRoots, SyncError> {
     use ethrex_trie::{Nibbles, Node};
 
@@ -1033,17 +1039,12 @@ fn compute_storage_roots(
             warn!(
                 "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
             );
-        }
+        };
+        METRICS.storage_leaves_inserted.inc();
     }
 
-    let (computed_storage_root, changes) = storage_trie.collect_changes_since_last_hash();
+    let (_, changes) = storage_trie.collect_changes_since_last_hash();
 
-    let account_state = store
-        .get_account_state_by_acc_hash(pivot_hash, account_hash)?
-        .ok_or(SyncError::AccountState(pivot_hash, account_hash))?;
-    if computed_storage_root == account_state.storage_root {
-        METRICS.storage_tries_state_roots_computed.inc();
-    }
     Ok((account_hash, changes))
 }
 
@@ -1062,11 +1063,18 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        let (peer_id, mut connection) = peers
+        let Some((peer_id, mut connection)) = peers
             .peer_table
             .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
             .await?
-            .ok_or(SyncError::NoPeers)?;
+        else {
+            // When we come here, we may be waiting for requests to timeout.
+            // Because we're waiting for a timeout, we sleep so the rest of the code
+            // can get to them
+            debug!("We tried to get peers during update_pivot, but we found no free peers");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        };
 
         let peer_score = peers.peer_table.get_score(&peer_id).await?;
         info!(
@@ -1154,8 +1162,6 @@ pub enum SyncError {
     CodeHashesSnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
     AccountState(H256, H256),
-    #[error("Failed to acquire lock on maybe_big_account_storage")]
-    MaybeBigAccount,
     #[error("Failed to fetch bytecodes from peers")]
     BytecodesNotFound,
     #[error("Failed to get account state snapshots directory")]
@@ -1166,16 +1172,8 @@ pub enum SyncError {
     CodeHashesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
-    #[error("Cannot find suitable peer")]
-    NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
-    #[error("The download datadir folders at {0} are not empty, delete them first")]
-    NotEmptyDatadirFolders(PathBuf),
-    #[error("Couldn't create a thread")]
-    ThreadCreationError,
-    #[error("Called update_pivot outside snapsync mode")]
-    NotInSnapSync,
     #[error("Peer handler error: {0}")]
     PeerHandler(#[from] PeerHandlerError),
     #[error("Corrupt Path")]
@@ -1192,6 +1190,43 @@ pub enum SyncError {
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
+}
+
+impl SyncError {
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            SyncError::SnapshotReadError(_, _)
+            | SyncError::SnapshotDecodeError(_)
+            | SyncError::CodeHashesSnapshotDecodeError(_)
+            | SyncError::AccountState(_, _)
+            | SyncError::BytecodesNotFound
+            | SyncError::AccountStateSnapshotsDirNotFound
+            | SyncError::AccountStoragesSnapshotsDirNotFound
+            | SyncError::CodeHashesSnapshotsDirNotFound
+            | SyncError::DifferentStateRoots(_, _, _)
+            | SyncError::NoBlockHeaders
+            | SyncError::PeerHandler(_)
+            | SyncError::CorruptPath
+            | SyncError::TrieGenerationError(_)
+            | SyncError::AccountTempDBDirNotFound
+            | SyncError::StorageTempDBDirNotFound
+            | SyncError::RocksDBError(_)
+            | SyncError::BytecodeFileError
+            | SyncError::NoLatestCanonical
+            | SyncError::PeerTableError(_) => false,
+            SyncError::Chain(_)
+            | SyncError::Store(_)
+            | SyncError::Send(_)
+            | SyncError::Trie(_)
+            | SyncError::Rlp(_)
+            | SyncError::JoinHandle(_)
+            | SyncError::CorruptDB
+            | SyncError::BodiesNotFound
+            | SyncError::InvalidRangeReceived
+            | SyncError::BlockNumber(_)
+            | SyncError::NoBlocks => true,
+        }
+    }
 }
 
 impl<T> From<SendError<T>> for SyncError {
@@ -1355,7 +1390,6 @@ async fn insert_storages(
     _: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
     _: &Path,
-    pivot_header: &BlockHeader,
 ) -> Result<(), SyncError> {
     use rayon::iter::IntoParallelIterator;
 
@@ -1386,7 +1420,6 @@ async fn insert_storages(
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
         let store_clone = store.clone();
-        let pivot_hash_moved = pivot_header.hash();
         info!("Starting compute of account_storages_snapshot");
         let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
             let store: Store = store_clone;
@@ -1401,9 +1434,7 @@ async fn insert_storages(
                         // FIXME: we probably want to make storages an Arc
                         .map(move |account| (account, storages.clone()))
                 })
-                .map(|(account, storages)| {
-                    compute_storage_roots(store.clone(), account, &storages, pivot_hash_moved)
-                })
+                .map(|(account, storages)| compute_storage_roots(store.clone(), account, &storages))
                 .collect::<Result<Vec<_>, SyncError>>()
         })
         .await??;
@@ -1492,7 +1523,6 @@ async fn insert_storages(
     accounts_with_storage: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
     datadir: &Path,
-    _: &BlockHeader,
 ) -> Result<(), SyncError> {
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
@@ -1592,14 +1622,14 @@ async fn insert_storages(
                 let mut buffer: [u8; 64] = [0_u8; 64];
                 buffer[..32].copy_from_slice(&account_hash.0);
                 iter.seek(buffer);
-                let mut iter = RocksDBIterator {
+                let iter = RocksDBIterator {
                     iter,
                     limit: *account_hash,
                 };
 
                 let _ = trie_from_sorted_accounts(
                     trie.db(),
-                    &mut iter,
+                    &mut iter.inspect(|_| METRICS.storage_leaves_inserted.inc()),
                     pool_clone,
                     buffer_sender,
                     buffer_receiver,
@@ -1610,7 +1640,6 @@ async fn insert_storages(
                     );
                 })
                 .map_err(SyncError::TrieGenerationError);
-                METRICS.storage_tries_state_roots_computed.inc();
                 let _ = sender.send(());
             });
             pool.execute(task);

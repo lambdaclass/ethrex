@@ -1,16 +1,18 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store, regenerate_head_state,
+    get_network, get_signer, init_blockchain, init_network, init_store,
 };
-use crate::l2::L2Options;
+use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
-use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
+use ethrex_common::fd_limit::raise_fd_limit;
+use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
+use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     peer_handler::PeerHandler,
@@ -22,11 +24,12 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::SecretKey;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
-use tokio::{sync::Mutex, task::JoinSet};
+use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
 use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
+use url::Url;
 
 #[allow(clippy::too_many_arguments)]
 async fn init_rpc_api(
@@ -146,40 +149,54 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
+    raise_fd_limit()?;
+
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = datadir.join("rollup_store");
 
+    // Checkpoints are stored in the main datadir
+    let checkpoints_dir = datadir.clone();
+
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&datadir, genesis).await;
+    let store = init_store(&datadir, genesis.clone()).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
+    let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
+    let l1_fee_config = get_l1_fee_config(&opts.sequencer_opts);
+
     let fee_config = FeeConfig {
-        fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
-        ..Default::default()
+        base_fee_vault: opts
+            .sequencer_opts
+            .block_producer_opts
+            .base_fee_vault_address,
+        operator_fee_config,
+        l1_fee_config,
+    };
+
+    // We wrap fee_config in an Arc<RwLock> to let the watcher
+    // update the L1 fee periodically.
+    let l2_config = L2Config {
+        fee_config: Arc::new(std::sync::RwLock::new(fee_config)),
     };
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
         max_mempool_size: opts.node_opts.mempool_max_size,
-        r#type: BlockchainType::L2(fee_config),
+        r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
     };
 
-    let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
-    regenerate_head_state(&store, &blockchain).await?;
+    regenerate_head_state(&store, &rollup_store, &blockchain).await?;
 
     let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
-    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        &datadir,
-        &local_p2p_node,
-        &signer,
-    )));
+    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
     let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
 
@@ -194,7 +211,7 @@ pub async fn init_l2(
         &opts,
         peer_handler.peer_table.clone(),
         local_p2p_node.clone(),
-        local_node_record.lock().await.clone(),
+        local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
@@ -225,7 +242,6 @@ pub async fn init_l2(
             &network,
             &datadir,
             local_p2p_node,
-            local_node_record.clone(),
             signer,
             peer_handler.clone(),
             store.clone(),
@@ -253,17 +269,21 @@ pub async fn init_l2(
         info!("P2P is disabled");
     }
 
+    let l2_url = Url::parse(&format!(
+        "http://{}:{}",
+        opts.node_opts.http_addr, opts.node_opts.http_port
+    ))
+    .map_err(|err| eyre::eyre!("Failed to parse L2 RPC URL: {err}"))?;
+
     let l2_sequencer = ethrex_l2::start_l2(
         store,
         rollup_store,
         blockchain,
         l2_sequencer_cfg,
         cancellation_token.clone(),
-        #[cfg(feature = "metrics")]
-        format!(
-            "http://{}:{}",
-            opts.node_opts.http_addr, opts.node_opts.http_port
-        ),
+        l2_url,
+        genesis,
+        checkpoints_dir,
     )
     .into_future();
 
@@ -280,13 +300,50 @@ pub async fn init_l2(
     let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(
-        peer_handler.peer_table,
-        local_node_record.lock().await.clone(),
-    )
-    .await;
+    let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
     store_node_config_file(node_config, node_config_path).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
     Ok(())
+}
+
+pub fn get_l1_fee_config(sequencer_opts: &SequencerOptions) -> Option<L1FeeConfig> {
+    if sequencer_opts.based {
+        // If based is enabled, skip L1 fee configuration
+        return None;
+    }
+
+    sequencer_opts
+        .block_producer_opts
+        .l1_fee_vault_address
+        .map(|addr| L1FeeConfig {
+            l1_fee_vault: addr,
+            l1_fee_per_blob_gas: 0, // This is set by the L1 watcher
+        })
+}
+
+pub async fn get_operator_fee_config(
+    sequencer_opts: &SequencerOptions,
+) -> eyre::Result<Option<OperatorFeeConfig>> {
+    if sequencer_opts.based {
+        // If based is enabled, skip operator fee configuration
+        return Ok(None);
+    }
+
+    let fee = sequencer_opts.block_producer_opts.operator_fee_per_gas;
+
+    let address = sequencer_opts
+        .block_producer_opts
+        .operator_fee_vault_address;
+
+    let operator_fee_config =
+        if let (Some(operator_fee_vault), Some(operator_fee_per_gas)) = (address, fee) {
+            Some(OperatorFeeConfig {
+                operator_fee_vault,
+                operator_fee_per_gas,
+            })
+        } else {
+            None
+        };
+    Ok(operator_fee_config)
 }

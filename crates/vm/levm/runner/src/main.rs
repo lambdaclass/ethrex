@@ -4,7 +4,7 @@ use env_logger::Env;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     Address, H160, H256, U256,
-    types::{Account, LegacyTransaction, Transaction},
+    types::{Account, Code, LegacyTransaction, Transaction},
 };
 use ethrex_levm::{
     EVMConfig, Environment,
@@ -20,6 +20,7 @@ use log::{debug, error, info};
 use num_bigint::BigUint;
 use num_traits::Num;
 use runner::input::{InputAccount, InputTransaction, RunnerInput};
+use rustc_hash::FxHashMap;
 use std::{collections::BTreeMap, io::Write};
 use std::{
     fs::{self, File},
@@ -202,8 +203,8 @@ fn main() {
 
 /// Prints on screen difference between initial state and current one.
 fn compare_initial_and_current_accounts(
-    initial_accounts: BTreeMap<Address, LevmAccount>,
-    current_accounts: BTreeMap<Address, LevmAccount>,
+    initial_accounts: FxHashMap<Address, LevmAccount>,
+    current_accounts: FxHashMap<Address, LevmAccount>,
     transaction: &InputTransaction,
 ) {
     info!("\nState Diff:");
@@ -268,9 +269,9 @@ fn compare_initial_and_current_accounts(
 fn setup_initial_state(
     runner_input: &mut RunnerInput,
     bytecode: Bytes,
-) -> BTreeMap<Address, Account> {
+) -> FxHashMap<Address, Account> {
     // Default state has sender with some balance to send Tx, it can be overwritten though.
-    let mut initial_state = BTreeMap::from([(
+    let mut initial_state = FxHashMap::from_iter(vec![(
         runner_input.transaction.sender,
         Account::from(InputAccount::default()),
     )]);
@@ -285,7 +286,7 @@ fn setup_initial_state(
         if let Some(to) = runner_input.transaction.to {
             // Contract Bytecode, set code of recipient.
             let acc = initial_state.entry(to).or_default();
-            acc.code = bytecode;
+            acc.code = Code::from_bytecode(bytecode);
         } else {
             // Initcode should be data of transaction
             runner_input.transaction.data = bytecode;

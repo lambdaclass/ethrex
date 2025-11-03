@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
@@ -19,15 +20,64 @@ use crate::{
     utils::keccak,
 };
 
-#[allow(unused)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct Code {
+    pub hash: H256,
+    pub bytecode: Bytes,
+    // TODO: Consider using Arc<[u16]> (needs to enable serde rc feature)
+    pub jump_targets: Vec<u16>,
+}
+
+impl Code {
+    // TODO: also add `from_hashed_bytecode` to optimize the download pipeline,
+    // where hash is already known and checked.
+    pub fn from_bytecode(code: Bytes) -> Self {
+        let jump_targets = Self::compute_jump_targets(&code);
+        Self {
+            hash: keccak(code.as_ref()),
+            bytecode: code,
+            jump_targets,
+        }
+    }
+
+    fn compute_jump_targets(code: &[u8]) -> Vec<u16> {
+        debug_assert!(code.len() <= u16::MAX as usize);
+        let mut targets = Vec::new();
+        let mut i = 0;
+        while i < code.len() {
+            // TODO: we don't use the constants from the vm module to avoid a circular dependency
+            match code[i] {
+                // OP_JUMPDEST
+                0x5B => {
+                    targets.push(i as u16);
+                }
+                // OP_PUSH1..32
+                c @ 0x60..0x80 => {
+                    // OP_PUSH0
+                    i += (c - 0x5F) as usize;
+                }
+                _ => (),
+            }
+            i += 1;
+        }
+        targets
+    }
+}
+
+impl AsRef<Bytes> for Code {
+    fn as_ref(&self) -> &Bytes {
+        &self.bytecode
+    }
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub info: AccountInfo,
-    pub code: Bytes,
-    pub storage: BTreeMap<H256, U256>,
+    pub code: Code,
+    pub storage: FxHashMap<H256, U256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct AccountInfo {
     pub code_hash: H256,
     pub balance: U256,
@@ -63,6 +113,16 @@ impl Default for AccountState {
     }
 }
 
+impl Default for Code {
+    fn default() -> Self {
+        Self {
+            bytecode: Bytes::new(),
+            hash: *EMPTY_KECCACK_HASH,
+            jump_targets: Vec::new(),
+        }
+    }
+}
+
 impl From<GenesisAccount> for Account {
     fn from(genesis: GenesisAccount) -> Self {
         Self {
@@ -71,7 +131,7 @@ impl From<GenesisAccount> for Account {
                 balance: genesis.balance,
                 nonce: genesis.nonce,
             },
-            code: genesis.code,
+            code: Code::from_bytecode(genesis.code),
             storage: genesis
                 .storage
                 .iter()
@@ -160,11 +220,11 @@ impl From<&GenesisAccount> for AccountState {
 }
 
 impl Account {
-    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: BTreeMap<H256, U256>) -> Self {
+    pub fn new(balance: U256, code: Code, nonce: u64, storage: FxHashMap<H256, U256>) -> Self {
         Self {
             info: AccountInfo {
                 balance,
-                code_hash: keccak(code.as_ref()).0.into(),
+                code_hash: code.hash,
                 nonce,
             },
             code,

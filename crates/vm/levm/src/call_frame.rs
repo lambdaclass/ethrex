@@ -3,16 +3,13 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    utils::{JumpTargetFilter, restore_cache_state},
+    utils::restore_cache_state,
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::H256;
 use ethrex_common::{Address, U256};
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-};
+use ethrex_common::{H256, types::Code};
+use std::{collections::HashMap, fmt};
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -243,7 +240,7 @@ pub struct CallFrame {
     /// Address of the code to execute. Usually the same as `to`, but can be different
     pub code_address: Address,
     /// Bytecode to execute
-    pub bytecode: Bytes,
+    pub bytecode: Code,
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
@@ -258,9 +255,6 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
-    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
-    /// push instructions).
-    pub jump_target_filter: JumpTargetFilter,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -289,7 +283,7 @@ impl CallFrameBackup {
             .entry(address)
             .or_insert_with(|| LevmAccount {
                 info: account.info.clone(),
-                storage: BTreeMap::new(),
+                storage: Default::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,
             });
@@ -319,7 +313,7 @@ impl CallFrame {
         msg_sender: Address,
         to: Address,
         code_address: Address,
-        bytecode: Bytes,
+        bytecode: Code,
         msg_value: U256,
         calldata: Bytes,
         is_static: bool,
@@ -341,12 +335,11 @@ impl CallFrame {
             msg_sender,
             to,
             code_address,
-            bytecode: bytecode.clone(),
+            bytecode,
             msg_value,
             calldata,
             is_static,
             depth,
-            jump_target_filter: JumpTargetFilter::new(bytecode),
             should_transfer_value,
             is_create,
             ret_offset,
@@ -362,10 +355,10 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        if self.pc < self.bytecode.len() {
+        if self.pc < self.bytecode.bytecode.len() {
             #[expect(unsafe_code, reason = "bounds checked above")]
             unsafe {
-                *self.bytecode.get_unchecked(self.pc)
+                *self.bytecode.bytecode.get_unchecked(self.pc)
             }
         } else {
             0
@@ -390,8 +383,7 @@ impl CallFrame {
         Ok(())
     }
 
-    pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.jump_target_filter = JumpTargetFilter::new(code.clone());
+    pub fn set_code(&mut self, code: Code) -> Result<(), VMError> {
         self.bytecode = code;
         Ok(())
     }

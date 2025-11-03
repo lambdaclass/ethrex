@@ -15,6 +15,10 @@ pub struct MetricsBlocks {
     block_building_ms: IntGauge,
     block_building_base_fee: IntGauge,
     gas_used: Gauge,
+    transaction_count: IntGauge,
+    execution_ms: IntGauge,
+    merkle_ms: IntGauge,
+    store_ms: IntGauge,
     /// Keeps track of the head block number
     head_height: IntGauge,
 }
@@ -68,7 +72,43 @@ impl MetricsBlocks {
                 "Keeps track of the block number for the head of the chain",
             )
             .unwrap(),
+            execution_ms: IntGauge::new(
+                "execution_ms",
+                "Keeps track of the execution time spent in block execution in miliseconds",
+            )
+            .unwrap(),
+            merkle_ms: IntGauge::new(
+                "merkle_ms",
+                "Keeps track of the execution time spent in block merkelization in miliseconds",
+            )
+            .unwrap(),
+            store_ms: IntGauge::new(
+                "store_ms",
+                "Keeps track of the execution time spent in block storage in miliseconds",
+            )
+            .unwrap(),
+            transaction_count: IntGauge::new(
+                "transaction_count",
+                "Keeps track of transaction count in a block",
+            )
+            .unwrap(),
         }
+    }
+
+    pub fn set_transaction_count(&self, transaction_count: i64) {
+        self.transaction_count.set(transaction_count);
+    }
+
+    pub fn set_execution_ms(&self, execution_ms: i64) {
+        self.execution_ms.set(execution_ms);
+    }
+
+    pub fn set_merkle_ms(&self, merkle_ms: i64) {
+        self.merkle_ms.set(merkle_ms);
+    }
+
+    pub fn set_store_ms(&self, store_ms: i64) {
+        self.store_ms.set(store_ms);
     }
 
     pub fn set_latest_block_gas_limit(&self, gas_limit: f64) {
@@ -91,14 +131,12 @@ impl MetricsBlocks {
         self.block_building_base_fee.set(base_fee);
     }
 
-    pub fn set_block_number(&self, block_number: u64) -> Result<(), MetricsError> {
-        self.block_number.set(block_number.try_into()?);
-        Ok(())
+    pub fn set_block_number(&self, block_number: u64) {
+        self.block_number.set(block_number.cast_signed());
     }
 
-    pub fn set_head_height(&self, head_height: u64) -> Result<(), MetricsError> {
-        self.head_height.set(head_height.try_into()?);
-        Ok(())
+    pub fn set_head_height(&self, head_height: u64) {
+        self.head_height.set(head_height.cast_signed());
     }
 
     pub fn set_latest_gas_used(&self, gas_used: f64) {
@@ -127,6 +165,14 @@ impl MetricsBlocks {
         r.register(Box::new(self.block_building_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.head_height.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.store_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.execution_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.merkle_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.transaction_count.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();

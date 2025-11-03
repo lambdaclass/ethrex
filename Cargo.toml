@@ -22,25 +22,16 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/runner",
-  "tooling/ef_tests/blockchain",
-  "tooling/ef_tests/state_v2",
-  "tooling/genesis",
-  "tooling/hive_report",
-  "tooling/load_test",
-  "tooling/loc",
-  "tooling/archive_sync",
   "crates/common/config",
-  "tooling/reorgs",
   "crates/concurrency",
-  "tooling/migrations",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
+exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]
 
 [workspace.package]
-version = "4.0.0"
+version = "5.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
@@ -99,6 +90,7 @@ tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
 reqwest = { version = "0.12.7", features = ["socks", "json"] }
+rustc-hash = "2.1.1"
 snap = "1.1.1"
 secp256k1 = { version = "0.30.0", default-features = false, features = [
   "global-context",
@@ -114,6 +106,7 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
+aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23" }
 spawned-concurrency = "0.4.2"
 spawned-rt = "0.4.2"
 lambdaworks-crypto = "0.11.0"
@@ -130,3 +123,6 @@ rocksdb = "0.24.0"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }
+
+[workspace.lints.clippy]
+redundant_clone = "warn"

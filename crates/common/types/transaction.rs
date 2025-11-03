@@ -42,6 +42,7 @@ pub enum Transaction {
 
 /// The same as a Transaction enum, only that blob transactions are in wrapped format, including
 /// the blobs bundle.
+/// PrivilegedL2Transaction is not included as it is not expected to be sent over P2P.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum P2PTransaction {
     LegacyTransaction(LegacyTransaction),
@@ -49,7 +50,6 @@ pub enum P2PTransaction {
     EIP1559Transaction(EIP1559Transaction),
     EIP4844TransactionWithBlobs(WrappedEIP4844Transaction),
     EIP7702Transaction(EIP7702Transaction),
-    PrivilegedL2Transaction(PrivilegedL2Transaction),
 }
 
 impl TryInto<Transaction> for P2PTransaction {
@@ -61,9 +61,6 @@ impl TryInto<Transaction> for P2PTransaction {
             P2PTransaction::EIP2930Transaction(itx) => Ok(Transaction::EIP2930Transaction(itx)),
             P2PTransaction::EIP1559Transaction(itx) => Ok(Transaction::EIP1559Transaction(itx)),
             P2PTransaction::EIP7702Transaction(itx) => Ok(Transaction::EIP7702Transaction(itx)),
-            P2PTransaction::PrivilegedL2Transaction(itx) => {
-                Ok(Transaction::PrivilegedL2Transaction(itx))
-            }
             _ => Err("Can't convert blob p2p transaction into regular transaction. Blob bundle would be lost.".to_string()),
         }
     }
@@ -102,9 +99,6 @@ impl RLPDecode for P2PTransaction {
                 // EIP7702
                 0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
                     .map(|(tx, rem)| (P2PTransaction::EIP7702Transaction(tx), rem)),
-                // PrivilegedL2
-                0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (P2PTransaction::PrivilegedL2Transaction(tx), rem)),
                 ty => Err(RLPDecodeError::Custom(format!(
                     "Invalid transaction type: {ty}"
                 ))),
@@ -1452,7 +1446,6 @@ mod canonic_encoding {
                 P2PTransaction::EIP1559Transaction(_) => TxType::EIP1559,
                 P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
                 P2PTransaction::EIP7702Transaction(_) => TxType::EIP7702,
-                P2PTransaction::PrivilegedL2Transaction(_) => TxType::Privileged,
             }
         }
 
@@ -1468,7 +1461,6 @@ mod canonic_encoding {
                 P2PTransaction::EIP1559Transaction(t) => t.encode(buf),
                 P2PTransaction::EIP4844TransactionWithBlobs(t) => t.encode(buf),
                 P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
-                P2PTransaction::PrivilegedL2Transaction(t) => t.encode(buf),
             };
         }
 
@@ -1494,9 +1486,6 @@ mod canonic_encoding {
                 }
                 P2PTransaction::EIP7702Transaction(t) => {
                     Transaction::EIP7702Transaction(t.clone()).compute_hash()
-                }
-                P2PTransaction::PrivilegedL2Transaction(t) => {
-                    Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
                 }
             }
         }
@@ -2191,6 +2180,7 @@ mod serde_impl {
         pub authorization_list: Option<Vec<AuthorizationTupleEntry>>,
         #[serde(default)]
         pub blob_versioned_hashes: Vec<H256>,
+        pub wrapper_version: Option<u8>,
         #[serde(default, with = "crate::serde_utils::bytes::vec")]
         pub blobs: Vec<Bytes>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -2256,6 +2246,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2310,6 +2301,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: value.blob_versioned_hashes,
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2332,10 +2324,11 @@ mod serde_impl {
                 })
                 .collect();
 
+            let wrapper_version = value.wrapper_version;
             Ok(Self {
                 tx: value.try_into()?,
-                wrapper_version: None,
-                blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
+                wrapper_version,
+                blobs_bundle: BlobsBundle::create_from_blobs(&blobs, wrapper_version)?,
             })
         }
     }
@@ -2398,6 +2391,7 @@ mod serde_impl {
                 ),
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2425,6 +2419,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: value.from,
             }
@@ -2475,6 +2470,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: None,
                 input: value.data,
             }
@@ -2505,6 +2501,7 @@ mod serde_impl {
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 input: value.data,
             }
@@ -2855,6 +2852,7 @@ mod tests {
             }],
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
+            wrapper_version: None,
             chain_id: Default::default(),
             authorization_list: None,
         };
@@ -2908,6 +2906,7 @@ mod tests {
             }],
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
+            wrapper_version: None,
             chain_id: Default::default(),
             authorization_list: None,
         };

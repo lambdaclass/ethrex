@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex_common::types::{
-    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, EIP1559Transaction,
+    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, Code, EIP1559Transaction,
     EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, LegacyTransaction,
     Transaction as ethrexTransaction, TxKind, code_hash,
 };
@@ -567,7 +567,7 @@ impl From<Account> for ethrexAccount {
                 balance: val.balance,
                 nonce: val.nonce.as_u64(),
             },
-            code: val.code,
+            code: Code::from_bytecode(val.code),
             storage: val
                 .storage
                 .into_iter()
@@ -605,5 +605,6 @@ pub enum BlockExpectedException {
     IncorrectBlockFormat,
     InvalidRequest,
     SystemContractCallFailed,
+    RlpBlockLimitExceeded,
     Other, //TODO: Implement exceptions
 }

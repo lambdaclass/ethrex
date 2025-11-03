@@ -1,5 +1,5 @@
 use crate::{
-    cli::Options,
+    cli::{LogColor, Options},
     utils::{
         display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
         read_jwtsecret_file, read_node_config_file,
@@ -36,7 +36,6 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
@@ -58,14 +57,16 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let mut layer = fmt::layer();
 
-    if !std::io::stdout().is_terminal() {
+    if opts.log_color == LogColor::Never
+        || (opts.log_color == LogColor::Auto && !std::io::stdout().is_terminal())
+    {
         layer = layer.with_ansi(false);
     }
 
     let fmt_layer = layer.with_filter(filter);
 
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
-        let profiling_layer = FunctionProfilingLayer::default();
+        let profiling_layer = FunctionProfilingLayer;
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
     } else {
         Box::new(Registry::default().with(fmt_layer))
@@ -94,7 +95,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
-    let store = open_store(datadir.as_ref());
+    let mut store = open_store(datadir.as_ref());
     store
         .add_initial_state(genesis)
         .await
@@ -130,7 +131,7 @@ pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<
     Blockchain::new(store, blockchain_opts).into()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
     peer_handler: PeerHandler,
@@ -141,8 +142,6 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: Option<u64>,
-    extra_data: String,
 ) {
     init_datadir(&opts.datadir);
 
@@ -182,8 +181,8 @@ pub async fn init_rpc_api(
         peer_handler,
         get_client_version(),
         log_filter_handler,
-        gas_ceil,
-        extra_data,
+        opts.gas_limit,
+        opts.extra_data.clone(),
     );
 
     tracker.spawn(rpc_api);
@@ -195,7 +194,6 @@ pub async fn init_network(
     network: &Network,
     datadir: &Path,
     local_p2p_node: Node,
-    local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
     peer_handler: PeerHandler,
     store: Store,
@@ -212,17 +210,21 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
+    #[cfg(feature = "l2")]
+    let based_context_arg = based_context;
+
+    #[cfg(not(feature = "l2"))]
+    let based_context_arg = None;
+
     let context = P2PContext::new(
         local_p2p_node,
-        local_node_record,
         tracker.clone(),
         signer,
         peer_handler.peer_table.clone(),
         store,
         blockchain.clone(),
         get_client_version(),
-        #[cfg(feature = "l2")]
-        based_context,
+        based_context_arg,
         opts.tx_broadcasting_time_interval,
     )
     .await
@@ -402,12 +404,7 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(
-    PathBuf,
-    CancellationToken,
-    PeerTable,
-    Arc<Mutex<NodeRecord>>,
-)> {
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
     let datadir = &opts.datadir;
     init_datadir(datadir);
 
@@ -440,11 +437,7 @@ pub async fn init_l1(
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        datadir,
-        &local_p2p_node,
-        &signer,
-    )));
+    let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
 
     let peer_handler = PeerHandler::new(PeerTable::spawn(opts.target_peers));
 
@@ -457,15 +450,12 @@ pub async fn init_l1(
         &opts,
         peer_handler.clone(),
         local_p2p_node.clone(),
-        local_node_record.lock().await.clone(),
+        local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
-        // TODO (#4482): Make this configurable.
-        None,
-        opts.extra_data.clone(),
     )
     .await;
 
@@ -482,7 +472,6 @@ pub async fn init_l1(
             &network,
             datadir,
             local_p2p_node,
-            local_node_record.clone(),
             signer,
             peer_handler.clone(),
             store.clone(),
@@ -568,7 +557,7 @@ pub async fn regenerate_head_state(
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block(block).await?;
+        blockchain.add_block_pipeline(block)?;
     }
 
     info!("Finished regenerating state");

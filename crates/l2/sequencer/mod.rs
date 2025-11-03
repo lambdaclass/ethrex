@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerState;
@@ -8,6 +9,7 @@ use crate::sequencer::errors::SequencerError;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::Genesis;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -17,6 +19,7 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
+use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -36,13 +39,16 @@ pub mod errors;
 pub mod setup;
 pub mod utils;
 
+#[expect(clippy::too_many_arguments)]
 pub async fn start_l2(
     store: Store,
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
-    #[cfg(feature = "metrics")] l2_url: String,
+    _l2_url: Url,
+    genesis: Genesis,
+    checkpoints_dir: PathBuf,
 ) -> Result<(), errors::SequencerError> {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
@@ -73,12 +79,6 @@ pub async fn start_l2(
         return Ok(());
     };
 
-    if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
-        error!(
-            "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
-        );
-        return Ok(());
-    }
     if needed_proof_types.contains(&ProverType::TDX)
         && cfg.proof_coordinator.tdx_private_key.is_none()
     {
@@ -104,16 +104,16 @@ pub async fn start_l2(
         rollup_store.clone(),
         cfg.clone(),
         shared_state.clone(),
+        genesis,
+        checkpoints_dir.clone(),
     )
     .await
     .inspect_err(|err| {
         error!("Error starting Committer: {err}");
     });
     let _ = ProofCoordinator::spawn(
-        store.clone(),
         rollup_store.clone(),
         cfg.clone(),
-        blockchain.clone(),
         needed_proof_types.clone(),
     )
     .await
@@ -126,6 +126,7 @@ pub async fn start_l2(
         shared_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
+        checkpoints_dir,
     )
     .await
     .inspect_err(|err| {
@@ -144,17 +145,18 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
+    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), _l2_url)
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
         });
     let mut verifier_handle = None;
 
-    if needed_proof_types.contains(&ProverType::Aligned) {
+    if cfg.aligned.aligned_mode {
         verifier_handle = Some(tokio::spawn(l1_proof_verifier::start_l1_proof_verifier(
             cfg.clone(),
             rollup_store.clone(),
+            needed_proof_types.clone(),
         )));
     }
     if cfg.based.enabled {
