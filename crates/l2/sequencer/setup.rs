@@ -72,7 +72,8 @@ pub async fn register_tdx_key(
         eth_client,
         TxType::EIP1559,
         tdx_address,
-        get_address_from_secret_key(private_key).map_err(ProofCoordinatorError::InternalError)?,
+        get_address_from_secret_key(&private_key.secret_bytes())
+            .map_err(ProofCoordinatorError::InternalError)?,
         calldata.into(),
         Overrides {
             max_fee_per_gas: Some(gas_price),

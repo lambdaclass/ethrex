@@ -23,13 +23,6 @@ use ethrex_common::{
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
-use ethrex_rlp;
-use ethrex_rlp::encode::RLPEncode;
-use secp256k1::{
-    Message,
-    ecdsa::{RecoverableSignature, RecoveryId},
-};
-use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 pub type Storage = HashMap<U256, H256>;
 
@@ -349,9 +342,21 @@ pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError
     }
 }
 
+#[cfg(any(feature = "zisk", feature = "risc0", feature = "sp1"))]
+pub fn eip7702_recover_address(
+    _auth_tuple: &AuthorizationTuple,
+) -> Result<Option<Address>, VMError> {
+    todo!()
+}
+
+#[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
 pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
 ) -> Result<Option<Address>, VMError> {
+    use ethrex_rlp::encode::RLPEncode;
+    use sha2::Digest;
+    use sha3::Keccak256;
+
     if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
         return Ok(None);
     }
@@ -369,7 +374,7 @@ pub fn eip7702_recover_address(
     hasher.update(rlp_buf);
     let bytes = &mut hasher.finalize();
 
-    let Ok(message) = Message::from_digest_slice(bytes) else {
+    let Ok(message) = secp256k1::Message::from_digest_slice(bytes) else {
         return Ok(None);
     };
 
@@ -379,13 +384,14 @@ pub fn eip7702_recover_address(
     ]
     .concat();
 
-    let Ok(recovery_id) = RecoveryId::try_from(
+    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(
         TryInto::<i32>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
     ) else {
         return Ok(None);
     };
 
-    let Ok(signature) = RecoverableSignature::from_compact(&bytes, recovery_id) else {
+    let Ok(signature) = secp256k1::ecdsa::RecoverableSignature::from_compact(&bytes, recovery_id)
+    else {
         return Ok(None);
     };
 
