@@ -34,7 +34,7 @@ pub trait TrieDB: Send + Sync {
 #[derive(Default)]
 pub struct InMemoryTrieDB {
     pub inner: NodeMap,
-    prefix: Option<Nibbles>,
+    pub prefix: Option<Nibbles>,
 }
 
 impl InMemoryTrieDB {
