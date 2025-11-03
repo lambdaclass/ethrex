@@ -78,6 +78,7 @@ pub struct Store {
     /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
     /// - sync-related operations, which must be idempotent in order to handle reorgs
     latest_block_header: LatestBlockHeaderCache,
+    last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -1326,6 +1327,18 @@ impl Store {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
+
+        let last_written = {
+            let tx = backend.begin_read()?;
+            let last_written = tx
+                .get(MISC_VALUES, "last_written".as_bytes())?
+                .unwrap_or_else(|| vec![0u8; 64]);
+            if &last_written == &[0xff] {
+                vec![0xff; 64]
+            } else {
+                last_written
+            }
+        };
         let store = Self {
             backend,
             chain_config: Default::default(),
@@ -1333,8 +1346,10 @@ impl Store {
             trie_cache: Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
+            last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
         };
         let backend_clone = store.backend.clone();
+        let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
         std::thread::spawn(move || {
             let mut rx = fkv_rx;
             loop {
@@ -1348,7 +1363,7 @@ impl Store {
                 }
             }
             info!("Generation of FlatKeyValue started.");
-            match flatkeyvalue_generator(backend_clone.as_ref(), &mut rx) {
+            match flatkeyvalue_generator(backend_clone.as_ref(), &last_computed_fkv, &mut rx) {
                 Ok(_) => info!("FlatKeyValue generation finished."),
                 Err(err) => error!("Error while generating FlatKeyValue: {err}"),
             }
@@ -1812,27 +1827,39 @@ impl Store {
         Ok(())
     }
 
-    pub async fn get_storage_at(
+    pub fn get_storage_at(
         &self,
         block_number: BlockNumber,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        match self.get_canonical_block_hash(block_number).await? {
-            Some(block_hash) => self.get_storage_at_hash(block_hash, address, storage_key),
+        match self.get_block_header(block_number)? {
+            Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
             None => Ok(None),
         }
     }
 
-    pub fn get_storage_at_hash(
+    pub fn get_storage_at_root(
         &self,
-        block_hash: BlockHash,
+        state_root: H256,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
-            return Ok(None);
+        let hashed_address = hash_address(&address);
+        let account_hash = H256::from_slice(&hashed_address);
+        let storage_root = if self.flatkeyvalue_computed(account_hash)? {
+            // We will use FKVs, we don't need the root
+            *EMPTY_TRIE_HASH
+        } else {
+            let state_trie = self.open_state_trie(state_root)?;
+            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+                return Ok(None);
+            };
+            let account = AccountState::decode(&encoded_account)?;
+            account.storage_root
         };
+        let storage_trie = self.open_storage_trie(account_hash, storage_root, state_root)?;
+
         let hashed_key = hash_key(&storage_key);
         storage_trie
             .get(&hashed_key)?
@@ -1926,14 +1953,12 @@ impl Store {
         get_account_state_from_trie(&state_trie, address)
     }
 
-    pub fn get_account_state_by_hash(
+    pub fn get_account_state_by_root(
         &self,
-        block_hash: BlockHash,
+        state_root: H256,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
+        let state_trie = self.open_state_trie(state_root)?;
         self.get_account_state_from_trie(&state_trie, address)
     }
 
@@ -2167,7 +2192,10 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_backend(self.backend.as_ref())?),
+            db: Box::new(state_trie_backend(
+                self.backend.as_ref(),
+                self.last_written()?,
+            )?),
             prefix: None,
         };
         Ok(Trie::open(Box::new(trie_db), state_root))
@@ -2178,7 +2206,10 @@ impl Store {
     /// Used for internal store operations
     pub fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         Ok(Trie::open(
-            Box::new(state_trie_backend(self.backend.as_ref())?),
+            Box::new(state_trie_backend(
+                self.backend.as_ref(),
+                self.last_written()?,
+            )?),
             state_root,
         ))
     }
@@ -2188,7 +2219,10 @@ impl Store {
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         Ok(Trie::open(
-            Box::new(state_trie_locked_backend(self.backend.as_ref())?),
+            Box::new(state_trie_locked_backend(
+                self.backend.as_ref(),
+                self.last_written()?,
+            )?),
             state_root,
         ))
     }
@@ -2208,7 +2242,10 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_backend(self.backend.as_ref())?),
+            db: Box::new(state_trie_backend(
+                self.backend.as_ref(),
+                self.last_written()?,
+            )?),
             prefix: Some(account_hash),
         };
         Ok(Trie::open(Box::new(trie_db), storage_root))
@@ -2222,7 +2259,11 @@ impl Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         Ok(Trie::open(
-            Box::new(storage_trie_backend(self.backend.as_ref(), account_hash)?),
+            Box::new(storage_trie_backend(
+                self.backend.as_ref(),
+                account_hash,
+                self.last_written()?,
+            )?),
             storage_root,
         ))
     }
@@ -2238,6 +2279,7 @@ impl Store {
             Box::new(storage_trie_locked_backend(
                 self.backend.as_ref(),
                 account_hash,
+                self.last_written()?,
             )?),
             storage_root,
         ))
@@ -2340,6 +2382,20 @@ impl Store {
             let _ = h.hash.set(block_hash);
         });
         Ok(header)
+    }
+
+    fn last_written(&self) -> Result<Vec<u8>, StoreError> {
+        let last_computed_flatkeyvalue = self
+            .last_computed_flatkeyvalue
+            .lock()
+            .map_err(|_| StoreError::LockError)?;
+        Ok(last_computed_flatkeyvalue.clone())
+    }
+
+    fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
+        let account_nibbles = Nibbles::from_bytes(account.as_bytes());
+        let last_computed_flatkeyvalue = self.last_written()?;
+        Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
     }
 }
 
@@ -2444,6 +2500,7 @@ fn apply_trie_updates(
 // with the other end of `control_rx`
 fn flatkeyvalue_generator(
     backend: &dyn StorageBackend,
+    last_computed_fkv: &Mutex<Vec<u8>>,
     control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     let read_tx = backend.begin_read()?;
@@ -2477,7 +2534,11 @@ fn flatkeyvalue_generator(
 
         let mut ctr = 0;
         let mut write_txn = backend.begin_write()?;
-        let mut iter = Trie::open(Box::new(state_trie_backend(backend)?), state_root).into_iter();
+        let mut iter = Trie::open(
+            Box::new(state_trie_backend(backend, last_written.clone())?),
+            state_root,
+        )
+        .into_iter();
         if last_written_account > Nibbles::default() {
             iter.advance(last_written_account.to_bytes())?;
         }
@@ -2493,10 +2554,17 @@ fn flatkeyvalue_generator(
             if ctr > 10_000 {
                 write_txn.commit()?;
                 write_txn = backend.begin_write()?;
+                *last_computed_fkv
+                    .lock()
+                    .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
             }
 
             let mut iter_inner = Trie::open(
-                Box::new(storage_trie_backend(backend, account_hash)?),
+                Box::new(storage_trie_backend(
+                    backend,
+                    account_hash,
+                    path.as_ref().to_vec(),
+                )?),
                 account_state.storage_root,
             )
             .into_iter();
@@ -2508,13 +2576,16 @@ fn flatkeyvalue_generator(
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
-                let key = apply_prefix(Some(account_hash), path);
+                let key = apply_prefix(Some(account_hash), path.clone());
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
                 write_txn.put(FLATKEY_VALUES, key.as_ref(), &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;
                     write_txn = backend.begin_write()?;
+                    *last_computed_fkv
+                        .lock()
+                        .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
                 }
                 fkv_check_for_stop_msg(control_rx)?;
                 Ok(())
@@ -2537,6 +2608,9 @@ fn flatkeyvalue_generator(
             Ok(()) => {
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
                 write_txn.commit()?;
+                *last_computed_fkv
+                    .lock()
+                    .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
                 return Ok(());
             }
         };
@@ -2564,29 +2638,35 @@ fn fkv_check_for_stop_msg(
 fn storage_trie_backend(
     backend: &dyn StorageBackend,
     hashed_address: H256,
+    last_written: Vec<u8>,
 ) -> Result<BackendTrieDB, StoreError> {
     let tx = backend.begin_write()?;
-    BackendTrieDB::new(tx, Some(hashed_address))
+    BackendTrieDB::new(tx, Some(hashed_address), last_written)
 }
 
 fn storage_trie_locked_backend(
     backend: &dyn StorageBackend,
     hashed_address: H256,
+    last_written: Vec<u8>,
 ) -> Result<BackendTrieDBLocked, StoreError> {
-    BackendTrieDBLocked::new(backend, Some(hashed_address))
+    BackendTrieDBLocked::new(backend, Some(hashed_address), last_written)
 }
 
-fn state_trie_backend(backend: &dyn StorageBackend) -> Result<BackendTrieDB, StoreError> {
+fn state_trie_backend(
+    backend: &dyn StorageBackend,
+    last_written: Vec<u8>,
+) -> Result<BackendTrieDB, StoreError> {
     let tx = backend.begin_write()?;
     // No address prefix for state trie
-    BackendTrieDB::new(tx, None)
+    BackendTrieDB::new(tx, None, last_written)
 }
 
 fn state_trie_locked_backend(
     backend: &dyn StorageBackend,
+    last_written: Vec<u8>,
 ) -> Result<BackendTrieDBLocked, StoreError> {
     // No address prefix for state trie
-    BackendTrieDBLocked::new(backend, None)
+    BackendTrieDBLocked::new(backend, None, last_written)
 }
 
 pub struct AccountProof {
