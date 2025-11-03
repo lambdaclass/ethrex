@@ -966,7 +966,6 @@ impl Transaction {
                 sig[32..64].copy_from_slice(&tx.s.to_big_endian());
                 sig[64] = signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
-                    .map_err(Error::from)
             }
             Transaction::EIP2930Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -985,7 +984,6 @@ impl Transaction {
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
-                    .map_err(Error::from)
             }
             Transaction::EIP1559Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1005,7 +1003,6 @@ impl Transaction {
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
-                    .map_err(Error::from)
             }
             Transaction::EIP4844Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1027,7 +1024,6 @@ impl Transaction {
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
-                    .map_err(Error::from)
             }
             Transaction::EIP7702Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1048,7 +1044,6 @@ impl Transaction {
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
-                    .map_err(Error::from)
             }
             Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
         }
@@ -1264,15 +1259,14 @@ impl Transaction {
     }
 }
 
-#[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
 pub fn recover_address_from_message(
     signature: Signature,
     message: &Bytes,
-) -> Result<Address, secp256k1::Error> {
+) -> Result<Address, Error> {
     use sha2::Digest;
     // Hash message
     let payload: [u8; 32] = sha3::Keccak256::digest(message).into();
-    recover_address(signature, H256::from_slice(&payload))
+    recover_address(signature, H256::from_slice(&payload)).map_err(Error::from)
 }
 
 #[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
@@ -1295,19 +1289,39 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
 }
 
 #[cfg(any(feature = "zisk", feature = "risc0", feature = "sp1"))]
-pub fn recover_address_from_message(
-    _signature: Signature,
-    _message: &Bytes,
-) -> Result<Address, k256::ecdsa::Error> {
-    todo!()
-}
+pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k256::ecdsa::Error> {
+    use sha2::Digest;
+    use sha3::Keccak256;
 
-#[cfg(any(feature = "zisk", feature = "risc0", feature = "sp1"))]
-pub fn recover_address(
-    _signature: Signature,
-    _payload: H256,
-) -> Result<Address, k256::ecdsa::Error> {
-    todo!()
+    // Create signature
+    let signature_bytes = signature.to_fixed_bytes();
+
+    let mut signature = k256::ecdsa::Signature::from_slice(&signature_bytes[..64])?;
+
+    let mut recovery_id_byte = signature_bytes[64];
+
+    if let Some(low_s) = signature.normalize_s() {
+        signature = low_s;
+        recovery_id_byte ^= 1;
+    }
+
+    let recovery_id = k256::ecdsa::RecoveryId::from_byte(recovery_id_byte).ok_or(
+        k256::ecdsa::Error::from_source("Failed to parse recovery id"),
+    )?;
+
+    // Recover public key
+    let public =
+        k256::ecdsa::VerifyingKey::recover_from_msg(payload.as_bytes(), &signature, recovery_id)?;
+
+    let uncompressed = public.to_encoded_point(false);
+
+    let mut uncompressed = uncompressed.to_bytes();
+
+    let xy = &mut uncompressed[1..65];
+
+    let hash = Keccak256::digest(xy);
+
+    Ok(Address::from_slice(&hash[12..]))
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
