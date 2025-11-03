@@ -1333,7 +1333,7 @@ impl Store {
             let last_written = tx
                 .get(MISC_VALUES, "last_written".as_bytes())?
                 .unwrap_or_else(|| vec![0u8; 64]);
-            if &last_written == &[0xff] {
+            if last_written == [0xff] {
                 vec![0xff; 64]
             } else {
                 last_written
