@@ -62,7 +62,8 @@ impl StorageBackend for FjallBackend {
         Ok(Box::new(FjallLockedTx { snapshot }))
     }
 
-    fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
+    fn create_checkpoint(&self, _path: &Path) -> Result<(), StoreError> {
+        // TODO: this is use in the L2
         todo!()
     }
 }
