@@ -370,9 +370,9 @@ fn compute_l1messages_and_privileged_transactions_digests(
     l1messages: &[L1Message],
     privileged_transactions: &[PrivilegedL2Transaction],
 ) -> Result<(H256, H256), StatelessExecutionError> {
-    use ethrex_l2_common::{l1_messages::get_l1_message_hash, merkle_tree::compute_merkle_root};
+    use ethrex_l2_common::{l1_messages::get_message_hash, merkle_tree::compute_merkle_root};
 
-    let message_hashes: Vec<_> = l1messages.iter().map(get_l1_message_hash).collect();
+    let message_hashes: Vec<_> = l1messages.iter().map(get_message_hash).collect();
     let privileged_transactions_hashes: Vec<_> = privileged_transactions
         .iter()
         .map(PrivilegedL2Transaction::get_privileged_hash)

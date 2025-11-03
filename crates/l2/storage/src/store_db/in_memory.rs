@@ -306,7 +306,7 @@ impl StoreEngineRollup for Store {
 
         inner
             .message_hashes_by_batch
-            .insert(batch.number, batch.message_hashes);
+            .insert(batch.number, batch.l1_message_hashes);
 
         inner
             .privileged_transactions_hashes

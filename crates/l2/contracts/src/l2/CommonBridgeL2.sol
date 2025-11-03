@@ -104,4 +104,26 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             keccak256(abi.encodePacked(tokenL1, tokenL2, destination, amount))
         );
     }
+    /// @inheritdoc ICommonBridgeL2
+    function sendToL2(
+        uint256 chainId,
+        address to,
+        uint256 destGasLimit,
+        bytes calldata data
+    ) external payable override {
+        _burnGas(destGasLimit);
+        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2{value: msg.value}(
+            chainId,
+            msg.sender,
+            to,
+            destGasLimit,
+            data
+        );
+    }
+
+    /// Burns at least {amount} gas
+    function _burnGas(uint256 amount) private view {
+        uint256 startingGas = gasleft();
+        while (startingGas - gasleft() < amount) {}
+    }
 }

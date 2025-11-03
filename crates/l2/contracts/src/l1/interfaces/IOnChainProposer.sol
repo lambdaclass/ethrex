@@ -55,6 +55,8 @@ interface IOnChainProposer {
     /// @param newStateRoot the new state root of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
+    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages
+    /// of the batch to be committed.
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
@@ -62,6 +64,7 @@ interface IOnChainProposer {
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
+        bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external;

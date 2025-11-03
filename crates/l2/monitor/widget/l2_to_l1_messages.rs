@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_common::{calldata::Value, l1_messages::L1MESSENGER_ADDRESS};
+use ethrex_l2_common::{calldata::Value, messages::MESSENGER_ADDRESS};
 use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, calldata::encode_calldata};
 use ethrex_rpc::{EthClient, clients::Overrides, types::receipt::RpcLog};
 use ratatui::{
@@ -73,7 +73,7 @@ impl L2ToL1MessageStatus {
         let l1message_log = tx_receipt
             .logs
             .iter()
-            .find(|log| log.log.address == L1MESSENGER_ADDRESS)
+            .find(|log| log.log.address == MESSENGER_ADDRESS)
             .ok_or(MonitorError::NoLogs)?;
         let msg_id = l1message_log
             .log

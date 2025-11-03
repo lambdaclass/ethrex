@@ -7,7 +7,7 @@ use ethrex_common::{
     types::{Block, BlockNumber, PrivilegedL2Transaction, Transaction, batch::Batch},
 };
 use ethrex_l2_common::{
-    l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
+    l1_messages::{L1Message, get_block_l1_messages, get_message_hash},
     privileged_transactions::compute_privileged_transactions_hash,
 };
 use ethrex_storage::Store;
@@ -62,7 +62,7 @@ pub async fn get_batch(
         last_block: last_block.header.number,
         state_root: new_state_root,
         privileged_transactions_hash,
-        message_hashes: get_batch_message_hashes(store, batch).await?,
+        l1_message_hashes: get_batch_message_hashes(store, batch).await?,
         blobs_bundle,
         commit_tx,
         verify_tx: None,
@@ -76,7 +76,7 @@ async fn get_batch_message_hashes(store: &Store, batch: &[Block]) -> Result<Vec<
         let block_messages = extract_block_messages(store, block.header.number).await?;
 
         for msg in &block_messages {
-            message_hashes.push(get_l1_message_hash(msg));
+            message_hashes.push(get_message_hash(msg));
         }
     }
 

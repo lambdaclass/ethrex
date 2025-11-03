@@ -190,6 +190,7 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
+        bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external override onlySequencer whenNotPaused {
@@ -222,6 +223,13 @@ contract OnChainProposer is
             ICommonBridge(BRIDGE).publishWithdrawals(
                 batchNumber,
                 withdrawalsLogsMerkleRoot
+            );
+        }
+
+        if (l2MessagesMerkleRoot != bytes32(0)) {
+            ICommonBridge(BRIDGE).publishL2Messages(
+                batchNumber,
+                l2MessagesMerkleRoot
             );
         }
 

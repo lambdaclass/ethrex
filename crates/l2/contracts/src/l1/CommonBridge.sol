@@ -14,6 +14,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
+import {IRouter} from "./interfaces/IRouter.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -36,6 +37,13 @@ contract CommonBridge is
     mapping(bytes32 => bool) public claimedWithdrawals;
 
     /// @notice Mapping of merkle roots to the L2 withdrawal transaction logs.
+    /// @dev The key is the L2 batch number where the messages were emitted.
+    /// @dev The value is the merkle root of the messages.
+    /// @dev If there exist a merkle root for a given batch number it means
+    /// that the messages were published on L1, and that that batch was committed.
+    mapping(uint256 => bytes32) public l2MessagesMerkleRoots;
+
+    /// @notice Mapping of merkle roots to the L2 messages.
     /// @dev The key is the L2 batch number where the logs were emitted.
     /// @dev The value is the merkle root of the logs.
     /// @dev If there exist a merkle root for a given batch number it means
@@ -95,6 +103,9 @@ contract CommonBridge is
     /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
     uint256 private pendingPrivilegedTxIndex = 0;
 
+    /// @notice Address of the SharedBridgeRouter contract
+    address public SHARED_BRIDGE_ROUTER;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -114,7 +125,8 @@ contract CommonBridge is
         address owner,
         address onChainProposer,
         uint256 inclusionMaxWait,
-        address _nativeToken
+        address _nativeToken,
+        address _sharedBridgeRouter
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -128,6 +140,8 @@ contract CommonBridge is
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
         NATIVE_TOKEN_L1 = _nativeToken;
+
+        SHARED_BRIDGE_ROUTER = _sharedBridgeRouter;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -321,7 +335,10 @@ contract CommonBridge is
 
         bytes memory hashes;
         for (uint i = 0; i < number; i++) {
-            hashes = bytes.concat(hashes, pendingTxHashes[i + pendingPrivilegedTxIndex]);
+            hashes = bytes.concat(
+                hashes,
+                pendingTxHashes[i + pendingPrivilegedTxIndex]
+            );
         }
 
         return
@@ -346,7 +363,9 @@ contract CommonBridge is
         if (pendingTxHashesLength() == 0) {
             return false;
         }
-        return block.timestamp > privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]];
+        return
+            block.timestamp >
+            privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]];
     }
 
     /// @inheritdoc ICommonBridge
@@ -372,6 +391,18 @@ contract CommonBridge is
         emit WithdrawalsPublished(
             withdrawalLogsBatchNumber,
             withdrawalsLogsMerkleRoot
+        );
+    }
+
+    /// @inheritdoc ICommonBridge
+    function publishL2Messages(
+        uint256 l2MessagesBatchNumber,
+        bytes32 l2MessagesMerkleRoot,
+        BalanceDiff[] calldata balanceDiffs
+    ) public onlyOnChainProposer {
+        Router(SHARED_BRIDGE_ROUTER).sendMessage{value: message.value}(
+            dstChainId,
+            message
         );
     }
 

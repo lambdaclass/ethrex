@@ -46,6 +46,11 @@ interface ICommonBridge {
         bytes data;
     }
 
+    struct BalanceDiff {
+        uint256 chainId;
+        uint256 value;
+    }
+
     /// @notice Method to retrieve all the pending transaction hashes.
     /// @dev This method is used by the L2 L1_Watcher to get the pending
     /// privileged transactions to be processed.

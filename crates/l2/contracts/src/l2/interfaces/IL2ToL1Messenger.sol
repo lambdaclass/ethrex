@@ -16,7 +16,30 @@ interface IL2ToL1Messenger {
         uint256 indexed messageId
     );
 
+    event L2ToL2Message(
+        uint256 indexed chainId,
+        address from,
+        address to,
+        uint256 value,
+        uint256 gasLimit,
+        bytes data
+    );
+
     /// @notice Sends the given data to the L1
     /// @param data data to be sent to L1
     function sendMessageToL1(bytes32 data) external;
+
+    /// @notice Sends a message to another L2 chain
+    /// @param chainId the destination chain id
+    /// @param from the sender address on the source chain
+    /// @param to the recipient address on the destination chain
+    /// @param gasLimit the gas limit for the message execution on the destination chain
+    /// @param data the calldata to be sent to the recipient on the destination chain
+    function sendMessageToL2(
+        uint256 chainId,
+        address from,
+        address to,
+        uint256 gasLimit,
+        bytes calldata data
+    ) external payable;
 }
