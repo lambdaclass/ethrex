@@ -16,7 +16,7 @@ struct TrieLayer {
     bloom_digests: Arc<Vec<u64>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
@@ -31,17 +31,6 @@ pub struct TrieLayerCache {
     /// so we never use it again, because if we don't we may be misled into believing a key is not present
     /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
     bloom: Option<Arc<xorfilter::Fuse8<FxBuildHasher>>>,
-}
-
-impl Default for TrieLayerCache {
-    fn default() -> Self {
-        // Try to create the bloom filter, if it fails use poison mode.
-        Self {
-            bloom: None,
-            last_id: 0,
-            layers: Default::default(),
-        }
-    }
 }
 
 impl std::fmt::Debug for TrieLayerCache {
@@ -132,7 +121,7 @@ impl TrieLayerCache {
         let key_hashes: Vec<u64> = nodes
             .keys()
             .par_bridge()
-            .map(|key| FxBuildHasher::default().hash_one(key))
+            .map(|key| FxBuildHasher.hash_one(key))
             .collect();
 
         let entry = TrieLayer {
