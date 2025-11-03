@@ -269,18 +269,19 @@ pub async fn init_l2(
         info!("P2P is disabled");
     }
 
+    let l2_url = Url::parse(&format!(
+        "http://{}:{}",
+        opts.node_opts.http_addr, opts.node_opts.http_port
+    ))
+    .map_err(|err| eyre::eyre!("Failed to parse L2 RPC URL: {err}"))?;
+
     let l2_sequencer = ethrex_l2::start_l2(
         store,
         rollup_store,
         blockchain,
         l2_sequencer_cfg,
         cancellation_token.clone(),
-        #[cfg(feature = "metrics")]
-        Url::parse(&format!(
-            "http://{}:{}",
-            opts.node_opts.http_addr, opts.node_opts.http_port
-        ))
-        .map_err(|err| eyre::eyre!("Failed to parse L2 RPC URL: {err}"))?,
+        l2_url,
         genesis,
         checkpoints_dir,
     )
