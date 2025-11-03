@@ -1,9 +1,8 @@
 use ethrex_common::H256;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
-use rustc_hash::{FxHashMap, FxHasher};
-use std::hash::Hash;
-use std::hash::Hasher;
+use rustc_hash::{FxBuildHasher, FxHashMap};
+use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
@@ -13,8 +12,8 @@ struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
-    // Hashed keys for the filter
-    keys: Arc<Vec<u64>>,
+    // pre-computed 64-bit digests to recreate the global bloom filter
+    bloom_digests: Arc<Vec<u64>>,
 }
 
 #[derive(Clone)]
@@ -31,7 +30,7 @@ pub struct TrieLayerCache {
     /// In case a bloom filter insert or merge fails, we need to mark the bloom filter as poisoned
     /// so we never use it again, because if we don't we may be misled into believing a key is not present
     /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
-    bloom: Option<Arc<xorfilter::Fuse8>>,
+    bloom: Option<Arc<xorfilter::Fuse8<FxBuildHasher>>>,
 }
 
 impl Default for TrieLayerCache {
@@ -57,7 +56,7 @@ impl std::fmt::Debug for TrieLayerCache {
 
 impl TrieLayerCache {
     // TODO: tune this
-    fn create_filter() -> xorfilter::Fuse8 {
+    fn create_filter() -> xorfilter::Fuse8<FxBuildHasher> {
         xorfilter::Fuse8::new(1_000_000)
     }
 
@@ -67,11 +66,7 @@ impl TrieLayerCache {
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
         if let Some(filter) = &self.bloom
-            && !filter.contains_key({
-                let mut s = FxHasher::default();
-                key.hash(&mut s);
-                s.finish()
-            })
+            && !filter.contains(key)
         {
             // TrieWrapper goes to db when returning None.
             return None;
@@ -137,18 +132,14 @@ impl TrieLayerCache {
         let key_hashes: Vec<u64> = nodes
             .keys()
             .par_bridge()
-            .map(|key| {
-                let mut h = FxHasher::default();
-                key.hash(&mut h);
-                h.finish()
-            })
+            .map(|key| FxBuildHasher::default().hash_one(key))
             .collect();
 
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
             parent,
             id: self.last_id,
-            keys: Arc::new(key_hashes),
+            bloom_digests: Arc::new(key_hashes),
         };
 
         self.layers.insert(state_root, Arc::new(entry));
@@ -161,17 +152,17 @@ impl TrieLayerCache {
         let mut bloom = Self::create_filter();
 
         // Parallelize key hashing ourselves because populate from xorfilter doesn't.
-        let mut key_hashes: Vec<u64> = self
+        let mut bloom_digests: Vec<u64> = self
             .layers
             .values()
-            .flat_map(|x| x.keys.iter().copied())
+            .flat_map(|x| x.bloom_digests.iter().copied())
             .collect();
 
         // xorfilter needs "few" or no unique keys, so we need to do this.
-        key_hashes.par_sort_unstable();
-        key_hashes.dedup();
+        bloom_digests.par_sort_unstable();
+        bloom_digests.dedup();
 
-        if let Err(e) = bloom.build_keys(&key_hashes) {
+        if let Err(e) = bloom.build_keys(&bloom_digests) {
             tracing::warn!("TrieLayerCache: rebuild_bloom error: {e}");
             self.bloom = None;
             return;
