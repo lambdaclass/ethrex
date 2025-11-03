@@ -2,8 +2,8 @@ use ethrex_common::H256;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use rustc_hash::{FxHashMap, FxHasher};
+use std::hash::Hash;
 use std::hash::Hasher;
-use std::hash::{DefaultHasher, Hash};
 use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
@@ -67,7 +67,11 @@ impl TrieLayerCache {
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
         if let Some(filter) = &self.bloom
-            && !filter.contains(key)
+            && !filter.contains_key({
+                let mut s = FxHasher::default();
+                key.hash(&mut s);
+                s.finish()
+            })
         {
             // TrieWrapper goes to db when returning None.
             return None;
