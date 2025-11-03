@@ -194,11 +194,13 @@ impl Trie {
     }
 
     pub fn get_root_node(&self, path: Nibbles) -> Result<Arc<Node>, TrieError> {
-        self.root.get_node(self.db.as_ref(), path)?.ok_or_else(|| {
-            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                self.root.compute_hash().finalize(),
-            )))
-        })
+        self.root
+            .get_node_checked(self.db.as_ref(), path)?
+            .ok_or_else(|| {
+                TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
+                    self.root.compute_hash().finalize(),
+                )))
+            })
     }
 
     /// Returns a list of changes in a TrieNode format since last root hash processed.
@@ -504,7 +506,8 @@ impl Trie {
         if self.hash_no_commit() == *EMPTY_TRIE_HASH {
             return Ok(None);
         }
-        self.root.get_node(self.db.as_ref(), Nibbles::default())
+        self.root
+            .get_node_checked(self.db.as_ref(), Nibbles::default())
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
