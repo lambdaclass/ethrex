@@ -208,7 +208,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.clone());
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
         let mut vm = self.new_evm(vm_db)?;
 
         let exec_merkle_start = Instant::now();
