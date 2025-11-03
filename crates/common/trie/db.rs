@@ -59,23 +59,6 @@ impl InMemoryTrieDB {
         }
     }
 
-    pub fn from_nodes(
-        root_hash: H256,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
-    ) -> Result<Self, TrieError> {
-        let mut embedded_root = Trie::get_embedded_root(state_nodes, root_hash)?;
-        let mut hashed_nodes = vec![];
-        embedded_root.commit(Nibbles::default(), &mut hashed_nodes);
-
-        let hashed_nodes = hashed_nodes
-            .into_iter()
-            .map(|(k, v)| (k.into_vec(), v))
-            .collect();
-
-        let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
-        Ok(Self::new(in_memory_trie))
-    }
-
     fn apply_prefix(&self, path: Nibbles) -> Nibbles {
         match &self.prefix {
             Some(prefix) => prefix.concat(&path),
