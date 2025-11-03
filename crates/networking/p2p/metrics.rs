@@ -61,8 +61,7 @@ pub struct Metrics {
     pub current_step: Arc<CurrentStep>,
 
     // Headers
-    pub headers_to_download: AtomicU64,
-    pub downloaded_headers: AtomicU64,
+    pub downloaded_headers: IntCounter,
     pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
     pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
 
@@ -632,6 +631,16 @@ impl Default for Metrics {
             .register(Box::new(storage_leaves_inserted.clone()))
             .expect("Failed to register storage_leaves_inserted counter");
 
+        let downloaded_headers = IntCounter::new(
+            "downloaded_headers",
+            "Total number of headers already download",
+        )
+        .expect("Failed to create downloaded_headers counter");
+
+        registry
+            .register(Box::new(downloaded_headers.clone()))
+            .expect("Failed to register downloaded_headers counter");
+
         let storage_leaves_downloaded = IntCounter::new(
             "storage_leaves_downloaded",
             "Total number of storage leaves downloaded",
@@ -679,8 +688,7 @@ impl Default for Metrics {
             current_step: Arc::new(CurrentStep(AtomicU8::new(0))),
 
             // Headers
-            headers_to_download: AtomicU64::new(0),
-            downloaded_headers: AtomicU64::new(0),
+            downloaded_headers,
             time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
             headers_download_start_time: Arc::new(Mutex::new(None)),
 
