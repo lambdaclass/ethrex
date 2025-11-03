@@ -15,7 +15,7 @@ const ELF_PATH: &str = concat!(
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
 
-    dbg!(&input_bytes);
+    dbg!(INPUT_PATH);
 
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
