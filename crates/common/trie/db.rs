@@ -76,7 +76,7 @@ impl InMemoryTrieDB {
         Ok(Self::new(in_memory_trie))
     }
 
-    fn apply_prefix(&self, path: Nibbles) -> Nibbles {
+    pub fn apply_prefix(&self, path: Nibbles) -> Nibbles {
         match &self.prefix {
             Some(prefix) => prefix.concat(&path),
             None => path,
