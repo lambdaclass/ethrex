@@ -2576,7 +2576,7 @@ fn flatkeyvalue_generator(
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
-                let key = apply_prefix(Some(account_hash), path.clone());
+                let key = apply_prefix(Some(account_hash), path);
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
                 write_txn.put(FLATKEY_VALUES, key.as_ref(), &node.value)?;
                 ctr += 1;
