@@ -45,8 +45,15 @@ async fn server_shutdown(
     info!("Server shutting down!");
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+pub fn main() -> eyre::Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .max_blocking_threads(20_000)
+        .build()?
+        .block_on(ethrex_main())
+}
+
+async fn ethrex_main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
     if let Some(subcommand) = command {
