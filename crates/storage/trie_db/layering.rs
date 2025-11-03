@@ -66,7 +66,7 @@ impl std::fmt::Debug for TrieLayerCache {
 impl TrieLayerCache {
     // TODO: tune this
     fn create_filter() -> xorfilter::Fuse8 {
-        xorfilter::Fuse8::new(10_000_000)
+        xorfilter::Fuse8::new(1_000_000)
     }
 
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
