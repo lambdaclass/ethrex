@@ -17,8 +17,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork,
-        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle,
-        fake_exponential_checked,
+        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
     },
 };
 use ethrex_l2_common::{
@@ -975,7 +974,7 @@ impl L1Committer {
                 20, // 20% of headroom
             )
             .await?
-            .to_le_bytes();
+            .to_little_endian();
 
             let gas_price_per_blob = U256::from_little_endian(&le_bytes);
 
@@ -1214,7 +1213,7 @@ async fn estimate_blob_gas(
     eth_client: &EthClient,
     arbitrary_base_blob_gas_price: u64,
     headroom: u64,
-) -> Result<u64, CommitterError> {
+) -> Result<U256, CommitterError> {
     let latest_block = eth_client
         .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
         .await?;
@@ -1241,9 +1240,9 @@ async fn estimate_blob_gas(
 
     // If the blob's market is in high demand, the equation may give a really big number.
     // This function doesn't panic, it performs checked/saturating operations.
-    let blob_gas = fake_exponential_checked(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        total_blob_gas,
+    let blob_gas = fake_exponential(
+        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
+        U256::from(total_blob_gas),
         BLOB_BASE_FEE_UPDATE_FRACTION,
     )
     .map_err(BlobEstimationError::FakeExponentialError)?;
@@ -1251,7 +1250,7 @@ async fn estimate_blob_gas(
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
     // Check if we have an overflow when we take the headroom into account.
-    let blob_gas = arbitrary_base_blob_gas_price
+    let blob_gas = U256::from(arbitrary_base_blob_gas_price)
         .checked_add(gas_with_headroom)
         .ok_or(BlobEstimationError::OverflowError)?;
 
