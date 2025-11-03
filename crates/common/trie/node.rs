@@ -191,7 +191,7 @@ impl From<NodeHash> for ValueOrHash {
 ))]
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
 pub enum Node {
-    Branch(#[rkyv(omit_bounds)] Box<BranchNode>),
+    Branch(#[rkyv(omit_bounds)]  Box<BranchNode>),
     Extension(#[rkyv(omit_bounds)] ExtensionNode),
     Leaf(LeafNode),
 }

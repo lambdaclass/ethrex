@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
+use crate::rkyv_utils::SizedNode;
 use crate::types::{Block, Code};
 use crate::{
     H160,
@@ -81,8 +82,7 @@ pub struct ExecutionWitness {
     // The chain config.
     pub chain_config: ChainConfig,
     /// RLP-encoded trie nodes needed for stateless execution.
-    #[rkyv(with = Map<crate::rkyv_utils::RLPNode>)]
-    pub nodes: Vec<Node>,
+    pub nodes: Vec<SizedNode>,
     /// Flattened map of account addresses and storage keys whose values
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
@@ -141,6 +141,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         let nodes_hashed = value
             .nodes
             .into_iter()
+            .map(Node::from)
             .map(|node| (node.compute_hash().finalize(), node))
             .collect();
 

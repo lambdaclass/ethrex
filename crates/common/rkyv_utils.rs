@@ -1,7 +1,10 @@
 use bytes::Bytes;
 use ethereum_types::{Bloom, H160, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::Node;
+use ethrex_trie::{
+    Nibbles, Node, NodeHash, NodeRef, ValueRLP,
+    node::{BranchNode, ExtensionNode, LeafNode},
+};
 use rkyv::{
     Archive, Archived, Deserialize, Serialize,
     rancor::{Fallible, Source},
@@ -260,14 +263,61 @@ where
     }
 }
 
-/// Archive a `Node` as its RLP encoding.
-#[derive(Archive, Serialize, Deserialize, Clone)]
-#[rkyv(remote = Node)]
-pub struct RLPNode(#[rkyv(getter = Node::encode_to_vec)] Vec<u8>);
+/// Node representation that only references childs via hashes instead of pointers.
+#[derive(Archive, serde::Serialize, serde::Deserialize, Serialize, Deserialize, Clone)]
+pub enum SizedNode {
+    Branch {
+        choices: [NodeHash; 16],
+        value: ValueRLP,
+    },
+    Extension {
+        child: NodeHash,
+        prefix: Nibbles,
+    },
+    Leaf {
+        partial: Nibbles,
+        value: ValueRLP,
+    },
+}
 
-impl From<RLPNode> for Node {
-    fn from(value: RLPNode) -> Self {
-        Node::decode(&value.0).expect("failed to deserialize node")
+impl From<SizedNode> for Node {
+    fn from(value: SizedNode) -> Self {
+        match value {
+            SizedNode::Branch { choices, value } => {
+                let mut ref_choices = Vec::with_capacity(16);
+                for choice in choices {
+                    ref_choices.push(NodeRef::Hash(choice));
+                }
+                let choices = ref_choices.try_into().unwrap();
+                Node::Branch(Box::new(BranchNode { choices, value }))
+            }
+            SizedNode::Extension { child, prefix } => {
+                let child = NodeRef::Hash(child);
+                Node::Extension(ExtensionNode { child, prefix })
+            }
+            SizedNode::Leaf { partial, value } => Node::Leaf(LeafNode { partial, value }),
+        }
+    }
+}
+
+impl From<Node> for SizedNode {
+    fn from(value: Node) -> Self {
+        match value {
+            Node::Branch(n) => {
+                let BranchNode { choices, value } = *n;
+                let mut ref_choices = Vec::with_capacity(16);
+                for choice in choices {
+                    ref_choices.push(choice.compute_hash());
+                }
+                let choices = ref_choices.try_into().unwrap();
+                SizedNode::Branch { choices, value }
+            }
+            Node::Extension(ExtensionNode { child, prefix }) => {
+                let child = child.compute_hash();
+                SizedNode::Extension { child, prefix }
+            }
+            Node::Leaf(LeafNode { partial, value }) => SizedNode::Leaf { partial, value },
+        }
     }
 }
 
