@@ -146,9 +146,9 @@ pub enum Command {
         #[arg(
             short = 'o',
             long,
-            help = "If true, assumes Osaka has been activated on L1."
+            help = "Whether Osaka fork is activated or not. If None, it assumes it is active."
         )]
-        osaka_activated: bool,
+        osaka_activated: Option<bool>,
     },
     #[command(about = "Reverts unverified batches.")]
     RevertBatch {
@@ -479,7 +479,13 @@ impl Command {
                     let blob = blobs_bundle::blob_from_bytes(Bytes::copy_from_slice(&blob))
                         .expect("Failed to create blob from bytes; blob was just read from file");
 
-                    let wrapper_version = if osaka_activated { Some(1) } else { None };
+                    let wrapper_version = if let Some(activated) = osaka_activated
+                        && !activated
+                    {
+                        None
+                    } else {
+                        Some(1)
+                    };
 
                     let blobs_bundle =
                         BlobsBundle::create_from_blobs(&vec![blob], wrapper_version)?;
