@@ -62,6 +62,7 @@ impl SyncManager {
             .await
             .is_ok_and(|res| res.is_some())
         {
+            info!("STARTING FROM SYNC MANAGER");
             sync_manager.start_sync();
         }
         sync_manager
@@ -83,6 +84,7 @@ impl SyncManager {
     pub fn sync_to_head(&self, fcu_head: H256) {
         self.set_head(fcu_head);
         if !self.is_active() {
+            info!("STARTING FROM SYNC_TO_HEAD");
             self.start_sync();
         }
     }

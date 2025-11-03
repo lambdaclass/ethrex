@@ -142,6 +142,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    block_worker_channel: tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Result<(), ethrex_blockchain::error::ChainError>>, ethrex_common::types::Block)>,
 ) {
     init_datadir(&opts.datadir);
 
@@ -183,6 +184,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
+        block_worker_channel,
     );
 
     tracker.spawn(rpc_api);
@@ -431,6 +433,8 @@ pub async fn init_l1(
         },
     );
 
+    let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
+
     regenerate_head_state(&store, &blockchain).await?;
 
     let signer = get_signer(datadir);
@@ -456,6 +460,7 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        block_worker_channel,
     )
     .await;
 
@@ -547,6 +552,7 @@ pub async fn regenerate_head_state(
     }
 
     info!("Regenerating state from block {last_state_number} to {head_block_number}");
+    info!("STARTING FROM REGENERATE");
 
     // Re-apply blocks from the last known state root to the head block
     for i in (last_state_number + 1)..=head_block_number {
