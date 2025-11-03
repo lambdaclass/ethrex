@@ -2,27 +2,15 @@
 pragma solidity =0.8.29;
 import "./interfaces/IFeeTokenPricer.sol";
 
-contract FeeTokenPricer is IFeeTokenPricer {
-    address internal constant ADMIN =
-        0x000000000000000000000000000000000000f000;
-    mapping(address => uint256) private feeTokenPerEthInWei;
-
-    modifier onlyAdmin() {
-        require(msg.sender == ADMIN, "FeeTokenPricer: not admin");
-        _;
-    }
-    /// @inheritdoc IFeeTokenPricer
-    function getFeeTokenRatio(
-        address feeToken
-    ) external view override returns (uint256) {
-        return feeTokenPerEthInWei[feeToken];
-    }
-
-    /// @inheritdoc IFeeTokenPricer
-    function setFeeTokenRatio(
-        address feeToken,
-        uint256 ratio
-    ) external override onlyAdmin {
-        feeTokenPerEthInWei[feeToken] = ratio;
-    }
+contract FeeTokenPricer is IFeeTokenPricer {  
+	address internal constant FEE_TOKEN =
+        0xb7E811662Fa10ac068aeE115AC2e682821630535;
+	
+  /// @inheritdoc IFeeTokenPricer
+  function getFeeTokenRatio(
+      address fee_token
+  ) external view override returns (uint256) {
+		require(fee_token == FEE_TOKEN, "The fee token does not match with the one set for the chain");
+		return 2;
+  }	
 }
