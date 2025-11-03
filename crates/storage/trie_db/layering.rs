@@ -1,8 +1,5 @@
 use ethrex_common::H256;
-use rayon::iter::{ParallelBridge, ParallelIterator};
-use rayon::slice::ParallelSliceMut;
-use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::hash::BuildHasher;
+use rustc_hash::{FxHashMap, FxHasher};
 use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
@@ -12,8 +9,6 @@ struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
-    // pre-computed 64-bit digests to recreate the global bloom filter
-    bloom_digests: Arc<Vec<u64>>,
 }
 
 #[derive(Clone, Default)]
@@ -30,7 +25,7 @@ pub struct TrieLayerCache {
     /// In case a bloom filter insert or merge fails, we need to mark the bloom filter as poisoned
     /// so we never use it again, because if we don't we may be misled into believing a key is not present
     /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
-    bloom: Option<Arc<xorfilter::Fuse8<FxBuildHasher>>>,
+    bloom: Option<Arc<cuckoofilter::CuckooFilter<FxHasher>>>,
 }
 
 impl std::fmt::Debug for TrieLayerCache {
@@ -45,8 +40,8 @@ impl std::fmt::Debug for TrieLayerCache {
 
 impl TrieLayerCache {
     // TODO: tune this
-    fn create_filter() -> xorfilter::Fuse8<FxBuildHasher> {
-        xorfilter::Fuse8::new(1_000_000)
+    fn create_filter() -> cuckoofilter::CuckooFilter<FxHasher> {
+        cuckoofilter::CuckooFilter::with_capacity(100_000_000)
     }
 
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
@@ -118,43 +113,54 @@ impl TrieLayerCache {
 
         self.last_id += 1;
 
-        let key_hashes: Vec<u64> = nodes
-            .keys()
-            .par_bridge()
-            .map(|key| FxBuildHasher.hash_one(key))
-            .collect();
+        let mut needs_rebuild = false;
+
+        // Try to take full ownership of the bloom to update it, otherwise rebuild it.
+        if let Some(bloom) = self.bloom.take() {
+            match Arc::try_unwrap(bloom) {
+                Ok(mut bloom) => {
+                    let mut errored = false;
+                    for key in nodes.keys() {
+                        if let Err(e) = bloom.add(key) {
+                            tracing::warn!("TrieLayerCache: rebuild_bloom error: {e}");
+                            errored = true;
+                            break;
+                        }
+                    }
+                    if !errored {
+                        self.bloom = Some(Arc::new(bloom));
+                    }
+                }
+                Err(bloom) => {
+                    self.bloom = Some(bloom);
+                    needs_rebuild = true;
+                }
+            }
+        }
 
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
             parent,
             id: self.last_id,
-            bloom_digests: Arc::new(key_hashes),
         };
 
         self.layers.insert(state_root, Arc::new(entry));
-        // We need to rebuild the filter, with xorfilter we can't simply add the layer since it's static.
-        self.rebuild_bloom();
+
+        if needs_rebuild {
+            self.rebuild_bloom();
+        }
     }
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
     pub fn rebuild_bloom(&mut self) {
         let mut bloom = Self::create_filter();
 
-        // Parallelize key hashing ourselves because populate from xorfilter doesn't.
-        let mut bloom_digests: Vec<u64> = self
-            .layers
-            .values()
-            .flat_map(|x| x.bloom_digests.iter().copied())
-            .collect();
-
-        // xorfilter needs "few" or no unique keys, so we need to do this.
-        bloom_digests.par_sort_unstable();
-        bloom_digests.dedup();
-
-        if let Err(e) = bloom.build_keys(&bloom_digests) {
-            tracing::warn!("TrieLayerCache: rebuild_bloom error: {e}");
-            self.bloom = None;
-            return;
+        for key in self.layers.values().flat_map(|x| x.nodes.keys()) {
+            if let Err(e) = bloom.add(key) {
+                tracing::warn!("TrieLayerCache: rebuild_bloom error: {e}");
+                self.bloom = None;
+                return;
+            }
         }
 
         self.bloom = Some(Arc::new(bloom));
