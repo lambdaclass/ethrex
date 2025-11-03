@@ -18,7 +18,7 @@ There is a large amount of docs in comments inside the code. For more informatio
 
 ## Testing
 
-We run `EEST`, `ethereum/tests` and `legacyTests` both in their [state](../../../tooling/ef_tests/state/README.md) and [blockchain](../../../tooling/ef_tests/blockchain/README.md) form. More info on each README.
+We run `EELS`, `ethereum/tests` and `legacyTests` both in their [state](../../../tooling/ef_tests/state/README.md) and [blockchain](../../../tooling/ef_tests/blockchain/README.md) form. More info on each README.
 
 For running state tests from the current directory use:
 ```
