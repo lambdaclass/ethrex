@@ -46,6 +46,8 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         duration.as_secs_f64()
     );
 
+    std::fs::remove_file(INPUT_PATH)?;
+
     Ok(())
 }
 
