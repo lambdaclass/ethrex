@@ -1,0 +1,25 @@
+[package]
+version = "0.1.0"
+name = "zkvm-zisk-program"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.13.0" }
+guest_program = { path = "../../", default-features = false, features = [
+    "zisk",
+] }
+
+sha2 = "0.10.9"
+rkyv = "0.8.10"
+
+[patch.crates-io]
+sha2 = { git = "https://github.com/0xPolygonHermez/zisk-patch-hashes.git", branch = "zisk-patch-sha2/v0.10.9" }
+sha3 = { git = "https://github.com/0xPolygonHermez/zisk-patch-hashes.git", branch = "zisk-patch-sha3/v0.10.8" }
+k256 = { git = "https://github.com/0xPolygonHermez/zisk-patch-elliptic-curves.git", tag = "patch-k256-0.13.4-zisk-0.13.0" }
+substrate-bn = { git = "https://github.com/0xPolygonHermez/zisk-patch-bn.git", tag = "patch-0.6.0-zisk-0.13.0" }
+sp1_bls12_381 = { git = "https://github.com/han0110/bls12_381.git", branch = "zisk-patch/v0.8.0-upgrade-sp1-lib" }
+
+[features]
+l2 = ["guest_program/l2"]
