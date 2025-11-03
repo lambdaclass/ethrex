@@ -1520,19 +1520,19 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
 
         Ok(Some(self.apply_account_updates_from_trie_batch(
-            state_trie,
+            &mut state_trie,
             account_updates,
         )?))
     }
 
     pub fn apply_account_updates_from_trie_batch<'a>(
         &self,
-        mut state_trie: Trie,
+        state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
@@ -2421,6 +2421,7 @@ fn apply_trie_updates(
             break;
         }
     }
+    write_tx.commit()?;
     // We want to send this message even if there was an error during the batch write
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;

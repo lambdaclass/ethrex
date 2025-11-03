@@ -31,6 +31,7 @@ lazy_static.workspace = true
 rayon.workspace = true
 url.workspace = true
 rkyv.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true

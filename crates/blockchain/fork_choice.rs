@@ -112,7 +112,7 @@ pub async fn apply_fork_choice(
     metrics!(
         use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
-        let _ = METRICS_BLOCKS.set_head_height(head.number);
+        METRICS_BLOCKS.set_head_height(head.number);
     );
 
     Ok(head)

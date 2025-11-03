@@ -381,7 +381,7 @@ pub async fn ensure_post_state(
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         Box::new(execution_report.clone()),
                         error_reason,
-                        cache,
+                        cache.into_iter().collect(),
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -401,7 +401,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             format!("Post-state root mismatch. LEVM runner, line:{}", line!()),
-                            cache,
+                            cache.into_iter().collect(),
                         ));
                     }
 
@@ -419,7 +419,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             format!("Logs mismatch. LEVM runner, line:{}", line!()),
-                            cache,
+                            cache.into_iter().collect(),
                         ));
                     }
                 }

@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
@@ -19,7 +20,7 @@ use crate::{
     utils::keccak,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
     pub hash: H256,
     pub bytecode: Bytes,
@@ -73,10 +74,10 @@ impl AsRef<Bytes> for Code {
 pub struct Account {
     pub info: AccountInfo,
     pub code: Code,
-    pub storage: BTreeMap<H256, U256>,
+    pub storage: FxHashMap<H256, U256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct AccountInfo {
     pub code_hash: H256,
     pub balance: U256,
@@ -219,7 +220,7 @@ impl From<&GenesisAccount> for AccountState {
 }
 
 impl Account {
-    pub fn new(balance: U256, code: Code, nonce: u64, storage: BTreeMap<H256, U256>) -> Self {
+    pub fn new(balance: U256, code: Code, nonce: u64, storage: FxHashMap<H256, U256>) -> Self {
         Self {
             info: AccountInfo {
                 balance,

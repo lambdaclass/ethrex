@@ -11,6 +11,7 @@ documentation.workspace = true
 ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
+ethrex-trie.workspace = true
 ethrex-vm.workspace = true
 secp256k1.workspace = true
 
@@ -18,6 +19,8 @@ thiserror.workspace = true
 sha3.workspace = true
 tracing.workspace = true
 bytes.workspace = true
+hex.workspace = true
+rustc-hash.workspace = true
 tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
 

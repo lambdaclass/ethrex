@@ -969,7 +969,10 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-trie",
  "ethrex-vm",
+ "hex",
+ "rustc-hash",
  "secp256k1",
  "sha3",
  "thiserror",
@@ -995,6 +998,7 @@ dependencies = [
  "once_cell",
  "rayon",
  "rkyv",
+ "rustc-hash",
  "secp256k1",
  "serde",
  "serde_json",
@@ -1056,6 +1060,7 @@ dependencies = [
  "malachite",
  "p256",
  "ripemd",
+ "rustc-hash",
  "secp256k1",
  "serde",
  "serde_json",
@@ -1103,6 +1108,8 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "qfilter",
+ "rayon",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -2253,6 +2260,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "qfilter"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "746341cd2357c9a4df2d951522b4a8dd1ef553e543119899ad7bf87e938c8fbe"
+dependencies = [
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -3552,6 +3568,12 @@ checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yoke"

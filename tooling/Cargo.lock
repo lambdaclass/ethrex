@@ -2589,6 +2589,7 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "prettytable-rs",
+ "rustc-hash 2.1.1",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -3181,7 +3182,10 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-rlp 5.0.0",
  "ethrex-storage 5.0.0",
+ "ethrex-trie 5.0.0",
  "ethrex-vm",
+ "hex",
+ "rustc-hash 2.1.1",
  "secp256k1 0.30.0",
  "sha3",
  "thiserror 2.0.17",
@@ -3234,6 +3238,7 @@ dependencies = [
  "once_cell",
  "rayon",
  "rkyv",
+ "rustc-hash 2.1.1",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -3412,6 +3417,7 @@ dependencies = [
  "malachite",
  "p256",
  "ripemd",
+ "rustc-hash 2.1.1",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -3641,6 +3647,8 @@ dependencies = [
  "ethrex-rlp 5.0.0",
  "ethrex-trie 5.0.0",
  "hex",
+ "qfilter",
+ "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",
  "serde",
@@ -7074,6 +7082,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.107",
+]
+
+[[package]]
+name = "qfilter"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "746341cd2357c9a4df2d951522b4a8dd1ef553e543119899ad7bf87e938c8fbe"
+dependencies = [
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -11236,6 +11253,12 @@ checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yansi"

@@ -226,11 +226,7 @@ impl BlockProducer {
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
-            let _ = METRICS_BLOCKS
-            .set_block_number(block_number)
-            .inspect_err(|e| {
-                tracing::error!("Failed to set metric: block_number {}", e.to_string())
-            });
+            METRICS_BLOCKS.set_block_number(block_number);
             #[allow(clippy::as_conversions)]
             let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
