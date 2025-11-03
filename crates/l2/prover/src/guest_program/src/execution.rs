@@ -18,20 +18,21 @@ use ethrex_common::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
+use ethrex_l2_common::privileged_transactions::get_block_privileged_transactions;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-use std::collections::{BTreeMap, HashMap};
+#[cfg(feature = "l2")]
+use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
     kzg_commitment_to_versioned_hash,
 };
+#[cfg(feature = "l2")]
 use ethrex_l2_common::{
     l1_messages::get_block_l1_messages,
-    privileged_transactions::{
-        PrivilegedTransactionError, compute_privileged_transactions_hash,
-        get_block_privileged_transactions,
-    },
+    privileged_transactions::{PrivilegedTransactionError, compute_privileged_transactions_hash},
     state_diff::{StateDiff, StateDiffError, prepare_state_diff},
 };
 
@@ -199,6 +200,8 @@ pub fn stateless_validation_l2(
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
+        use std::collections::BTreeMap;
+
         use bytes::Bytes;
         use ethrex_common::types::Code;
 
@@ -249,6 +252,8 @@ pub fn stateless_validation_l2(
     })
 }
 
+// receipts, account_updates, and last_block_header are only used in L2
+#[cfg_attr(not(feature = "l2"), expect(dead_code))]
 struct StatelessResult {
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,
@@ -273,7 +278,7 @@ fn execute_stateless(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_configs: Option<Vec<FeeConfig>>,
+    _fee_configs: Option<Vec<FeeConfig>>,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let guest_program_state: GuestProgramState = execution_witness
         .try_into()
@@ -293,7 +298,7 @@ fn execute_stateless(
     #[cfg(feature = "l2")]
     let parent_block_header_clone = guest_program_state.parent_block_header.clone();
     #[cfg(feature = "l2")]
-    let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
+    let fee_configs = _fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
@@ -334,7 +339,7 @@ fn execute_stateless(
     let mut acc_receipts = Vec::new();
     let mut non_privileged_count = 0;
 
-    for (i, block) in blocks.iter().enumerate() {
+    for (_i, block) in blocks.iter().enumerate() {
         // Validate the block
         validate_block(
             block,
@@ -349,7 +354,7 @@ fn execute_stateless(
         let mut vm = Evm::new_for_l2(
             wrapped_db.clone(),
             fee_configs
-                .get(i)
+                .get(_i)
                 .cloned()
                 .ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
         )?;
