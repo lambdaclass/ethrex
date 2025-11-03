@@ -14,6 +14,7 @@ struct TrieLayer {
     id: usize,
 }
 
+#[derive(Clone)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
@@ -27,32 +28,17 @@ pub struct TrieLayerCache {
     /// In case a bloom filter insert or merge fails, we need to mark the bloom filter as poisoned
     /// so we never use it again, because if we don't we may be misled into believing a key is not present
     /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
-    bloom: Option<xorfilter::Fuse8>,
+    bloom: Option<Arc<xorfilter::Fuse8>>,
 }
 
 impl Default for TrieLayerCache {
     fn default() -> Self {
         // Try to create the bloom filter, if it fails use poison mode.
         Self {
-            bloom: Some(Self::create_filter()),
+            bloom: None,
             last_id: 0,
             layers: Default::default(),
         }
-    }
-}
-
-impl Clone for TrieLayerCache {
-    fn clone(&self) -> Self {
-        let mut trie = Self {
-            last_id: self.last_id,
-            layers: self.layers.clone(),
-            bloom: None,
-        };
-
-        // Fuse8 is not Clone.
-        trie.rebuild_bloom();
-
-        trie
     }
 }
 
@@ -175,7 +161,7 @@ impl TrieLayerCache {
             return;
         }
 
-        self.bloom = Some(bloom);
+        self.bloom = Some(Arc::new(bloom));
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
