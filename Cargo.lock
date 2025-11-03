@@ -3356,6 +3356,7 @@ dependencies = [
 name = "ethrex-blockchain"
 version = "5.0.0"
 dependencies = [
+ "affinity",
  "bytes",
  "ethrex-common",
  "ethrex-metrics",

@@ -218,11 +218,20 @@ impl Blockchain {
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
             let (tx, rx) = channel();
             let execution_handle = s.spawn(move || {
+                #[cfg(target_os = "linux")]
+                {
+                    affinity::set_thread_affinity([2])?;
+                }
+
                 let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref);
                 let exec_end_instant = Instant::now();
                 execution_result.map(move |r| (r, exec_end_instant))
             });
             let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
+                #[cfg(target_os = "linux")]
+                {
+                    affinity::set_thread_affinity([3])?;
+                }
                 let account_updates_list = self.handle_merkleization(
                     rx,
                     &parent_header,
