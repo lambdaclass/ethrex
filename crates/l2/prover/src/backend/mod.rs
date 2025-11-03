@@ -23,6 +23,8 @@ pub enum Backend {
     SP1,
     #[cfg(feature = "risc0")]
     RISC0,
+    #[cfg(feature = "zisk")]
+    ZisK,
 }
 
 // Needed for Clap
@@ -36,6 +38,8 @@ impl FromStr for Backend {
             "sp1" => Ok(Backend::SP1),
             #[cfg(feature = "risc0")]
             "risc0" => Ok(Backend::RISC0),
+            #[cfg(feature = "zisk")]
+            "zisk" => Ok(Backend::ZisK),
             _ => Err(Self::Err::from("Invalid backend")),
         }
     }
@@ -47,4 +51,6 @@ pub enum ProveOutput {
     SP1(sp1::ProveOutput),
     #[cfg(feature = "risc0")]
     RISC0(risc0_zkvm::Receipt),
+    #[cfg(feature = "zisk")]
+    ZisK(ProgramOutput),
 }

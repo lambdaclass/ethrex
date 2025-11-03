@@ -22,6 +22,8 @@ pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std:
         Backend::SP1 => backend::sp1::execute(input),
         #[cfg(feature = "risc0")]
         Backend::RISC0 => backend::risc0::execute(input),
+        #[cfg(feature = "zisk")]
+        Backend::ZisK => backend::zisk::execute(input),
     }
 }
 
@@ -37,6 +39,8 @@ pub fn prove(
         Backend::SP1 => backend::sp1::prove(input, format).map(ProveOutput::SP1),
         #[cfg(feature = "risc0")]
         Backend::RISC0 => backend::risc0::prove(input, format).map(ProveOutput::RISC0),
+        #[cfg(feature = "zisk")]
+        Backend::ZisK => backend::zisk::prove(input, format).map(ProveOutput::ZisK),
     }
 }
 
@@ -50,5 +54,7 @@ pub fn to_batch_proof(
         ProveOutput::SP1(proof) => backend::sp1::to_batch_proof(proof, format),
         #[cfg(feature = "risc0")]
         ProveOutput::RISC0(receipt) => backend::risc0::to_batch_proof(receipt, format),
+        #[cfg(feature = "zisk")]
+        ProveOutput::ZisK(proof) => backend::zisk::to_batch_proof(proof, format),
     }
 }
