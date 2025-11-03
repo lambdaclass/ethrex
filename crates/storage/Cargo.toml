@@ -26,8 +26,7 @@ rocksdb = { workspace = true, optional = true }
 rustc-hash.workspace = true
 tokio = { workspace = true, optional = true, features = ["rt"] }
 bincode = "1.3.3"
-qfilter = "0.2.5"
-rayon.workspace = true
+xorfilter-rs = "0.5.1"
 
 [features]
 default = []

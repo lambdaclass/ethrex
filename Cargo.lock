@@ -3767,8 +3767,6 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
- "qfilter",
- "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",
  "serde",
@@ -3778,6 +3776,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "xorfilter-rs",
 ]
 
 [[package]]
@@ -7754,15 +7753,6 @@ dependencies = [
  "itertools 0.10.5",
  "once_cell",
  "parking_lot",
-]
-
-[[package]]
-name = "qfilter"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "746341cd2357c9a4df2d951522b4a8dd1ef553e543119899ad7bf87e938c8fbe"
-dependencies = [
- "xxhash-rust",
 ]
 
 [[package]]
@@ -12242,10 +12232,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "xxhash-rust"
-version = "0.8.15"
+name = "xorfilter-rs"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
+checksum = "47f9da296a88b6bc150b896d17770a62d4dc6f63ecf0ed10a9c08a1cb3d12f24"
 
 [[package]]
 name = "yaml-rust2"
