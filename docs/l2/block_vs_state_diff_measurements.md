@@ -10,7 +10,7 @@ The following are results from measurements conducted to understand the efficien
 | Blob Payload | Batch 2 | Batch 3 | Batch 4 | Batch 5 | Batch 6 | Batch 7 | Batch 8 | Batch 9 | Batch 10 | Batch 11 |
 | ------------ | ------- | ------- | ------- | ------- | ------- | ------- | ------- | ------- | -------- | -------- |
 | State Diff   |   2030  |   2335  |   2361  |   2267  |   2204  |  2135   |  2215   |  2172   |   2321   |   2352   |
-| Block List   |         |         |         |         |         |         |         |         |          |          |
+| Block List   |   741   |   936   |   893   |   891   |   896   |  896    |  901    |  893    |   1015   |   1019   |
 
 ### ERC20 Transfers
 
@@ -24,7 +24,7 @@ The following are results from measurements conducted to understand the efficien
 | Blob Payload | Avg. ETH Transfers per Batch | Avg. ERC20 Transfers per Batch |
 | ------------ | ---------------------------- | ------------------------------ |
 | State Diff   |            2239              |                                |
-| Block List   |                              |                                |
+| Block List   |            908               |                                |
 
 
 ## How to run
