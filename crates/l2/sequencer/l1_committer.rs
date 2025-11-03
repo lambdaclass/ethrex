@@ -541,10 +541,7 @@ impl L1Committer {
 
                 // Here we use the checkpoint store because we need the previous
                 // state available (i.e. not pruned) for re-execution.
-                let vm_db = StoreVmDatabase::new(
-                    checkpoint_store.clone(),
-                    potential_batch_block.header.parent_hash,
-                );
+                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header);
 
                 let fee_config = self
                     .rollup_store
@@ -614,7 +611,7 @@ impl L1Committer {
 
             // Again, here the VM database should be instantiated from the checkpoint
             // store to have access to the previous state
-            let parent_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_block_hash);
+            let parent_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header);
 
             let acc_privileged_txs_len: u64 = acc_privileged_txs.len().try_into()?;
             if acc_privileged_txs_len > PRIVILEGED_TX_BUDGET {
