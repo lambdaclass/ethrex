@@ -30,6 +30,7 @@ tikv-jemallocator = { version = "0.6.0", optional = true, features = [
   "stats",
   "unprefixed_malloc_on_supported_platforms",
 ] }
+mimalloc = { version = "0.1.48", optional = true }
 bytes.workspace = true
 hex.workspace = true
 tracing.workspace = true
@@ -73,7 +74,7 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "metrics", "jemalloc", "dev"]
+default = ["rocksdb", "c-kzg", "metrics", "mimalloc", "dev"]
 dev = ["dep:ethrex-dev"]
 c-kzg = [
   "ethrex-vm/c-kzg",
@@ -85,6 +86,7 @@ c-kzg = [
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
+mimalloc = ["dep:mimalloc"]
 jemalloc_profiling = [
   "jemalloc",
   "tikv-jemallocator/profiling",
