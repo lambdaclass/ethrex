@@ -82,10 +82,7 @@ impl NodeRef {
                 let Some(node) = db
                     .get(path.clone())?
                     .filter(|rlp| !rlp.is_empty())
-                    .and_then(|rlp| match Node::decode(&rlp) {
-                        Ok(node) => (node.compute_hash() == *hash).then_some(Ok(node)),
-                        Err(err) => Some(Err(TrieError::RLPDecode(err))),
-                    })
+                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                     .transpose()?
                 else {
                     return Ok(None);
