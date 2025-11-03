@@ -2290,9 +2290,8 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(storage_trie_locked_backend(
+            db: Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
-                account_hash,
                 self.last_written()?,
             )?),
             prefix: Some(account_hash),
