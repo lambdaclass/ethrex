@@ -1,4 +1,4 @@
-use crate::api::tables::{FLATKEY_VALUES, MISC_VALUES, TRIE_NODES};
+use crate::api::tables::{FLATKEY_VALUES, TRIE_NODES};
 use crate::api::{StorageBackend, StorageLocked, StorageRwTx};
 use crate::error::StoreError;
 use crate::layering::apply_prefix;
@@ -22,12 +22,9 @@ impl BackendTrieDB {
     pub fn new(
         tx: Box<dyn StorageRwTx + 'static>,
         address_prefix: Option<H256>,
+        last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
-        // TODO: move "last_written" to a constant, or merge it into CHAIN_DATA table
-        let last_computed_flatkeyvalue = tx
-            .get(MISC_VALUES, "last_written".as_bytes())?
-            .map(Nibbles::from_hex)
-            .unwrap_or_default();
+        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
             tx: Mutex::new(tx),
             last_computed_flatkeyvalue,
@@ -95,13 +92,9 @@ impl BackendTrieDBLocked {
     pub fn new(
         engine: &dyn StorageBackend,
         address_prefix: Option<H256>,
+        last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
-        // TODO: move "last_written" to a constant, or merge it into CHAIN_DATA table
-        let last_computed_flatkeyvalue = engine
-            .begin_read()?
-            .get(MISC_VALUES, "last_written".as_bytes())?
-            .map(Nibbles::from_hex)
-            .unwrap_or_default();
+        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         let trie_tx = engine.begin_locked(TRIE_NODES)?;
         let fkv_tx = engine.begin_locked(FLATKEY_VALUES)?;
         Ok(Self {
