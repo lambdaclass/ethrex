@@ -72,7 +72,7 @@ checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
 	fi
 
 ENCLAVE ?= lambdanet
-KURTOSIS_CONFIG_FILE ?= ./fixtures/networks/ethrex_only.yaml
+KURTOSIS_CONFIG_FILE ?= ./fixtures/networks/default.yaml
 
 # If on a Mac, use OrbStack to run Docker containers because Docker Desktop doesn't work well with Kurtosis
 localnet: build-image checkout-ethereum-package ## 🌐 Start kurtosis network
