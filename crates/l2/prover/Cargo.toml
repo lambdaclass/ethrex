@@ -35,7 +35,7 @@ ethrex-l2 = { path = "../", default-features = false }
 ethrex-l2-common = { workspace = true }
 ethrex-sdk.workspace = true
 
-guest_program = { path = "./src/guest_program", default-features = false }
+guest_program = { path = "./src/guest_program" }
 
 risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"] }
 risc0-zkp = { version = "=3.0.2", optional = true }
@@ -57,6 +57,7 @@ default = ["l2"]
 # prover backends
 risc0 = ["guest_program/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
 sp1 = ["guest_program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
+zisk = ["guest_program/zisk-guest"]
 profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]

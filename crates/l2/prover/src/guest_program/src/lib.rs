@@ -16,3 +16,11 @@ pub static ZKVM_RISC0_PROGRAM_VK: &str = include_str!(concat!("./risc0/out/riscv
 // To avoid compilation errors, we override it with an empty slice.
 #[cfg(any(clippy, not(feature = "risc0")))]
 pub const ZKVM_RISC0_PROGRAM_VK: &str = "";
+
+#[cfg(all(not(clippy), feature = "zisk"))]
+pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] =
+    include_bytes!("./zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program");
+// If we're running clippy, the file isn't generated.
+// To avoid compilation errors, we override it with an empty slice.
+#[cfg(any(clippy, not(feature = "zisk")))]
+pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];

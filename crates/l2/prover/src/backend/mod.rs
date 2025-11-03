@@ -12,6 +12,9 @@ pub mod risc0;
 #[cfg(feature = "sp1")]
 pub mod sp1;
 
+#[cfg(feature = "zisk")]
+pub mod zisk;
+
 #[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum)]
 pub enum Backend {
     #[default]
