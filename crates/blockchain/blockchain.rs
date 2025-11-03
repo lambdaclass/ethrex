@@ -165,7 +165,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header);
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -208,7 +208,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
         let mut vm = self.new_evm(vm_db)?;
 
         let exec_merkle_start = Instant::now();
@@ -532,6 +532,11 @@ impl Blockchain {
 
         for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;
+            let parent_header = self
+                .storage
+                .get_block_header_by_hash(parent_hash)
+                .map_err(ChainError::StoreError)?
+                .ok_or(ChainError::ParentNotFound)?;
 
             // This assumes that the user has the necessary state stored already,
             // so if the user only has the state previous to the first block, it
@@ -539,7 +544,7 @@ impl Blockchain {
             // doesn't fail, later in this function we store the new state after
             // re-execution.
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header));
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
@@ -1007,9 +1012,14 @@ impl Blockchain {
         // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
+        let parent_header = self
+            .storage
+            .get_block_header_by_hash(first_block_header.parent_hash)
+            .map_err(|e| (ChainError::StoreError(e), None))?
+            .ok_or((ChainError::ParentNotFound, None))?;
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
-            first_block_header.parent_hash,
+            parent_header,
             block_hash_cache,
         );
         let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;

@@ -22,7 +22,7 @@ pub async fn load_initial_state_revm(test: &EFTest) -> (RevmState, H256, Store) 
 
     let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
         storage.clone(),
-        genesis.get_block().hash(),
+        genesis.get_block().header,
     ));
 
     (revm_state(vm_db), genesis.get_block().hash(), storage)
@@ -35,9 +35,7 @@ pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let block_hash = genesis.get_block().hash();
-
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage, block_hash));
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage, genesis.get_block().header));
 
     GeneralizedDatabase::new(Arc::new(store))
 }

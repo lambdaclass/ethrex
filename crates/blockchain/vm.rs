@@ -1,7 +1,7 @@
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, BlockHash, BlockNumber, ChainConfig, Code},
+    types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code},
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
@@ -16,26 +16,29 @@ pub struct StoreVmDatabase {
     // We use this when executing blocks in batches, as we will only add the blocks at the end
     // And may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: HashMap<BlockNumber, BlockHash>,
+    pub state_root: H256,
 }
 
 impl StoreVmDatabase {
-    pub fn new(store: Store, block_hash: BlockHash) -> Self {
+    pub fn new(store: Store, block_header: BlockHeader) -> Self {
         StoreVmDatabase {
             store,
-            block_hash,
+            block_hash: block_header.hash(),
             block_hash_cache: HashMap::new(),
+            state_root: block_header.state_root,
         }
     }
 
     pub fn new_with_block_hash_cache(
         store: Store,
-        block_hash: BlockHash,
+        block_header: BlockHeader,
         block_hash_cache: HashMap<BlockNumber, BlockHash>,
     ) -> Self {
         StoreVmDatabase {
             store,
-            block_hash,
+            block_hash: block_header.hash(),
             block_hash_cache,
+            state_root: block_header.state_root,
         }
     }
 }
@@ -44,14 +47,14 @@ impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.store
-            .get_account_state_by_hash(self.block_hash, address)
+            .get_account_state_by_root(self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
-            .get_storage_at_hash(self.block_hash, address, key)
+            .get_storage_at_root(self.state_root, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
