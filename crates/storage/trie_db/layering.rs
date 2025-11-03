@@ -1,5 +1,7 @@
 use ethrex_common::H256;
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
+use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
@@ -131,18 +133,6 @@ impl TrieLayerCache {
             return;
         }
 
-        // add this new bloom to the global one.
-        if let Some(filter) = &mut self.bloom {
-            for (p, _) in &key_values {
-                filter.insert(p.as_ref());
-            }
-
-            if let Err(e) = filter.build() {
-                tracing::warn!("TrieLayerCache: rebuild_bloom error: {e}");
-                self.bloom = None;
-            }
-        }
-
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
@@ -155,14 +145,25 @@ impl TrieLayerCache {
             id: self.last_id,
         };
         self.layers.insert(state_root, Arc::new(entry));
+        // We need to rebuild the filter, with xorfilter we can't simply add the layer since it's static.
+        self.rebuild_bloom();
     }
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
     pub fn rebuild_bloom(&mut self) {
         let mut bloom = Self::create_filter();
 
-        for key in self.layers.values().flat_map(|x| x.nodes.keys()) {
-            bloom.populate(key);
+        // Parallelize key hashing ourselves because populate from xorfilter doesn't.
+        let key_hashes = self
+            .layers
+            .values()
+            .flat_map(|x| x.nodes.keys())
+            .par_bridge()
+            .map(|key| bloom.hash_builder.hash_one(key))
+            .collect_vec_list();
+
+        for keys in key_hashes {
+            bloom.populate_keys(&keys);
         }
 
         if let Err(e) = bloom.build() {
