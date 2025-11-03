@@ -2,7 +2,8 @@ use ethrex_common::H256;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use rustc_hash::FxHashMap;
-use std::hash::BuildHasher;
+use std::hash::Hasher;
+use std::hash::{DefaultHasher, Hash};
 use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
@@ -12,6 +13,8 @@ struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
+    // Hashed keys for the filter
+    keys: Arc<Vec<u64>>,
 }
 
 #[derive(Clone)]
@@ -126,11 +129,24 @@ impl TrieLayerCache {
             .collect();
 
         self.last_id += 1;
+
+        let key_hashes: Vec<u64> = nodes
+            .keys()
+            .par_bridge()
+            .map(|key| {
+                let mut h = DefaultHasher::new();
+                key.hash(&mut h);
+                h.finish()
+            })
+            .collect();
+
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
             parent,
             id: self.last_id,
+            keys: Arc::new(key_hashes),
         };
+
         self.layers.insert(state_root, Arc::new(entry));
         // We need to rebuild the filter, with xorfilter we can't simply add the layer since it's static.
         self.rebuild_bloom();
@@ -144,18 +160,14 @@ impl TrieLayerCache {
         let mut key_hashes: Vec<u64> = self
             .layers
             .values()
-            .flat_map(|x| x.nodes.keys())
-            .par_bridge()
-            .map(|key| bloom.hash_builder.hash_one(key))
+            .flat_map(|x| x.keys.iter().copied())
             .collect();
 
         // xorfilter needs "few" or no unique keys, so we need to do this.
         key_hashes.par_sort_unstable();
         key_hashes.dedup();
 
-        bloom.populate_keys(&key_hashes);
-
-        if let Err(e) = bloom.build() {
+        if let Err(e) = bloom.build_keys(&key_hashes) {
             tracing::warn!("TrieLayerCache: rebuild_bloom error: {e}");
             self.bloom = None;
             return;
