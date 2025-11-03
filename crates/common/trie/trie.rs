@@ -254,7 +254,10 @@ impl Trie {
                 node_path.push(data[..len as usize].to_vec());
             }
 
-            let root = match self.root.get_node(self.db.as_ref(), Nibbles::default())? {
+            let root = match self
+                .root
+                .get_node_checked(self.db.as_ref(), Nibbles::default())?
+            {
                 Some(x) => x,
                 None => return Ok(Vec::new()),
             };
@@ -431,8 +434,9 @@ impl Trie {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
                             let child_path = current_path.append_new(idx as u8);
-                            let child_node =
-                                child_ref.get_node(db, child_path.clone())?.ok_or_else(|| {
+                            let child_node = child_ref
+                                .get_node_checked(db, child_path.clone())?
+                                .ok_or_else(|| {
                                     TrieError::InconsistentTree(Box::new(
                                         InconsistentTreeError::NodeNotFoundOnBranchNode(
                                             child_ref.compute_hash().finalize(),
@@ -455,7 +459,7 @@ impl Trie {
                         let child_path = partial_path.concat(&extension_node.prefix);
                         let child_node = extension_node
                             .child
-                            .get_node(db, child_path.clone())?
+                            .get_node_checked(db, child_path.clone())?
                             .ok_or_else(|| {
                                 TrieError::InconsistentTree(Box::new(
                                     InconsistentTreeError::ExtensionNodeChildNotFound(
