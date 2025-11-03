@@ -45,8 +45,22 @@ async fn server_shutdown(
     info!("Server shutting down!");
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+pub fn main() -> eyre::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let num_cores = affinity::get_core_num() - 4;
+        affinity::set_thread_affinity((4..4 + num_cores).collect())?;
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_keep_alive(Duration::from_secs(15))
+        .worker_threads(8)
+        .build()?
+        .block_on(ethrex_main())
+}
+
+async fn ethrex_main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
     if let Some(subcommand) = command {
