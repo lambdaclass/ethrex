@@ -2585,7 +2585,7 @@ fn flatkeyvalue_generator(
                     write_txn = backend.begin_write()?;
                     *last_computed_fkv
                         .lock()
-                        .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
+                        .map_err(|_| StoreError::LockError)? = key.into_vec();
                 }
                 fkv_check_for_stop_msg(control_rx)?;
                 Ok(())
