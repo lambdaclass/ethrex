@@ -12,7 +12,7 @@ guest_program = { path = "../../", default-features = false, features = [
 ] }
 
 sha2 = "0.10.9"
-rkyv = "0.8.10"
+rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/0xPolygonHermez/zisk-patch-hashes.git", branch = "zisk-patch-sha2/v0.10.9" }
