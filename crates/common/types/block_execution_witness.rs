@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::rkyv_utils::SizedNode;
 use crate::types::{Block, Code};
@@ -14,7 +15,6 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
-use rkyv::with::Map;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -32,7 +32,7 @@ pub struct GuestProgramState {
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
     /// It is used to rebuild the state trie and storage tries.
-    pub nodes_hashed: BTreeMap<H256, Node>,
+    pub nodes_hashed: BTreeMap<H256, Arc<Node>>,
     /// Map of code hashes to their corresponding bytecode.
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
@@ -142,7 +142,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .nodes
             .into_iter()
             .map(Node::from)
-            .map(|node| (node.compute_hash().finalize(), node))
+            .map(|node| (node.compute_hash().finalize(), Arc::new(node)))
             .collect();
 
         // hash codes
@@ -186,7 +186,7 @@ impl GuestProgramState {
             return Ok(());
         }
 
-        let state_trie = Trie::from_nodes(self.parent_block_header.state_root, &self.nodes_hashed)
+        let state_trie = Trie::from_nodes(self.parent_block_header.state_root, &mut self.nodes_hashed)
             .map_err(|e| {
                 GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
             })?;
@@ -209,7 +209,7 @@ impl GuestProgramState {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(account_state.storage_root, &self.nodes_hashed).ok()
+        Trie::from_nodes(account_state.storage_root, &mut self.nodes_hashed).ok()
     }
 
     /// Helper function to apply account updates to the execution witness

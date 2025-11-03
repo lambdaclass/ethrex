@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethrex_common::{
+    rkyv_utils::SizedNode,
     serde_utils,
     types::{
         ChainConfig,
@@ -44,6 +45,7 @@ impl From<ExecutionWitness> for RpcExecutionWitness {
             state: value
                 .nodes
                 .into_iter()
+                .map(Node::from)
                 .map(|n| Bytes::from(n.encode_to_vec()))
                 .collect(),
             keys: value.keys.into_iter().map(Bytes::from).collect(),
@@ -75,7 +77,7 @@ pub fn execution_witness_from_rpc_chain_config(
         nodes: rpc_witness
             .state
             .into_iter()
-            .map(|b| Node::decode(&b.to_vec()))
+            .map(|b| Node::decode(&b.to_vec()).map(SizedNode::from))
             .collect::<Result<_, _>>()
             .map_err(|e| {
                 GuestProgramStateError::Custom(format!("failed to rlp decode nodes: {e}"))

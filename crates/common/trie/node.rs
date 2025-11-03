@@ -2,9 +2,13 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+};
 
 pub use branch::BranchNode;
+use ethereum_types::H256;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
@@ -132,6 +136,43 @@ impl NodeRef {
             hash.take();
         }
     }
+
+    pub fn resolve_subtrie(
+        &mut self,
+        all_nodes: &mut BTreeMap<H256, Arc<Node>>,
+    ) -> Result<(), TrieError> {
+        let finalized_hash = self.compute_hash().finalize(); // this will be a reference in the future
+
+        let Some((finalized_hash, mut node_ref)) = all_nodes.remove_entry(&finalized_hash) else {
+            return Ok(());
+        };
+
+        match Arc::make_mut(&mut node_ref) {
+            Node::Branch(node) => {
+                for choice in &mut node.choices {
+                    let NodeRef::Hash(hash) = choice else {
+                        unreachable!()
+                    };
+
+                    if hash.is_valid() {
+                        choice.resolve_subtrie(all_nodes)?;
+                    }
+                }
+            }
+            Node::Extension(node) => {
+                let NodeRef::Hash(_) = node.child else {
+                    unreachable!()
+                };
+
+                node.child.resolve_subtrie(all_nodes)?;
+            }
+            Node::Leaf(_) => {}
+        };
+
+        *self = node_ref.clone().into();
+        all_nodes.insert(finalized_hash, node_ref);
+        Ok(())
+    }
 }
 
 impl Default for NodeRef {
@@ -143,6 +184,12 @@ impl Default for NodeRef {
 impl From<Node> for NodeRef {
     fn from(value: Node) -> Self {
         Self::Node(Arc::new(value), OnceLock::new())
+    }
+}
+
+impl From<Arc<Node>> for NodeRef {
+    fn from(value: Arc<Node>) -> Self {
+        Self::Node(value, OnceLock::new())
     }
 }
 
@@ -191,7 +238,7 @@ impl From<NodeHash> for ValueOrHash {
 ))]
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
 pub enum Node {
-    Branch(#[rkyv(omit_bounds)]  Box<BranchNode>),
+    Branch(#[rkyv(omit_bounds)] Box<BranchNode>),
     Extension(#[rkyv(omit_bounds)] ExtensionNode),
     Leaf(LeafNode),
 }
