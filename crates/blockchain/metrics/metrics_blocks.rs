@@ -131,14 +131,12 @@ impl MetricsBlocks {
         self.block_building_base_fee.set(base_fee);
     }
 
-    pub fn set_block_number(&self, block_number: u64) -> Result<(), MetricsError> {
-        self.block_number.set(block_number.try_into()?);
-        Ok(())
+    pub fn set_block_number(&self, block_number: u64) {
+        self.block_number.set(block_number.cast_signed());
     }
 
-    pub fn set_head_height(&self, head_height: u64) -> Result<(), MetricsError> {
-        self.head_height.set(head_height.try_into()?);
-        Ok(())
+    pub fn set_head_height(&self, head_height: u64) {
+        self.head_height.set(head_height.cast_signed());
     }
 
     pub fn set_latest_gas_used(&self, gas_used: f64) {
