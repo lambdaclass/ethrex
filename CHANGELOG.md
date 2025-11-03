@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-03
+
+- Switch to binary fuse filter for added performance on trie layers [#5159](https://github.com/lambdaclass/ethrex/pull/5159)
+
 ### 2025-10-31
 
 - Improved discovery and peer initialization [#5147](https://github.com/lambdaclass/ethrex/pull/5147)
