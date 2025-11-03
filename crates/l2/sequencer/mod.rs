@@ -19,7 +19,6 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
-#[cfg(feature = "metrics")]
 use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -47,9 +46,7 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
-    #[cfg(feature = "metrics")] l2_url: Url,
-    initial_checkpoint_store: Store,
-    initial_checkpoint_blockchain: Arc<Blockchain>,
+    _l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
 ) -> Result<(), errors::SequencerError> {
@@ -107,10 +104,8 @@ pub async fn start_l2(
         rollup_store.clone(),
         cfg.clone(),
         shared_state.clone(),
-        initial_checkpoint_store,
-        initial_checkpoint_blockchain,
         genesis,
-        checkpoints_dir,
+        checkpoints_dir.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -131,6 +126,7 @@ pub async fn start_l2(
         shared_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
+        checkpoints_dir,
     )
     .await
     .inspect_err(|err| {
@@ -149,7 +145,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
+    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), _l2_url)
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");

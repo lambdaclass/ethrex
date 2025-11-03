@@ -8,3 +8,6 @@ documentation.workspace = true
 [dependencies]
 thiserror.workspace = true
 tracing.workspace = true
+
+[lints]
+workspace = true
