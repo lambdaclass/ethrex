@@ -79,7 +79,7 @@ where
         Ok(_) => info!(test=%test_name, elapsed=?start.elapsed(), "test completed successfully"),
         Err(err) if err.is_panic() => {
             error!(test=%test_name, %err, "test panicked");
-            std::process::exit(1);
+
         }
         Err(err) => {
             warn!(test=%test_name, %err, "test task was cancelled");

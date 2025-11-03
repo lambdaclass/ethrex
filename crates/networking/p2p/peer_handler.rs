@@ -205,6 +205,7 @@ impl PeerHandler {
         while sync_head_number == 0 {
             if retries > 10 {
                 // sync_head might be invalid
+                println!("Sync Log 14: Failed to retrieve sync head block number after {retries} attempts, aborting");
                 return Ok(None);
             }
             let peer_connection = self
@@ -212,7 +213,9 @@ impl PeerHandler {
                 .get_peer_connections(&SUPPORTED_ETH_CAPABILITIES)
                 .await?;
 
+            println!("About to look in the peer list: {}", peer_connection.len());
             for (peer_id, mut connection) in peer_connection {
+                println!("Sync Log 15: Asking peer {peer_id} for sync head block number (attempt {retries}). sync_head: {sync_head}");
                 match ask_peer_head_number(
                     peer_id,
                     &mut connection,
@@ -223,12 +226,14 @@ impl PeerHandler {
                 .await
                 {
                     Ok(number) => {
+                        println!("Sync Log 16: Retrieved sync head block number {number} from peer {peer_id}");
                         sync_head_number = number;
                         if number != 0 {
                             break;
                         }
                     }
                     Err(err) => {
+                        println!("Did not retrieve sync head block number from peer {peer_id}: {err}");
                         debug!(
                             "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
                         );
