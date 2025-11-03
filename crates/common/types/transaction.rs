@@ -1310,8 +1310,11 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k
     )?;
 
     // Recover public key
-    let public =
-        k256::ecdsa::VerifyingKey::recover_from_msg(payload.as_bytes(), &signature, recovery_id)?;
+    let public = k256::ecdsa::VerifyingKey::recover_from_prehash(
+        payload.as_bytes(),
+        &signature,
+        recovery_id,
+    )?;
 
     let uncompressed = public.to_encoded_point(false);
 
