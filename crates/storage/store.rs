@@ -51,7 +51,7 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 pub const MAX_SNAPSHOT_READS: usize = 100;
 
 // TODO: use finalized hash to determine when to commit
-const COMMIT_THRESHOLD: usize = if cfg!(test) { 10000 } else { 128 };
+const COMMIT_THRESHOLD: usize = 128;
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -1311,7 +1311,6 @@ impl Store {
     }
 
     fn from_backend(backend: Arc<dyn StorageBackend>) -> Result<Self, StoreError> {
-        info!("Initializing Store with {COMMIT_THRESHOLD} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
         let store = Self {
