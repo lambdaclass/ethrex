@@ -2,8 +2,8 @@ use ethrex_common::H256;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use rustc_hash::FxHashMap;
+use std::hash::BuildHasher;
 use std::sync::Arc;
-use std::{collections::HashSet, hash::BuildHasher};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
