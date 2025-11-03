@@ -1317,7 +1317,9 @@ impl Store {
                 Self::from_backend(Arc::new(RocksDBBackend::open(path)?), DB_COMMIT_THRESHOLD)
             }
             #[cfg(feature = "fjall")]
-            EngineType::Fjall => Self::from_backend(Arc::new(FjallBackend::open(path)?)),
+            EngineType::Fjall => {
+                Self::from_backend(Arc::new(FjallBackend::open(path)?), DB_COMMIT_THRESHOLD)
+            }
             EngineType::InMemory => Self::from_backend(
                 Arc::new(InMemoryBackend::open()?),
                 IN_MEMORY_COMMIT_THRESHOLD,
