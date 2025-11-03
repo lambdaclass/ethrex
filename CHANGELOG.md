@@ -2,8 +2,14 @@
 
 ## Perf
 
+### 2025-10-31
+
+- Improved discovery and peer initialization [#5147](https://github.com/lambdaclass/ethrex/pull/5147)
+
 ### 2025-10-30
 
+- Pipeline Merkleization and Execution [#5084](https://github.com/lambdaclass/ethrex/pull/5084)
+- Add bloom filters to snapshot layers [#5112](https://github.com/lambdaclass/ethrex/pull/5112)
 - Make trusted setup warmup non blocking [#5124](https://github.com/lambdaclass/ethrex/pull/5124)
 
 ### 2025-10-28
