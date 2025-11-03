@@ -2725,6 +2725,7 @@ mod serde_impl {
                 blobs: vec![],
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
+                wrapper_version: None,
             }
         }
     }
