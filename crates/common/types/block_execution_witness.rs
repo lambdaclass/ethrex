@@ -12,7 +12,9 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_trie::rkyv::RLPNodeRemote;
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
+use rkyv::with::Map;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -80,6 +82,7 @@ pub struct ExecutionWitness {
     // The chain config.
     pub chain_config: ChainConfig,
     /// RLP-encoded trie nodes needed for stateless execution.
+    #[rkyv(with = Map<crate::rkyv_utils::RLPNode>)]
     pub nodes: Vec<Node>,
     /// Flattened map of account addresses and storage keys whose values
     /// are needed for stateless execution.

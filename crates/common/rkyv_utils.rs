@@ -1,5 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::{Bloom, H160, H256, U256};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_trie::Node;
 use rkyv::{
     Archive, Archived, Deserialize, Serialize,
     rancor::{Fallible, Source},
@@ -255,6 +257,17 @@ where
             end = start + 32_usize;
         }
         Ok((address, access_list_keys))
+    }
+}
+
+/// Archive a `Node` as its RLP encoding.
+#[derive(Archive, Serialize, Deserialize, Clone)]
+#[rkyv(remote = Node)]
+pub struct RLPNode(#[rkyv(getter = Node::encode_to_vec)] Vec<u8>);
+
+impl From<RLPNode> for Node {
+    fn from(value: RLPNode) -> Self {
+        Node::decode(&value.0).expect("failed to deserialize node")
     }
 }
 
