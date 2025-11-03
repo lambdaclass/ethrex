@@ -85,15 +85,10 @@ pub struct BackendTrieDBLocked {
     fkv_tx: Box<dyn StorageLocked>,
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
-    address_prefix: Option<H256>,
 }
 
 impl BackendTrieDBLocked {
-    pub fn new(
-        engine: &dyn StorageBackend,
-        address_prefix: Option<H256>,
-        last_written: Vec<u8>,
-    ) -> Result<Self, StoreError> {
+    pub fn new(engine: &dyn StorageBackend, last_written: Vec<u8>) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         let trie_tx = engine.begin_locked(TRIE_NODES)?;
         let fkv_tx = engine.begin_locked(FLATKEY_VALUES)?;
@@ -101,19 +96,12 @@ impl BackendTrieDBLocked {
             trie_tx,
             fkv_tx,
             last_computed_flatkeyvalue,
-            address_prefix,
         })
-    }
-    fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, node_hash)
-            .as_ref()
-            .to_vec()
     }
 }
 
 impl TrieDB for BackendTrieDBLocked {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        let key = apply_prefix(self.address_prefix, key);
         self.last_computed_flatkeyvalue >= key
     }
 
@@ -123,8 +111,7 @@ impl TrieDB for BackendTrieDBLocked {
         } else {
             &self.trie_tx
         };
-        let key = self.make_key(key);
-        tx.get(&key)
+        tx.get(key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 

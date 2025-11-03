@@ -2672,7 +2672,7 @@ fn state_trie_locked_backend(
     last_written: Vec<u8>,
 ) -> Result<BackendTrieDBLocked, StoreError> {
     // No address prefix for state trie
-    BackendTrieDBLocked::new(backend, None, last_written)
+    BackendTrieDBLocked::new(backend, last_written)
 }
 
 pub struct AccountProof {
