@@ -1,5 +1,5 @@
+use ethrex_common::H160;
 use ethrex_common::genesis_utils::write_genesis_as_json;
-use ethrex_common::{H160, H256};
 use std::fs::File;
 use std::io::BufReader;
 use std::{
@@ -358,7 +358,6 @@ fn add_with_proxy(
     address: Address,
     code: Vec<u8>,
     out_dir: &Path,
-    alloc: Option<HashMap<H256, U256>>,
 ) -> Result<(), SystemContractsUpdaterError> {
     let impl_address = address ^ IMPL_MASK;
 
@@ -387,11 +386,6 @@ fn add_with_proxy(
         get_erc1967_slot("eip1967.proxy.admin"),
         address_to_word(ADMIN_ADDRESS),
     );
-    if let Some(alloc) = alloc {
-        for (key, value) in alloc {
-            storage.insert(U256::from_big_endian(key.as_bytes()), value);
-        }
-    }
     genesis.alloc.insert(
         address,
         GenesisAccount {
@@ -441,7 +435,6 @@ pub fn update_genesis_file(
         COMMON_BRIDGE_L2_ADDRESS,
         common_bridge_l2_runtime(out_dir),
         out_dir,
-        None,
     )?;
 
     add_with_proxy(
@@ -449,7 +442,6 @@ pub fn update_genesis_file(
         L2_TO_L1_MESSENGER_ADDRESS,
         l2_to_l1_messenger_runtime(out_dir),
         out_dir,
-        None,
     )?;
 
     add_with_proxy(
@@ -457,7 +449,6 @@ pub fn update_genesis_file(
         FEE_TOKEN_REGISTRY_ADDRESS,
         fee_token_registry_runtime(out_dir),
         out_dir,
-        None,
     )?;
 
     for address in 0xff00..0xfffb {
