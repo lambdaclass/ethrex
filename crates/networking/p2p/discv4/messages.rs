@@ -27,6 +27,9 @@ pub enum PacketDecodeErr {
     HashMismatch,
     #[error("Invalid signature")]
     InvalidSignature,
+    #[deprecated(
+        note = "Unused; consolidate on other variants. Will be removed in a future release."
+    )]
     #[error("Discv4 decoding error: {0}")]
     Discv4DecodingError(String),
     #[error("Io Error: {0}")]
@@ -249,8 +252,6 @@ impl PingMessage {
         }
     }
 
-    // TODO: remove when used
-    #[allow(unused)]
     pub fn with_enr_seq(self, enr_seq: u64) -> Self {
         Self {
             enr_seq: Some(enr_seq),
@@ -281,7 +282,6 @@ pub struct FindNodeMessage {
 }
 
 impl FindNodeMessage {
-    #[allow(unused)]
     pub fn new(target: H512, expiration: u64) -> Self {
         Self { target, expiration }
     }
@@ -308,6 +308,9 @@ impl RLPDecode for FindNodeMessage {
 }
 
 #[derive(Debug, Clone)]
+#[deprecated(
+    note = "Unused internal type; find-node tracking is handled by PeerTable/DiscoveryServer. Will be removed in a future release."
+)]
 pub struct FindNodeRequest {
     /// the number of nodes sent
     /// we keep track of this number since we will accept neighbor messages until the max_per_bucket
@@ -330,6 +333,9 @@ impl Default for FindNodeRequest {
 }
 
 impl FindNodeRequest {
+    #[deprecated(
+        note = "Unused internal type; use PeerTable for tracking. Will be removed in a future release."
+    )]
     pub fn new_with_sender(sender: tokio::sync::mpsc::UnboundedSender<Vec<Node>>) -> Self {
         Self {
             tx: Some(sender),
@@ -374,7 +380,6 @@ pub struct PongMessage {
 }
 
 impl PongMessage {
-    #[allow(unused)]
     pub fn new(to: Endpoint, ping_hash: H256, expiration: u64) -> Self {
         Self {
             to,
