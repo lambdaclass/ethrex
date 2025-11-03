@@ -2658,14 +2658,6 @@ fn storage_trie_backend(
     BackendTrieDB::new(tx, Some(hashed_address), last_written)
 }
 
-fn storage_trie_locked_backend(
-    backend: &dyn StorageBackend,
-    hashed_address: H256,
-    last_written: Vec<u8>,
-) -> Result<BackendTrieDBLocked, StoreError> {
-    BackendTrieDBLocked::new(backend, Some(hashed_address), last_written)
-}
-
 fn state_trie_backend(
     backend: &dyn StorageBackend,
     last_written: Vec<u8>,
