@@ -1,7 +1,7 @@
 use ethrex_common::H256;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHasher};
 use std::hash::Hasher;
 use std::hash::{DefaultHasher, Hash};
 use std::sync::Arc;
@@ -134,7 +134,7 @@ impl TrieLayerCache {
             .keys()
             .par_bridge()
             .map(|key| {
-                let mut h = DefaultHasher::new();
+                let mut h = FxHasher::default();
                 key.hash(&mut h);
                 h.finish()
             })
