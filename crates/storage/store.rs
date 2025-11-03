@@ -50,8 +50,12 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
 
-// TODO: use finalized hash to determine when to commit
-const COMMIT_THRESHOLD: usize = if cfg!(test) { 10000 } else { 128 };
+// We use one constant for in-memory and another for on-disk backends.
+// This is due to tests requiring state older than 128 blocks.
+// TODO: unify these
+#[allow(unused)]
+const DB_COMMIT_THRESHOLD: usize = 128;
+const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -1305,20 +1309,28 @@ impl Store {
         let _path = &path;
         match engine_type {
             #[cfg(feature = "rocksdb")]
-            EngineType::RocksDB => Self::from_backend(Arc::new(RocksDBBackend::open(path)?)),
-            EngineType::InMemory => Self::from_backend(Arc::new(InMemoryBackend::open()?)),
+            EngineType::RocksDB => {
+                Self::from_backend(Arc::new(RocksDBBackend::open(path)?), DB_COMMIT_THRESHOLD)
+            }
+            EngineType::InMemory => Self::from_backend(
+                Arc::new(InMemoryBackend::open()?),
+                IN_MEMORY_COMMIT_THRESHOLD,
+            ),
         }
     }
 
-    fn from_backend(backend: Arc<dyn StorageBackend>) -> Result<Self, StoreError> {
-        info!("Initializing Store with {COMMIT_THRESHOLD} in-memory diff-layers");
+    fn from_backend(
+        backend: Arc<dyn StorageBackend>,
+        commit_threshold: usize,
+    ) -> Result<Self, StoreError> {
+        debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
         let store = Self {
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Default::default(),
+            trie_cache: Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
         };
@@ -2379,7 +2391,7 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?;
 
     // Phase 2: update disk layer.
-    let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
+    let Some(root) = trie.get_commitable(parent_state_root) else {
         // Nothing to commit to disk, move on.
         return Ok(());
     };
