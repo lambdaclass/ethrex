@@ -423,15 +423,12 @@ impl Command {
                     let state_diff = StateDiff::decode(&blob)?;
 
                     // Apply all account updates to trie
-                    let trie = store.open_direct_state_trie(current_state_root)?;
+                    let mut trie = store.open_direct_state_trie(current_state_root)?;
 
                     let account_updates = state_diff.to_account_updates(&trie)?;
 
                     let account_updates_list = store
-                        .apply_account_updates_from_trie_batch(
-                            current_state_root,
-                            &account_updates.into_values().collect::<Vec<_>>(),
-                        )
+                        .apply_account_updates_from_trie_batch(&mut trie, account_updates.values())
                         .map_err(|e| format!("Error applying account updates: {e}"))
                         .unwrap();
 

@@ -9,8 +9,8 @@ use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
-    current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
-    get_code_hashes_snapshots_dir, validate_folders,
+    current_unix_time, delete_leaves_folder, get_account_state_snapshots_dir,
+    get_account_storages_snapshots_dir, get_code_hashes_snapshots_dir,
 };
 use crate::{
     metrics::METRICS,
@@ -148,15 +148,34 @@ impl Syncer {
         match self.sync_cycle(sync_head, store).await {
             Ok(()) => {
                 info!(
-                    "Sync cycle finished, time elapsed: {} secs",
-                    start_time.elapsed().as_secs()
+                    time_elapsed_s = start_time.elapsed().as_secs(),
+                    %sync_head,
+                    "Sync cycle finished successfully",
                 );
             }
-            // TODO #2767: If the error is irrecoverable, we should exit ethrex
-            Err(error) => error!(
-                "Sync cycle failed due to {error}, time elapsed: {} secs ",
-                start_time.elapsed().as_secs()
-            ),
+
+            // If the error is irrecoverable, we exit ethrex
+            Err(error) => {
+                match error.is_recoverable() {
+                    false => {
+                        // We exit the node, as we can't recover this error
+                        error!(
+                            time_elapsed_s = start_time.elapsed().as_secs(),
+                            %sync_head,
+                            %error, "Sync cycle failed, exiting as the error is irrecoverable",
+                        );
+                        std::process::exit(2);
+                    }
+                    true => {
+                        // We do nothing, as the error is recoverable
+                        error!(
+                            time_elapsed_s = start_time.elapsed().as_secs(),
+                            %sync_head,
+                            %error, "Sync cycle failed, retrying",
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -197,18 +216,8 @@ impl Syncer {
         };
 
         // We validate that we have the folders that are being used empty, as we currently assume
-        // they are.
-        if !validate_folders(&self.datadir) {
-            // Temp std::process::exit until #2767 is done
-            error!(
-                "One of the folders used for temporary leaves during snap is still used. Delete them in {}",
-                &self.datadir.to_str().unwrap_or_default()
-            );
-            std::process::exit(1);
-            // Cloning a single string, the node should stop after this
-            // return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
-        }
-
+        // they are. If they are not empty we empty the folder
+        delete_leaves_folder(&self.datadir);
         loop {
             debug!("Sync Log 1: In snap sync");
             debug!(
@@ -548,7 +557,7 @@ impl Syncer {
             let mut last_valid_hash = H256::default();
             for block in blocks {
                 let block_hash = block.hash();
-                blockchain.add_block(block).map_err(|e| {
+                blockchain.add_block_pipeline(block).map_err(|e| {
                     (
                         e,
                         Some(BatchBlockProcessingFailure {
@@ -1153,8 +1162,6 @@ pub enum SyncError {
     CodeHashesSnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
     AccountState(H256, H256),
-    #[error("Failed to acquire lock on maybe_big_account_storage")]
-    MaybeBigAccount,
     #[error("Failed to fetch bytecodes from peers")]
     BytecodesNotFound,
     #[error("Failed to get account state snapshots directory")]
@@ -1167,12 +1174,6 @@ pub enum SyncError {
     DifferentStateRoots(H256, H256, H256),
     #[error("Failed to get block headers")]
     NoBlockHeaders,
-    #[error("The download datadir folders at {0} are not empty, delete them first")]
-    NotEmptyDatadirFolders(PathBuf),
-    #[error("Couldn't create a thread")]
-    ThreadCreationError,
-    #[error("Called update_pivot outside snapsync mode")]
-    NotInSnapSync,
     #[error("Peer handler error: {0}")]
     PeerHandler(#[from] PeerHandlerError),
     #[error("Corrupt Path")]
@@ -1189,6 +1190,43 @@ pub enum SyncError {
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
+}
+
+impl SyncError {
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            SyncError::SnapshotReadError(_, _)
+            | SyncError::SnapshotDecodeError(_)
+            | SyncError::CodeHashesSnapshotDecodeError(_)
+            | SyncError::AccountState(_, _)
+            | SyncError::BytecodesNotFound
+            | SyncError::AccountStateSnapshotsDirNotFound
+            | SyncError::AccountStoragesSnapshotsDirNotFound
+            | SyncError::CodeHashesSnapshotsDirNotFound
+            | SyncError::DifferentStateRoots(_, _, _)
+            | SyncError::NoBlockHeaders
+            | SyncError::PeerHandler(_)
+            | SyncError::CorruptPath
+            | SyncError::TrieGenerationError(_)
+            | SyncError::AccountTempDBDirNotFound
+            | SyncError::StorageTempDBDirNotFound
+            | SyncError::RocksDBError(_)
+            | SyncError::BytecodeFileError
+            | SyncError::NoLatestCanonical
+            | SyncError::PeerTableError(_) => false,
+            SyncError::Chain(_)
+            | SyncError::Store(_)
+            | SyncError::Send(_)
+            | SyncError::Trie(_)
+            | SyncError::Rlp(_)
+            | SyncError::JoinHandle(_)
+            | SyncError::CorruptDB
+            | SyncError::BodiesNotFound
+            | SyncError::InvalidRangeReceived
+            | SyncError::BlockNumber(_)
+            | SyncError::NoBlocks => true,
+        }
+    }
 }
 
 impl<T> From<SendError<T>> for SyncError {

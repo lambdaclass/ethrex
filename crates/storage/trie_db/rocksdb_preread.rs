@@ -136,7 +136,7 @@ impl RocksDBPreRead {
         let cache: HashMap<_, _> = results
             .into_par_iter()
             .map(|(key, value)| {
-                if let Some(tlc_value) = tlc.get(state_root, &key) {
+                if let Some(tlc_value) = tlc.get(state_root, Nibbles::from_bytes(key.as_ref())) {
                     (key, tlc_value)
                 } else {
                     (key, value)
@@ -184,7 +184,7 @@ impl TrieDB for RocksDBPreReadTrieDB {
         if let Some(value) = self.inner.cache.get(key.as_ref()) {
             return Ok(Some(value.clone()));
         }
-        if let Some(value) = self.inner.tlc.get(self.inner.state_root, key.as_ref()) {
+        if let Some(value) = self.inner.tlc.get(self.inner.state_root, key.clone()) {
             return Ok(Some(value));
         }
 
