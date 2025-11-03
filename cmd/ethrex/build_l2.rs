@@ -452,30 +452,12 @@ pub fn update_genesis_file(
         None,
     )?;
 
-    let test_fee_tokens = HashMap::from([
-        (
-            H256::from_slice(
-                hex::decode("c323dfda4b2fe7ed7849af4c8a1254f46e97d07606daedc1115b866ffdbeead0")
-                    .unwrap()
-                    .as_slice(),
-            ),
-            U256::one(),
-        ),
-        (
-            H256::from_slice(
-                hex::decode("0109ad0da289aadeb025bef1544ffdbc563aff9f80bec769bb9ca1205de463fa")
-                    .unwrap()
-                    .as_slice(),
-            ),
-            U256::one(),
-        ),
-    ]);
     add_with_proxy(
         &mut genesis,
         FEE_TOKEN_REGISTRY_ADDRESS,
         fee_token_registry_runtime(out_dir),
         out_dir,
-        Some(test_fee_tokens),
+        None,
     )?;
 
     for address in 0xff00..0xfffb {
