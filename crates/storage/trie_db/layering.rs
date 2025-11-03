@@ -148,7 +148,10 @@ impl TrieLayerCache {
                 };
                 for (p, _) in entry.nodes.iter() {
                     if let Err(qfilter::Error::CapacityExceeded) = bloom.insert(p) {
-                        tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                        tracing::warn!(
+                            "TrieLayerCache: rebuild_bloom capacity exceeded inserting element - bloom.len(): {}",
+                            bloom.len()
+                        );
                         return None;
                     }
                 }
@@ -168,7 +171,11 @@ impl TrieLayerCache {
                 return;
             };
             if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
-                tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                tracing::warn!(
+                    "TrieLayerCache: rebuild_bloom capacity exceeded merging blooms. self.len(): {}, other.len(): {}",
+                    ret.len(),
+                    bloom.len()
+                );
                 self.bloom = None;
                 return;
             }
