@@ -1,9 +1,7 @@
 use std::process::Command;
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use guest_program::input::ProgramInput;
-
-use crate::backend::ProveOutput;
+use guest_program::{input::ProgramInput, output::ProgramOutput};
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
@@ -45,16 +43,16 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 pub fn prove(
     _input: ProgramInput,
     _format: ProofFormat,
-) -> Result<ProveOutput, Box<dyn std::error::Error>> {
+) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
     Err("prove is not implemented for ZisK backend".into())
 }
 
-pub fn verify(_output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
+pub fn verify(_output: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>> {
     Err("verify is not implemented for ZisK backend".into())
 }
 
 pub fn to_batch_proof(
-    _proof: ProveOutput,
+    _proof: ProgramOutput,
     _format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     Err("to_batch_proof is not implemented for ZisK backend".into())
