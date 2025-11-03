@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-03
+
+- Avoid unnecessary hash validations [#5167](https://github.com/lambdaclass/ethrex/pull/5167)
+
 ### 2025-10-31
 
 - Improved discovery and peer initialization [#5147](https://github.com/lambdaclass/ethrex/pull/5147)
