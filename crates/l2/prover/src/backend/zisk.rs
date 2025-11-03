@@ -3,23 +3,30 @@ use std::process::Command;
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::{input::ProgramInput, output::ProgramOutput};
 
+const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
+
+const OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output.bin");
+
+const ELF_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/guest_program/src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program"
+);
+
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
 
-    let input_path = "zisk_input.bin";
-
-    std::fs::write(input_path, input_bytes.as_slice())?;
+    std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
     let mut cmd = Command::new("ziskemu");
 
     let start = std::time::Instant::now();
     let output = cmd
         .arg("--elf")
-        .arg("../guest_program/src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program")
+        .arg(ELF_PATH)
         .arg("--inputs")
-        .arg(input_path)
+        .arg(INPUT_PATH)
         .arg("--output")
-        .arg("zisk_output.bin")
+        .arg(OUTPUT_PATH)
         .arg("--stats") // Enable stats in order to get total steps.
         .output()?;
     let duration = start.elapsed();
