@@ -131,6 +131,7 @@ impl RpcHandler for SponsoredTx {
             .await
             .map_err(RpcErr::from)?;
         let chain_config = context.l1_ctx.storage.get_chain_config();
+
         let chain_id = chain_config.chain_id;
         let nonce = context
             .l1_ctx
