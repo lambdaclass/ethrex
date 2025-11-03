@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::{input::ProgramInput, output::ProgramOutput};
@@ -27,7 +27,9 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         .arg(INPUT_PATH)
         .arg("--output")
         .arg(OUTPUT_PATH)
-        .arg("--stats") // Enable stats in order to get total steps.
+        .arg("--stats")
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::piped())
         .output()?;
     let duration = start.elapsed();
 
