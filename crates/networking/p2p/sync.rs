@@ -216,6 +216,7 @@ impl Syncer {
                 block_sync_state.block_hashes.len()
             );
             debug!("Requesting Block Headers from {current_head}");
+            println!("Current head number and sync head: {} {}", current_head_number, sync_head);
 
             let Some(mut block_headers) = self
                 .peers
@@ -223,6 +224,7 @@ impl Syncer {
                 .await?
             else {
                 warn!("Sync failed to find target block header, aborting");
+                println!("Am I here?");
                 return Ok(());
             };
 
@@ -243,6 +245,7 @@ impl Syncer {
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
                 warn!("Sync failed to find target block header, going back to the previous parent");
+                println!("Or here?");
                 current_head = first_block_parent_hash;
                 continue;
             }
@@ -350,6 +353,7 @@ impl Syncer {
                 .await?
             else {
                 warn!("Sync failed to find target block header, aborting");
+                println!("Or is it here?");
                 debug!("Sync Log 8: Sync failed to find target block header, aborting");
                 return Ok(());
             };

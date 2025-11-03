@@ -65,6 +65,7 @@ impl RocksDBTrieDB {
     }
 
     fn cf_handle(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
+        println!("############### About to use trie_cf_name={}", self.cf_name);
         self.db
             .cf_handle(&self.trie_cf_name)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family for the trie not found")))
@@ -73,6 +74,7 @@ impl RocksDBTrieDB {
     fn cf_handle_flatkeyvalue(
         &self,
     ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
+        println!("############### About to use flatkeyvalue_cf_name={}", CF_FLATKEYVALUE);
         self.db
             .cf_handle(&self.flatkeyvalue_cf_name)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family for the flat key value store not found")))
@@ -101,6 +103,8 @@ impl TrieDB for RocksDBTrieDB {
             .db
             .get_cf(&cf, &db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
+
+        println!("############### RocksDBTrieDB::get key={:?} res={:?}", hex::encode(db_key), res.clone().map(|v| hex::encode(v)));
         Ok(res)
     }
 
@@ -113,11 +117,14 @@ impl TrieDB for RocksDBTrieDB {
             let cf = if key.is_leaf() { &cf_snapshot } else { &cf };
             let db_key = self.make_key(key);
             if value.is_empty() {
+                println!("############### RocksDBTrieDB::delete key={:?}", hex::encode(&db_key));
                 batch.delete_cf(cf, db_key);
             } else {
+                println!("############### RocksDBTrieDB::put key={:?} value={:?}", hex::encode(&db_key), hex::encode(&value));
                 batch.put_cf(cf, db_key, value);
             }
         }
+
 
         self.db
             .write(batch)

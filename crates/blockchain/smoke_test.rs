@@ -1,6 +1,18 @@
 #[cfg(test)]
 mod blockchain_integration_test {
-    use std::{fs::File, io::BufReader};
+    use ethrex_common::{
+        Address, Signature, U256,
+        types::{Genesis, GenesisAccount, Transaction, TxKind, TxType},
+        utils::keccak,
+    };
+    use ethrex_rlp::encode::PayloadRLPEncode;
+    use secp256k1::{Message, SECP256K1, SecretKey};
+
+    use std::{
+        collections::{BTreeMap, HashMap},
+        fs::File,
+        io::BufReader,
+    };
 
     use crate::{
         Blockchain,
@@ -326,4 +338,153 @@ mod blockchain_integration_test {
 
         store
     }
+
+    // signer
+
+    struct Account {
+        pub private_key: SecretKey,
+        pub address: Address,
+    }
+
+    impl Account {
+        pub fn new(private_key: SecretKey) -> Self {
+            let address = Address::from(keccak(
+                &private_key.public_key(SECP256K1).serialize_uncompressed()[1..],
+            ));
+            Self {
+                private_key,
+                address,
+            }
+        }
+
+        pub fn sign(&self, data: Bytes) -> Signature {
+            let hash = keccak(data);
+            let msg = Message::from_digest(hash.0);
+            let (recovery_id, signature) = SECP256K1
+                .sign_ecdsa_recoverable(&msg, &self.private_key)
+                .serialize_compact();
+
+            Signature::from_slice(
+                &[
+                    signature.as_slice(),
+                    &[Into::<i32>::into(recovery_id) as u8],
+                ]
+                .concat(),
+            )
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "rocksdb")]
+    async fn test_basic_value_transfer() {
+        //Create signer for some account
+        let account_1 = Account::new(
+            SecretKey::from_slice(
+                hex::decode("4f3edf983ac636a6584e819f7aee7e2a3f6f0b8c0c6e8f1a5a4f5f35426f5d7e")
+                    .unwrap()
+                    .as_ref(),
+            )
+            .unwrap(),
+        );
+        let account_2 = Account::new(
+            SecretKey::from_slice(
+                hex::decode("6c3699283bda56ad74f6b855546325b68d482e983852a7a8297d1e4b7f2abf3c")
+                    .unwrap()
+                    .as_ref(),
+            )
+            .unwrap(),
+        );
+
+        // Create test accounts
+        let account_a = account_1.address;
+        let account_b = account_2.address;
+        let initial_balance = U256::from(10_000_000_000_000_000_000u64); // 10 ETH
+
+        // Create genesis with test accounts
+        let mut genesis_accounts = BTreeMap::new();
+        let account_state = GenesisAccount {
+            balance: initial_balance,
+            code: Bytes::new(),
+            nonce: 0,
+            storage: HashMap::new(),
+        };
+        genesis_accounts.insert(account_a, account_state.clone());
+        genesis_accounts.insert(account_b, account_state);
+
+        let genesis = Genesis {
+            config: ethrex_common::types::ChainConfig::default(),
+            alloc: genesis_accounts,
+            ..Default::default()
+        };
+
+        // Create store with RocksDB
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_db");
+        let mut store = Store::new(&db_path, EngineType::RocksDB).expect("Failed to create store");
+        store.add_initial_state(genesis).await.unwrap();
+
+        // Create blockchain instance
+        let blockchain = Blockchain::default_with_store(store.clone());
+
+        // Get genesis block header
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+
+        // Create transfer transaction
+        let transfer_amount = U256::from(1_000_000_000_000_000_000u64); // 1 ETH
+        let mut tx = ethrex_common::types::EIP1559Transaction {
+            chain_id: 1,
+            nonce: 0,
+            max_priority_fee_per_gas: 20_000000,
+            max_fee_per_gas: 20_000000,
+            gas_limit: 210000,
+            to: TxKind::Call(account_b),
+            value: transfer_amount,
+            data: Bytes::new(),
+            ..Default::default()
+        };
+
+        let tx_outer = Transaction::EIP1559Transaction;
+
+        let mut payload = vec![TxType::EIP1559 as u8];
+        payload.append(tx.encode_payload_to_vec().as_mut());
+
+        let signature = account_1.sign(payload.into());
+
+        tx.signature_r = U256::from_big_endian(&signature[..32]);
+        tx.signature_s = U256::from_big_endian(&signature[32..64]);
+        tx.signature_y_parity = signature[64] != 0 && signature[64] != 27;
+
+        // Create block with the transaction
+        let block_1 = new_block(&store, &genesis_header).await;
+        let hash_1 = block_1.hash();
+        blockchain.add_block(block_1.clone()).unwrap();
+
+        // We may be able to remove this forkchoice update, we only get by block hash.
+        store
+            .forkchoice_update(None, 1, hash_1, None, None)
+            .await
+            .unwrap();
+
+        // Verify account balances
+        let account_a_state = store
+            .get_account_state_by_hash(hash_1, account_a)
+            .unwrap()
+            .unwrap();
+        let account_b_state = store
+            .get_account_state_by_hash(hash_1, account_b)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            account_a_state.balance,
+            U256::from(9_000_000_000_000_000_000u64),
+            "Account A should have 9 ETH"
+        );
+        assert_eq!(
+            account_b_state.balance,
+            U256::from(11_000_000_000_000_000_000u64),
+            "Account B should have 11 ETH"
+        );
+    }
+
 }

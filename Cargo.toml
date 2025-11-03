@@ -22,19 +22,11 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/runner",
-  "tooling/ef_tests/blockchain",
-  "tooling/ef_tests/state_v2",
-  "tooling/genesis",
-  "tooling/hive_report",
-  "tooling/load_test",
-  "tooling/loc",
-  "tooling/archive_sync",
   "crates/common/config",
-  "tooling/reorgs",
   "crates/concurrency",
-  "tooling/migrations",
+  "tooling/rocksdb_smoke_test",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
+exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]
@@ -115,6 +107,7 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
+aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23" }
 spawned-concurrency = "0.4.2"
 spawned-rt = "0.4.2"
 lambdaworks-crypto = "0.11.0"
