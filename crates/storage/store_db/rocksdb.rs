@@ -594,7 +594,6 @@ impl Store {
         account_updates: Vec<(Nibbles, Vec<u8>)>,
         storage_updates: StorageUpdates,
     ) -> Result<(), StoreError> {
-        let db = &*self.db;
         let fkv_ctl = &self.flatkeyvalue_control_tx;
         let trie_cache = &self.trie_cache;
 
@@ -631,31 +630,49 @@ impl Store {
 
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
         let mut trie_mut = (*trie).clone();
-        let mut batch = WriteBatch::default();
         let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
-            open_cfs(db, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
+            open_cfs(&self.dbs, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
+        let nodes_transaction = cf_trie_nodes.begin_write().unwrap();
+        let flatkeyvalue_transaction = cf_flatkeyvalue.begin_write().unwrap();
+        {
+            let mut nodes_tree = nodes_transaction.get_tree(b"").unwrap().unwrap();
+            let mut flatkeyvalue_tree = flatkeyvalue_transaction.get_tree(b"").unwrap().unwrap();
 
-        let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
-        // Commit removes the bottom layer and returns it, this is the mutation step.
-        let nodes = trie_mut.commit(root).unwrap_or_default();
-        for (key, value) in nodes {
-            let is_leaf = key.len() == 65 || key.len() == 131;
-
-            if is_leaf && key > last_written {
-                continue;
-            }
-            let cf = if is_leaf {
-                &cf_flatkeyvalue
-            } else {
-                &cf_trie_nodes
+            let last_written = {
+                cf_misc
+                    .begin_read()
+                    .unwrap()
+                    .get_tree(b"")
+                    .unwrap()
+                    .unwrap()
+                    .get(b"last_written")
+                    .unwrap()
+                    .map(|b| b.to_vec())
+                    .unwrap_or_default()
             };
-            if value.is_empty() {
-                batch.delete_cf(cf, key);
-            } else {
-                batch.put_cf(cf, key, value);
+            // Commit removes the bottom layer and returns it, this is the mutation step.
+            let nodes = trie_mut.commit(root).unwrap_or_default();
+            for (key, value) in nodes {
+                let is_leaf = key.len() == 65 || key.len() == 131;
+
+                if is_leaf && key > last_written {
+                    continue;
+                }
+                let cf = if is_leaf {
+                    &mut flatkeyvalue_tree
+                } else {
+                    &mut nodes_tree
+                };
+                if value.is_empty() {
+                    cf.delete(&key);
+                } else {
+                    cf.insert(&key, &value);
+                }
             }
         }
-        let result = db.write(batch);
+        let result = self
+            .db
+            .group_commit([nodes_transaction, flatkeyvalue_transaction], false);
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
@@ -706,7 +723,7 @@ impl StoreEngine for Store {
             cf_headers,
             cf_bodies,
         ] = open_cfs(
-            &db,
+            &self.dbs,
             [
                 CF_RECEIPTS,
                 CF_ACCOUNT_CODES,
@@ -716,83 +733,109 @@ impl StoreEngine for Store {
                 CF_BODIES,
             ],
         )?;
-        let mut batch = WriteBatch::default();
 
-        let UpdateBatch {
-            account_updates,
-            storage_updates,
-            ..
-        } = update_batch;
+        let receipts_transaction = cf_receipts.begin_write().unwrap();
+        let codes_transaction = cf_codes.begin_write().unwrap();
+        let block_numbers_transaction = cf_block_numbers.begin_write().unwrap();
+        let txl_transaction = cf_tx_locations.begin_write().unwrap();
+        let headers_transaction = cf_headers.begin_write().unwrap();
+        let bodies_transaction = cf_bodies.begin_write().unwrap();
+        {
+            let mut receipts_tree = receipts_transaction.get_tree(b"").unwrap().unwrap();
+            let mut codes_tree = codes_transaction.get_tree(b"").unwrap().unwrap();
+            let mut block_numbers_tree = block_numbers_transaction.get_tree(b"").unwrap().unwrap();
+            let mut txl_tree = txl_transaction.get_tree(b"").unwrap().unwrap();
+            let mut headers_tree = headers_transaction.get_tree(b"").unwrap().unwrap();
+            let mut bodies_tree = bodies_transaction.get_tree(b"").unwrap().unwrap();
 
-        // Capacity one ensures sender just notifies and goes on
-        let (notify_tx, notify_rx) = sync_channel(1);
-        let wait_for_new_layer = notify_rx;
-        trie_upd_worker_tx
-            .send((
-                notify_tx,
-                parent_state_root,
-                last_state_root,
+            let UpdateBatch {
                 account_updates,
                 storage_updates,
-            ))
-            .map_err(|e| {
-                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-            })?;
+                ..
+            } = update_batch;
 
-        for block in update_batch.blocks {
-            let block_number = block.header.number;
-            let block_hash = block.hash();
+            // Capacity one ensures sender just notifies and goes on
+            let (notify_tx, notify_rx) = sync_channel(1);
+            let wait_for_new_layer = notify_rx;
+            trie_upd_worker_tx
+                .send((
+                    notify_tx,
+                    parent_state_root,
+                    last_state_root,
+                    account_updates,
+                    storage_updates,
+                ))
+                .map_err(|e| {
+                    StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+                })?;
 
-            let hash_key_rlp = BlockHashRLP::from(block_hash);
-            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            batch.put_cf(&cf_headers, hash_key_rlp.bytes(), header_value_rlp.bytes());
+            for block in update_batch.blocks {
+                let block_number = block.header.number;
+                let block_hash = block.hash();
 
-            let hash_key: AccountCodeHashRLP = block_hash.into();
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            batch.put_cf(&cf_bodies, hash_key.bytes(), body_value.bytes());
+                let hash_key_rlp = BlockHashRLP::from(block_hash);
+                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+                headers_tree.insert(hash_key_rlp.bytes(), header_value_rlp.bytes());
 
-            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-            batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
+                let hash_key: AccountCodeHashRLP = block_hash.into();
+                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+                bodies_tree.insert(hash_key.bytes(), body_value.bytes());
 
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                batch.put_cf(&cf_tx_locations, composite_key, location_value);
+                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                block_numbers_tree.insert(&hash_key, &block_number.to_le_bytes());
+
+                for (index, transaction) in block.body.transactions.iter().enumerate() {
+                    let tx_hash = transaction.hash();
+                    // Key: tx_hash + block_hash
+                    let mut composite_key = Vec::with_capacity(64);
+                    composite_key.extend_from_slice(tx_hash.as_bytes());
+                    composite_key.extend_from_slice(block_hash.as_bytes());
+                    let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                    txl_tree.insert(&composite_key, &location_value);
+                }
             }
-        }
 
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
-                batch.put_cf(&cf_receipts, key, value);
+            for (block_hash, receipts) in update_batch.receipts {
+                for (index, receipt) in receipts.into_iter().enumerate() {
+                    let key = (block_hash, index as u64).encode_to_vec();
+                    let value = receipt.encode_to_vec();
+                    receipts_tree.insert(&key, &value);
+                }
             }
-        }
 
-        for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
-            code.bytecode.encode(&mut buf);
-            code.jump_targets
-                .into_iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>()
-                .as_slice()
-                .encode(&mut buf);
-            batch.put_cf(&cf_codes, code_hash.0, buf);
-        }
+            for (code_hash, code) in update_batch.code_updates {
+                let mut buf =
+                    Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+                code.bytecode.encode(&mut buf);
+                code.jump_targets
+                    .into_iter()
+                    .flat_map(|t| t.to_le_bytes())
+                    .collect::<Vec<u8>>()
+                    .as_slice()
+                    .encode(&mut buf);
+                codes_tree.insert(&code_hash.0, &buf);
+            }
 
-        // Wait for an updated top layer so every caller afterwards sees a consistent view.
-        // Specifically, the next block produced MUST see this upper layer.
-        wait_for_new_layer
-            .recv()
-            .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
+            // Wait for an updated top layer so every caller afterwards sees a consistent view.
+            // Specifically, the next block produced MUST see this upper layer.
+            wait_for_new_layer
+                .recv()
+                .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
+        }
         // After top-level is added, we can make the rest of the changes visible.
-        db.write(batch)
-            .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        self.db
+            .group_commit(
+                [
+                    receipts_transaction,
+                    codes_transaction,
+                    block_numbers_transaction,
+                    txl_transaction,
+                    headers_transaction,
+                    bodies_transaction,
+                ],
+                false,
+            )
+            .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))
     }
 
     /// Add a batch of blocks in a single transaction.
@@ -1852,14 +1895,14 @@ impl StoreEngine for Store {
 
 /// Open column families
 fn open_cfs<'a, const N: usize>(
-    db: &'a DBWithThreadMode<MultiThreaded>,
+    dbs: &'a HashMap<String, canopydb::Database>,
     names: [&str; N],
-) -> Result<[Arc<BoundColumnFamily<'a>>; N], StoreError> {
+) -> Result<[&'a canopydb::Database; N], StoreError> {
     let mut handles = Vec::with_capacity(N);
 
     for name in names {
         handles
-            .push(db.cf_handle(name).ok_or_else(|| {
+            .push(dbs.get(name).ok_or_else(|| {
                 StoreError::Custom(format!("Column family '{}' not found", name))
             })?);
     }
