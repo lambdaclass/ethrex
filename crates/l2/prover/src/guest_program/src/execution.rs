@@ -205,7 +205,7 @@ pub fn stateless_validation_l2(
         let mut guest_program_state = GuestProgramState {
             codes_hashed: codes_hashed
                 .into_iter()
-                .map(|(h, c)| (h, Code::from_bytecode(Bytes::from_owner(c))))
+                .map(|(h, c)| (h, Code::from_hashed_bytecode(h, Bytes::from_owner(c))))
                 .collect(),
             parent_block_header,
             first_block_number: initial_db.first_block_number,

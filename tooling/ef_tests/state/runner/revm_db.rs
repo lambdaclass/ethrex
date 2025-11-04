@@ -225,7 +225,10 @@ impl RevmState {
                 if account.is_contract_changed()
                     && let Some(code) = new_acc_info.code
                 {
-                    account_update.code = Some(Code::from_bytecode(code.original_bytes().0));
+                    account_update.code = Some(Code::from_hashed_bytecode(
+                        code_hash,
+                        code.original_bytes().0,
+                    ));
                 }
             }
             // Update account storage in DB

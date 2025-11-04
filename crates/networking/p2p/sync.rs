@@ -952,7 +952,8 @@ impl Syncer {
                             .write_account_code_batch(
                                 code_hashes_to_download
                                     .drain(..)
-                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                                    .zip(bytecodes.into_iter())
+                                    .map(|(h, b)| (h, Code::from_hashed_bytecode(h, b)))
                                     .collect(),
                             )
                             .await?;
@@ -973,7 +974,8 @@ impl Syncer {
                 .write_account_code_batch(
                     code_hashes_to_download
                         .drain(..)
-                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                        .zip(bytecodes.into_iter())
+                        .map(|(h, b)| (h, Code::from_hashed_bytecode(h, b)))
                         .collect(),
                 )
                 .await?;

@@ -29,12 +29,20 @@ pub struct Code {
 }
 
 impl Code {
-    // TODO: also add `from_hashed_bytecode` to optimize the download pipeline,
-    // where hash is already known and checked.
     pub fn from_bytecode(code: Bytes) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
         Self {
             hash: keccak(code.as_ref()),
+            bytecode: code,
+            jump_targets,
+        }
+    }
+
+    pub fn from_hashed_bytecode(hash: H256, code: Bytes) -> Self {
+        debug_assert_eq!(hash, keccak(code.as_ref()));
+        let jump_targets = Self::compute_jump_targets(&code);
+        Self {
+            hash,
             bytecode: code,
             jump_targets,
         }
@@ -125,13 +133,15 @@ impl Default for Code {
 
 impl From<GenesisAccount> for Account {
     fn from(genesis: GenesisAccount) -> Self {
+        let hash = code_hash(&genesis.code);
+        let code = Code::from_hashed_bytecode(hash, genesis.code);
         Self {
             info: AccountInfo {
-                code_hash: code_hash(&genesis.code),
+                code_hash: hash,
                 balance: genesis.balance,
                 nonce: genesis.nonce,
             },
-            code: Code::from_bytecode(genesis.code),
+            code,
             storage: genesis
                 .storage
                 .iter()
