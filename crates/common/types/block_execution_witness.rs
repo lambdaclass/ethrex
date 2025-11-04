@@ -81,8 +81,9 @@ pub struct ExecutionWitness {
     pub first_block_number: u64,
     // The chain config.
     pub chain_config: ChainConfig,
-    /// RLP-encoded trie nodes needed for stateless execution.
-    pub nodes: Vec<SizedNode>,
+    /// SizedNode nodes
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub nodes: Vec<Vec<u8>>,
     /// Flattened map of account addresses and storage keys whose values
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
@@ -141,6 +142,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         let nodes_hashed = value
             .nodes
             .into_iter()
+            .map(SizedNode::from_bytes)
             .map(Node::from)
             .map(|node| (node.compute_hash().finalize(), Arc::new(node)))
             .collect();

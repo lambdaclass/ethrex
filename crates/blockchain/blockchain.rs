@@ -7,12 +7,12 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ethrex_common::rkyv_utils::SizedNode;
 use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::rkyv_utils::SizedNode;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
@@ -482,7 +482,11 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config();
 
-        let nodes = used_trie_nodes.into_iter().map(SizedNode::from).collect::<Vec<_>>();
+        let nodes = used_trie_nodes
+            .into_iter()
+            .map(SizedNode::from)
+            .map(SizedNode::to_bytes)
+            .collect::<Vec<_>>();
 
         let mut keys = Vec::new();
 

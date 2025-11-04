@@ -279,6 +279,16 @@ pub enum SizedNode {
     },
 }
 
+impl SizedNode {
+    pub fn to_bytes(self) -> Vec<u8> {
+        rkyv::to_bytes::<rkyv::rancor::Error>(&self).unwrap().to_vec()
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        rkyv::from_bytes::<SizedNode, rkyv::rancor::Error>(&bytes).unwrap()
+    }
+}
+
 impl From<SizedNode> for Node {
     fn from(value: SizedNode) -> Self {
         match value {
