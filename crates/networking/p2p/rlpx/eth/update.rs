@@ -10,6 +10,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_storage::Store;
+use tracing::info;
 
 #[derive(Debug, Clone)]
 pub struct BlockRangeUpdate {
@@ -38,6 +39,7 @@ impl BlockRangeUpdate {
 
     /// Validates an incoming BlockRangeUpdate from a peer
     pub fn validate(&self) -> Result<(), PeerConnectionError> {
+        info!("Validating BlockRangeUpdate: {self:?}");
         if self.earliest_block > self.latest_block || self.latest_block_hash.is_zero() {
             return Err(PeerConnectionError::InvalidBlockRangeUpdate);
         }

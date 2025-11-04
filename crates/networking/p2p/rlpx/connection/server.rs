@@ -66,7 +66,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
@@ -623,6 +623,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
         trace!(peer=%state.node, "Sending BlockRangeUpdate");
         let update = BlockRangeUpdate::new(&state.storage).await?;
         let lastet_block = update.latest_block;
+        info!("Sending BlockRangeUpdate: {update:?}");
         send(state, Message::BlockRangeUpdate(update)).await?;
         state.last_block_range_update_block = lastet_block - (lastet_block % 32);
     }
