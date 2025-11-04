@@ -106,9 +106,9 @@ impl TrieDB for RocksDBTrieDB {
                 };
                 let db_key = self.make_key(key);
                 if value.is_empty() {
-                    cf.delete(&db_key);
+                    cf.delete(&db_key).unwrap();
                 } else {
-                    cf.insert(&db_key, &value);
+                    cf.insert(&db_key, &value).unwrap();
                 }
             }
         }
@@ -139,7 +139,7 @@ impl TrieDB for RocksDBTrieDB {
                 let db_key = self.make_key(hash.clone());
                 buffer.clear();
                 node.encode(&mut buffer);
-                cf.insert(&db_key, &buffer);
+                cf.insert(&db_key, &buffer).unwrap();
             }
         }
 
