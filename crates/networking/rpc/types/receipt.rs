@@ -1,5 +1,5 @@
 use ethrex_common::{
-    Address, Bloom, Bytes, H256,
+    Address, Bloom, Bytes, H256, U256,
     constants::GAS_PER_BLOB,
     evm::calculate_create_address,
     serde_utils,
@@ -154,10 +154,10 @@ pub struct RpcReceiptTxInfo {
     pub effective_gas_price: u64,
     #[serde(
         skip_serializing_if = "Option::is_none",
-        with = "ethrex_common::serde_utils::u64::hex_str_opt",
+        with = "serde_utils::u256::hex_str_opt",
         default = "Option::default"
     )]
-    pub blob_gas_price: Option<u64>,
+    pub blob_gas_price: Option<U256>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         with = "serde_utils::u64::hex_str_opt",
@@ -171,7 +171,7 @@ impl RpcReceiptTxInfo {
         transaction: Transaction,
         index: u64,
         gas_used: u64,
-        block_blob_gas_price: u64,
+        block_blob_gas_price: U256,
         base_fee_per_gas: Option<u64>,
     ) -> Result<Self, RpcErr> {
         let nonce = transaction.nonce();

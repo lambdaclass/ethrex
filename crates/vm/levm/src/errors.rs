@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use derive_more::derive::Display;
-use ethrex_common::{Address, H256, U256, types::Log};
+use ethrex_common::{
+    Address, H256, U256,
+    types::{FakeExponentialError, Log},
+};
 use serde::{Deserialize, Serialize};
 use thiserror;
 
@@ -176,6 +179,8 @@ pub enum InternalError {
     /// Unexpected error when accessing the database, used in trait `Database`.
     #[error("Database access error: {0}")]
     Database(#[from] DatabaseError),
+    #[error("{0}")]
+    FakeExponentialError(#[from] FakeExponentialError),
 }
 
 impl InternalError {
