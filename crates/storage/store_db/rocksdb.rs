@@ -346,7 +346,8 @@ impl Store {
                     .get_tree(b"")
                     .unwrap()
                     .unwrap()
-                    .insert(key.as_ref(), value.as_ref());
+                    .insert(key.as_ref(), value.as_ref())
+                    .unwrap();
             }
 
             Ok(db.group_commit(transactions.into_values(), false).unwrap())
@@ -475,8 +476,10 @@ impl Store {
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
-                misc_tree.insert(b"last_written", path.as_ref());
-                flatkeyvalue.insert(path.as_ref(), node.value.as_ref());
+                misc_tree.insert(b"last_written", path.as_ref()).unwrap();
+                flatkeyvalue
+                    .insert(path.as_ref(), node.value.as_ref())
+                    .unwrap();
                 ctr += 1;
                 if ctr > 10_000 {
                     let mut new_misc_tx =
@@ -529,8 +532,10 @@ impl Store {
                         continue;
                     };
                     let key = apply_prefix(Some(account_hash), path);
-                    misc_tree.insert(b"last_written", key.as_ref());
-                    flatkeyvalue.insert(key.as_ref(), node.value.as_ref());
+                    misc_tree.insert(b"last_written", key.as_ref()).unwrap();
+                    flatkeyvalue
+                        .insert(key.as_ref(), node.value.as_ref())
+                        .unwrap();
                     ctr += 1;
                     if ctr > 10_000 {
                         let mut new_misc_tx =
@@ -598,7 +603,7 @@ impl Store {
                 }
                 Err(err) => return Err(err),
                 Ok(()) => {
-                    misc_tree.insert(b"last_written", [0xff].as_ref());
+                    misc_tree.insert(b"last_written", [0xff].as_ref()).unwrap();
                     drop(misc_tree);
                     drop(flatkeyvalue);
                     self.db
@@ -692,9 +697,9 @@ impl Store {
                     &mut nodes_tree
                 };
                 if value.is_empty() {
-                    cf.delete(&key);
+                    cf.delete(&key).unwrap();
                 } else {
-                    cf.insert(&key, &value);
+                    cf.insert(&key, &value).unwrap();
                 }
             }
         }
@@ -802,14 +807,20 @@ impl StoreEngine for Store {
 
                 let hash_key_rlp = BlockHashRLP::from(block_hash);
                 let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-                headers_tree.insert(hash_key_rlp.bytes(), header_value_rlp.bytes());
+                headers_tree
+                    .insert(hash_key_rlp.bytes(), header_value_rlp.bytes())
+                    .unwrap();
 
                 let hash_key: AccountCodeHashRLP = block_hash.into();
                 let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-                bodies_tree.insert(hash_key.bytes(), body_value.bytes());
+                bodies_tree
+                    .insert(hash_key.bytes(), body_value.bytes())
+                    .unwrap();
 
                 let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                block_numbers_tree.insert(&hash_key, &block_number.to_le_bytes());
+                block_numbers_tree
+                    .insert(&hash_key, &block_number.to_le_bytes())
+                    .unwrap();
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let tx_hash = transaction.hash();
@@ -818,7 +829,7 @@ impl StoreEngine for Store {
                     composite_key.extend_from_slice(tx_hash.as_bytes());
                     composite_key.extend_from_slice(block_hash.as_bytes());
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    txl_tree.insert(&composite_key, &location_value);
+                    txl_tree.insert(&composite_key, &location_value).unwrap();
                 }
             }
 
@@ -826,7 +837,7 @@ impl StoreEngine for Store {
                 for (index, receipt) in receipts.into_iter().enumerate() {
                     let key = (block_hash, index as u64).encode_to_vec();
                     let value = receipt.encode_to_vec();
-                    receipts_tree.insert(&key, &value);
+                    receipts_tree.insert(&key, &value).unwrap();
                 }
             }
 
@@ -840,7 +851,7 @@ impl StoreEngine for Store {
                     .collect::<Vec<u8>>()
                     .as_slice()
                     .encode(&mut buf);
-                codes_tree.insert(&code_hash.0, &buf);
+                codes_tree.insert(&code_hash.0, &buf).unwrap();
             }
 
             // Wait for an updated top layer so every caller afterwards sees a consistent view.
@@ -898,14 +909,16 @@ impl StoreEngine for Store {
 
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
                     let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                    headers_tree.insert(&hash_key, &header_value);
+                    headers_tree.insert(&hash_key, &header_value).unwrap();
 
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
                     let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                    bodies_tree.insert(&hash_key, &body_value);
+                    bodies_tree.insert(&hash_key, &body_value).unwrap();
 
                     let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    block_numbers_tree.insert(&hash_key, &block_number.to_le_bytes());
+                    block_numbers_tree
+                        .insert(&hash_key, &block_number.to_le_bytes())
+                        .unwrap();
 
                     for (index, transaction) in block.body.transactions.iter().enumerate() {
                         let tx_hash = transaction.hash();
@@ -915,7 +928,9 @@ impl StoreEngine for Store {
                         composite_key.extend_from_slice(block_hash.as_bytes());
                         let location_value =
                             (block_number, block_hash, index as u64).encode_to_vec();
-                        tx_locations_tree.insert(&composite_key, &location_value);
+                        tx_locations_tree
+                            .insert(&composite_key, &location_value)
+                            .unwrap();
                     }
                 }
             }
@@ -1604,33 +1619,39 @@ impl StoreEngine for Store {
                     for (block_number, block_hash) in canonical_blocks {
                         let number_key = block_number.to_le_bytes();
                         let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
-                        canonical_tree.insert(&number_key, &hash_value);
+                        canonical_tree.insert(&number_key, &hash_value).unwrap();
                     }
                 }
 
                 // Remove anything after the head from the canonical chain
                 for number in (head_number + 1)..=(latest) {
-                    canonical_tree.delete(&number.to_le_bytes());
+                    canonical_tree.delete(&number.to_le_bytes()).unwrap();
                 }
 
                 // Make head canonical
                 let head_key = head_number.to_le_bytes();
                 let head_value = BlockHashRLP::from(head_hash).bytes().clone();
-                canonical_tree.insert(&head_key, &head_value);
+                canonical_tree.insert(&head_key, &head_value).unwrap();
 
                 // Update chain data
 
                 let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
-                chain_data_tree.insert(&latest_key, &head_number.to_le_bytes());
+                chain_data_tree
+                    .insert(&latest_key, &head_number.to_le_bytes())
+                    .unwrap();
 
                 if let Some(safe_number) = safe {
                     let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
-                    chain_data_tree.insert(&safe_key, &safe_number.to_le_bytes());
+                    chain_data_tree
+                        .insert(&safe_key, &safe_number.to_le_bytes())
+                        .unwrap();
                 }
 
                 if let Some(finalized_number) = finalized {
                     let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
-                    chain_data_tree.insert(&finalized_key, &finalized_number.to_le_bytes());
+                    chain_data_tree
+                        .insert(&finalized_key, &finalized_number.to_le_bytes())
+                        .unwrap();
                 }
             }
 
@@ -1834,7 +1855,6 @@ impl StoreEngine for Store {
         &self,
         storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        let db = self.db.clone();
         let dbs = self.dbs.clone();
         tokio::task::spawn_blocking(move || {
             let cf = dbs.get(CF_TRIE_NODES).ok_or_else(|| {
@@ -1849,9 +1869,9 @@ impl StoreEngine for Store {
                     for (node_hash, node_data) in nodes {
                         let key = apply_prefix(Some(address_hash), node_hash);
                         if node_data.is_empty() {
-                            tree.delete(key.as_ref());
+                            tree.delete(key.as_ref()).unwrap();
                         } else {
-                            tree.insert(key.as_ref(), &node_data);
+                            tree.insert(key.as_ref(), &node_data).unwrap();
                         }
                     }
                 }
