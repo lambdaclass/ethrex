@@ -130,12 +130,11 @@ impl TrieLayerCache {
         // add this new bloom to the global one via merge
         if let Some(filter) = &mut self.bloom
             && let Some(new_filter) = &bloom
+            && let Err(qfilter::Error::CapacityExceeded) = filter.merge(false, new_filter)
         {
-            if let Err(qfilter::Error::CapacityExceeded) = filter.merge(false, new_filter) {
-                tracing::warn!("TrieLayerCache: put_batch merge capacity exceeded");
-                self.bloom = None;
-                bloom = None;
-            }
+            tracing::warn!("TrieLayerCache: put_batch merge capacity exceeded");
+            self.bloom = None;
+            bloom = None;
         }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
