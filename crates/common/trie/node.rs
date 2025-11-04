@@ -24,6 +24,8 @@ pub enum NodeRef {
 
 impl NodeRef {
     /// Gets a shared reference to the inner node.
+    /// Requires that the trie is in a consistent state, ie that all leaves being pointed are in the database.
+    /// Outside of snapsync this should always be the case.
     pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
@@ -38,7 +40,7 @@ impl NodeRef {
         }
     }
 
-    /// Gets a shared reference to the inner node.
+    /// Gets a shared reference to the inner node, if it exists with the correct hash.
     pub fn get_node_checked(
         &self,
         db: &dyn TrieDB,
