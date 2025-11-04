@@ -5,6 +5,6 @@ This section explains how to interact with your L2 rollup built with ethrex. Her
 - [Depositing](./deposit.md) and [withdrawing](./withdraw.md) assets
 - [Connecting wallets](./wallet.md) like MetaMask
 - [Deploying](./deploy_contracts.md) smart contracts
-- [Maintaining](./maintain_sequencer.md) and operating the sequencer
+- Maintaining and operating the sequencer
 
 Use these guides to perform common actions and manage your L2 network.
