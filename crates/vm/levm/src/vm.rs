@@ -309,7 +309,7 @@ pub struct VM<'a> {
     /// The current call frame.
     pub current_call_frame: CallFrame,
     /// Stack allocations, call_frame.depth points to the index
-    pub stack: Box<[Stack; 1025]>,
+    pub stack: Vec<Stack>,
     pub env: Environment,
     pub substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
@@ -344,13 +344,6 @@ impl<'a> VM<'a> {
 
         let fork = env.config.fork;
 
-        let mut stack = Box::new_uninit_slice(1025);
-        for i in 0..1025 {
-            stack[i].write(Stack::default());
-        }
-        #[expect(unsafe_code)]
-        let stack = unsafe { stack.assume_init().try_into().unwrap() };
-
         let mut vm = Self {
             call_frames: Vec::new(),
             substate,
@@ -378,7 +371,7 @@ impl<'a> VM<'a> {
                 0,
                 Memory::default(),
             ),
-            stack,
+            stack: Vec::new(),
             env,
             opcode_table: VM::build_opcode_table(fork),
         };
@@ -412,6 +405,9 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        while self.stack.len() < 1024 {
+            self.stack.push(Stack::default());
+        }
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
