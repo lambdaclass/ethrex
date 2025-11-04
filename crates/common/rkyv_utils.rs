@@ -267,15 +267,16 @@ where
 pub enum SizedNode {
     Branch {
         choices: [NodeHash; 16],
-        value: ValueRLP,
+        value: ValueRLP, // 0
     },
     Extension {
         child: NodeHash,
-        prefix: Nibbles,
+        prefix: [u8; 32], // max 32 bytes
     },
     Leaf {
-        partial: Nibbles,
-        value: ValueRLP,
+        partial: [u8; 32], // max 32 bytes
+        #[serde(with = "serde_bytes")]
+        value: [u8; 108], // max 108 bytes for an account state
     },
 }
 
@@ -292,9 +293,14 @@ impl From<SizedNode> for Node {
             }
             SizedNode::Extension { child, prefix } => {
                 let child = NodeRef::Hash(child);
+                let prefix = Nibbles::from_bytes(&prefix);
                 Node::Extension(ExtensionNode { child, prefix })
             }
-            SizedNode::Leaf { partial, value } => Node::Leaf(LeafNode { partial, value }),
+            SizedNode::Leaf { partial, value } =>  {
+                let partial = Nibbles::from_bytes(&partial);
+                let value = Vec::from(value);
+                Node::Leaf(LeafNode { partial, value })
+            }
         }
     }
 }
@@ -313,9 +319,16 @@ impl From<Node> for SizedNode {
             }
             Node::Extension(ExtensionNode { child, prefix }) => {
                 let child = child.compute_hash();
-                SizedNode::Extension { child, prefix }
+                let mut prefix = prefix.into_vec();
+                prefix.resize(32, 0);
+                SizedNode::Extension { child, prefix: prefix.try_into().unwrap() }
             }
-            Node::Leaf(LeafNode { partial, value }) => SizedNode::Leaf { partial, value },
+            Node::Leaf(LeafNode { partial, mut value }) => {
+                value.resize(108, 0);
+                let partial = partial.into_vec().try_into().unwrap();
+                let value = value.try_into().unwrap();
+                SizedNode::Leaf { partial, value }
+            },
         }
     }
 }

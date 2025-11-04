@@ -31,6 +31,7 @@ lazy_static.workspace = true
 rayon.workspace = true
 url.workspace = true
 rkyv.workspace = true
+serde_bytes = "0.11.9"
 
 [dev-dependencies]
 hex-literal.workspace = true
