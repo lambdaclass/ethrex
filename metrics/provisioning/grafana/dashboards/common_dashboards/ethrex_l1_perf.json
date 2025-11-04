@@ -765,7 +765,7 @@
       },
       "gridPos": {
         "h": 12,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 14
       },
@@ -1004,8 +1004,8 @@
       },
       "gridPos": {
         "h": 12,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 14
       },
       "id": 12,
@@ -1170,6 +1170,229 @@
               },
               "remove_duplicate_blocks": {
                 "aggregations": []
+              }
+            }
+          }
+        }
+      ],
+      "type": "xychart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "series",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 50,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 2,
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 7
+            },
+            "pointStrokeWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "points+lines"
+          },
+          "links": [
+            {
+              "oneClick": false,
+              "targetBlank": true,
+              "title": "Show on Etherscan",
+              "url": "https://${network}.etherscan.io/block/${__data.fields.Block}"
+            }
+          ],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/block.*/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "id": 59,
+      "interval": "5s",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mapping": "auto",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              }
+            }
+          }
+        ],
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "(\n  sum by (instance, function_name) (\n    increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name!=\"Block execution\"}[$__rate_interval])\n  )\n)\nor\nlabel_replace(\n  sum by (instance) (\n    increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Block execution\"}[$__rate_interval])\n  )\n  - sum by (instance) (\n    increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=~\"Storage read|Account read|Account Read\"}[$__rate_interval])\n  ),\n  \"function_name\",\"Block execution (without db)\",\"instance\",\".*\"\n)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "{{instance}} {{function_name}}",
+          "range": true,
+          "refId": "Function"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Block",
+          "range": true,
+          "refId": "Block"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "all_same_block",
+          "range": true,
+          "refId": "all_same_block"
+        }
+      ],
+      "title": "Block Execution Functions by Block",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "mode": "inner"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "config": {
+                  "id": "equal",
+                  "options": {
+                    "value": "0"
+                  }
+                },
+                "fieldName": "all_same_block"
+              }
+            ],
+            "match": "any",
+            "type": "exclude"
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "byVariable": false,
+            "include": {
+              "pattern": "^(?!.*all_same_block).*$"
+            }
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Block": {
+                "aggregations": []
+              },
+              "Time": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value": {
+                "aggregations": [],
+                "operation": "groupby"
               }
             }
           }
