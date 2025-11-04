@@ -150,23 +150,17 @@ impl NodeRef {
         match Arc::make_mut(&mut node_ref) {
             Node::Branch(node) => {
                 for choice in &mut node.choices {
-                    let NodeRef::Hash(hash) = choice else {
-                        dbg!("already resolved branch node");
-                        return Ok(());
-                    };
-
-                    if hash.is_valid() {
+                    if let NodeRef::Hash(hash) = choice
+                        && hash.is_valid()
+                    {
                         choice.resolve_subtrie(all_nodes)?;
                     }
                 }
             }
             Node::Extension(node) => {
-                let NodeRef::Hash(_) = node.child else {
-                    dbg!("already resolved branch node");
-                    return Ok(());
-                };
-
-                node.child.resolve_subtrie(all_nodes)?;
+                if let NodeRef::Hash(_) = node.child {
+                    node.child.resolve_subtrie(all_nodes)?;
+                }
             }
             Node::Leaf(_) => {}
         };
