@@ -8,6 +8,7 @@ path = "concurrency.rs"
 
 [dependencies]
 crossbeam.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

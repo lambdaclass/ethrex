@@ -1,6 +1,7 @@
 use crossbeam::channel::{Sender, select_biased, unbounded};
 use std::marker::Send;
 use std::thread::{Builder, Scope};
+use tracing::info;
 
 pub struct ThreadPool<'scope> {
     priority_sender: Sender<Box<dyn 'scope + Send + FnOnce()>>, // Implictly our threads in the thread pool have the receiver
@@ -15,6 +16,7 @@ impl<'scope> ThreadPool<'scope> {
         for i in 0..thread_count {
             let priority_receiver = priority_receiver.clone();
             let nice_receiver = nice_receiver.clone();
+            info!(count=1, "Launching thread");
             let _ = Builder::new()
                 .name(format!("ThreadPool {i}"))
                 .spawn_scoped(scope, move || {
