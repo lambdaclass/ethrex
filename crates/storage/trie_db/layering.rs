@@ -10,6 +10,10 @@ struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
+    /// Per layer bloom filter, None if the size was exceeded (exceedingly rare).
+    /// Having a bloom per layer avoids the cost of rehashing each key every time we rebuild the globam bloom,
+    /// since merge simply uses the u64 hashed keys instead of rehashing.
+    bloom: Option<qfilter::Filter>,
 }
 
 #[derive(Clone, Debug)]
@@ -110,8 +114,10 @@ impl TrieLayerCache {
             return;
         }
 
+        let mut bloom = Self::create_filter().ok();
+
         // add this new bloom to the global one.
-        if let Some(filter) = &mut self.bloom {
+        if let Some(filter) = &mut bloom {
             for (p, _) in &key_values {
                 if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
                     tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
@@ -131,6 +137,7 @@ impl TrieLayerCache {
             nodes: Arc::new(nodes),
             parent,
             id: self.last_id,
+            bloom,
         };
         self.layers.insert(state_root, Arc::new(entry));
     }
@@ -141,22 +148,10 @@ impl TrieLayerCache {
             .layers
             .values()
             .par_bridge()
-            .map(|entry| {
-                let Ok(mut bloom) = Self::create_filter() else {
-                    tracing::warn!("TrieLayerCache: rebuild_bloom could not create filter");
-                    return None;
-                };
-                for (p, _) in entry.nodes.iter() {
-                    if let Err(qfilter::Error::CapacityExceeded) = bloom.insert(p) {
-                        tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                        return None;
-                    }
-                }
-                Some(bloom)
-            })
+            .map(|entry| entry.bloom.as_ref())
             .collect();
 
-        let Some(mut ret) = blooms.pop().flatten() else {
+        let Some(mut ret) = blooms.pop().flatten().cloned() else {
             tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
             self.bloom = None;
             return;
