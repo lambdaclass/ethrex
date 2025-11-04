@@ -16,8 +16,8 @@ use ethrex_l2_common::state_diff::SIMPLE_TX_STATE_DIFF_SIZE;
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_l2_rpc::clients::{
     get_base_fee_vault_address, get_l1_blob_base_fee_per_gas, get_l1_fee_vault_address,
+    get_operator_fee, get_operator_fee_vault_address,
 };
-use ethrex_l2_rpc::clients::{get_operator_fee, get_operator_fee_vault_address};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata, claim_erc20withdraw,

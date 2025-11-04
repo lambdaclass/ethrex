@@ -17,7 +17,7 @@ impl RpcHandler for GetBaseFeeVaultAddress {
         ))?;
         if params.len() != 1 {
             return Err(ethrex_rpc::RpcErr::BadParams(
-                "Expected 1 params".to_owned(),
+                "Expected 1 param".to_owned(),
             ))?;
         };
         // Parse BlockNumber
@@ -70,7 +70,7 @@ impl RpcHandler for GetOperatorFeeVaultAddress {
         ))?;
         if params.len() != 1 {
             return Err(ethrex_rpc::RpcErr::BadParams(
-                "Expected 1 params".to_owned(),
+                "Expected 1 param".to_owned(),
             ))?;
         };
         // Parse BlockNumber
@@ -123,7 +123,7 @@ impl RpcHandler for GetOperatorFee {
         ))?;
         if params.len() != 1 {
             return Err(ethrex_rpc::RpcErr::BadParams(
-                "Expected 1 params".to_owned(),
+                "Expected 1 param".to_owned(),
             ))?;
         };
         // Parse BlockNumber
@@ -171,7 +171,7 @@ impl RpcHandler for GetL1FeeVaultAddress {
         ))?;
         if params.len() != 1 {
             return Err(ethrex_rpc::RpcErr::BadParams(
-                "Expected 1 params".to_owned(),
+                "Expected 1 param".to_owned(),
             ))?;
         };
         // Parse BlockNumber
@@ -224,7 +224,7 @@ impl RpcHandler for GetL1BlobBaseFeeRequest {
         ))?;
         if params.len() != 1 {
             return Err(ethrex_rpc::RpcErr::BadParams(
-                "Expected 1 params".to_owned(),
+                "Expected 1 param".to_owned(),
             ))?;
         };
         // Parse BlockNumber
