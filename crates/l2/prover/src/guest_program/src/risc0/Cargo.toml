@@ -23,13 +23,19 @@ rkyv = { version = "0.8.10", features = ["unaligned"] }
 ethrex-common = { path = "../../../../../../common", default-features = false, features = [
     "risc0",
 ] }
-ethrex-storage = { path = "../../../../../../storage", default-features = false }
+ethrex-storage = { path = "../../../../../../storage", default-features = false, features = [
+    "risc0",
+] }
 ethrex-rlp = { path = "../../../../../../common/rlp" }
 ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
     "risc0",
 ] }
-ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false }
-ethrex-l2-common = { path = "../../../../../common", default-features = false }
+ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false, features = [
+    "risc0",
+] }
+ethrex-l2-common = { path = "../../../../../common", default-features = false, features = [
+    "risc0",
+] }
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.8-risczero.0" }
