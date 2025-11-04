@@ -80,6 +80,8 @@ impl RLPxInitiator {
     }
 
     #[cfg(any(test, feature = "test-utils"))]
+    /// Creates a dummy GenServer for tests
+    /// This should only be used in tests
     pub async fn dummy(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(P2PContext::dummy(peer_table).await);

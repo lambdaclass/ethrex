@@ -441,7 +441,7 @@ pub async fn init_l1(
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
 
     init_rpc_api(
-        &opts.clone(),
+        &opts,
         peer_handler.clone(),
         local_p2p_node,
         local_node_record.clone(),

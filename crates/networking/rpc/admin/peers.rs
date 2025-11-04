@@ -129,7 +129,7 @@ pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Resu
             .cast(InMessage::Initiate { node: node.clone() })
             .await;
 
-        if peer_is_conected(&mut context.peer_handler, &node.enode_url()).await {
+        if peer_is_connected(&mut context.peer_handler, &node.enode_url()).await {
             return Ok(serde_json::to_value(true)?);
         }
 
@@ -140,14 +140,12 @@ pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Resu
     }
 }
 
-async fn peer_is_conected(peer_handler: &mut PeerHandler, enode_url: &String) -> bool {
+async fn peer_is_connected(peer_handler: &mut PeerHandler, enode_url: &str) -> bool {
     peer_handler
         .read_connected_peers()
         .await
         .into_iter()
-        .map(|peer| peer.node.enode_url())
-        .collect::<Vec<_>>()
-        .contains(enode_url)
+        .any(|peer| peer.node.enode_url() == *enode_url)
 }
 
 // TODO: Adapt the test to the new P2P architecture.

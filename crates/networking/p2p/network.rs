@@ -93,6 +93,10 @@ impl P2PContext {
             tx_broadcaster,
         })
     }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    /// Creates a dummy P2PContext for tests
+    /// This should only be used in tests as it won't be able to connect to the p2p network
     pub async fn dummy(peer_table: PeerTable) -> P2PContext {
         use ethrex_storage::EngineType;
 
