@@ -24,10 +24,7 @@ openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 
 # install lightouse and ethrex
 brew install lambdaclass/tap/ethrex
-
-# we need to manually get lighthouse for now, we need the v8.0.0-rc version that isn't in brew yet, you can find the latest releases here: https://github.com/sigp/lighthouse/releases/ 
-curl -LO https://github.com/sigp/lighthouse/releases/download/v8.0.0-rc.2/lighthouse-v8.0.0-rc.2-aarch64-apple-darwin.tar.gz
-tar -xvf lighthouse-v8.0.0-rc.2-aarch64-apple-darwin.tar.gz
+brew install lighthouse
 ```
 
 On one terminal:
@@ -58,8 +55,8 @@ openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 # install lightouse and ethrex
 curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
 chmod +x ethrex
-curl -LO https://github.com/sigp/lighthouse/releases/download/v8.0.0-rc.2/lighthouse-v8.0.0-rc.2-x86_64-unknown-linux-gnu.tar.gz
-tar -xvf lighthouse-v8.0.0-rc.2-x86_64-unknown-linux-gnu.tar.gz
+curl -LO https://github.com/sigp/lighthouse/releases/download/v8.0.0/lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xvf lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 
