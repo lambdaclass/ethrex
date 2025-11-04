@@ -113,30 +113,8 @@ impl TrieLayerCache {
 
         self.last_id += 1;
 
-        let mut needs_rebuild = false;
-
-        // Try to take full ownership of the bloom to update it, otherwise rebuild it.
-        if let Some(bloom) = self.bloom.take() {
-            match Arc::try_unwrap(bloom) {
-                Ok(mut bloom) => {
-                    let mut errored = false;
-                    for key in nodes.keys() {
-                        if let Err(e) = bloom.add(key) {
-                            tracing::warn!("TrieLayerCache: rebuild_bloom error: {e}");
-                            errored = true;
-                            break;
-                        }
-                    }
-                    if !errored {
-                        self.bloom = Some(Arc::new(bloom));
-                    }
-                }
-                Err(bloom) => {
-                    self.bloom = Some(bloom);
-                    needs_rebuild = true;
-                }
-            }
-        }
+        // Note: bloom doesn't need to be edited here since commit will be called after this method,
+        // which removes the oldest layer and thus rebuilds the bloom.
 
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
@@ -145,10 +123,6 @@ impl TrieLayerCache {
         };
 
         self.layers.insert(state_root, Arc::new(entry));
-
-        if needs_rebuild {
-            self.rebuild_bloom();
-        }
     }
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
