@@ -20,39 +20,37 @@ pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
 impl<'a> VM<'a> {
     // POP operation
     pub fn op_pop(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::POP)?;
-        current_call_frame.stack.pop1()?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::POP)?;
+        self.current_stack().pop1()?;
         Ok(OpcodeResult::Continue)
     }
 
     // TLOAD operation
     pub fn op_tload(&mut self) -> Result<OpcodeResult, VMError> {
-        let key = self.current_call_frame.stack.pop1()?;
+        let key = self.current_stack().pop1()?;
         let to = self.current_call_frame.to;
         let value = self.substate.get_transient(&to, &key);
 
-        let current_call_frame = &mut self.current_call_frame;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::TLOAD)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::TLOAD)?;
-
-        current_call_frame.stack.push1(value)?;
+        self.current_stack().push1(value)?;
         Ok(OpcodeResult::Continue)
     }
 
     // TSTORE operation
     pub fn op_tstore(&mut self) -> Result<OpcodeResult, VMError> {
         let (key, value, to) = {
-            let current_call_frame = &mut self.current_call_frame;
+            self.current_call_frame
+                .increase_consumed_gas(gas_cost::TSTORE)?;
 
-            current_call_frame.increase_consumed_gas(gas_cost::TSTORE)?;
-
-            if current_call_frame.is_static {
+            if self.current_call_frame.is_static {
                 return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
             }
 
-            let [key, value] = *current_call_frame.stack.pop()?;
-            (key, value, current_call_frame.to)
+            let [key, value] = *self.current_stack().pop()?;
+            (key, value, self.current_call_frame.to)
         };
         self.substate.set_transient(&to, &key, value);
 
@@ -61,26 +59,26 @@ impl<'a> VM<'a> {
 
     // MLOAD operation
     pub fn op_mload(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
+        let offset = u256_to_usize(self.current_stack().pop1()?)?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::mload(
-            new_memory_size,
-            current_call_frame.memory.len(),
-        )?)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::mload(
+                new_memory_size,
+                self.current_call_frame.memory.len(),
+            )?)?;
 
-        current_call_frame
-            .stack
-            .push1(current_call_frame.memory.load_word(offset)?)?;
+        let word = self.current_call_frame.memory.load_word(offset)?;
+
+        self.current_stack().push1(word)?;
 
         Ok(OpcodeResult::Continue)
     }
 
     // MSTORE operation
     pub fn op_mstore(&mut self) -> Result<OpcodeResult, VMError> {
-        let [offset, value] = *self.current_call_frame.stack.pop()?;
+        let [offset, value] = *self.current_stack().pop()?;
 
         // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
         if self.debug_mode.enabled && self.debug_mode.handle_debug(offset, value)? {
@@ -89,36 +87,34 @@ impl<'a> VM<'a> {
 
         let offset = u256_to_usize(offset)?;
 
-        let current_call_frame = &mut self.current_call_frame;
-
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::mstore(
-            new_memory_size,
-            current_call_frame.memory.len(),
-        )?)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::mstore(
+                new_memory_size,
+                self.current_call_frame.memory.len(),
+            )?)?;
 
-        current_call_frame.memory.store_word(offset, value)?;
+        self.current_call_frame.memory.store_word(offset, value)?;
 
         Ok(OpcodeResult::Continue)
     }
 
     // MSTORE8 operation
     pub fn op_mstore8(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-
-        let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
+        let offset = u256_to_usize(self.current_stack().pop1()?)?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::mstore8(
-            new_memory_size,
-            current_call_frame.memory.len(),
-        )?)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::mstore8(
+                new_memory_size,
+                self.current_call_frame.memory.len(),
+            )?)?;
 
-        let value = current_call_frame.stack.pop1()?;
+        let value = self.current_stack().pop1()?;
 
-        current_call_frame
+        self.current_call_frame
             .memory
             .store_data(offset, &u256_to_big_endian(value)[WORD_SIZE - 1..WORD_SIZE])?;
 
@@ -128,9 +124,8 @@ impl<'a> VM<'a> {
     // SLOAD operation
     pub fn op_sload(&mut self) -> Result<OpcodeResult, VMError> {
         let (storage_slot_key, address) = {
-            let current_call_frame = &mut self.current_call_frame;
-            let storage_slot_key = current_call_frame.stack.pop1()?;
-            let address = current_call_frame.to;
+            let storage_slot_key = self.current_stack().pop1()?;
+            let address = self.current_call_frame.to;
             (storage_slot_key, address)
         };
 
@@ -138,11 +133,10 @@ impl<'a> VM<'a> {
 
         let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
 
-        let current_call_frame = &mut self.current_call_frame;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
-
-        current_call_frame.stack.push1(value)?;
+        self.current_stack().push1(value)?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -153,9 +147,8 @@ impl<'a> VM<'a> {
         }
 
         let (storage_slot_key, new_storage_slot_value, to) = {
-            let current_call_frame = &mut self.current_call_frame;
-            let [storage_slot_key, new_storage_slot_value] = *current_call_frame.stack.pop()?;
-            let to = current_call_frame.to;
+            let [storage_slot_key, new_storage_slot_value] = *self.current_stack().pop()?;
+            let to = self.current_call_frame.to;
             (storage_slot_key, new_storage_slot_value, to)
         };
 
@@ -229,30 +222,28 @@ impl<'a> VM<'a> {
 
     // MSIZE operation
     pub fn op_msize(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
-        current_call_frame
-            .stack
-            .push1(current_call_frame.memory.len().into())?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::MSIZE)?;
+        let mem_size = self.current_call_frame.memory.len().into();
+        self.current_stack().push1(mem_size)?;
         Ok(OpcodeResult::Continue)
     }
 
     // GAS operation
     pub fn op_gas(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::GAS)?;
 
-        let remaining_gas = current_call_frame.gas_remaining;
+        let remaining_gas = self.current_call_frame.gas_remaining;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
-        current_call_frame.stack.push1(remaining_gas.into())?;
+        self.current_stack().push1(remaining_gas.into())?;
 
         Ok(OpcodeResult::Continue)
     }
 
     // MCOPY operation
     pub fn op_mcopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
+        let [dest_offset, src_offset, size] = *self.current_stack().pop()?;
         let size: usize = u256_to_usize(size)?;
 
         let (dest_offset, src_offset) = if size == 0 {
@@ -263,13 +254,14 @@ impl<'a> VM<'a> {
 
         let new_memory_size = calculate_memory_size(dest_offset.max(src_offset), size)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::mcopy(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::mcopy(
+                new_memory_size,
+                self.current_call_frame.memory.len(),
+                size,
+            )?)?;
 
-        current_call_frame
+        self.current_call_frame
             .memory
             .copy_within(src_offset, dest_offset, size)?;
 
@@ -278,11 +270,11 @@ impl<'a> VM<'a> {
 
     // JUMP operation
     pub fn op_jump(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::JUMP)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::JUMP)?;
 
-        let jump_address = current_call_frame.stack.pop1()?;
-        Self::jump(current_call_frame, jump_address)?;
+        let jump_address = self.current_stack().pop1()?;
+        Self::jump(&mut self.current_call_frame, jump_address)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -321,7 +313,7 @@ impl<'a> VM<'a> {
 
     // JUMPI operation
     pub fn op_jumpi(&mut self) -> Result<OpcodeResult, VMError> {
-        let [jump_address, condition] = *self.current_call_frame.stack.pop()?;
+        let [jump_address, condition] = *self.current_stack().pop()?;
 
         self.current_call_frame
             .increase_consumed_gas(gas_cost::JUMPI)?;
@@ -344,12 +336,11 @@ impl<'a> VM<'a> {
 
     // PC operation
     pub fn op_pc(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::PC)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::PC)?;
 
-        current_call_frame
-            .stack
-            .push1(U256::from(current_call_frame.pc.wrapping_sub(1)))?;
+        let pc = self.current_call_frame.pc.wrapping_sub(1);
+        self.current_stack().push1(U256::from(pc))?;
 
         Ok(OpcodeResult::Continue)
     }

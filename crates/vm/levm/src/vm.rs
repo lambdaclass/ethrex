@@ -308,6 +308,8 @@ pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
     /// The current call frame.
     pub current_call_frame: CallFrame,
+    /// Stack allocations, call_frame.depth points to the index
+    pub stack: Box<[Stack; 1025]>,
     pub env: Environment,
     pub substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
@@ -320,8 +322,6 @@ pub struct VM<'a> {
     pub tracer: LevmCallTracer,
     /// Mode for printing some useful stuff, only used in development!
     pub debug_mode: DebugMode,
-    /// A pool of stacks to avoid reallocating too much when creating new call frames.
-    pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
@@ -344,6 +344,13 @@ impl<'a> VM<'a> {
 
         let fork = env.config.fork;
 
+        let mut stack = Box::new_uninit_slice(1025);
+        for i in 0..1025 {
+            stack[i].write(Stack::default());
+        }
+        #[expect(unsafe_code)]
+        let stack = unsafe { stack.assume_init().try_into().unwrap() };
+
         let mut vm = Self {
             call_frames: Vec::new(),
             substate,
@@ -354,7 +361,6 @@ impl<'a> VM<'a> {
             storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
-            stack_pool: Vec::new(),
             vm_type,
             current_call_frame: CallFrame::new(
                 env.origin,
@@ -370,9 +376,9 @@ impl<'a> VM<'a> {
                 is_create,
                 0,
                 0,
-                Stack::default(),
                 Memory::default(),
             ),
+            stack,
             env,
             opcode_table: VM::build_opcode_table(fork),
         };
@@ -502,6 +508,10 @@ impl<'a> VM<'a> {
     /// True if external transaction is a contract creation
     pub fn is_create(&self) -> Result<bool, InternalError> {
         Ok(self.current_call_frame.is_create)
+    }
+
+    pub fn current_stack(&mut self) -> &mut Stack {
+        &mut self.stack[self.current_call_frame.depth]
     }
 
     /// Executes without making changes to the cache.

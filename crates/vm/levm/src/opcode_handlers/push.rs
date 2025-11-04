@@ -11,18 +11,19 @@ use ethrex_common::{U256, utils::u256_from_big_endian_const};
 impl<'a> VM<'a> {
     // Generic PUSH operation, optimized at compile time for the given N.
     pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let call_frame = &mut self.current_call_frame;
-        call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::PUSHN)?;
 
         // Check to avoid multiple checks.
-        if call_frame.pc.checked_add(N).is_none() {
+        if self.current_call_frame.pc.checked_add(N).is_none() {
             Err(InternalError::Overflow)?;
         }
 
-        let value = if let Some(slice) = call_frame
+        let value = if let Some(slice) = self
+            .current_call_frame
             .bytecode
             .bytecode
-            .get(call_frame.pc..call_frame.pc.wrapping_add(N))
+            .get(self.current_call_frame.pc..self.current_call_frame.pc.wrapping_add(N))
         {
             u256_from_big_endian_const(
                 // SAFETY: If the get succeeded, we got N elements so the cast is safe.
@@ -35,10 +36,10 @@ impl<'a> VM<'a> {
             U256::zero()
         };
 
-        call_frame.stack.push1(value)?;
+        self.current_stack().push1(value)?;
 
         // Advance the PC by the number of bytes in this instruction's payload.
-        call_frame.pc = call_frame.pc.wrapping_add(N);
+        self.current_call_frame.pc = self.current_call_frame.pc.wrapping_add(N);
 
         Ok(OpcodeResult::Continue)
     }
@@ -47,7 +48,7 @@ impl<'a> VM<'a> {
     pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::PUSH0)?;
-        self.current_call_frame.stack.push_zero()?;
+        self.current_stack().push_zero()?;
         Ok(OpcodeResult::Continue)
     }
 }

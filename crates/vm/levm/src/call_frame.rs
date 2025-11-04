@@ -23,7 +23,7 @@ use std::{collections::HashMap, fmt};
 /// [`pop`](Self::pop) methods support working with multiple elements instead of a single one,
 /// reducing the number of checks performed on the stack.
 pub struct Stack {
-    pub values: Box<[U256; STACK_LIMIT]>,
+    pub values: [U256; STACK_LIMIT],
     pub offset: usize,
 }
 
@@ -194,7 +194,7 @@ impl Stack {
 impl Default for Stack {
     fn default() -> Self {
         Self {
-            values: Box::new([U256::zero(); STACK_LIMIT]),
+            values: [U256::zero(); STACK_LIMIT],
             offset: STACK_LIMIT,
         }
     }
@@ -243,7 +243,6 @@ pub struct CallFrame {
     pub bytecode: Code,
     /// Value sent along the transaction
     pub msg_value: U256,
-    pub stack: Stack,
     pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
     pub calldata: Bytes,
@@ -323,7 +322,6 @@ impl CallFrame {
         is_create: bool,
         ret_offset: usize,
         ret_size: usize,
-        stack: Stack,
         memory: Memory,
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
@@ -344,7 +342,6 @@ impl CallFrame {
             is_create,
             ret_offset,
             ret_size,
-            stack,
             memory,
             call_frame_backup: CallFrameBackup::default(),
             output: Bytes::default(),

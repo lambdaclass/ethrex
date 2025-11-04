@@ -162,9 +162,8 @@ fn main() {
 
     // Set initial stack and memory
     info!("Setting initial stack: {:?}", runner_input.initial_stack);
-    let stack = &mut vm.current_call_frame.stack;
     for elem in runner_input.initial_stack {
-        stack.push(&[elem]).expect("Stack Overflow");
+        vm.current_stack().push(&[elem]).expect("Stack Overflow");
     }
     info!(
         "Setting initial memory: 0x{:x}",
@@ -186,15 +185,16 @@ fn main() {
     }
 
     // Print final stack and memory
-    let callframe = vm.current_call_frame;
+    let stack_depth = vm.current_stack().offset;
     info!(
         "Final Stack (bottom to top): {:?}",
-        &callframe.stack.values[callframe.stack.offset..]
+        &vm.current_stack().values[stack_depth..]
             .iter()
             .rev()
             .map(|value| format!("0x{:x}", value))
             .collect::<Vec<_>>()
     );
+    let callframe = vm.current_call_frame;
     let final_memory: Vec<u8> = callframe.memory.buffer.borrow()[0..callframe.memory.len].to_vec();
     info!("Final Memory: 0x{}", hex::encode(final_memory));
 
