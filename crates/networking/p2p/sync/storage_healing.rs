@@ -556,7 +556,7 @@ fn get_initial_downloads(
     account_paths: &AccountStorageRoots,
 ) -> VecDeque<NodeRequest> {
     let trie = store
-        .open_locked_state_trie(state_root)
+        .open_direct_state_trie(state_root)
         .expect("We should be able to open the store");
     let mut initial_requests: VecDeque<NodeRequest> = VecDeque::new();
     initial_requests.extend(
