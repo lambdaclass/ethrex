@@ -141,8 +141,11 @@ impl NodeRef {
         &mut self,
         all_nodes: &mut BTreeMap<H256, Arc<Node>>,
     ) -> Result<(), TrieError> {
-        let finalized_hash = self.compute_hash().finalize(); // this will be a reference in the future
+        // this will be a reference in the future, to avoid the memcpy here
+        let finalized_hash = self.compute_hash().finalize();
 
+        // remove and later re-insert instead of get_mut because we can't keep the mut borrow
+        // maybe there is a better solution, this remove might be expensive (memmove)
         let Some((finalized_hash, mut node_ref)) = all_nodes.remove_entry(&finalized_hash) else {
             return Ok(());
         };
