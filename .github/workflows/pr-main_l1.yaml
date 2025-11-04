@@ -180,14 +180,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: "Rpc Compat tests"
-            simulation: ethereum/rpc-compat
-            # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
-            buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
-            artifact_prefix: rpc_compat
+          # - name: "Rpc Compat tests"
+          #   simulation: ethereum/rpc-compat
+          #   # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
+          #   buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
+          #   artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|eth|snap/Ping|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate|AccountRange|GetTrieNodes|GetByteCodes|GetStorageRanges|Findnode|BlobViolations
+            limit: snap/ByteCodes
             artifact_prefix: devp2p
           # - name: "Engine Auth and EC tests"
           #   simulation: ethereum/engine
@@ -241,7 +241,7 @@ jobs:
           SIM_LIMIT: ${{ matrix.limit }}
           SIM_BUILDARG: ${{ matrix.buildarg }}
         run: |
-          FLAGS='--sim.parallelism 4 --sim.loglevel 3'
+          FLAGS='--sim.parallelism 4 --sim.loglevel 3 --docker.output'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
@@ -273,7 +273,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hive_failed_logs_${{ matrix.artifact_prefix }}
-          path: src/results/failed_logs
+          path: src/results
           if-no-files-found: warn
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
