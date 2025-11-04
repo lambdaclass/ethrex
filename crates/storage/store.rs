@@ -52,6 +52,7 @@ pub enum EngineType {
     RocksDB,
 }
 
+#[derive(Default)]
 pub struct UpdateBatch {
     /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,

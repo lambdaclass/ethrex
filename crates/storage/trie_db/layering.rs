@@ -1,7 +1,7 @@
-use ethrex_common::H256;
+use ethrex_common::{H256, utils::keccak};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -13,7 +13,7 @@ struct TrieLayer {
 }
 
 #[derive(Clone, Debug)]
-pub struct TrieLayerCache {
+struct TrieLayerCacheInner {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
@@ -29,14 +29,30 @@ pub struct TrieLayerCache {
     bloom: Option<qfilter::Filter>,
 }
 
+#[derive(Debug)]
+pub struct TrieLayerCache {
+    inner: RwLock<TrieLayerCacheInner>,
+}
+
 impl Default for TrieLayerCache {
     fn default() -> Self {
         // Try to create the bloom filter, if it fails use poison mode.
         let bloom = Self::create_filter().ok();
         Self {
-            bloom,
-            last_id: 0,
-            layers: Default::default(),
+            inner: RwLock::new(TrieLayerCacheInner {
+                bloom,
+                last_id: 0,
+                layers: Default::default(),
+            }),
+        }
+    }
+}
+
+impl Clone for TrieLayerCache {
+    fn clone(&self) -> Self {
+        let inner = self.inner.read().expect("TrieLayerCache poisoned");
+        Self {
+            inner: RwLock::new(inner.clone()),
         }
     }
 }
@@ -51,18 +67,20 @@ impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         let key = key.as_ref();
 
+        let inner = self.inner.read().expect("TrieLayerCache poisoned");
+
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
-        if let Some(filter) = &self.bloom
-            && !filter.contains(key)
-        {
-            // TrieWrapper goes to db when returning None.
-            return None;
+        if let Some(filter) = &inner.bloom {
+            if !filter.contains(key) {
+                // TrieWrapper goes to db when returning None.
+                return None;
+            }
         }
 
         let mut current_state_root = state_root;
 
-        while let Some(layer) = self.layers.get(&current_state_root) {
+        while let Some(layer) = inner.layers.get(&current_state_root) {
             if let Some(value) = layer.nodes.get(key) {
                 return Some(value.clone());
             }
@@ -82,8 +100,9 @@ impl TrieLayerCache {
 
     // TODO: use finalized hash to know when to commit
     pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
+        let inner = self.inner.read().expect("TrieLayerCache poisoned");
         let mut counter = 0;
-        while let Some(layer) = self.layers.get(&state_root) {
+        while let Some(layer) = inner.layers.get(&state_root) {
             state_root = layer.parent;
             counter += 1;
             if counter > commit_threshold {
@@ -93,29 +112,27 @@ impl TrieLayerCache {
         None
     }
 
-    pub fn put_batch(
-        &mut self,
-        parent: H256,
-        state_root: H256,
-        key_values: Vec<(Nibbles, Vec<u8>)>,
-    ) {
+    pub fn put_batch(&self, parent: H256, state_root: H256, key_values: Vec<(Nibbles, Vec<u8>)>) {
         if parent == state_root && key_values.is_empty() {
             return;
         } else if parent == state_root {
             tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
             return;
         }
-        if self.layers.contains_key(&state_root) {
+
+        let mut inner = self.inner.write().expect("TrieLayerCache poisoned");
+
+        if inner.layers.contains_key(&state_root) {
             tracing::warn!("tried to insert a state_root that's already inserted");
             return;
         }
 
         // add this new bloom to the global one.
-        if let Some(filter) = &mut self.bloom {
+        if let Some(filter) = &mut inner.bloom {
             for (p, _) in &key_values {
                 if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
                     tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
-                    self.bloom = None;
+                    inner.bloom = None;
                     break;
                 }
             }
@@ -126,20 +143,25 @@ impl TrieLayerCache {
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
 
-        self.last_id += 1;
+        inner.last_id += 1;
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
             parent,
-            id: self.last_id,
+            id: inner.last_id,
         };
-        self.layers.insert(state_root, Arc::new(entry));
+        inner.layers.insert(state_root, Arc::new(entry));
     }
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
-    pub fn rebuild_bloom(&mut self) {
-        let mut blooms: Vec<_> = self
-            .layers
-            .values()
+    pub fn rebuild_bloom(&self) {
+        // Snapshot layers under read lock, then compute outside the lock
+        let layers: Vec<Arc<TrieLayer>> = {
+            let inner = self.inner.read().expect("TrieLayerCache poisoned");
+            inner.layers.values().cloned().collect()
+        };
+
+        let mut blooms: Vec<_> = layers
+            .into_iter()
             .par_bridge()
             .map(|entry| {
                 let Ok(mut bloom) = Self::create_filter() else {
@@ -158,34 +180,53 @@ impl TrieLayerCache {
 
         let Some(mut ret) = blooms.pop().flatten() else {
             tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-            self.bloom = None;
+            let mut inner = self.inner.write().expect("TrieLayerCache poisoned");
+            inner.bloom = None;
             return;
         };
         for bloom in blooms.iter() {
             let Some(bloom) = bloom else {
                 tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-                self.bloom = None;
+                let mut inner = self.inner.write().expect("TrieLayerCache poisoned");
+                inner.bloom = None;
                 return;
             };
             if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
                 tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                self.bloom = None;
+                let mut inner = self.inner.write().expect("TrieLayerCache poisoned");
+                inner.bloom = None;
                 return;
             }
         }
-        self.bloom = Some(ret);
+        let mut inner = self.inner.write().expect("TrieLayerCache poisoned");
+        inner.bloom = Some(ret);
     }
 
-    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
-            Ok(layer) => layer,
-            Err(layer) => TrieLayer::clone(&layer),
+    pub fn commit(&self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+        // Remove the requested layer first to avoid holding the lock across recursion
+        let (layer, layer_id) = {
+            let mut inner = self.inner.write().expect("TrieLayerCache poisoned");
+            let layer_arc = inner.layers.remove(&state_root)?;
+            let layer = match Arc::try_unwrap(layer_arc) {
+                Ok(layer) => layer,
+                Err(layer) => TrieLayer::clone(&layer),
+            };
+            let id = layer.id;
+            (layer, id)
         };
-        // ensure parents are commited
+
+        // ensure parents are committed
         let parent_nodes = self.commit(layer.parent);
+
         // older layers are useless
-        self.layers.retain(|_, item| item.id > layer.id);
-        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
+        {
+            let mut inner = self.inner.write().expect("TrieLayerCache poisoned");
+            inner.layers.retain(|_, item| item.id > layer_id);
+        }
+
+        // layers removed, rebuild global bloom filter.
+        self.rebuild_bloom();
+
         Some(
             parent_nodes
                 .unwrap_or_default()
@@ -227,8 +268,24 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
 
-    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        // TODO: Get rid of this.
-        unimplemented!("This function should not be called");
+    //TODO: Check if this is well implemented, for now it works at least for inserting state nodes
+    fn put_batch(&self, mut key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        // State root is the hash of the node that doesn't have nibbles in path.
+        let state_root = key_values
+            .iter()
+            .find(|(key, _)| *key == Nibbles::default())
+            .and_then(|(_, value)| Some(keccak(value)))
+            .unwrap();
+
+        // Apply prefix to every key
+        for (key, _value) in &mut key_values {
+            *key = apply_prefix(self.prefix, key.clone());
+        }
+
+        let parent = self.state_root;
+
+        self.inner.put_batch(parent, state_root, key_values);
+
+        Ok(())
     }
 }
