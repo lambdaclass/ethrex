@@ -6,7 +6,7 @@ use std::sync::Arc;
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
-struct TrieLayer {
+pub(crate) struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
@@ -21,7 +21,7 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: FxHashMap<H256, Arc<TrieLayer>>,
+    pub(crate) layers: FxHashMap<H256, Arc<TrieLayer>>,
     /// Global bloom that accrues all layer blooms.
     ///
     /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
@@ -30,7 +30,7 @@ pub struct TrieLayerCache {
     /// In case a bloom filter insert or merge fails, we need to mark the bloom filter as poisoned
     /// so we never use it again, because if we don't we may be misled into believing a key is not present
     /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
-    bloom: Option<qfilter::Filter>,
+    pub(crate) bloom: Option<qfilter::Filter>,
 }
 
 impl Default for TrieLayerCache {
@@ -153,9 +153,10 @@ impl TrieLayerCache {
     }
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
-    pub fn rebuild_bloom(&mut self) {
-        let mut blooms: Vec<_> = self
-            .layers
+    pub fn rebuild_bloom_threaded(
+        layers: &FxHashMap<H256, Arc<TrieLayer>>,
+    ) -> Option<qfilter::Filter> {
+        let mut blooms: Vec<_> = layers
             .values()
             .par_bridge()
             .map(|entry| entry.bloom.as_ref())
@@ -163,22 +164,21 @@ impl TrieLayerCache {
 
         let Some(mut ret) = blooms.pop().flatten().cloned() else {
             tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-            self.bloom = None;
-            return;
+            return None;
         };
         for bloom in blooms.iter() {
             let Some(bloom) = bloom else {
                 tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-                self.bloom = None;
-                return;
+
+                return None;
             };
             if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
                 tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                self.bloom = None;
-                return;
+
+                return None;
             }
         }
-        self.bloom = Some(ret);
+        return Some(ret);
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -190,7 +190,6 @@ impl TrieLayerCache {
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
         self.layers.retain(|_, item| item.id > layer.id);
-        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
         Some(
             parent_nodes
                 .unwrap_or_default()

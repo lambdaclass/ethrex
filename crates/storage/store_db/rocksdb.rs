@@ -748,6 +748,8 @@ impl Store {
         let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
         // Commit removes the bottom layer and returns it, this is the mutation step.
         let nodes = trie_mut.commit(root).unwrap_or_default();
+        let layers = trie_mut.layers.clone();
+        let handle = std::thread::spawn(move || TrieLayerCache::rebuild_bloom_threaded(&layers));
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
 
@@ -769,6 +771,12 @@ impl Store {
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
+
+        if let Ok(Some(bloom)) = handle.join() {
+            trie_mut.bloom = Some(bloom)
+        } else {
+            trie_mut.bloom = None;
+        }
         // Phase 3: update diff layers with the removal of bottom layer.
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         Ok(())
