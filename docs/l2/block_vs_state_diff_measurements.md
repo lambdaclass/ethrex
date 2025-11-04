@@ -1,4 +1,3 @@
-# Blob Transaction Capacity: State Diff vs. Transaction List
 # Comparative Analysis: Transaction Volume in Blobs Using State Diffs and Transaction Lists
 
 The following are results from measurements conducted to understand the efficiency of blob utilization in an ethrex L2 network through the simulation of different scenarios with varying transaction complexities (e.g., ETH transfers, ERC20 transfers, and other complex smart contract interactions) and data encoding strategies, with the final goal of estimating the approximate number of transactions that can be packed into a single blob using state diffs versus full transaction lists, thereby optimizing calldata costs and achieving greater scalability.
@@ -9,53 +8,102 @@ The following are results from measurements conducted to understand the efficien
 
 | Blob Payload | Batch 2 | Batch 3 | Batch 4 | Batch 5 | Batch 6 | Batch 7 | Batch 8 | Batch 9 | Batch 10 | Batch 11 |
 | ------------ | ------- | ------- | ------- | ------- | ------- | ------- | ------- | ------- | -------- | -------- |
-| State Diff   |   2030  |   2335  |   2361  |   2267  |   2204  |  2135   |  2215   |  2172   |   2321   |   2352   |
-| Block List   |   741   |   936   |   893   |   891   |   896   |  896    |  901    |  893    |   1015   |   1019   |
+| State Diff   | 2030    | 2335    | 2361    | 2267    | 2204    | 2135    | 2215    | 2172    | 2321     | 2352     |
+| Block List   | 741     | 936     | 893     | 891     | 896     | 896     | 901     | 893     | 1015     | 1019     |
 
 ### ERC20 Transfers
 
 | Blob Payload | Batch 2 | Batch 3 | Batch 4 | Batch 5 | Batch 6 | Batch 7 | Batch 8 | Batch 9 | Batch 10 | Batch 11 |
 | ------------ | ------- | ------- | ------- | ------- | ------- | ------- | ------- | ------- | -------- | -------- |
-| State Diff   |   1846  |   1835  |   1869  |   1905  |   1910  |   1819  |   1897  |   1895  |    1908  |    1758  |
-| Block List   |   636   |   649   |   611   |   611   |   644   |   540   |   503   |   508   |    504   |    505   |
+| State Diff   | 1846    | 1835    | 1869    | 1905    | 1910    | 1819    | 1897    | 1895    | 1908     | 1758     |
+| Block List   | 636     | 649     | 611     | 611     | 644     | 540     | 503     | 508     | 504      | 505      |
 
-## Summary
+### Summary
 
 | Blob Payload | Avg. ETH Transfers per Batch | Avg. ERC20 Transfers per Batch |
 | ------------ | ---------------------------- | ------------------------------ |
-| State Diff   |            2239              |             1864               |
-| Block List   |            908               |             571                |
-
+| State Diff   | 2239                         | 1864                           |
+| Block List   | 908                          | 571                            |
 
 ## Conclusion
 
 Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately 2.47x for ETH transfers and 3.26x for ERC20 transfers.
 
-## How to run
+## How this measurements were done
 
-Run an L2 ethrex:
+### Prerequisites
 
-```
+- Fresh cloned ethrex repository
+- The spammer and measurer code provided in the appendix set up for running (you can create a new cargo project and copy the code there)
+
+### Steps
+
+#### 1. Run an L2 ethrex:
+
+For running the measurements, we need to run an ethrex L2 node. For doing that, change your current directory to `ethrex/crates/l2` in your fresh-cloned ethrex and run the following in a terminal:
+
+```shell
 ETHREX_COMMITTER_COMMIT_TIME=120000 MEMPOOL_MAX_SIZE=1000000 make init-l2-dev
 ```
 
-After a few seconds (to give time to the rich account to get funds) run the transactions spammer *
+This will set up and run an ethrex L2 node in dev mode with a mempool size big-enough to be able to handle the spammer transactions. And after this you should see the ethrex L2 monitor running.
 
-`cargo run`
+#### 2. Run the desired transactions spammer
 
+> [!IMPORTANT]
+> Wait a few seconds after running the L2 node to make sure it's fully up and running before starting the spammer, and to ensure that the rich account used by the spammer has funds.
 
-Once enough batches are generated run the measurer *
+In another terminal, change your current directory to the spammer code you want to run (either ETH or ERC20) and run:
 
+```shell
+cargo run
+```
 
-`cargo run`
+It's ok not to see any logs or prints as output, since the spammer code doesn't print anything.
 
+If you go back to the terminal where the L2 node is running, you should start seeing the following:
 
-* Code can be found on the appendix
+1. The mempool table growing in size as transactions are being sent to the L2 node.
+2. In the L2 Blocks table, new blocks with `#Txs` greater than 0 being created as the spammer transactions are included in blocks.
+3. Every 2 minutes (or the time you set in `ETHREX_COMMITTER_COMMIT_TIME`), new batches being created in the L2 Batches table.
 
+#### 3. Run the measurer
 
-# Appendix
+> [!IMPORTANT]
+>
+> - Wait until enough batches are created before running the measurer.
+> - Ignore the results of the first 2/3 batches, since they contain other transactions created during the L2 node initialization.
 
-Code for the transactions spammer
+In another terminal, change your current directory to the measurer code and run:
+
+```shell
+cargo run
+```
+
+This will start printing the total number of transactions included in each batch until the last committed one.
+
+> [!NOTE]
+>
+> - The measurer will query batches starting from batch 1 and will continue indefinitely until it fails to find a batch (e.g. because the L2 node hasn't created it yet), so it is ok to see an error at the end of the output once the measurer reaches a batch that hasn't been created yet.
+
+## Appendix
+
+- [ETH Transactions Spammer](#eth-transactions-spammer)
+  - [`main.rs`](#mainrs)
+  - [`Cargo.toml`](#cargotoml)
+- [Measurer](#measurer)
+  - [`main.rs`](#mainrs-1)
+  - [`Cargo.toml`](#cargotoml-1)
+- [ERC20 Transactions Spammer](#erc20-transactions-spammer)
+  - [`main.rs`](#mainrs-2)
+  - [`Cargo.toml`](#cargotoml-2)
+
+### ETH Transactions Spammer
+
+> [!NOTE]
+> This is using ethrex v6.0.0
+
+#### `main.rs`
 
 ```rs
 use ethrex_common::{Address, U256, types::{EIP1559Transaction, Transaction, TxKind}};
@@ -101,6 +149,8 @@ async fn generate_signed_transaction(nonce: u64, chain_id: u64, signer: &Signer)
 }
 ```
 
+#### `Cargo.toml`
+
 ```toml
 [package]
 name = "tx_spammer"
@@ -108,17 +158,21 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ethrex-sdk = {git = "https://github.com/lambdaclass/ethrex.git"}
-ethrex-common = {git = "https://github.com/lambdaclass/ethrex.git"}
-ethrex-l2-rpc = {git = "https://github.com/lambdaclass/ethrex.git"}
-ethrex-rpc = {git = "https://github.com/lambdaclass/ethrex.git"}
+ethrex-sdk = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-common = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-l2-rpc = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-rpc = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+
 tokio = { version = "1", features = ["full"] }
 url = "2"
 hex = "0.4"
 ```
 
+### Measurer
 
-Code for the measurer
+A simple program that queries the L2 node for batches and blocks, counting the number of transactions in each block, and summing them up per batch.
+
+#### `main.rs`
 
 ```rs
 use reqwest::Client;
@@ -136,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             txs += fetch_block(number).await;
         }
         println!("Total transactions in batch {}: {}", batch, txs);
-        
+
         batch += 1;
     }
 }
@@ -193,6 +247,7 @@ async fn fetch_block(number: u64) -> u64 {
 }
 ```
 
+#### `Cargo.toml`
 
 ```toml
 [package]
@@ -206,7 +261,9 @@ serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
-Code for the tx spammer with ERC20
+### ERC20 Transactions Spammer
+
+#### `main.rs`
 
 ```rs
 use ethrex_blockchain::constants::TX_GAS_COST;
@@ -315,7 +372,7 @@ async fn generate_erc20_transaction(nonce: u64, chain_id: u64, signer: &Signer, 
                     },
                 )
                 .await.unwrap();
-    
+
     tx
 }
 
@@ -336,6 +393,8 @@ async fn generate_signed_transaction(nonce: u64, chain_id: u64, signer: &Signer)
 }
 ```
 
+##### `Cargo.toml`
+
 ```toml
 [package]
 name = "tx_spammer"
@@ -343,13 +402,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ethrex-sdk = {git = "https://github.com/lambdaclass/ethrex.git"}
-ethrex-common = {git = "https://github.com/lambdaclass/ethrex.git"}
-ethrex-l2-rpc = {git = "https://github.com/lambdaclass/ethrex.git"}
-ethrex-rpc = {git = "https://github.com/lambdaclass/ethrex.git"}
+ethrex-sdk = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-common = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-l2-rpc = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-rpc = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
 tokio = { version = "1", features = ["full"] }
-ethrex-l2-common = { git = "https://github.com/lambdaclass/ethrex.git"}
-ethrex-blockchain = { git = "https://github.com/lambdaclass/ethrex.git"}
+ethrex-l2-common = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-blockchain = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
 url = "2"
 hex = "0.4"
 eyre = "0.6"
