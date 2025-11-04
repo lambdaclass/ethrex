@@ -215,13 +215,14 @@ impl BranchNode {
                 let Some(child) = child_ref
                     .get_node_mut(db, base_path.current().append_new(*choice_index as u8))?
                 else {
-                    return Err(TrieError::InconsistentTree(Box::new(
-                        InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref.compute_hash().finalize(),
-                            self.compute_hash().finalize(),
-                            base_path.current(),
-                        ),
-                    )));
+                    // Warning: Outside of replay this should return an Inconsistent Tree error!
+                    // With the eth_getProof method if a child is missing we know for sure that it's an extension node,
+                    // because these are the only ones we can't get when using that RPC endpoint.
+                    let reduced_node: ExtensionNode = ExtensionNode::new(
+                        Nibbles::from_hex(vec![*choice_index as u8]),
+                        child_ref.clone(),
+                    );
+                    return Ok((Some(NodeRemoveResult::New(reduced_node.into())), value));
                 };
 
                 let node = match child {
