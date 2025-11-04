@@ -1,18 +1,18 @@
 use std::process::{Command, Stdio};
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use guest_program::{input::ProgramInput, output::ProgramOutput};
+use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 
 const OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output.bin");
 
-const ELF_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/src/guest_program/src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program"
-);
+const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_elf");
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+    // We write the ELF to a temp file because ziskemu currently only accepts ELF files from disk
+    std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
+
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
 
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
