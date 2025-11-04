@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use ethereum_types::{Bloom, H160, H256, U256};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{
     Nibbles, Node, NodeHash, NodeRef, ValueRLP,
     node::{BranchNode, ExtensionNode, LeafNode},
