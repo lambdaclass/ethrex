@@ -9,7 +9,7 @@ The following are results from measurements conducted to understand the efficien
 | Blob Payload | Batch 2 | Batch 3 | Batch 4 | Batch 5 | Batch 6 | Batch 7 | Batch 8 | Batch 9 | Batch 10 | Batch 11 |
 | ------------ | ------- | ------- | ------- | ------- | ------- | ------- | ------- | ------- | -------- | -------- |
 | State Diff   |     |     |     |     |     |     |     |     |      |      |
-| Block List   |      |      |      |      |      |      |      |      |      |      |
+| Block List   |   913   |   871   |  886    |    935  |  1019   |   994   |  1002   |  1011   |  1012    |   1015   |
 
 ### ERC20 Transfers
 
@@ -23,7 +23,7 @@ The following are results from measurements conducted to understand the efficien
 | Blob Payload | Avg. ETH Transfers per Batch | Avg. ERC20 Transfers per Batch |
 | ------------ | ---------------------------- | ------------------------------ |
 | State Diff   |                          |                 1870           |
-| Block List   |                           |                609             |
+| Block List   |          965                 |                609             |
 
 ## Conclusion
 
@@ -106,7 +106,10 @@ This will start printing the total number of transactions included in each batch
 #### `main.rs`
 
 ```rs
-use ethrex_common::{Address, U256, types::{EIP1559Transaction, Transaction, TxKind}};
+use ethrex_common::{
+    Address, U256,
+    types::{EIP1559Transaction, Transaction, TxKind},
+};
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_l2_sdk::send_generic_transaction;
 use ethrex_rpc::EthClient;
@@ -116,20 +119,30 @@ use url::Url;
 #[tokio::main]
 async fn main() {
     let chain_id = 65536999;
-    let signer = Signer::Local(LocalSigner::new(
-        "39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-            .parse()
-            .expect("invalid private key"),
-    ));
-    let eth_client: EthClient = EthClient::new(Url::parse("http://localhost:1729").expect("Invalid URL")).expect("Failed to create EthClient");
+    let senders = vec![
+        "7a738a3a8ee9cdbb5ee8dfc1fc5d97847eaba4d31fd94f89e57880f8901fa029",
+        "8cfe380955165dd01f4e33a3c68f4e08881f238fbbea71a2ab407f4a3759705b",
+        "5bb463c0e64039550de4f95b873397b36d76b2f1af62454bb02cf6024d1ea703",
+        "3c0924743b33b5f06b056bed8170924ca12b0d52671fb85de1bb391201709aaf",
+        "6aeeda1e7eda6d618de89496fce01fb6ec685c38f1c5fccaa129ec339d33ff87",
+    ]
+    .iter()
+    .map(|s| Signer::Local(LocalSigner::new(s.parse().expect("invalid private key"))))
+    .collect::<Vec<Signer>>();
+    let eth_client: EthClient =
+        EthClient::new(Url::parse("http://localhost:1729").expect("Invalid URL"))
+            .expect("Failed to create EthClient");
     let mut nonce = 0;
     loop {
-        let signed_tx = generate_signed_transaction(nonce, chain_id, &signer).await;
-        send_generic_transaction(&eth_client, signed_tx.into(), &signer).await.expect("Failed to send transaction");
+        for sender in senders.clone() {
+            let signed_tx = generate_signed_transaction(nonce, chain_id, &sender).await;
+            send_generic_transaction(&eth_client, signed_tx.into(), &sender)
+                .await
+                .expect("Failed to send transaction");
+            sleep(std::time::Duration::from_millis(10)).await;
+        }
         nonce += 1;
-        sleep(std::time::Duration::from_millis(10)).await;
     }
-
 }
 
 async fn generate_signed_transaction(nonce: u64, chain_id: u64, signer: &Signer) -> Transaction {
