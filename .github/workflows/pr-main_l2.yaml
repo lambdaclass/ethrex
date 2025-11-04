@@ -2,6 +2,7 @@ name: L2 (without proving)
 on:
   push:
     branches: ["main"]
+  merge_group:
   pull_request:
     branches: ["**"]
 
@@ -37,7 +38,9 @@ jobs:
       - name: finish
         id: finish
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+              echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
               echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
@@ -198,7 +201,7 @@ jobs:
         run: |
           cd crates/l2
           make build-prover-exec
-          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
+          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32
 
       - name: Build test
         run: |
