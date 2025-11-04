@@ -2,7 +2,7 @@ use crate::l2::batch::RpcBatch;
 use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
-use ethrex_l2_common::l1_messages::L1MessageProof;
+use ethrex_l2_common::messages::L1MessageProof;
 use ethrex_rpc::clients::eth::errors::GetL1BlobBaseFeeRequestError;
 use ethrex_rpc::clients::eth::errors::GetOperatorFeeError;
 use ethrex_rpc::clients::eth::errors::GetOperatorFeeVaultAddressError;

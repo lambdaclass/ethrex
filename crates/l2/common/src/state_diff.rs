@@ -13,7 +13,7 @@ use ethrex_trie::{Trie, TrieError};
 use ethrex_vm::{EvmError, VmDatabase};
 use serde::{Deserialize, Serialize};
 
-use crate::{l1_messages::L1Message, privileged_transactions::PrivilegedTransactionLog};
+use crate::{messages::L1Message, privileged_transactions::PrivilegedTransactionLog};
 
 /// The serialized length of a default l1message log
 pub const L1MESSAGE_LOG_LEN: u64 = 84;

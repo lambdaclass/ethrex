@@ -156,6 +156,8 @@ impl RLPxMessage for BatchSealed {
             },
             commit_tx,
             verify_tx,
+            balance_diffs: vec![],
+            l2_message_hashes: vec![],
         };
         Ok(BatchSealed::new(batch, signature))
     }

@@ -668,7 +668,7 @@ impl StoreEngineRollup for SQLStore {
             .await?;
         self.store_message_hashes_by_batch_in_tx(
             batch.number,
-            batch.message_hashes,
+            batch.l1_message_hashes,
             Some(&transaction),
         )
         .await?;

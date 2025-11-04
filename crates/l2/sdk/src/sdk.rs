@@ -10,7 +10,7 @@ use ethrex_common::{
         WrappedEIP4844Transaction,
     },
 };
-use ethrex_l2_common::{calldata::Value, l1_messages::L1MessageProof};
+use ethrex_l2_common::{calldata::Value, messages::L1MessageProof};
 use ethrex_l2_rpc::{
     clients::get_message_proof,
     signer::{LocalSigner, Signable, Signer},

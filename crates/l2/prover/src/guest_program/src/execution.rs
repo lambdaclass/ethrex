@@ -14,7 +14,7 @@ use ethrex_common::types::{
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Block};
 #[cfg(feature = "l2")]
-use ethrex_l2_common::l1_messages::L1Message;
+use ethrex_l2_common::messages::L1Message;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ use ethrex_common::types::{
     kzg_commitment_to_versioned_hash,
 };
 use ethrex_l2_common::{
-    l1_messages::get_block_l1_messages,
+    messages::get_block_l1_messages,
     privileged_transactions::{
         PrivilegedTransactionError, compute_privileged_transactions_hash,
         get_block_privileged_transactions,
@@ -370,9 +370,9 @@ fn compute_l1messages_and_privileged_transactions_digests(
     l1messages: &[L1Message],
     privileged_transactions: &[PrivilegedL2Transaction],
 ) -> Result<(H256, H256), StatelessExecutionError> {
-    use ethrex_l2_common::{l1_messages::get_message_hash, merkle_tree::compute_merkle_root};
+    use ethrex_l2_common::{merkle_tree::compute_merkle_root, messages::get_l1_message_hash};
 
-    let message_hashes: Vec<_> = l1messages.iter().map(get_message_hash).collect();
+    let message_hashes: Vec<_> = l1messages.iter().map(get_l1_message_hash).collect();
     let privileged_transactions_hashes: Vec<_> = privileged_transactions
         .iter()
         .map(PrivilegedL2Transaction::get_privileged_hash)

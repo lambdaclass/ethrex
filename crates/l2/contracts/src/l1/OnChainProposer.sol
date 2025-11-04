@@ -11,6 +11,10 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
+import "./interfaces/ICommonBridge.sol";
+import "./interfaces/IOnChainProposer.sol";
+import "../l2/interfaces/ICommonBridgeL2.sol";
+import {BalanceDiff} from "./interfaces/ICommonBridge.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -192,7 +196,8 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
-        bytes32 lastBlockHash
+        bytes32 lastBlockHash,
+        BalanceDiff[] balanceDiffs
     ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
         require(
@@ -229,7 +234,8 @@ contract OnChainProposer is
         if (l2MessagesMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishL2Messages(
                 batchNumber,
-                l2MessagesMerkleRoot
+                l2MessagesMerkleRoot,
+                balanceDiffs
             );
         }
 

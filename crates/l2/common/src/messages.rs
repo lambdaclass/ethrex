@@ -1,7 +1,9 @@
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
+use ethrex_common::types::balance_diff::BalanceDiff;
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
 
@@ -41,14 +43,18 @@ impl L1Message {
     }
 }
 
-pub fn get_message_hash(msg: &L1Message) -> H256 {
+pub fn get_l1_message_hash(msg: &L1Message) -> H256 {
+    keccak(msg.encode())
+}
+
+pub fn get_l2_message_hash(msg: &L2Message) -> H256 {
     keccak(msg.encode())
 }
 
 pub fn get_block_l1_message_hashes(receipts: &[Receipt]) -> Vec<H256> {
     get_block_l1_messages(receipts)
         .iter()
-        .map(get_message_hash)
+        .map(get_l1_message_hash)
         .collect()
 }
 
@@ -94,6 +100,19 @@ pub struct L2Message {
     pub data: Bytes,
 }
 
+impl L2Message {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&self.chain_id.to_big_endian());
+        bytes.extend_from_slice(&self.from.to_fixed_bytes());
+        bytes.extend_from_slice(&self.to.to_fixed_bytes());
+        bytes.extend_from_slice(&self.value.to_big_endian());
+        bytes.extend_from_slice(&self.gas_limit.to_big_endian());
+        bytes.extend_from_slice(&self.data);
+        bytes
+    }
+}
+
 pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
     // keccak256("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)")
     static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
@@ -108,11 +127,11 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
                 .iter()
                 .filter(|log| {
                     log.address == MESSENGER_ADDRESS
-                        && log.topics.get(0) == Some(&*L2MESSAGE_EVENT_SELECTOR)
+                        && log.topics.first() == Some(&*L2MESSAGE_EVENT_SELECTOR)
                         && log.topics.len() >= 2 // need chainId
                 })
                 .filter_map(|log| {
-                    let chain_id = U256::from_big_endian(&log.topics[1].0);
+                    let chain_id = U256::from_big_endian(&log.topics.get(1)?.0);
                     let from = H256::from_slice(log.data.get(32..64)?);
                     let from = Address::from_slice(&from.as_fixed_bytes()[12..]);
                     let to = H256::from_slice(log.data.get(64..96)?);
@@ -135,4 +154,16 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
                 })
         })
         .collect()
+}
+
+pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
+    let mut acc: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
+    for m in messages {
+        let entry = acc.entry(m.chain_id).or_insert(BalanceDiff {
+            chain_id: m.chain_id,
+            value: m.value,
+        });
+        entry.value += m.value;
+    }
+    acc.into_values().collect()
 }

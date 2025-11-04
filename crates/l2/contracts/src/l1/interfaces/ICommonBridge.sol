@@ -109,6 +109,18 @@ interface ICommonBridge {
         bytes32 withdrawalsLogsMerkleRoot
     ) external;
 
+    /// @notice Publishes the L2 messages in the router contract.
+    /// @dev This method is used by the L2 OnChainOperator to publish the L2
+    /// messages when an L2 batch is committed.
+    /// @param l2MessagesBatchNumber the batch number in L2 where the l2 messages were emitted.
+    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
+    /// @param balanceDiffs Array of balance differences for cross-chain accounting.
+    function publishMessages(
+        uint256 l2MessagesBatchNumber,
+        bytes32 l2MessagesMerkleRoot,
+        BalanceDiff[] calldata balanceDiffs
+    ) external;
+
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:
     /// - The l2WithdrawalBatchNumber was committed. If the given batch was not

@@ -400,7 +400,12 @@ contract CommonBridge is
         bytes32 l2MessagesMerkleRoot,
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer {
-        Router(SHARED_BRIDGE_ROUTER).sendMessage{value: message.value}(
+        uint256 totalValue = 0;
+        for (uint i = 0; i < balanceDiffs.length; i++) {
+            totalValue += balanceDiffs[i].value;
+        }
+
+        Router(SHARED_BRIDGE_ROUTER).publishL2Messages{value: totalValue}(
             dstChainId,
             message
         );

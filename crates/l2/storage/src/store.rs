@@ -59,9 +59,11 @@ impl Store {
             state_root: H256::zero(),
             privileged_transactions_hash: H256::zero(),
             l1_message_hashes: Vec::new(),
+            l2_message_hashes: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
             commit_tx: None,
             verify_tx: None,
+            balance_diffs: Vec::new(),
         })
         .await?;
         // Sets the latest sent batch proof to 0
@@ -223,6 +225,8 @@ impl Store {
             privileged_transactions_hash,
             commit_tx,
             verify_tx,
+            balance_diffs: Vec::new(),     // TODO: Load balance diffs
+            l2_message_hashes: Vec::new(), // TODO: Load L2 message hashes
         }))
     }
 
