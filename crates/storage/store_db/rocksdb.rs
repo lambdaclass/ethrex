@@ -491,22 +491,19 @@ impl Store {
                     .unwrap();
                 ctr += 1;
                 if ctr > 10_000 {
-                    let mut new_misc_tx =
-                        self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
-                    let mut new_flatkeyvalue_tx = self
+                    drop(misc_tree);
+                    drop(flatkeyvalue);
+
+                    self.db
+                        .group_commit([cf_misc, cf_flatkeyvalue], false)
+                        .unwrap();
+
+                    cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+                    cf_flatkeyvalue = self
                         .dbs
                         .get(CF_FLATKEYVALUE)
                         .unwrap()
                         .begin_write()
-                        .unwrap();
-
-                    drop(misc_tree);
-                    drop(flatkeyvalue);
-
-                    std::mem::swap(&mut new_misc_tx, &mut cf_misc);
-                    std::mem::swap(&mut new_flatkeyvalue_tx, &mut cf_flatkeyvalue);
-                    self.db
-                        .group_commit([new_misc_tx, new_flatkeyvalue_tx], false)
                         .unwrap();
 
                     misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
@@ -547,22 +544,19 @@ impl Store {
                         .unwrap();
                     ctr += 1;
                     if ctr > 10_000 {
-                        let mut new_misc_tx =
-                            self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
-                        let mut new_flatkeyvalue_tx = self
+                        drop(misc_tree);
+                        drop(flatkeyvalue);
+
+                        self.db
+                            .group_commit([cf_misc, cf_flatkeyvalue], false)
+                            .unwrap();
+
+                        cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+                        cf_flatkeyvalue = self
                             .dbs
                             .get(CF_FLATKEYVALUE)
                             .unwrap()
                             .begin_write()
-                            .unwrap();
-
-                        drop(misc_tree);
-                        drop(flatkeyvalue);
-
-                        std::mem::swap(&mut new_misc_tx, &mut cf_misc);
-                        std::mem::swap(&mut new_flatkeyvalue_tx, &mut cf_flatkeyvalue);
-                        self.db
-                            .group_commit([new_misc_tx, new_flatkeyvalue_tx], false)
                             .unwrap();
 
                         misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
