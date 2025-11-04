@@ -1533,7 +1533,7 @@ impl StoreEngine for Store {
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
-            self.db.clone(),
+            self.dbs.clone(),
             CF_TRIE_NODES,
             None,
             self.last_written()?,
@@ -1558,7 +1558,7 @@ impl StoreEngine for Store {
         state_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
-            self.db.clone(),
+            self.dbs.clone(),
             CF_TRIE_NODES,
             None,
             self.last_written()?,
