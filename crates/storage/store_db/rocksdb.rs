@@ -414,35 +414,46 @@ impl Store {
         &self,
         control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
-        let mut cf_misc = self
-            .dbs
-            .get(CF_MISC_VALUES)
-            .unwrap()
-            .begin_write_concurrent()
-            .unwrap();
-        let mut cf_flatkeyvalue = self
-            .dbs
-            .get(CF_FLATKEYVALUE)
-            .unwrap()
-            .begin_write_concurrent()
-            .unwrap();
-        let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-        let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
-
-        let last_written = {
-            misc_tree
-                .get(b"last_written")
+        {
+            let cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_read().unwrap();
+            let cf_flatkeyvalue = self
+                .dbs
+                .get(CF_FLATKEYVALUE)
                 .unwrap()
-                .map(|b| b.to_vec())
-                .unwrap_or_else(|| vec![0u8; 64])
-        };
-        if last_written == vec![0xff] {
-            return Ok(());
+                .begin_write_concurrent()
+                .unwrap();
+            let misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
+            let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+            let last_written = {
+                misc_tree
+                    .get(b"last_written")
+                    .unwrap()
+                    .map(|b| b.to_vec())
+                    .unwrap_or_else(|| vec![0u8; 64])
+            };
+            if last_written == vec![0xff] {
+                return Ok(());
+            }
+
+            flatkeyvalue.delete_range(last_written..vec![0xff])?;
         }
 
-        flatkeyvalue.delete_range(last_written..vec![0xff])?;
-
         loop {
+            let mut cf_misc = self
+                .dbs
+                .get(CF_MISC_VALUES)
+                .unwrap()
+                .begin_write_concurrent()
+                .unwrap();
+            let mut cf_flatkeyvalue = self
+                .dbs
+                .get(CF_FLATKEYVALUE)
+                .unwrap()
+                .begin_write_concurrent()
+                .unwrap();
+            let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
+            let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+
             let root = self
                 .read_sync(CF_TRIE_NODES, [])?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
