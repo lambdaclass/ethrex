@@ -8,7 +8,7 @@ use crate::{
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
+        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
     vm::{Substate, VM},
@@ -19,7 +19,10 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
-    types::{Account, Code, Fork, Transaction, account_diff::AccountStateDiff, tx_fields::*},
+    types::{
+        Account, Code, Fork, Transaction, account_diff::AccountStateDiff, fake_exponential,
+        tx_fields::*,
+    },
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
@@ -261,6 +264,7 @@ pub fn get_base_fee_per_blob_gas(
         block_excess_blob_gas.unwrap_or_default(),
         base_fee_update_fraction,
     )
+    .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
 }
 
 /// Gets the max blob gas cost for a transaction that a user is
