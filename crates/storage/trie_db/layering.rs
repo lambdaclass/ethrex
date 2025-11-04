@@ -11,7 +11,7 @@ struct TrieLayer {
     parent: H256,
     id: usize,
     /// Per layer bloom filter, None if the size was exceeded (exceedingly rare).
-    /// Having a bloom per layer avoids the cost of rehashing each key every time we rebuild the globam bloom,
+    /// Having a bloom per layer avoids the cost of rehashing each key every time we rebuild the global bloom,
     /// since merge simply uses the u64 hashed keys instead of rehashing.
     bloom: Option<qfilter::Filter>,
 }
