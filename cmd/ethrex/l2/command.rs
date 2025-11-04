@@ -34,7 +34,7 @@ use std::{
 use tracing::{debug, info};
 
 // Compile-time check to ensure that at least one of the database features is enabled.
-#[cfg(not(feature = "rocksdb"))]
+#[cfg(all(not(feature = "rocksdb"), not(feature = "canopydb")))]
 const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
@@ -374,6 +374,8 @@ impl Command {
             } => {
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
+                #[cfg(feature = "canopydb")]
+                let store_type = EngineType::CanopyDB;
 
                 #[cfg(feature = "l2-sql")]
                 let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
