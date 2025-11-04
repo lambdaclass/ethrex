@@ -8,8 +8,8 @@ The following are results from measurements conducted to understand the efficien
 
 | Blob Payload | Batch 2 | Batch 3 | Batch 4 | Batch 5 | Batch 6 | Batch 7 | Batch 8 | Batch 9 | Batch 10 | Batch 11 |
 | ------------ | ------- | ------- | ------- | ------- | ------- | ------- | ------- | ------- | -------- | -------- |
-| State Diff   |     |     |     |     |     |     |     |     |      |      |
-| Block List   |   913   |   871   |  886    |    935  |  1019   |   994   |  1002   |  1011   |  1012    |   1015   |
+| State Diff   |   2373  |   2134  |  2367   |   2141  |  2191   |   2370  |  2309   |  2361   |  2375    |   2367   |
+| Block List   |   913   |   871   |  886    |   935   |  1019   |   994   |  1002   |  1011   |  1012    |   1015   |
 
 ### ERC20 Transfers
 
@@ -22,12 +22,12 @@ The following are results from measurements conducted to understand the efficien
 
 | Blob Payload | Avg. ETH Transfers per Batch | Avg. ERC20 Transfers per Batch |
 | ------------ | ---------------------------- | ------------------------------ |
-| State Diff   |                          |                 1870           |
+| State Diff   |          2298                |                1870            |
 | Block List   |          965                 |                609             |
 
 ## Conclusion
 
-Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately for ETH transfers and 3.07x for ERC20 transfers.
+Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately 2.38x for ETH transfers and 3.07x for ERC20 transfers.
 
 ## How this measurements were done
 
