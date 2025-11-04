@@ -38,7 +38,7 @@ use crate::{
 };
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
-    encode::RLPEncode,
+    encode::{RLPEncode, encode_length},
 };
 use std::fmt::Debug;
 
@@ -834,6 +834,11 @@ impl StoreEngine for Store {
             ..
         } = update_batch;
 
+        let mut rlp_key_buffer = Vec::with_capacity(256);
+        // Enough size to fit the largest code and jumpdests.
+        // Increase before max code size does.
+        let mut rlp_val_buffer = Vec::with_capacity(6 + 72 * 1024);
+
         // Capacity one ensures sender just notifies and goes on
         let (notify_tx, notify_rx) = sync_channel(1);
         let wait_for_new_layer = notify_rx;
@@ -857,42 +862,51 @@ impl StoreEngine for Store {
             let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
             batch.put_cf(&cf_headers, hash_key_rlp.bytes(), header_value_rlp.bytes());
 
-            let hash_key: AccountCodeHashRLP = block_hash.into();
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            batch.put_cf(&cf_bodies, hash_key.bytes(), body_value.bytes());
+            block_hash.encode(&mut rlp_key_buffer);
+            block.body.encode(&mut rlp_val_buffer);
+            batch.put_cf(&cf_bodies, &rlp_key_buffer, &rlp_val_buffer);
+            rlp_val_buffer.clear();
 
-            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-            batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
+            block_number.encode(&rlp_val_buffer);
+            batch.put_cf(&cf_block_numbers, &rlp_key_buffer, &rlp_val_buffer);
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
+                rlp_key_buffer.clear();
+                rlp_val_buffer.clear();
+
                 let tx_hash = transaction.hash();
                 // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                batch.put_cf(&cf_tx_locations, composite_key, location_value);
+                rlp_key_buffer.extend_from_slice(tx_hash.as_bytes());
+                rlp_key_buffer.extend_from_slice(block_hash.as_bytes());
+                (block_number, block_hash, index as u64).encode(&mut rlp_val_buffer);
+                batch.put_cf(&cf_tx_locations, &rlp_key_buffer, &rlp_val_buffer);
             }
         }
 
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
-                batch.put_cf(&cf_receipts, key, value);
+                rlp_key_buffer.clear();
+                rlp_val_buffer.clear();
+
+                let key = (block_hash, index as u64).encode(&mut rlp_key_buffer);
+                let value = receipt.encode(&mut rlp_val_buffer);
+                batch.put_cf(&cf_receipts, &rlp_key_buffer, &rlp_val_buffer);
             }
         }
 
         for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
-            code.bytecode.encode(&mut buf);
-            code.jump_targets
-                .into_iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>()
-                .as_slice()
-                .encode(&mut buf);
-            batch.put_cf(&cf_codes, code_hash.0, buf);
+            rlp_key_buffer.clear();
+            rlp_val_buffer.clear();
+
+            code.bytecode.encode(&mut rlp_val_buffer);
+            encode_length(code.jump_targets.len() * 2, &mut rlp_val_buffer);
+            rlp_val_buffer.extend(
+                code.jump_targets
+                    .into_iter()
+                    .flat_map(|t| t.to_le_bytes())
+                    .collect::<Vec<u8>>(),
+            );
+            batch.put_cf(&cf_codes, code_hash.0, &rlp_val_buffer);
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
