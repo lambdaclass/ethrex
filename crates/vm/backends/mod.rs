@@ -73,12 +73,12 @@ impl Evm {
         }
     }
 
-    #[instrument(level = "trace", name = "Block execution", skip_all)]
+    #[instrument(level = "trace", name = "Execute VM", skip_all)]
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         LEVM::execute_block(block, &mut self.db, self.vm_type)
     }
 
-    #[instrument(level = "trace", name = "Block execution", skip_all)]
+    #[instrument(level = "trace", name = "Execute VM Pipeline", skip_all)]
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,

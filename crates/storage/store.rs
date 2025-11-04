@@ -352,7 +352,7 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
-    #[instrument(level = "trace", name = "Trie update", skip_all)]
+    #[instrument(level = "trace", name = "Old Trie update", skip_all)]
     pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
