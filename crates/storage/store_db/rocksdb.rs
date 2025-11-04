@@ -1,9 +1,6 @@
-use crate::{
-    rlp::AccountCodeHashRLP,
-    trie_db::{
-        layering::{TrieLayerCache, TrieWrapper, apply_prefix},
-        rocksdb_locked::RocksDBLockedTrieDB,
-    },
+use crate::trie_db::{
+    layering::{TrieLayerCache, TrieWrapper, apply_prefix},
+    rocksdb_locked::RocksDBLockedTrieDB,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -888,8 +885,8 @@ impl StoreEngine for Store {
                 rlp_key_buffer.clear();
                 rlp_val_buffer.clear();
 
-                let key = (block_hash, index as u64).encode(&mut rlp_key_buffer);
-                let value = receipt.encode(&mut rlp_val_buffer);
+                (block_hash, index as u64).encode(&mut rlp_key_buffer);
+                receipt.encode(&mut rlp_val_buffer);
                 batch.put_cf(&cf_receipts, &rlp_key_buffer, &rlp_val_buffer);
             }
         }
