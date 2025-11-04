@@ -288,7 +288,9 @@ where
             .finalize()
     };
 
-    let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
+    scope.execute_priority(Box::new(move || {
+        let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
+    }));
     Ok(hash)
 }
 
