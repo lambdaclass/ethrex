@@ -790,6 +790,7 @@ impl Syncer {
                 {
                     continue;
                 };
+                validate_state_root(store.clone(), pivot_header.state_root);
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
