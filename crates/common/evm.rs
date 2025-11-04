@@ -1,6 +1,6 @@
 use ethereum_types::Address;
 use ethrex_rlp::encode::RLPEncode;
-use sha3::{Digest, Keccak256};
+use keccak_asm::{Digest, Keccak256};
 
 /// Calculates the address of a new conctract using the CREATE
 /// opcode as follows:

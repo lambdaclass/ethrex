@@ -16,7 +16,7 @@ ethrex-vm.workspace = true
 secp256k1.workspace = true
 
 thiserror.workspace = true
-sha3.workspace = true
+keccak-asm.workspace = true
 tracing.workspace = true
 bytes.workspace = true
 hex.workspace = true

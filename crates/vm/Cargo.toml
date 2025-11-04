@@ -18,7 +18,7 @@ hex.workspace = true
 lazy_static.workspace = true
 tracing.workspace = true
 serde.workspace = true
-sha3.workspace = true
+keccak-asm.workspace = true
 rkyv.workspace = true
 
 bincode = "1"

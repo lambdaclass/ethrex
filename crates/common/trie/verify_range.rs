@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use ethereum_types::H256;
 use ethrex_rlp::decode::RLPDecode;
-use sha3::{Digest, Keccak256};
+use keccak_asm::{Digest, Keccak256};
 
 use crate::{
     ProofTrie, Trie, TrieError, ValueRLP,

@@ -3,12 +3,12 @@ use std::{cmp::min, fmt::Display};
 use crate::utils::keccak;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
+use keccak_asm::{Digest, Keccak256};
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
-use sha3::{Digest, Keccak256};
 
 use ethrex_rlp::{
     constants::RLP_NULL,

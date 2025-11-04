@@ -13,7 +13,7 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use sha3::{Digest, Keccak256};
+use keccak_asm::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 

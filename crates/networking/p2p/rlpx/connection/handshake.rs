@@ -22,12 +22,12 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use futures::{StreamExt, stream::SplitStream};
+use keccak_asm::{Digest, Keccak256};
 use rand::Rng;
 use secp256k1::{
     PublicKey, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha3::{Digest, Keccak256};
 use std::{
     collections::HashMap,
     net::SocketAddr,

@@ -3351,10 +3351,10 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "keccak-asm",
  "rustc-hash 2.1.1",
  "secp256k1",
  "serde_json",
- "sha3",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -3373,6 +3373,7 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
+ "keccak-asm",
  "kzg-rs",
  "lazy_static",
  "libc",
@@ -3384,7 +3385,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sha3",
  "thiserror 2.0.17",
  "tinyvec",
  "tracing",
@@ -3500,12 +3500,12 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "keccak-asm",
  "lambdaworks-crypto 0.11.0",
  "rkyv",
  "secp256k1",
  "serde",
  "serde_with",
- "sha3",
  "thiserror 2.0.17",
 ]
 
@@ -3556,6 +3556,7 @@ dependencies = [
  "ethrex-rlp",
  "hex",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "keccak-asm",
  "lambdaworks-math 0.11.0",
  "lazy_static",
  "malachite 0.6.1",
@@ -3566,7 +3567,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sha3",
  "spinoff",
  "strum 0.27.2",
  "substrate-bn",
@@ -3612,6 +3612,7 @@ dependencies = [
  "hex-literal",
  "hmac",
  "indexmap 2.12.0",
+ "keccak-asm",
  "lazy_static",
  "prometheus 0.14.0",
  "rand 0.8.5",
@@ -3621,7 +3622,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sha3",
  "snap",
  "spawned-concurrency",
  "spawned-rt",
@@ -3704,13 +3704,13 @@ dependencies = [
  "hex-literal",
  "jemalloc_pprof",
  "jsonwebtoken 9.3.1",
+ "keccak-asm",
  "rand 0.8.5",
  "reqwest 0.12.24",
  "secp256k1",
  "serde",
  "serde_json",
  "sha2",
- "sha3",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -3767,13 +3767,13 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
+ "keccak-asm",
  "qfilter",
  "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",
  "serde",
  "serde_json",
- "sha3",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -3824,13 +3824,13 @@ dependencies = [
  "hasher",
  "hex",
  "hex-literal",
+ "keccak-asm",
  "lazy_static",
  "proptest",
  "rand 0.8.5",
  "rocksdb",
  "serde",
  "serde_json",
- "sha3",
  "smallvec",
  "tempfile",
  "thiserror 2.0.17",
@@ -3851,10 +3851,10 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "keccak-asm",
  "lazy_static",
  "rkyv",
  "serde",
- "sha3",
  "thiserror 2.0.17",
  "tracing",
 ]
@@ -5494,6 +5494,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
 dependencies = [
  "cpufeatures",
+]
+
+[[package]]
+name = "keccak-asm"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "505d1856a39b200489082f90d897c3f07c455563880bc5952e38eabf731c83b6"
+dependencies = [
+ "digest 0.10.7",
+ "sha3-asm",
 ]
 
 [[package]]
@@ -9542,6 +9552,16 @@ checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
 dependencies = [
  "digest 0.10.7",
  "keccak",
+]
+
+[[package]]
+name = "sha3-asm"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c28efc5e327c837aa837c59eae585fc250715ef939ac32881bcc11677cd02d46"
+dependencies = [
+ "cc",
+ "cfg-if 1.0.4",
 ]
 
 [[package]]

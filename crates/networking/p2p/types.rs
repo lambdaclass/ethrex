@@ -7,9 +7,9 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
+use keccak_asm::{Digest, Keccak256};
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
-use sha3::{Digest, Keccak256};
 use std::net::Ipv6Addr;
 use std::{
     fmt::Display,

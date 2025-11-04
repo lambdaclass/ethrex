@@ -6,7 +6,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::utils::u256_from_big_endian;
-use sha3::{Digest, Keccak256};
+use keccak_asm::{Digest, Keccak256};
 
 // KECCAK256 (1)
 // Opcodes: KECCAK256

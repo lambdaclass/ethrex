@@ -1,8 +1,7 @@
 use crate::H256;
 use ethereum_types::U256;
 use hex::FromHexError;
-use sha3::Digest;
-use sha3::Keccak256;
+use keccak_asm::{Digest, Keccak256};
 
 pub const ZERO_U256: U256 = U256([0, 0, 0, 0]);
 

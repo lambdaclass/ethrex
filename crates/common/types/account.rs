@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
+use keccak_asm::{Digest as _, Keccak256};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use sha3::{Digest as _, Keccak256};
 
 use ethrex_rlp::{
     decode::RLPDecode,

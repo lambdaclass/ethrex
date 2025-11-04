@@ -1,6 +1,6 @@
 use ethereum_types::H256;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
-use sha3::{Digest, Keccak256};
+use keccak_asm::{Digest, Keccak256};
 
 /// Struct representing a trie node hash
 /// If the encoded node is less than 32 bits, contains the encoded node itself

@@ -28,11 +28,11 @@ use ethrex_common::{
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
+use keccak_asm::{Digest, Keccak256};
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 pub type Storage = HashMap<U256, H256>;
 

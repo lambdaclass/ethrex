@@ -1,8 +1,8 @@
 use ethrex_common::{H256, H512};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
+use keccak_asm::{Digest, Keccak256};
 use secp256k1::ecdh::shared_secret_point;
 use secp256k1::{PublicKey, SecretKey};
-use sha3::{Digest, Keccak256};
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder, max_compress_len};
 use std::array::TryFromSliceError;
 

@@ -16,7 +16,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
-use sha3::{Digest as _, Keccak256};
+use keccak_asm::{Digest as _, Keccak256};
 use std::{collections::hash_map::Entry, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},

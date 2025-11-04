@@ -2,9 +2,9 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
+use keccak_asm::{Digest, Keccak256};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{BufReader, Error},

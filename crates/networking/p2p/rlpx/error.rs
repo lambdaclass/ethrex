@@ -107,8 +107,8 @@ impl From<secp256k1::Error> for PeerConnectionError {
     }
 }
 
-impl From<sha3::digest::InvalidLength> for PeerConnectionError {
-    fn from(e: sha3::digest::InvalidLength) -> Self {
+impl From<keccak_asm::digest::InvalidLength> for PeerConnectionError {
+    fn from(e: keccak_asm::digest::InvalidLength) -> Self {
         PeerConnectionError::CryptographyError(e.to_string())
     }
 }

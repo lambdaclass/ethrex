@@ -14,6 +14,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use k256::elliptic_curve::Field;
+use keccak_asm::{Digest, Keccak256};
 use lambdaworks_math::cyclic_group::IsGroup;
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{
     BN254FieldElement, BN254TwistCurveFieldElement,
@@ -39,7 +40,6 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use sha3::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 
@@ -376,8 +376,6 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 
 #[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
-    use sha3::Keccak256;
-
     use crate::gas_cost::ECRECOVER_COST;
 
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;

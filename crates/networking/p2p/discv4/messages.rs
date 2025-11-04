@@ -10,11 +10,11 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
+use keccak_asm::{Digest, Keccak256};
 use secp256k1::{
     SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha3::{Digest, Keccak256};
 use std::{convert::Into, io::ErrorKind};
 
 #[derive(Debug, thiserror::Error)]
