@@ -1,17 +1,21 @@
 use canopydb::{Database, ReadTransaction};
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use crate::{store_db::rocksdb::CF_FLATKEYVALUE, trie_db::layering::apply_prefix};
 
+const TX_POOL_SIZE: usize = 8;
+
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
 pub struct RocksDBLockedTrieDB {
-    /// Column family handle
-    dbs: Arc<HashMap<String, Database>>,
     /// Read-only snapshot for consistent reads
-    snapshot: ReadTransaction,
-    snapshot_fkv: ReadTransaction,
+    snapshot: [Mutex<ReadTransaction>; TX_POOL_SIZE],
+    /// Snapshot/locked transaction
+    snapshot_fkv: [Mutex<ReadTransaction>; TX_POOL_SIZE],
     /// Storage trie address prefix
     address_prefix: Option<H256>,
     last_computed_flatkeyvalue: Nibbles,
@@ -24,13 +28,15 @@ impl RocksDBLockedTrieDB {
         address_prefix: Option<H256>,
         last_written: Vec<u8>,
     ) -> Result<Self, TrieError> {
-        let snapshot = dbs.get(cf_name).unwrap().begin_read().unwrap();
-        let snapshot_fkv = dbs.get(CF_FLATKEYVALUE).unwrap().begin_read().unwrap();
+        let snapshot =
+            std::array::from_fn(|_| Mutex::new(dbs.get(cf_name).unwrap().begin_read().unwrap()));
+        let snapshot_fkv = std::array::from_fn(|_| {
+            Mutex::new(dbs.get(CF_FLATKEYVALUE).unwrap().begin_read().unwrap())
+        });
 
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
 
         Ok(Self {
-            dbs,
             snapshot,
             snapshot_fkv,
             address_prefix,
@@ -56,12 +62,18 @@ impl TrieDB for RocksDBLockedTrieDB {
         };
         let db_key = self.make_key(key);
 
-        self.snapshot
+        let opt_read_tx = cf.iter().find_map(|tx| tx.try_lock().ok());
+        let read_tx = opt_read_tx
+            .or_else(|| Some(cf.first().unwrap().lock().unwrap()))
+            .unwrap();
+
+        read_tx
             .get_tree(b"")
             .unwrap()
             .unwrap()
-            .get(db_key)
+            .get(&db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB snapshot get error: {}", e)))
+            .map(|o| o.map(|b| b.to_vec()))
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
