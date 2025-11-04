@@ -617,7 +617,7 @@ pub fn determine_missing_children(
                     continue;
                 }
                 let validity = child
-                    .get_node(trie_state, child_path.clone())
+                    .get_node_checked(trie_state, child_path.clone())
                     .inspect_err(|_| {
                         debug!("Malformed data when doing get child of a branch node")
                     })?
@@ -643,7 +643,7 @@ pub fn determine_missing_children(
             }
             let validity = node
                 .child
-                .get_node(trie_state, child_path.clone())
+                .get_node_checked(trie_state, child_path.clone())
                 .inspect_err(|_| debug!("Malformed data when doing get child of a branch node"))?
                 .is_some();
 
