@@ -22,7 +22,7 @@ use std::{
     collections::HashSet,
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         mpsc::{SyncSender, sync_channel},
     },
 };
@@ -139,7 +139,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<RwLock<TrieLayerCache>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
@@ -706,7 +706,6 @@ impl Store {
     ) -> Result<(), StoreError> {
         let db = &*self.db;
         let fkv_ctl = &self.flatkeyvalue_control_tx;
-        let trie_cache = &self.trie_cache;
 
         // Phase 1: update the in-memory diff-layers only, then notify block production.
         let new_layer = storage_updates
@@ -718,20 +717,21 @@ impl Store {
             })
             .chain(account_updates)
             .collect();
-        // Read-Copy-Update the trie cache with a new layer.
-        let trie = trie_cache
-            .lock()
+        // Update trie cache with a new layer under write lock.
+        self.trie_cache
+            .write()
             .map_err(|_| StoreError::LockError)?
-            .clone();
-        let mut trie_mut = (*trie).clone();
-        trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
-        let trie = Arc::new(trie_mut);
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
+            .put_batch(parent_state_root, child_state_root, new_layer);
         // Update finished, signal block processing.
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
         // Phase 2: update disk layer.
-        let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
+        let Some(root) = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .get_commitable(parent_state_root, COMMIT_THRESHOLD)
+        else {
             // Nothing to commit to disk, move on.
             return Ok(());
         };
@@ -739,15 +739,18 @@ impl Store {
         // Ignore the error, if the channel is closed it means there is no worker to notify.
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
-        // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-        let mut trie_mut = (*trie).clone();
         let mut batch = WriteBatch::default();
         let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
             open_cfs(db, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
 
         let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
         // Commit removes the bottom layer and returns it, this is the mutation step.
-        let nodes = trie_mut.commit(root).unwrap_or_default();
+        let nodes = self
+            .trie_cache
+            .write()
+            .map_err(|_| StoreError::LockError)?
+            .commit(root)
+            .unwrap_or_default();
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
 
@@ -769,8 +772,7 @@ impl Store {
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
-        // Phase 3: update diff layers with the removal of bottom layer.
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+        // Phase 3: diff layers already updated by commit mutation.
         Ok(())
     }
 
@@ -1478,11 +1480,7 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
         });
@@ -1499,11 +1497,7 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: None,
         });
@@ -1543,11 +1537,7 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: None,
         });
@@ -1568,11 +1558,7 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
         });

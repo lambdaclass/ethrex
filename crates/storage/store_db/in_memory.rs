@@ -15,7 +15,7 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     path::Path,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 
 // NOTE: we use a different commit threshold than rocksdb since tests
@@ -39,7 +39,7 @@ pub struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    trie_cache: Arc<TrieLayerCache>,
+    trie_cache: Arc<RwLock<TrieLayerCache>>,
     // Contains account trie nodes
     state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -91,7 +91,6 @@ impl StoreEngine for Store {
         let mut store = self.inner()?;
 
         // Store trie updates
-        let mut trie = TrieLayerCache::clone(&store.trie_cache);
         let parent = update_batch
             .blocks
             .first()
@@ -117,9 +116,18 @@ impl StoreEngine for Store {
                 .state_trie_nodes
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
-
-            if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
-                let nodes = trie.commit(root).unwrap_or_default();
+            if let Some(root) = store
+                .trie_cache
+                .read()
+                .map_err(|_| StoreError::LockError)?
+                .get_commitable(pre_state_root, COMMIT_THRESHOLD)
+            {
+                let nodes = store
+                    .trie_cache
+                    .write()
+                    .map_err(|_| StoreError::LockError)?
+                    .commit(root)
+                    .unwrap_or_default();
                 for (key, value) in nodes {
                     if value.is_empty() {
                         state_trie.remove(&key);
@@ -140,8 +148,11 @@ impl StoreEngine for Store {
             })
             .chain(update_batch.account_updates)
             .collect();
-        trie.put_batch(pre_state_root, last_state_root, key_values);
-        store.trie_cache = Arc::new(trie);
+        store
+            .trie_cache
+            .write()
+            .map_err(|_| StoreError::LockError)?
+            .put_batch(pre_state_root, last_state_root, key_values);
 
         for block in update_batch.blocks {
             // store block
