@@ -55,22 +55,21 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let mut layer = fmt::layer();
-
-    if opts.log_color == LogColor::Never
-        || (opts.log_color == LogColor::Auto && !std::io::stdout().is_terminal())
-    {
-        layer = layer.with_ansi(false);
-    }
-
-    let fmt_layer = layer.with_filter(filter);
-
-    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
-        let profiling_layer = FunctionProfilingLayer;
-        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
-    } else {
-        Box::new(Registry::default().with(fmt_layer))
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let use_color = match opts.log_color {
+        LogColor::Always => true,
+        LogColor::Never => false,
+        LogColor::Auto => stdout_is_tty,
     };
+
+    let fmt_layer = fmt::layer()
+        .with_target(false)
+        .with_ansi(use_color)
+        .with_filter(filter);
+
+    let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
+
+    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
