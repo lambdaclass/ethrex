@@ -41,7 +41,7 @@ impl std::fmt::Debug for TrieLayerCache {
 impl TrieLayerCache {
     // TODO: tune this
     fn create_filter() -> cuckoofilter::CuckooFilter<FxHasher> {
-        cuckoofilter::CuckooFilter::with_capacity(1_000_000_000)
+        cuckoofilter::CuckooFilter::with_capacity(50_000_000_000)
     }
 
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
