@@ -40,7 +40,8 @@ impl NodeRef {
         }
     }
 
-    /// Gets a shared reference to the inner node, if it exists with the correct hash.
+    /// Gets a shared reference to the inner node, checking it's hash.
+    /// Returns `Ok(None)` if the hash is invalid.
     pub fn get_node_checked(
         &self,
         db: &dyn TrieDB,
