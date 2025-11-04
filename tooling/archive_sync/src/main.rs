@@ -146,6 +146,15 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
         )?;
         // Add code to DB if it is not empty
         if dump_account.code_hash != *EMPTY_KECCACK_HASH {
+            let got = keccak(dump_account.code.as_ref());
+            if got != dump_account.code_hash {
+                return Err(eyre::ErrReport::msg(
+                    format!(
+                        "Bytecode hash mismatch during archive sync: expected {:#x}, got {:#x}",
+                        dump_account.code_hash, got
+                    ),
+                ));
+            }
             store
                 .add_account_code(Code::from_hashed_bytecode(
                     dump_account.code_hash,
