@@ -1237,17 +1237,13 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byRegexp",
-              "options": "/block.*/"
+              "id": "byName",
+              "options": "Block"
             },
             "properties": [
               {
-                "id": "custom.hideFrom",
-                "value": {
-                  "legend": false,
-                  "tooltip": true,
-                  "viz": true
-                }
+                "id": "unit",
+                "value": "none"
               }
             ]
           }
@@ -1272,20 +1268,6 @@
           "showLegend": true
         },
         "mapping": "auto",
-                "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Block"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "none"
-              }
-            ]
-          }
-        ],
         "series": [
           {
             "frame": {
