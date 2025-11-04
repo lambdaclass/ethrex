@@ -326,7 +326,7 @@ impl From<Node> for SizedNode {
             Node::Leaf(LeafNode { partial, mut value }) => {
                 let mut partial = partial.into_vec();
                 value.resize(108, 0);
-                partial.resize(64, 0);
+                partial.resize(32, 0);
                 let partial = partial.try_into().unwrap();
                 let value = value.try_into().unwrap();
                 SizedNode::Leaf { partial, value }
