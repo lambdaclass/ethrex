@@ -36,7 +36,7 @@ ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
 and on another one:
 
 ```sh
-./lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
+lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
 ```
 
 ### Linux x86
