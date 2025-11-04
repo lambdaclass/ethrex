@@ -54,16 +54,17 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-
-            cumulative_gas_used += report.gas_used;
-            if cumulative_gas_used > block.header.gas_limit {
+            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded. Block gas limit {} was surpassed by executing transaction with gas used {}",
-                    block.header.gas_limit, report.gas_used
+                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                    block.header.gas_limit,
+                    tx.gas_limit()
                 )));
             }
 
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+
+            cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -104,16 +105,18 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                    block.header.gas_limit,
+                    tx.gas_limit()
+                )));
+            }
+
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
             cumulative_gas_used += report.gas_used;
-            if cumulative_gas_used > block.header.gas_limit {
-                return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded. Block gas limit {} was surpassed by executing transaction with gas used {}",
-                    block.header.gas_limit, report.gas_used
-                )));
-            }
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
