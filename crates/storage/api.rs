@@ -3,8 +3,8 @@ use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
     Transaction,
 };
+use std::fmt::Debug;
 use std::path::Path;
-use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
@@ -13,7 +13,7 @@ use ethrex_trie::{Nibbles, Trie};
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
-pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
+pub trait StoreEngine: Debug + Send + Sync {
     /// Store changes in a batch from a vec of blocks
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
 
