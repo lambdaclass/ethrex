@@ -288,7 +288,7 @@ impl Store {
 
         tokio::task::spawn_blocking(move || {
             let transaction = dbs.get(&cf_name).unwrap().begin_write().unwrap();
-            let tree = transaction.get_tree(b"").unwrap().unwrap();
+            let mut tree = transaction.get_tree(b"").unwrap().unwrap();
             tree.insert(key.as_ref(), value.as_ref())
                 .map_err(|e| StoreError::Custom(format!("CanopyDB write error: {}", e)))
         })
@@ -693,7 +693,6 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let db = self.db.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
                 update_batch
@@ -842,12 +841,11 @@ impl StoreEngine for Store {
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let db = self.db.clone();
+        let dbs = self.dbs.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatch::default();
-
             let [cf_headers, cf_bodies, cf_block_numbers, cf_tx_locations] = open_cfs(
-                &db,
+                &dbs,
                 [
                     CF_HEADERS,
                     CF_BODIES,
@@ -856,34 +854,49 @@ impl StoreEngine for Store {
                 ],
             )?;
 
-            for block in blocks {
-                let block_hash = block.hash();
-                let block_number = block.header.number;
+            let headers_tx = cf_headers.begin_write().unwrap();
+            let bodies_tx = cf_bodies.begin_write().unwrap();
+            let block_numbers_tx = cf_block_numbers.begin_write().unwrap();
+            let tx_locations_tx = cf_tx_locations.begin_write().unwrap();
+            {
+                let mut headers_tree = headers_tx.get_tree(b"").unwrap().unwrap();
+                let mut bodies_tree = bodies_tx.get_tree(b"").unwrap().unwrap();
+                let mut block_numbers_tree = block_numbers_tx.get_tree(b"").unwrap().unwrap();
+                let mut tx_locations_tree = tx_locations_tx.get_tree(b"").unwrap().unwrap();
 
-                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                batch.put_cf(&cf_headers, hash_key, header_value);
+                for block in blocks {
+                    let block_hash = block.hash();
+                    let block_number = block.header.number;
 
-                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                batch.put_cf(&cf_bodies, hash_key, body_value);
+                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                    let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
+                    headers_tree.insert(&hash_key, &header_value);
 
-                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
+                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                    let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
+                    bodies_tree.insert(&hash_key, &body_value);
 
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    let tx_hash = transaction.hash();
-                    // Key: tx_hash + block_hash
-                    let mut composite_key = Vec::with_capacity(64);
-                    composite_key.extend_from_slice(tx_hash.as_bytes());
-                    composite_key.extend_from_slice(block_hash.as_bytes());
-                    let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    batch.put_cf(&cf_tx_locations, composite_key, location_value);
+                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                    block_numbers_tree.insert(&hash_key, &block_number.to_le_bytes());
+
+                    for (index, transaction) in block.body.transactions.iter().enumerate() {
+                        let tx_hash = transaction.hash();
+                        // Key: tx_hash + block_hash
+                        let mut composite_key = Vec::with_capacity(64);
+                        composite_key.extend_from_slice(tx_hash.as_bytes());
+                        composite_key.extend_from_slice(block_hash.as_bytes());
+                        let location_value =
+                            (block_number, block_hash, index as u64).encode_to_vec();
+                        tx_locations_tree.insert(&composite_key, &location_value);
+                    }
                 }
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            db.group_commit(
+                [headers_tx, bodies_tx, block_numbers_tx, tx_locations_tx],
+                false,
+            )
+            .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -953,14 +966,12 @@ impl StoreEngine for Store {
     }
 
     async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        let mut batch = WriteBatch::default();
-
         let Some(hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(());
         };
 
         let [cf_canonical, cf_bodies, cf_headers, cf_block_numbers] = open_cfs(
-            &self.db,
+            &self.dbs,
             [
                 CF_CANONICAL_BLOCK_HASHES,
                 CF_BODIES,
@@ -969,13 +980,27 @@ impl StoreEngine for Store {
             ],
         )?;
 
-        batch.delete_cf(&cf_canonical, block_number.to_le_bytes());
-        batch.delete_cf(&cf_bodies, hash.as_bytes());
-        batch.delete_cf(&cf_headers, hash.as_bytes());
-        batch.delete_cf(&cf_block_numbers, hash.as_bytes());
+        let canonical_tx = cf_canonical.begin_write().unwrap();
+        let bodies_tx = cf_bodies.begin_write().unwrap();
+        let headers_tx = cf_headers.begin_write().unwrap();
+        let block_numbers_tx = cf_block_numbers.begin_write().unwrap();
+        {
+            let mut canonical_tree = canonical_tx.get_tree(b"").unwrap().unwrap();
+            let mut bodies_tree = bodies_tx.get_tree(b"").unwrap().unwrap();
+            let mut headers_tree = headers_tx.get_tree(b"").unwrap().unwrap();
+            let mut block_numbers_tree = block_numbers_tx.get_tree(b"").unwrap().unwrap();
+
+            canonical_tree.delete(&block_number.to_le_bytes()).unwrap();
+            bodies_tree.delete(&hash.as_bytes()).unwrap();
+            headers_tree.delete(&hash.as_bytes()).unwrap();
+            block_numbers_tree.delete(&hash.as_bytes()).unwrap();
+        }
 
         self.db
-            .write(batch)
+            .group_commit(
+                [canonical_tx, bodies_tx, headers_tx, block_numbers_tx],
+                false,
+            )
             .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
 
@@ -1059,9 +1084,13 @@ impl StoreEngine for Store {
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();
-        let cf = self.dbs.get(CF_PENDING_BLOCKS)?;
-        self.db
-            .put_cf(&cf, hash_key, block_value)
+        let cf = self.dbs.get(CF_PENDING_BLOCKS).unwrap();
+        cf.begin_write()
+            .unwrap()
+            .get_tree(b"")
+            .unwrap()
+            .unwrap()
+            .insert(&hash_key, &block_value)
             .map_err(StoreError::RocksdbError)
     }
 
@@ -1108,14 +1137,19 @@ impl StoreEngine for Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        let db = self.db.clone();
+        let dbs = self.dbs.clone();
         let tx_hash_key = transaction_hash.as_bytes().to_vec();
 
         tokio::task::spawn_blocking(move || {
             let [cf_transaction_locations, cf_canonical] =
-                open_cfs(&db, [CF_TRANSACTION_LOCATIONS, CF_CANONICAL_BLOCK_HASHES])?;
+                open_cfs(&dbs, [CF_TRANSACTION_LOCATIONS, CF_CANONICAL_BLOCK_HASHES])?;
 
-            let mut iter = db.prefix_iterator_cf(&cf_transaction_locations, &tx_hash_key);
+            let tl_tx = cf_transaction_locations.begin_read().unwrap();
+            let canonical_tx = cf_canonical.begin_read().unwrap();
+
+            let tl_tree = tl_tx.get_tree(b"").unwrap().unwrap();
+
+            let mut iter = tl_tree.prefix(&tx_hash_key).unwrap();
             let mut transaction_locations = Vec::new();
 
             while let Some(Ok((key, value))) = iter.next() {
@@ -1130,11 +1164,14 @@ impl StoreEngine for Store {
                 return Ok(None);
             }
 
+            let canonical_tree = canonical_tx.get_tree(b"").unwrap().unwrap();
+
             // If there are multiple locations, filter by the canonical chain
             for (block_number, block_hash, index) in transaction_locations {
                 let canonical_hash = {
-                    db.get_cf(&cf_canonical, block_number.to_le_bytes())?
-                        .and_then(|bytes| BlockHashRLP::from_bytes(bytes).to().ok())
+                    canonical_tree
+                        .get(&block_number.to_le_bytes())?
+                        .and_then(|bytes| BlockHashRLP::from_bytes(bytes.to_vec()).to().ok())
                 };
 
                 if canonical_hash == Some(block_hash) {
@@ -1203,22 +1240,17 @@ impl StoreEngine for Store {
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let dbs = self.dbs.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db
-                .cf_handle(CF_SNAP_STATE)
+            let cf = dbs
+                .get(CF_SNAP_STATE)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
-            let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-            let mut batch = WriteBatch::default();
-
-            while let Some(Ok((key, _))) = iter.next() {
-                batch.delete_cf(&cf, key);
-            }
-
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            let tx = cf.begin_write().unwrap();
+            tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
+            tx.commit().unwrap();
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1523,53 +1555,55 @@ impl StoreEngine for Store {
         // Get current latest block number to know what to clean up
         let latest = self.get_latest_block_number().await?.unwrap_or(0);
         let db = self.db.clone();
+        let dbs = self.dbs.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatch::default();
-
             let [cf_canonical, cf_chain_data] =
-                open_cfs(&db, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
+                open_cfs(&dbs, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
 
-            // Update canonical block hashes
-            if let Some(canonical_blocks) = new_canonical_blocks {
-                for (block_number, block_hash) in canonical_blocks {
-                    let number_key = block_number.to_le_bytes();
-                    let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
-                    batch.put_cf(&cf_canonical, number_key, hash_value);
+            let canonical_tx = cf_canonical.begin_write().unwrap();
+            let chain_data_tx = cf_chain_data.begin_write().unwrap();
+            {
+                let mut canonical_tree = canonical_tx.get_tree(b"").unwrap().unwrap();
+                let mut chain_data_tree = chain_data_tx.get_tree(b"").unwrap().unwrap();
+
+                // Update canonical block hashes
+                if let Some(canonical_blocks) = new_canonical_blocks {
+                    for (block_number, block_hash) in canonical_blocks {
+                        let number_key = block_number.to_le_bytes();
+                        let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
+                        canonical_tree.insert(&number_key, &hash_value);
+                    }
+                }
+
+                // Remove anything after the head from the canonical chain
+                for number in (head_number + 1)..=(latest) {
+                    canonical_tree.delete(&number.to_le_bytes());
+                }
+
+                // Make head canonical
+                let head_key = head_number.to_le_bytes();
+                let head_value = BlockHashRLP::from(head_hash).bytes().clone();
+                canonical_tree.insert(&head_key, &head_value);
+
+                // Update chain data
+
+                let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
+                chain_data_tree.insert(&latest_key, &head_number.to_le_bytes());
+
+                if let Some(safe_number) = safe {
+                    let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
+                    chain_data_tree.insert(&safe_key, &safe_number.to_le_bytes());
+                }
+
+                if let Some(finalized_number) = finalized {
+                    let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+                    chain_data_tree.insert(&finalized_key, &finalized_number.to_le_bytes());
                 }
             }
 
-            // Remove anything after the head from the canonical chain
-            for number in (head_number + 1)..=(latest) {
-                batch.delete_cf(&cf_canonical, number.to_le_bytes());
-            }
-
-            // Make head canonical
-            let head_key = head_number.to_le_bytes();
-            let head_value = BlockHashRLP::from(head_hash).bytes().clone();
-            batch.put_cf(&cf_canonical, head_key, head_value);
-
-            // Update chain data
-
-            let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
-            batch.put_cf(&cf_chain_data, latest_key, head_number.to_le_bytes());
-
-            if let Some(safe_number) = safe {
-                let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
-                batch.put_cf(&cf_chain_data, safe_key, safe_number.to_le_bytes());
-            }
-
-            if let Some(finalized_number) = finalized {
-                let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
-                batch.put_cf(
-                    &cf_chain_data,
-                    finalized_key,
-                    finalized_number.to_le_bytes(),
-                );
-            }
-
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            db.group_commit([canonical_tx, chain_data_tx], false)
+                .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1769,25 +1803,32 @@ impl StoreEngine for Store {
         storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
+        let dbs = self.dbs.clone();
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatch::default();
-            let cf = db.cf_handle(CF_TRIE_NODES).ok_or_else(|| {
+            let cf = dbs.get(CF_TRIE_NODES).ok_or_else(|| {
                 StoreError::Custom("Column family not found: CF_TRIE_NODES".to_string())
             })?;
 
-            for (address_hash, nodes) in storage_trie_nodes {
-                for (node_hash, node_data) in nodes {
-                    let key = apply_prefix(Some(address_hash), node_hash);
-                    if node_data.is_empty() {
-                        batch.delete_cf(&cf, key.as_ref());
-                    } else {
-                        batch.put_cf(&cf, key.as_ref(), node_data);
+            let tx = cf.begin_write().unwrap();
+            {
+                let mut tree = tx.get_tree(b"").unwrap().unwrap();
+
+                for (address_hash, nodes) in storage_trie_nodes {
+                    for (node_hash, node_data) in nodes {
+                        let key = apply_prefix(Some(address_hash), node_hash);
+                        if node_data.is_empty() {
+                            tree.delete(key.as_ref());
+                        } else {
+                            tree.insert(key.as_ref(), &node_data);
+                        }
                     }
                 }
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            tx.commit()
+                .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))?;
+
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1846,22 +1887,17 @@ impl StoreEngine for Store {
     }
 
     async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let dbs = self.dbs.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db
-                .cf_handle(CF_FULLSYNC_HEADERS)
+            let cf = dbs
+                .get(CF_FULLSYNC_HEADERS)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
-            let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-            let mut batch = WriteBatch::default();
-
-            while let Some(Ok((key, _))) = iter.next() {
-                batch.delete_cf(&cf, key);
-            }
-
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            let tx = cf.begin_write().unwrap();
+            tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
+            tx.commit().unwrap();
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1874,16 +1910,18 @@ impl StoreEngine for Store {
     }
 
     async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
-        let checkpoint = Checkpoint::new(&self.db)
-            .map_err(|e| StoreError::Custom(format!("Failed to create checkpoint: {e}")))?;
+        todo!("not implemented because used only for L2")
 
-        checkpoint.create_checkpoint(path).map_err(|e| {
-            StoreError::Custom(format!(
-                "Failed to create RocksDB checkpoint at {path:?}: {e}"
-            ))
-        })?;
+        // let checkpoint = Checkpoint::new(&self.db)
+        //     .map_err(|e| StoreError::Custom(format!("Failed to create checkpoint: {e}")))?;
 
-        Ok(())
+        // checkpoint.create_checkpoint(path).map_err(|e| {
+        //     StoreError::Custom(format!(
+        //         "Failed to create RocksDB checkpoint at {path:?}: {e}"
+        //     ))
+        // })?;
+
+        // Ok(())
     }
 
     fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {

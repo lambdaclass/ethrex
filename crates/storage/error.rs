@@ -9,7 +9,7 @@ pub enum StoreError {
     DecodeError,
     #[cfg(feature = "rocksdb")]
     #[error("Rocksdb error: {0}")]
-    RocksdbError(#[from] rocksdb::Error),
+    RocksdbError(#[from] canopydb::Error),
     #[error("{0}")]
     Custom(String),
     #[error(transparent)]
