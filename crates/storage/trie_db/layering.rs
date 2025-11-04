@@ -110,17 +110,6 @@ impl TrieLayerCache {
             return;
         }
 
-        // add this new bloom to the global one.
-        if let Some(filter) = &mut self.bloom {
-            for (p, _) in &key_values {
-                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
-                    tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
-                    self.bloom = None;
-                    break;
-                }
-            }
-        }
-
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
