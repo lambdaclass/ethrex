@@ -1,15 +1,17 @@
+use canopydb::{Database, Environment};
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
-use rocksdb::{DBWithThreadMode, MultiThreaded};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{store_db::rocksdb::CF_FLATKEYVALUE, trie_db::layering::apply_prefix};
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    db: Environment,
+    /// RocksDB database
+    dbs: Arc<HashMap<String, Database>>,
     /// Column family name
     cf_name: String,
     /// Storage trie address prefix
@@ -20,7 +22,8 @@ pub struct RocksDBTrieDB {
 
 impl RocksDBTrieDB {
     pub fn new(
-        db: Arc<DBWithThreadMode<MultiThreaded>>,
+        db: Environment,
+        dbs: Arc<HashMap<String, Database>>,
         cf_name: &str,
         address_prefix: Option<H256>,
         last_written: Vec<u8>,

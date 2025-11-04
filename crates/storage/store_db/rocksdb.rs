@@ -409,13 +409,13 @@ impl Store {
         control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
         let mut cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
-        let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
         let mut cf_flatkeyvalue = self
             .dbs
             .get(CF_FLATKEYVALUE)
             .unwrap()
             .begin_write()
             .unwrap();
+        let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
         let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
 
         let last_written = {
@@ -453,8 +453,14 @@ impl Store {
             let mut ctr = 0;
             let mut iter = {
                 let db = Box::new(
-                    RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None, self.last_written()?)
-                        .unwrap(),
+                    RocksDBTrieDB::new(
+                        self.db.clone(),
+                        self.dbs.clone(),
+                        CF_TRIE_NODES,
+                        None,
+                        self.last_written()?,
+                    )
+                    .unwrap(),
                 );
                 Trie::open(db, state_root)
             }
@@ -462,9 +468,10 @@ impl Store {
             if last_written_account > Nibbles::default() {
                 iter.advance(last_written_account.to_bytes())?;
             }
-            let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
+            let mut res = Ok(());
+            'outer: for (path, node) in iter {
                 let Node::Leaf(node) = node else {
-                    return Ok(());
+                    continue;
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
@@ -472,18 +479,25 @@ impl Store {
                 flatkeyvalue.insert(path.as_ref(), node.value.as_ref());
                 ctr += 1;
                 if ctr > 10_000 {
-                    self.db
-                        .group_commit([cf_misc, cf_flatkeyvalue], false)
-                        .unwrap();
-
-                    cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
-                    misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-                    cf_flatkeyvalue = self
+                    let mut new_misc_tx =
+                        self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+                    let mut new_flatkeyvalue_tx = self
                         .dbs
                         .get(CF_FLATKEYVALUE)
                         .unwrap()
                         .begin_write()
                         .unwrap();
+
+                    drop(misc_tree);
+                    drop(flatkeyvalue);
+
+                    std::mem::swap(&mut new_misc_tx, &mut cf_misc);
+                    std::mem::swap(&mut new_flatkeyvalue_tx, &mut cf_flatkeyvalue);
+                    self.db
+                        .group_commit([new_misc_tx, new_flatkeyvalue_tx], false)
+                        .unwrap();
+
+                    misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
                     flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
 
                     *self
@@ -496,6 +510,7 @@ impl Store {
                     let db = Box::new(
                         RocksDBTrieDB::new(
                             self.db.clone(),
+                            self.dbs.clone(),
                             CF_TRIE_NODES,
                             Some(account_hash),
                             self.last_written()?,
@@ -509,27 +524,34 @@ impl Store {
                     iter_inner.advance(last_written_storage.to_bytes())?;
                     last_written_storage = Nibbles::default();
                 }
-                iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
+                for (path, node) in iter_inner {
                     let Node::Leaf(node) = node else {
-                        return Ok(());
+                        continue;
                     };
                     let key = apply_prefix(Some(account_hash), path);
                     misc_tree.insert(b"last_written", key.as_ref());
                     flatkeyvalue.insert(key.as_ref(), node.value.as_ref());
                     ctr += 1;
                     if ctr > 10_000 {
-                        self.db
-                            .group_commit([cf_misc, cf_flatkeyvalue], false)
-                            .unwrap();
-
-                        cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
-                        misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-                        cf_flatkeyvalue = self
+                        let mut new_misc_tx =
+                            self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+                        let mut new_flatkeyvalue_tx = self
                             .dbs
                             .get(CF_FLATKEYVALUE)
                             .unwrap()
                             .begin_write()
                             .unwrap();
+
+                        drop(misc_tree);
+                        drop(flatkeyvalue);
+
+                        std::mem::swap(&mut new_misc_tx, &mut cf_misc);
+                        std::mem::swap(&mut new_flatkeyvalue_tx, &mut cf_flatkeyvalue);
+                        self.db
+                            .group_commit([new_misc_tx, new_flatkeyvalue_tx], false)
+                            .unwrap();
+
+                        misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
                         flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
 
                         *self
@@ -540,25 +562,29 @@ impl Store {
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
                             FKVGeneratorControlMessage::Stop => {
-                                return Err(StoreError::PivotChanged);
+                                res = Err(StoreError::PivotChanged);
+                                break 'outer;
                             }
                             _ => {
-                                return Err(StoreError::Custom("Unexpected message".to_string()));
+                                res = Err(StoreError::Custom("Unexpected message".to_string()));
+                                break 'outer;
                             }
-                        }
-                    }
-                    Ok(())
-                })?;
-                if let Ok(value) = control_rx.try_recv() {
-                    match value {
-                        FKVGeneratorControlMessage::Stop => return Err(StoreError::PivotChanged),
-                        _ => {
-                            return Err(StoreError::Custom("Unexpected message".to_string()));
                         }
                     }
                 }
-                Ok(())
-            });
+                if let Ok(value) = control_rx.try_recv() {
+                    match value {
+                        FKVGeneratorControlMessage::Stop => {
+                            res = Err(StoreError::PivotChanged);
+                            break 'outer;
+                        }
+                        _ => {
+                            res = Err(StoreError::Custom("Unexpected message".to_string()));
+                            break 'outer;
+                        }
+                    }
+                }
+            }
             match res {
                 Err(StoreError::PivotChanged) => {
                     if let Ok(value) = control_rx.recv() {
@@ -573,6 +599,8 @@ impl Store {
                 Err(err) => return Err(err),
                 Ok(()) => {
                     misc_tree.insert(b"last_written", [0xff].as_ref());
+                    drop(misc_tree);
+                    drop(flatkeyvalue);
                     self.db
                         .group_commit([cf_misc, cf_flatkeyvalue], false)
                         .unwrap();
@@ -1437,6 +1465,7 @@ impl StoreEngine for Store {
         // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
+            self.dbs.clone(),
             CF_TRIE_NODES,
             None,
             self.last_written()?,
@@ -1458,6 +1487,7 @@ impl StoreEngine for Store {
         // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
+            self.dbs.clone(),
             CF_TRIE_NODES,
             None,
             self.last_written()?,
@@ -1482,6 +1512,7 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
+            self.dbs.clone(),
             CF_TRIE_NODES,
             Some(hashed_address),
             self.last_written()?,
@@ -1492,6 +1523,7 @@ impl StoreEngine for Store {
     fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
+            self.dbs.clone(),
             CF_TRIE_NODES,
             None,
             self.last_written()?,
