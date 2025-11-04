@@ -523,19 +523,6 @@ impl Store {
                         .last_computed_flatkeyvalue
                         .lock()
                         .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
-
-                    if let Ok(value) = control_rx.try_recv() {
-                        match value {
-                            FKVGeneratorControlMessage::Stop => {
-                                res = Err(StoreError::PivotChanged);
-                                break 'outer;
-                            }
-                            _ => {
-                                res = Err(StoreError::Custom("Unexpected message".to_string()));
-                                break 'outer;
-                            }
-                        }
-                    }
                 }
 
                 let mut iter_inner = {
@@ -594,18 +581,29 @@ impl Store {
                             .last_computed_flatkeyvalue
                             .lock()
                             .map_err(|_| StoreError::LockError)? = key.as_ref().to_vec();
-
-                        if let Ok(value) = control_rx.try_recv() {
-                            match value {
-                                FKVGeneratorControlMessage::Stop => {
-                                    res = Err(StoreError::PivotChanged);
-                                    break 'outer;
-                                }
-                                _ => {
-                                    res = Err(StoreError::Custom("Unexpected message".to_string()));
-                                    break 'outer;
-                                }
+                    }
+                    if let Ok(value) = control_rx.try_recv() {
+                        match value {
+                            FKVGeneratorControlMessage::Stop => {
+                                res = Err(StoreError::PivotChanged);
+                                break 'outer;
                             }
+                            _ => {
+                                res = Err(StoreError::Custom("Unexpected message".to_string()));
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+                if let Ok(value) = control_rx.try_recv() {
+                    match value {
+                        FKVGeneratorControlMessage::Stop => {
+                            res = Err(StoreError::PivotChanged);
+                            break 'outer;
+                        }
+                        _ => {
+                            res = Err(StoreError::Custom("Unexpected message".to_string()));
+                            break 'outer;
                         }
                     }
                 }
