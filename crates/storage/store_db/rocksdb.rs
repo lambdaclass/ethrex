@@ -171,11 +171,9 @@ impl Store {
         for cf in expected_column_families {
             // default is handled automatically
             let db_handle = environment.get_or_create_database(cf).unwrap();
-            db_handle
-                .begin_write()
-                .unwrap()
-                .get_or_create_tree(b"")
-                .unwrap();
+            let tx = db_handle.begin_write().unwrap();
+            tx.get_or_create_tree(b"").unwrap();
+            tx.commit().unwrap();
             dbs.insert(cf.to_string(), db_handle);
         }
 
