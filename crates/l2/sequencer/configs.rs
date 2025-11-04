@@ -42,13 +42,14 @@ pub struct CommitterConfig {
 
 #[derive(Clone, Debug)]
 pub struct EthConfig {
-    pub rpc_url: Vec<String>,
+    pub rpc_url: Vec<Url>,
     pub maximum_allowed_max_fee_per_gas: u64,
     pub maximum_allowed_max_fee_per_blob_gas: u64,
     pub max_number_of_retries: u64,
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
     pub max_retry_delay: u64,
+    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -97,7 +98,6 @@ pub struct AlignedConfig {
     pub beacon_urls: Vec<Url>,
     pub network: Network,
     pub fee_estimate: String,
-    pub aligned_sp1_elf_path: String,
 }
 
 #[derive(Clone, Debug)]

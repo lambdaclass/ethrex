@@ -15,7 +15,7 @@ use ethrex_trie::{Nibbles, Trie};
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch from a vec of blocks
-    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
+    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
@@ -77,7 +77,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError>;
 
-    async fn add_pending_block(&self, block: Block) -> Result<(), StoreError>;
+    fn add_pending_block(&self, block: Block) -> Result<(), StoreError>;
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError>;
 
     /// Add block number for a given hash
@@ -380,4 +380,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 
     async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    fn flatkeyvalue_computed(&self, _account: H256) -> Result<bool, StoreError> {
+        Ok(false)
+    }
 }

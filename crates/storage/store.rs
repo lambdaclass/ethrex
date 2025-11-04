@@ -20,7 +20,7 @@ use sha3::{Digest as _, Keccak256};
 use std::{collections::hash_map::Entry, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::RwLock,
+    sync::Mutex,
 };
 use std::{fmt::Debug, path::Path};
 use tracing::{debug, error, info, instrument};
@@ -33,8 +33,14 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     pub engine: Arc<dyn StoreEngine>,
-    pub chain_config: Arc<RwLock<ChainConfig>>,
-    pub latest_block_header: Arc<RwLock<BlockHeader>>,
+    pub chain_config: ChainConfig,
+    /// Keeps the latest canonical block hash
+    /// It's wrapped in an ArcSwap to allow for cheap lock-free reads with infrequent writes
+    /// Reading an out-of-date value is acceptable, since it's only used as:
+    /// - a cache of the (frequently requested) header
+    /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
+    /// - sync-related operations, which must be idempotent in order to handle reorgs
+    latest_block_header: LatestBlockHeaderCache,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -69,8 +75,8 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        self.engine.apply_updates(update_batch).await
+    pub fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        self.engine.apply_updates(update_batch)
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
@@ -81,12 +87,12 @@ impl Store {
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
                 chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                latest_block_header: Default::default(),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
                 chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                latest_block_header: Default::default(),
             },
         };
 
@@ -103,7 +109,7 @@ impl Store {
         let reader = std::io::BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let store = Self::new(store_path, engine_type)?;
+        let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
     }
@@ -175,13 +181,9 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        let latest = self
-            .latest_block_header
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
+        let latest = self.latest_block_header.get();
         if block_number == latest.number {
-            return Ok(Some(latest));
+            return Ok(Some((*latest).clone()));
         }
         self.engine.get_block_header(block_number)
     }
@@ -191,12 +193,9 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
         {
-            let latest = self
-                .latest_block_header
-                .read()
-                .map_err(|_| StoreError::LockError)?;
+            let latest = self.latest_block_header.get();
             if block_hash == latest.hash() {
-                return Ok(Some(latest.clone()));
+                return Ok(Some((*latest).clone()));
             }
         }
 
@@ -223,11 +222,7 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
         // FIXME (#4353)
-        let latest = self
-            .latest_block_header
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
+        let latest = self.latest_block_header.get();
         if block_number == latest.number {
             // The latest may not be marked as canonical yet
             return self.engine.get_block_body_by_hash(latest.hash()).await;
@@ -254,16 +249,14 @@ impl Store {
         self.engine.get_block_bodies_by_hash(hashes).await
     }
 
-    pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        info!("Adding block to pending: {}", block.hash());
-        self.engine.add_pending_block(block).await
+    pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+        self.engine.add_pending_block(block)
     }
 
     pub async fn get_pending_block(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<Block>, StoreError> {
-        info!("get pending: {}", block_hash);
         self.engine.get_pending_block(block_hash).await
     }
 
@@ -286,7 +279,7 @@ impl Store {
     }
 
     pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
-        let chain_config = self.get_chain_config()?;
+        let chain_config = self.get_chain_config();
         let genesis_header = self
             .engine
             .get_block_header(0)?
@@ -360,25 +353,25 @@ impl Store {
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
     #[instrument(level = "trace", name = "Trie update", skip_all)]
-    pub async fn apply_account_updates_batch(
+    pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
 
-        Ok(Some(
-            self.apply_account_updates_from_trie_batch(state_trie, account_updates)
-                .await?,
-        ))
+        Ok(Some(self.apply_account_updates_from_trie_batch(
+            &mut state_trie,
+            account_updates,
+        )?))
     }
 
-    pub async fn apply_account_updates_from_trie_batch(
+    pub fn apply_account_updates_from_trie_batch<'a>(
         &self,
-        mut state_trie: Trie,
-        account_updates: impl IntoIterator<Item = &AccountUpdate>,
+        state_trie: &mut Trie,
+        account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
@@ -624,7 +617,7 @@ impl Store {
         self.engine.add_blocks(blocks).await
     }
 
-    pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
+    pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -636,14 +629,13 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
+        // The cache can't be empty
         if let Some(number) = self.engine.get_latest_block_number().await? {
-            *self
-                .latest_block_header
-                .write()
-                .map_err(|_| StoreError::LockError)? = self
+            let latest_block_header = self
                 .engine
                 .get_block_header(number)?
                 .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+            self.latest_block_header.update(latest_block_header);
         }
 
         match self.engine.get_block_header(genesis_block_number)? {
@@ -688,10 +680,7 @@ impl Store {
             .engine
             .get_block_header(number)?
             .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
-        *self
-            .latest_block_header
-            .write()
-            .map_err(|_| StoreError::LockError)? = latest_block_header;
+        self.latest_block_header.update(latest_block_header);
         Ok(())
     }
 
@@ -723,27 +712,39 @@ impl Store {
         self.engine.get_block_by_number(block_number).await
     }
 
-    pub async fn get_storage_at(
+    pub fn get_storage_at(
         &self,
         block_number: BlockNumber,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        match self.get_canonical_block_hash(block_number).await? {
-            Some(block_hash) => self.get_storage_at_hash(block_hash, address, storage_key),
+        match self.get_block_header(block_number)? {
+            Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
             None => Ok(None),
         }
     }
 
-    pub fn get_storage_at_hash(
+    pub fn get_storage_at_root(
         &self,
-        block_hash: BlockHash,
+        state_root: H256,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
-            return Ok(None);
+        let hashed_address = hash_address(&address);
+        let account_hash = H256::from_slice(&hashed_address);
+        let storage_root = if self.engine.flatkeyvalue_computed(account_hash)? {
+            // We will use FKVs, we don't need the root
+            *EMPTY_TRIE_HASH
+        } else {
+            let state_trie = self.open_state_trie(state_root)?;
+            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+                return Ok(None);
+            };
+            let account = AccountState::decode(&encoded_account)?;
+            account.storage_root
         };
+        let storage_trie = self.open_storage_trie(account_hash, storage_root, state_root)?;
+
         let hashed_key = hash_key(&storage_key);
         storage_trie
             .get(&hashed_key)?
@@ -751,19 +752,13 @@ impl Store {
             .transpose()
     }
 
-    pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        *self
-            .chain_config
-            .write()
-            .map_err(|_| StoreError::LockError)? = *chain_config;
+    pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+        self.chain_config = *chain_config;
         self.engine.set_chain_config(chain_config).await
     }
 
-    pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        Ok(*self
-            .chain_config
-            .read()
-            .map_err(|_| StoreError::LockError)?)
+    pub fn get_chain_config(&self) -> ChainConfig {
+        self.chain_config
     }
 
     pub async fn update_earliest_block_number(
@@ -789,11 +784,7 @@ impl Store {
     }
 
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        Ok(self
-            .latest_block_header
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .number)
+        Ok(self.latest_block_header.get().number)
     }
 
     pub async fn update_pending_block_number(
@@ -812,10 +803,7 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         {
-            let last = self
-                .latest_block_header
-                .read()
-                .map_err(|_| StoreError::LockError)?;
+            let last = self.latest_block_header.get();
             if last.number == block_number {
                 return Ok(Some(last.hash()));
             }
@@ -824,12 +812,7 @@ impl Store {
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
-        Ok(Some(
-            self.latest_block_header
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .hash(),
-        ))
+        Ok(Some(self.latest_block_header.get().hash()))
     }
 
     /// Updates the canonical chain.
@@ -844,15 +827,12 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
-        // Updates first the latest_block_header
-        // to avoid nonce inconsistencies #3927.
-        *self
-            .latest_block_header
-            .write()
-            .map_err(|_| StoreError::LockError)? = self
+        // Updates first the latest_block_header to avoid nonce inconsistencies #3927.
+        let latest_block_header = self
             .engine
             .get_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+        self.latest_block_header.update(latest_block_header);
         self.engine
             .forkchoice_update(
                 new_canonical_blocks,
@@ -915,14 +895,12 @@ impl Store {
         get_account_state_from_trie(&state_trie, address)
     }
 
-    pub fn get_account_state_by_hash(
+    pub fn get_account_state_by_root(
         &self,
-        block_hash: BlockHash,
+        state_root: H256,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
+        let state_trie = self.open_state_trie(state_root)?;
         self.get_account_state_from_trie(&state_trie, address)
     }
 
@@ -1332,10 +1310,7 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         {
-            let last = self
-                .latest_block_header
-                .read()
-                .map_err(|_| StoreError::LockError)?;
+            let last = self.latest_block_header.get();
             if last.number == block_number {
                 return Ok(Some(last.hash()));
             }
@@ -1464,6 +1439,22 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
         .to_vec()
 }
 
+#[derive(Debug, Default, Clone)]
+struct LatestBlockHeaderCache {
+    current: Arc<Mutex<Arc<BlockHeader>>>,
+}
+
+impl LatestBlockHeaderCache {
+    pub fn get(&self) -> Arc<BlockHeader> {
+        self.current.lock().expect("poisoned mutex").clone()
+    }
+
+    pub fn update(&self, header: BlockHeader) {
+        let new = Arc::new(header);
+        *self.current.lock().expect("poisoned mutex") = new;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
@@ -1538,7 +1529,7 @@ mod tests {
             })
             .collect();
         accounts.sort_by_key(|a| a.0);
-        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
         for (address, state) in &accounts {
             trie.insert(address.0.to_vec(), state.encode_to_vec())
                 .unwrap();
@@ -1564,13 +1555,13 @@ mod tests {
             .collect();
         slots.sort_by_key(|a| a.0);
         let mut trie = store
-            .open_storage_trie(address, *EMPTY_TRIE_HASH, *EMPTY_TRIE_HASH)
+            .open_direct_storage_trie(address, *EMPTY_TRIE_HASH)
             .unwrap();
         for (slot, value) in &slots {
             trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
         }
         let storage_root = trie.hash().unwrap();
-        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
         trie.insert(
             address.0.to_vec(),
             AccountState {
@@ -1594,7 +1585,7 @@ mod tests {
         }
     }
 
-    async fn test_genesis_block(store: Store) {
+    async fn test_genesis_block(mut store: Store) {
         const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
         const GENESIS_HIVE: &str = include_str!("../../fixtures/genesis/hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
@@ -1817,10 +1808,10 @@ mod tests {
         assert_eq!(pending_block_number, stored_pending_block_number);
     }
 
-    async fn test_chain_config_storage(store: Store) {
+    async fn test_chain_config_storage(mut store: Store) {
         let chain_config = example_chain_config();
         store.set_chain_config(&chain_config).await.unwrap();
-        let retrieved_chain_config = store.get_chain_config().unwrap();
+        let retrieved_chain_config = store.get_chain_config();
         assert_eq!(chain_config, retrieved_chain_config);
     }
 

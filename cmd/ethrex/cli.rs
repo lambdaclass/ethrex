@@ -575,8 +575,7 @@ pub async fn import_blocks(
             }
 
             blockchain
-                .add_block(block)
-                .await
+                .add_block_pipeline(block)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),

@@ -186,7 +186,7 @@ impl BlockProducer {
 
         // Blockchain stores block
         let block = payload_build_result.payload;
-        let chain_config = self.store.get_chain_config()?;
+        let chain_config = self.store.get_chain_config();
         validate_block(
             &block,
             &head_header,
@@ -203,8 +203,7 @@ impl BlockProducer {
 
         let account_updates_list = self
             .store
-            .apply_account_updates_batch(block.header.parent_hash, &account_updates)
-            .await?
+            .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let transactions_count = block.body.transactions.len();
@@ -212,8 +211,7 @@ impl BlockProducer {
         let block_hash = block.hash();
         self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
-            .store_block(block, account_updates_list, execution_result)
-            .await?;
+            .store_block(block, account_updates_list, execution_result)?;
         info!(
             "Stored new block {:x}, transaction_count {}",
             block_hash, transactions_count
@@ -228,11 +226,7 @@ impl BlockProducer {
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
-            let _ = METRICS_BLOCKS
-            .set_block_number(block_number)
-            .inspect_err(|e| {
-                tracing::error!("Failed to set metric: block_number {}", e.to_string())
-            });
+            METRICS_BLOCKS.set_block_number(block_number);
             #[allow(clippy::as_conversions)]
             let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
@@ -246,7 +240,10 @@ impl BlockProducer {
             return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
         };
 
-        let fee_config = *l2_config.fee_config.read().await;
+        let fee_config = *l2_config
+            .fee_config
+            .read()
+            .map_err(|_| BlockProducerError::Custom("Fee config lock was poisoned".to_string()))?;
 
         self.rollup_store
             .store_fee_config_by_block(block_number, fee_config)

@@ -112,7 +112,7 @@ async fn run(
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block).await;
+        let chain_result = blockchain.add_block(block);
 
         match chain_result {
             Err(error) => {
@@ -196,6 +196,11 @@ fn exception_is_expected(
                     BlockExpectedException::SystemContractCallFailed
                 ),
                 ChainError::EvmError(EvmError::SystemContractCallFailed(_))
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::RlpBlockLimitExceeded
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::MaximumRlpSizeExceeded(_, _))
             ) | (
                 BlockChainExpectedException::Other,
                 _ //TODO: Decide whether to support more specific errors.
@@ -285,7 +290,7 @@ fn parse_json_file(path: &Path) -> HashMap<String, TestUnit> {
 
 /// Creats a new in-memory store and adds the genesis state
 pub async fn build_store_for_test(test: &TestUnit) -> Store {
-    let store =
+    let mut store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
     let genesis = test.get_genesis();
     store
@@ -353,7 +358,6 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
             for (key, value) in expected_account.storage {
                 let db_storage_value = db
                     .get_storage_at(latest_block_number, *addr, key)
-                    .await
                     .expect("Failed to read from DB")
                     .unwrap_or_else(|| {
                         panic!("Storage missing for address {addr} key {key} in DB test:{test_key}")

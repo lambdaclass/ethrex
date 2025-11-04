@@ -1,5 +1,8 @@
 #[cfg(feature = "l2")]
 use crate::rlpx::l2::l2_connection::P2PBasedContext;
+#[cfg(not(feature = "l2"))]
+#[derive(Clone, Debug)]
+pub struct P2PBasedContext;
 use crate::{
     discv4::{
         peer_table::{PeerData, PeerTable},
@@ -13,7 +16,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{Node, NodeRecord},
+    types::Node,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -25,10 +28,7 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
-use tokio::{
-    net::{TcpListener, TcpSocket, UdpSocket},
-    sync::Mutex,
-};
+use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 
@@ -43,7 +43,6 @@ pub struct P2PContext {
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
-    pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
@@ -54,14 +53,13 @@ impl P2PContext {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         local_node: Node,
-        local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
         signer: SecretKey,
         peer_table: PeerTable,
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
-        #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
+        based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
@@ -79,9 +77,11 @@ impl P2PContext {
             error!("Failed to start Tx Broadcaster: {e}");
         })?;
 
+        #[cfg(not(feature = "l2"))]
+        let _ = &based_context;
+
         Ok(P2PContext {
             local_node,
-            local_node_record,
             tracker,
             signer,
             table: peer_table,
@@ -198,8 +198,11 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
             // Headers metrics
-            let headers_to_download = METRICS.headers_to_download.load(Ordering::Relaxed);
-            let headers_downloaded = METRICS.downloaded_headers.load(Ordering::Relaxed);
+            let headers_to_download = METRICS.sync_head_block.load(Ordering::Relaxed);
+            // We may download more than expected headers due to duplicates
+            // We just clamp it to the max to avoid showing the user confusing data
+            let headers_downloaded =
+                u64::min(METRICS.downloaded_headers.get(), headers_to_download);
             let headers_remaining = headers_to_download.saturating_sub(headers_downloaded);
             let headers_download_progress = if headers_to_download == 0 {
                 "0%".to_string()
@@ -213,13 +216,14 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Account leaves metrics
             let account_leaves_downloaded =
                 METRICS.downloaded_account_tries.load(Ordering::Relaxed);
+            let account_leaves_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
             let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
-                (METRICS.account_tries_inserted.load(Ordering::Relaxed) as f64
-                    / account_leaves_downloaded as f64)
-                    * 100.0
+                (account_leaves_inserted as f64 / account_leaves_downloaded as f64) * 100.0
             } else {
                 0.0
             };
+            let account_leaves_pending =
+                account_leaves_downloaded.saturating_sub(account_leaves_inserted);
             let account_leaves_time = format_duration({
                 let end_time = METRICS
                     .account_tries_download_end_time
@@ -259,9 +263,9 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
             // Storage leaves metrics
             let storage_leaves_downloaded = METRICS.storage_leaves_downloaded.get();
+            let storage_leaves_inserted = METRICS.storage_leaves_inserted.get();
             let storage_leaves_inserted_percentage = if storage_leaves_downloaded != 0 {
-                METRICS.storage_leaves_inserted.get() as f64 / storage_leaves_downloaded as f64
-                    * 100.0
+                storage_leaves_inserted as f64 / storage_leaves_downloaded as f64 * 100.0
             } else {
                 0.0
             };
@@ -360,19 +364,13 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
 
             info!(
-                "P2P Snap Sync:
-elapsed: {elapsed}
-{peer_number} peers.
-Current step: {current_step}
-Current Header Hash: {current_header_hash:x}
----
-headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
-account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
-account leaves insertion: {account_leaves_inserted_percentage:.2}%, elapsed: {account_leaves_inserted_time}
-storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}
-storage leaves insertion: {storage_leaves_inserted_percentage:.2}%, elapsed: {storage_leaves_inserted_time}
-healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
-bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_download_time})"
+                r#"
+P2P Snap Sync | elapsed {elapsed} | peers {peer_number} | step {current_step} | head {current_header_hash:x}
+  headers : {headers_downloaded}/{headers_to_download} ({headers_download_progress}), remaining {headers_remaining}
+  accounts: downloaded {account_leaves_downloaded} @ {account_leaves_time} | inserted {account_leaves_inserted} ({account_leaves_inserted_percentage:.1}%) in {account_leaves_inserted_time} | pending {account_leaves_pending}
+  storage : downloaded {storage_leaves_downloaded} @ {storage_leaves_time} | inserted {storage_leaves_inserted} ({storage_leaves_inserted_percentage:.1}%) in {storage_leaves_inserted_time}
+  healing : accounts {healed_accounts}, storages {healed_storages}, elapsed {heal_time}, throttle {heal_current_throttle}
+  bytecodes: downloaded {bytecodes_downloaded} in {bytecodes_download_time}"#
             );
         }
         tokio::time::sleep(Duration::from_secs(10)).await;

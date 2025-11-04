@@ -92,6 +92,9 @@ contract CommonBridge is
     /// Otherwise, this address is used for native token deposits and withdrawals.
     address public NATIVE_TOKEN_L1;
 
+    /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
+    uint256 private pendingPrivilegedTxIndex;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -121,6 +124,7 @@ contract CommonBridge is
 
         lastFetchedL1Block = block.number;
         transactionId = 0;
+        pendingPrivilegedTxIndex = 0;
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
@@ -136,7 +140,12 @@ contract CommonBridge is
         view
         returns (bytes32[] memory)
     {
-        return pendingTxHashes;
+        bytes32[] memory buffer = new bytes32[](pendingTxHashesLength());
+        for (uint256 i = 0; i < pendingTxHashesLength(); i++) {
+            buffer[i] = pendingTxHashes[i + pendingPrivilegedTxIndex];
+        }
+
+        return buffer;
     }
 
     /// Burns at least {amount} gas
@@ -307,13 +316,13 @@ contract CommonBridge is
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= pendingTxHashes.length,
+            uint256(number) <= pendingTxHashesLength(),
             "CommonBridge: number is greater than the length of pendingTxHashes (get)"
         );
 
         bytes memory hashes;
         for (uint i = 0; i < number; i++) {
-            hashes = bytes.concat(hashes, pendingTxHashes[i]);
+            hashes = bytes.concat(hashes, pendingTxHashes[i + pendingPrivilegedTxIndex]);
         }
 
         return
@@ -326,25 +335,19 @@ contract CommonBridge is
         uint16 number
     ) public onlyOnChainProposer {
         require(
-            number <= pendingTxHashes.length,
+            number <= pendingTxHashesLength(),
             "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
         );
 
-        for (uint i = 0; i < pendingTxHashes.length - number; i++) {
-            pendingTxHashes[i] = pendingTxHashes[i + number];
-        }
-
-        for (uint _i = 0; _i < number; _i++) {
-            pendingTxHashes.pop();
-        }
+        pendingPrivilegedTxIndex += number;
     }
 
     /// @inheritdoc ICommonBridge
     function hasExpiredPrivilegedTransactions() public view returns (bool) {
-        if (pendingTxHashes.length == 0) {
+        if (pendingTxHashesLength() == 0) {
             return false;
         }
-        return block.timestamp > privilegedTxDeadline[pendingTxHashes[0]];
+        return block.timestamp > privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]];
     }
 
     /// @inheritdoc ICommonBridge
@@ -488,6 +491,10 @@ contract CommonBridge is
                 batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber],
                 withdrawalLeaf
             );
+    }
+
+    function pendingTxHashesLength() private view returns (uint256) {
+        return pendingTxHashes.length - pendingPrivilegedTxIndex;
     }
 
     function upgradeL2Contract(

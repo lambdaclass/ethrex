@@ -1,5 +1,6 @@
 use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
+use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
 use ethrex_common::utils::keccak;
 use ethrex_common::{
@@ -13,7 +14,7 @@ use ethrex_l2_common::{
     privileged_transactions::compute_privileged_transactions_hash,
     state_diff::prepare_state_diff,
 };
-use ethrex_l2_sdk::{get_last_committed_batch, get_last_fetched_l1_block};
+use ethrex_l2_sdk::{get_l1_active_fork, get_last_committed_batch, get_last_fetched_l1_block};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
@@ -93,6 +94,7 @@ pub struct BlockFetcher {
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
     fetch_block_step: U256,
+    osaka_activation_time: Option<u64>,
 }
 
 impl BlockFetcher {
@@ -118,6 +120,7 @@ impl BlockFetcher {
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
             last_l1_block_fetched,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
+            osaka_activation_time: cfg.eth.osaka_activation_time,
         })
     }
 
@@ -269,7 +272,7 @@ impl BlockFetcher {
 
     async fn store_batch(&mut self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
-            self.blockchain.add_block(block.clone()).await?;
+            self.blockchain.add_block(block.clone())?;
 
             let block_hash = block.hash();
 
@@ -357,8 +360,12 @@ impl BlockFetcher {
         // This is copied from the L1Committer, this should be reviewed.
         let mut acc_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
         for block in batch {
-            let vm_db = StoreVmDatabase::new(self.store.clone(), block.header.parent_hash);
-            let mut vm = self.blockchain.new_evm(vm_db).await?;
+            let parent_header = self
+                .store
+                .get_block_header_by_hash(block.header.parent_hash)?
+                .ok_or(BlockFetcherError::ChainError(ChainError::ParentNotFound))?;
+            let vm_db = StoreVmDatabase::new(self.store.clone(), parent_header);
+            let mut vm = self.blockchain.new_evm(vm_db)?;
             vm.execute_block(block)
                 .map_err(BlockFetcherError::EvmError)?;
             let account_updates = vm
@@ -376,8 +383,12 @@ impl BlockFetcher {
         }
 
         let parent_block_hash = first_block.header.parent_hash;
+        let parent_header = self
+            .store
+            .get_block_header_by_hash(parent_block_hash)?
+            .ok_or(BlockFetcherError::ChainError(ChainError::ParentNotFound))?;
 
-        let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
+        let parent_db = StoreVmDatabase::new(self.store.clone(), parent_header);
 
         let state_diff = prepare_state_diff(
             last_block.header.clone(),
@@ -388,8 +399,11 @@ impl BlockFetcher {
         )
         .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
-        let (blobs_bundle, _) =
-            generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
+        let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
+            .await
+            .map_err(BlockFetcherError::EthClientError)?;
+        let (blobs_bundle, _) = generate_blobs_bundle(&state_diff, l1_fork)
+            .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
         Ok(Batch {
             number: batch_number.as_u64(),
