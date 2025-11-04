@@ -74,7 +74,7 @@ jobs:
   
   publish-apt:
     needs: [retag_docker_images]
-    uses: samoht9277/ethrex-apt/.github/workflows/publish-apt.yml@main
+    uses: lambdaclass/ethrex-apt/.github/workflows/publish-apt.yml@main
     permissions:
       contents: write
       actions: write
