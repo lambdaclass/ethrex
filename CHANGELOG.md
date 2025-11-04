@@ -3,6 +3,8 @@
 ## Perf
 
 ### 2025-11-03
+
+- Avoid unnecessary hash validations [#5167](https://github.com/lambdaclass/ethrex/pull/5167)
 - Merge execution with some post-execution validations [#5170](https://github.com/lambdaclass/ethrex/pull/5170)
 
 ### 2025-10-31
