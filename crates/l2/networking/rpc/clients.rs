@@ -57,7 +57,7 @@ pub async fn get_batch_by_number(
 pub async fn get_base_fee_vault_address(
     client: &EthClient,
     block: BlockIdentifier,
-) -> Result<Address, EthClientError> {
+) -> Result<Option<Address>, EthClientError> {
     let params = Some(vec![block.into()]);
     let request = RpcRequest::new("ethrex_getBaseFeeVaultAddress", params);
 
@@ -74,7 +74,7 @@ pub async fn get_base_fee_vault_address(
 pub async fn get_operator_fee_vault_address(
     client: &EthClient,
     block: BlockIdentifier,
-) -> Result<Address, EthClientError> {
+) -> Result<Option<Address>, EthClientError> {
     let params = Some(vec![block.into()]);
     let request = RpcRequest::new("ethrex_getOperatorFeeVaultAddress", params);
 
@@ -101,6 +101,23 @@ pub async fn get_operator_fee(
             .map_err(EthClientError::from),
         RpcResponse::Error(error_response) => {
             Err(GetOperatorFeeError::RPCError(error_response.error.message).into())
+        }
+    }
+}
+
+pub async fn get_l1_fee_vault_address(
+    client: &EthClient,
+    block: BlockIdentifier,
+) -> Result<Option<Address>, EthClientError> {
+    let params = Some(vec![block.into()]);
+    let request = RpcRequest::new("ethrex_getL1FeeVaultAddress", params);
+
+    match client.send_request(request).await? {
+        RpcResponse::Success(result) => serde_json::from_value(result.result)
+            .map_err(GetOperatorFeeVaultAddressError::SerdeJSONError)
+            .map_err(EthClientError::from),
+        RpcResponse::Error(error_response) => {
+            Err(GetOperatorFeeVaultAddressError::RPCError(error_response.error.message).into())
         }
     }
 }
