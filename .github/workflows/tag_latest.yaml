@@ -76,3 +76,6 @@ jobs:
     needs:
       - retag_docker_images
     uses: lambdaclass/ethrex-apt/.github/workflows/publish-apt.yml@main
+    permissions:
+      contents: write
+      actions: write
