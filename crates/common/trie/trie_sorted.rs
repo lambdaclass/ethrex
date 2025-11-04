@@ -306,7 +306,7 @@ where
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
     scope(|s| {
-        let pool = ThreadPool::new(12, s);
+        let pool = ThreadPool::new(1, s);
         trie_from_sorted_accounts(
             db,
             accounts_iter,
