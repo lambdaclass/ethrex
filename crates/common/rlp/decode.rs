@@ -492,29 +492,11 @@ pub fn is_encoded_as_bytes(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
     Ok((0xb8..=0xbf).contains(prefix))
 }
 
-pub fn is_encoded_as_list(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
-    let prefix = rlp.first().ok_or(RLPDecodeError::MalformedData)?;
-    Ok((RLP_EMPTY_LIST..=0xFF).contains(prefix))
-}
-
 /// Receives an RLP bytes item (prefix between 0xb8 and 0xbf) and returns its payload
 pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
     let prefix = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
     let offset: usize = (prefix - 0xb8 + 1).into();
     rlp.get(offset + 1..).ok_or(RLPDecodeError::InvalidLength)
-}
-
-/// Receives an RLP item (either string (prefix between 0x80 and 0xB8 or bytes (prefix between 0xb8 and 0xbf)) and returns its payload
-pub fn get_rlp_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
-    let prefix = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
-    match prefix {
-        (RLP_NULL..=0xb7) => rlp.get(1..).ok_or(RLPDecodeError::InvalidLength),
-        (0xb8..=0xbf) => {
-            let offset: usize = (prefix - 0xb8 + 1).into();
-            rlp.get(offset + 1..).ok_or(RLPDecodeError::InvalidLength)
-        }
-        _ => Err(RLPDecodeError::MalformedData),
-    }
 }
 
 /// Decodes the payload of an RLP item from a slice of bytes.
