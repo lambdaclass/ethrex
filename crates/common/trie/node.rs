@@ -151,7 +151,8 @@ impl NodeRef {
             Node::Branch(node) => {
                 for choice in &mut node.choices {
                     let NodeRef::Hash(hash) = choice else {
-                        unreachable!("already resolved branch node")
+                        dbg!("already resolved branch node");
+                        return Ok(());
                     };
 
                     if hash.is_valid() {
@@ -161,7 +162,8 @@ impl NodeRef {
             }
             Node::Extension(node) => {
                 let NodeRef::Hash(_) = node.child else {
-                    unreachable!("already resolved extension node")
+                    dbg!("already resolved branch node");
+                    return Ok(());
                 };
 
                 node.child.resolve_subtrie(all_nodes)?;
