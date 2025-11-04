@@ -867,7 +867,7 @@ impl StoreEngine for Store {
             batch.put_cf(&cf_bodies, &rlp_key_buffer, &rlp_val_buffer);
             rlp_val_buffer.clear();
 
-            block_number.encode(&rlp_val_buffer);
+            block_number.encode(&mut rlp_val_buffer);
             batch.put_cf(&cf_block_numbers, &rlp_key_buffer, &rlp_val_buffer);
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
