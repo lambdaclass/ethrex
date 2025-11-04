@@ -205,7 +205,7 @@ impl RpcHandler for GetL1FeeVaultAddress {
             serde_json::to_value(l1_fee_config.map(|config| format!("{:#x}", config.l1_fee_vault)))
                 .map_err(|e| {
                     ethrex_rpc::RpcErr::Internal(format!(
-                        "Failed to serialize base fee vault address: {}",
+                        "Failed to serialize l1 fee vault address: {}",
                         e
                     ))
                 })?,
