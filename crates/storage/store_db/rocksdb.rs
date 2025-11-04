@@ -14,12 +14,8 @@ use ethrex_common::{
     },
 };
 use ethrex_trie::{Nibbles, Node, Trie};
-use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
-    Options, WriteBatch, checkpoint::Checkpoint,
-};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     path::Path,
     sync::{
         Arc, Mutex,
@@ -138,7 +134,7 @@ enum FKVGeneratorControlMessage {
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    db: canopydb::Environment,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
@@ -147,42 +143,7 @@ pub struct Store {
 
 impl Store {
     pub fn new(path: &Path) -> Result<Self, StoreError> {
-        let mut db_options = Options::default();
-        db_options.create_if_missing(true);
-        db_options.create_missing_column_families(true);
-
-        db_options.set_max_open_files(-1);
-        db_options.set_max_file_opening_threads(16);
-
-        db_options.set_max_background_jobs(8);
-
-        db_options.set_level_zero_file_num_compaction_trigger(2);
-        db_options.set_level_zero_slowdown_writes_trigger(10);
-        db_options.set_level_zero_stop_writes_trigger(16);
-        db_options.set_target_file_size_base(512 * 1024 * 1024); // 512MB
-        db_options.set_max_bytes_for_level_base(2 * 1024 * 1024 * 1024); // 2GB L1
-        db_options.set_max_bytes_for_level_multiplier(10.0);
-        db_options.set_level_compaction_dynamic_level_bytes(true);
-
-        db_options.set_db_write_buffer_size(1024 * 1024 * 1024); // 1GB
-        db_options.set_write_buffer_size(128 * 1024 * 1024); // 128MB
-        db_options.set_max_write_buffer_number(4);
-        db_options.set_min_write_buffer_number_to_merge(2);
-
-        db_options.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
-        db_options.set_max_total_wal_size(2 * 1024 * 1024 * 1024); // 2GB
-        db_options.set_wal_bytes_per_sync(32 * 1024 * 1024); // 32MB
-        db_options.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
-        db_options.set_use_fsync(false); // fdatasync
-
-        db_options.set_enable_pipelined_write(true);
-        db_options.set_allow_concurrent_memtable_write(true);
-        db_options.set_enable_write_thread_adaptive_yield(true);
-        db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
-        db_options.set_advise_random_on_open(false);
-
-        // db_options.enable_statistics();
-        // db_options.set_stats_dump_period_sec(600);
+        let environment = canopydb::Environment::new(path).unwrap();
 
         // Current column families that the code expects
         let expected_column_families = vec![
@@ -203,159 +164,39 @@ impl Store {
             CF_MISC_VALUES,
         ];
 
-        // Get existing column families to know which ones to drop later
-        let existing_cfs = match DBWithThreadMode::<MultiThreaded>::list_cf(&db_options, path) {
-            Ok(cfs) => {
-                info!("Found existing column families: {:?}", cfs);
-                cfs
-            }
-            Err(_) => {
-                // Database doesn't exist yet
-                info!("Database doesn't exist, will create with expected column families");
-                vec!["default".to_string()]
-            }
-        };
-
-        // Create descriptors for ALL existing CFs + expected ones (RocksDB requires opening all existing CFs)
-        let mut all_cfs_to_open = HashSet::new();
-
-        // Add all expected CFs
-        for cf in &expected_column_families {
-            all_cfs_to_open.insert(cf.to_string());
-        }
-
         // Add all existing CFs (we must open them to be able to drop obsolete ones later)
-        for cf in &existing_cfs {
-            if cf != "default" {
-                // default is handled automatically
-                all_cfs_to_open.insert(cf.clone());
-            }
+        for cf in expected_column_families {
+            // default is handled automatically
+            let db_handle = environment.get_or_create_database(cf).unwrap();
+            db_handle
+                .begin_write()
+                .unwrap()
+                .get_or_create_tree(b"")
+                .unwrap();
         }
 
-        let mut cf_descriptors = Vec::new();
-        for cf_name in &all_cfs_to_open {
-            let mut cf_opts = Options::default();
-
-            cf_opts.set_level_zero_file_num_compaction_trigger(4);
-            cf_opts.set_level_zero_slowdown_writes_trigger(20);
-            cf_opts.set_level_zero_stop_writes_trigger(36);
-
-            match cf_name.as_str() {
-                CF_HEADERS | CF_BODIES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
-                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
-                    cf_opts.set_max_write_buffer_number(4);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(32 * 1024); // 32KB blocks
-                    cf_opts.set_block_based_table_factory(&block_opts);
-                }
-                CF_CANONICAL_BLOCK_HASHES | CF_BLOCK_NUMBERS => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
-                    cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
-
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false);
-                    cf_opts.set_block_based_table_factory(&block_opts);
-                }
-                CF_TRIE_NODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
-                    cf_opts.set_max_write_buffer_number(6);
-                    cf_opts.set_min_write_buffer_number_to_merge(2);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
-
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    cf_opts.set_block_based_table_factory(&block_opts);
-                }
-                CF_RECEIPTS | CF_ACCOUNT_CODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
-                    cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(32 * 1024); // 32KB
-                    cf_opts.set_block_based_table_factory(&block_opts);
-                }
-                _ => {
-                    // Default for other CFs
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
-                    cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
-
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024);
-                    cf_opts.set_block_based_table_factory(&block_opts);
-                }
-            }
-
-            cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
-        }
-
-        // Note: we are not using transactions on our Rocksdb instance.
-        // This is safe as long as two conditions are met:
-        // - We never write to the same table from two different places concurrently.
-        // - We always use batch writes. This guarantees atomicity in rocksdb.
-        //
-        // For the first point, we know that all writes to the state and storage tries are
-        // done through the `apply_updates` function, called only after block execution.
-        // There is only one other place where we write to the tries, and that's during snap
-        // sync, through the `write_storage_trie_nodes_batch` function (and similarly for state trie nodes);
-        // this does not pose a problem because there is no block execution until snap sync is done.
-        //
-        // Regardless of transactionality, all writes go through a WAL, which ensures
-        // we get durability (i.e. crash recovery).
-        //
-        // For other less crucial tables refer to the db_safety documentation.
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
-            &db_options,
-            path,
-            cf_descriptors,
-        )
-        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
-
-        // Clean up obsolete column families
-        for cf_name in &existing_cfs {
-            if cf_name != "default" && !expected_column_families.contains(&cf_name.as_str()) {
-                info!("Dropping obsolete column family: {}", cf_name);
-                match db.drop_cf(cf_name) {
-                    Ok(_) => info!("Successfully dropped column family: {}", cf_name),
-                    Err(e) => {
-                        // Log error but don't fail initialization - the database is still usable
-                        tracing::warn!(
-                            "Failed to drop obsolete column family '{}': {}",
-                            cf_name,
-                            e
-                        );
-                    }
-                }
-            }
-        }
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
 
-        let cf_misc = db
-            .cf_handle(CF_MISC_VALUES)
-            .ok_or_else(|| StoreError::Custom("column not found".to_string()))?;
-        let mut last_written = db
-            .get_cf(&cf_misc, "last_written")?
-            .unwrap_or_else(|| vec![0u8; 64]);
-        if last_written == vec![0xff] {
-            last_written = vec![0xff; 64];
-        }
-        drop(cf_misc); // dropped to remove borrow on db
+        let last_written = {
+            let db = environment.get_database(CF_MISC_VALUES).unwrap().unwrap();
+            let mut transaction = db.begin_read().unwrap();
+            let mut last_written = transaction
+                .get_tree(b"")
+                .unwrap()
+                .unwrap()
+                .get(b"last_written")
+                .unwrap()
+                .map(|b| b.to_vec())
+                .unwrap_or_else(|| vec![0u8; 64]);
+            if last_written == vec![0xff] {
+                last_written = vec![0xff; 64];
+            }
+            last_written
+        };
 
         let store = Self {
-            db: Arc::new(db),
+            db: environment,
             trie_cache: Default::default(),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
@@ -431,16 +272,6 @@ impl Store {
         Ok(store)
     }
 
-    // Helper method to get column family handle
-    fn cf_handle(
-        &self,
-        cf_name: &str,
-    ) -> Result<std::sync::Arc<BoundColumnFamily<'_>>, StoreError> {
-        self.db
-            .cf_handle(cf_name)
-            .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
-    }
-
     // Helper method for async writes
     async fn write_async<K, V>(&self, cf_name: &str, key: K, value: V) -> Result<(), StoreError>
     where
@@ -451,11 +282,15 @@ impl Store {
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
-            db.put_cf(&cf, key, value)
-                .map_err(|e| StoreError::Custom(format!("RocksDB write error: {}", e)))
+            let transaction = db
+                .get_database(&cf_name)
+                .unwrap()
+                .unwrap()
+                .begin_write()
+                .unwrap();
+            let tree = transaction.get_tree(b"").unwrap().unwrap();
+            tree.insert(key.as_ref(), value.as_ref())
+                .map_err(|e| StoreError::Custom(format!("CanopyDB write error: {}", e)))
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -470,11 +305,16 @@ impl Store {
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
-            db.get_cf(&cf, key)
-                .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
+            let transaction = db
+                .get_database(&cf_name)
+                .unwrap()
+                .unwrap()
+                .begin_read()
+                .unwrap();
+            let tree = transaction.get_tree(b"").unwrap().unwrap();
+            tree.get(key.as_ref())
+                .map(|b| b.map(|b| b.to_vec()))
+                .map_err(|e| StoreError::Custom(format!("CanopyDB read error: {}", e)))
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -485,10 +325,17 @@ impl Store {
     where
         K: AsRef<[u8]>,
     {
-        let cf = self.cf_handle(cf_name)?;
-        self.db
-            .get_cf(&cf, key)
-            .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
+        let transaction = self
+            .db
+            .get_database(&cf_name)
+            .unwrap()
+            .unwrap()
+            .begin_read()
+            .unwrap();
+        let tree = transaction.get_tree(b"").unwrap().unwrap();
+        tree.get(key.as_ref())
+            .map(|b| b.map(|b| b.to_vec()))
+            .map_err(|e| StoreError::Custom(format!("CanopyDB read error: {}", e)))
     }
 
     // Helper method for batch writes
@@ -498,17 +345,25 @@ impl Store {
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatch::default();
+            let mut transactions = BTreeMap::new();
 
-            for (cf_name, key, value) in batch_ops {
-                let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                    StoreError::Custom(format!("Column family not found: {}", cf_name))
-                })?;
-                batch.put_cf(&cf, key, value);
+            for (db_name, key, value) in batch_ops {
+                let transaction = transactions.entry(db_name).or_insert_with_key(|name| {
+                    db.get_database(name)
+                        .unwrap()
+                        .unwrap()
+                        .begin_write()
+                        .unwrap()
+                });
+
+                transaction
+                    .get_tree(b"")
+                    .unwrap()
+                    .unwrap()
+                    .insert(key.as_ref(), value.as_ref());
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            Ok(db.group_commit(transactions.into_values(), false).unwrap())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -540,16 +395,15 @@ impl Store {
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
-
+            let cf = db.get_database(&cf_name).unwrap().unwrap();
+            let transaction = cf.begin_read().unwrap();
+            let tree = transaction.get_tree(b"").unwrap().unwrap();
             let mut results = Vec::with_capacity(keys.len());
 
             for key in keys {
-                match db.get_cf(&cf, key)? {
+                match tree.get(key.as_ref())? {
                     Some(bytes) => {
-                        let value = deserialize_fn(bytes)?;
+                        let value = deserialize_fn(bytes.to_vec())?;
                         results.push(value);
                     }
                     None => {
@@ -568,19 +422,35 @@ impl Store {
         &self,
         control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
-        let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
-        let cf_flatkeyvalue = self.cf_handle(CF_FLATKEYVALUE)?;
-
-        let last_written = self
+        let mut cf_misc = self
             .db
-            .get_cf(&cf_misc, "last_written")?
-            .unwrap_or_default();
+            .get_database(CF_MISC_VALUES)
+            .unwrap()
+            .unwrap()
+            .begin_write()
+            .unwrap();
+        let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
+        let mut cf_flatkeyvalue = self
+            .db
+            .get_database(CF_FLATKEYVALUE)
+            .unwrap()
+            .unwrap()
+            .begin_write()
+            .unwrap();
+        let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+
+        let last_written = {
+            misc_tree
+                .get(b"last_written")
+                .unwrap()
+                .map(|b| b.to_vec())
+                .unwrap_or_else(|| vec![0u8; 64])
+        };
         if last_written == vec![0xff] {
             return Ok(());
         }
 
-        self.db
-            .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff])?;
+        flatkeyvalue.delete_range(last_written..vec![0xff])?;
 
         loop {
             let root = self
@@ -589,10 +459,7 @@ impl Store {
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
 
-            let last_written = self
-                .db
-                .get_cf(&cf_misc, "last_written")?
-                .unwrap_or_default();
+            let last_written = misc_tree.get(b"last_written").unwrap().unwrap().to_vec();
             let last_written_account = last_written
                 .get(0..64)
                 .map(|v| Nibbles::from_hex(v.to_vec()))
@@ -605,8 +472,14 @@ impl Store {
             debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
 
             let mut ctr = 0;
-            let mut batch = WriteBatch::default();
-            let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
+            let mut iter = {
+                let db = Box::new(
+                    RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None, self.last_written()?)
+                        .unwrap(),
+                );
+                Trie::open(db, state_root)
+            }
+            .into_iter();
             if last_written_account > Nibbles::default() {
                 iter.advance(last_written_account.to_bytes())?;
             }
@@ -616,20 +489,50 @@ impl Store {
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
-                batch.put_cf(&cf_misc, "last_written", path.as_ref());
-                batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
+                misc_tree.insert(b"last_written", path.as_ref());
+                flatkeyvalue.insert(path.as_ref(), node.value.as_ref());
                 ctr += 1;
                 if ctr > 10_000 {
-                    self.db.write(std::mem::take(&mut batch))?;
+                    self.db
+                        .group_commit([cf_misc, cf_flatkeyvalue], false)
+                        .unwrap();
+
+                    cf_misc = self
+                        .db
+                        .get_database(CF_MISC_VALUES)
+                        .unwrap()
+                        .unwrap()
+                        .begin_write()
+                        .unwrap();
+                    misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
+                    cf_flatkeyvalue = self
+                        .db
+                        .get_database(CF_FLATKEYVALUE)
+                        .unwrap()
+                        .unwrap()
+                        .begin_write()
+                        .unwrap();
+                    flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+
                     *self
                         .last_computed_flatkeyvalue
                         .lock()
                         .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
                 }
 
-                let mut iter_inner = self
-                    .open_direct_storage_trie(account_hash, account_state.storage_root)?
-                    .into_iter();
+                let mut iter_inner = {
+                    let db = Box::new(
+                        RocksDBTrieDB::new(
+                            self.db.clone(),
+                            CF_TRIE_NODES,
+                            Some(account_hash),
+                            self.last_written()?,
+                        )
+                        .unwrap(),
+                    );
+                    Trie::open(db, account_state.storage_root)
+                }
+                .into_iter();
                 if last_written_storage > Nibbles::default() {
                     iter_inner.advance(last_written_storage.to_bytes())?;
                     last_written_storage = Nibbles::default();
@@ -639,11 +542,31 @@ impl Store {
                         return Ok(());
                     };
                     let key = apply_prefix(Some(account_hash), path);
-                    batch.put_cf(&cf_misc, "last_written", key.as_ref());
-                    batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
+                    misc_tree.insert(b"last_written", key.as_ref());
+                    flatkeyvalue.insert(key.as_ref(), node.value.as_ref());
                     ctr += 1;
                     if ctr > 10_000 {
-                        self.db.write(std::mem::take(&mut batch))?;
+                        self.db
+                            .group_commit([cf_misc, cf_flatkeyvalue], false)
+                            .unwrap();
+
+                        cf_misc = self
+                            .db
+                            .get_database(CF_MISC_VALUES)
+                            .unwrap()
+                            .unwrap()
+                            .begin_write()
+                            .unwrap();
+                        misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
+                        cf_flatkeyvalue = self
+                            .db
+                            .get_database(CF_FLATKEYVALUE)
+                            .unwrap()
+                            .unwrap()
+                            .begin_write()
+                            .unwrap();
+                        flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+
                         *self
                             .last_computed_flatkeyvalue
                             .lock()
@@ -684,8 +607,10 @@ impl Store {
                 }
                 Err(err) => return Err(err),
                 Ok(()) => {
-                    batch.put_cf(&cf_misc, "last_written", [0xff]);
-                    self.db.write(batch)?;
+                    misc_tree.insert(b"last_written", [0xff].as_ref());
+                    self.db
+                        .group_commit([cf_misc, cf_flatkeyvalue], false)
+                        .unwrap();
                     *self
                         .last_computed_flatkeyvalue
                         .lock()
@@ -1126,7 +1051,7 @@ impl StoreEngine for Store {
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();
-        let cf = self.cf_handle(CF_PENDING_BLOCKS)?;
+        let cf = self.db.get_database(CF_PENDING_BLOCKS)?;
         self.db
             .put_cf(&cf, hash_key, block_value)
             .map_err(StoreError::RocksdbError)

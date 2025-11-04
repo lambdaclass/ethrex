@@ -35,7 +35,7 @@ dependencies = [
  "memmap2",
  "object 0.36.7",
  "rustc-demangle",
- "smallvec",
+ "smallvec 1.15.1",
  "typed-arena",
 ]
 
@@ -1331,6 +1331,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "canopydb"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c927a1b6fbe7300bd7efa06d8ffe72665c392206637d438e66bd5b459d5548a0"
+dependencies = [
+ "bitflags 2.10.0",
+ "dashmap 7.0.0-rc2",
+ "derive_more 2.0.1",
+ "fail",
+ "foldhash 0.1.5",
+ "fslock",
+ "hashbrown 0.15.5",
+ "libc",
+ "lock_api",
+ "log",
+ "lz4_flex",
+ "nix 0.29.0",
+ "parking_lot",
+ "quick_cache",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "smallvec 2.0.0-alpha.11",
+ "tempfile",
+ "triomphe",
+ "xxhash-rust",
+ "zerocopy 0.8.27",
+]
+
+[[package]]
 name = "cargo-platform"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2147,7 +2177,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "881c5d0a13b2f1498e2306e82cbada78390e152d4b1378fb28a84f4dcd0dc4f3"
 dependencies = [
  "dispatch",
- "nix",
+ "nix 0.30.1",
  "windows-sys 0.61.2",
 ]
 
@@ -2278,6 +2308,20 @@ dependencies = [
  "hashbrown 0.14.5",
  "lock_api",
  "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
+name = "dashmap"
+version = "7.0.0-rc2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4a1e35a65fe0538a60167f0ada6e195ad5d477f6ddae273943596d4a1a5730b"
+dependencies = [
+ "cfg-if 1.0.4",
+ "crossbeam-utils 0.8.21",
+ "equivalent",
+ "hashbrown 0.15.5",
+ "lock_api",
  "parking_lot_core",
 ]
 
@@ -3596,6 +3640,7 @@ dependencies = [
  "aes",
  "async-trait",
  "bytes",
+ "canopydb",
  "concat-kdf",
  "crossbeam 0.8.4",
  "ctr",
@@ -3616,7 +3661,6 @@ dependencies = [
  "prometheus 0.14.0",
  "rand 0.8.5",
  "rayon",
- "rocksdb",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3761,6 +3805,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "bytes",
+ "canopydb",
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-rlp",
@@ -3769,7 +3814,6 @@ dependencies = [
  "hex-literal",
  "qfilter",
  "rayon",
- "rocksdb",
  "rustc-hash 2.1.1",
  "serde",
  "serde_json",
@@ -3814,6 +3858,7 @@ version = "5.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "canopydb",
  "cita_trie",
  "criterion",
  "crossbeam 0.8.4",
@@ -3827,11 +3872,10 @@ dependencies = [
  "lazy_static",
  "proptest",
  "rand 0.8.5",
- "rocksdb",
  "serde",
  "serde_json",
  "sha3",
- "smallvec",
+ "smallvec 1.15.1",
  "tempfile",
  "thiserror 2.0.17",
  "tracing",
@@ -3878,6 +3922,17 @@ checksum = "7cd915d99f24784cdc19fd37ef22b97e3ff0ae756c7e492e9fbfe897d61e2aec"
 dependencies = [
  "indenter",
  "once_cell",
+]
+
+[[package]]
+name = "fail"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe5e43d0f78a42ad591453aedb1d7ae631ce7ee445c7643691055a9ed8d3b01c"
+dependencies = [
+ "log",
+ "once_cell",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -4105,6 +4160,16 @@ name = "fs2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
+name = "fslock"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04412b8935272e3a9bae6f48c7bfff74c2911f60525404edfdd28e49884c3bfb"
 dependencies = [
  "libc",
  "winapi",
@@ -4820,7 +4885,7 @@ dependencies = [
  "itoa",
  "pin-project-lite",
  "pin-utils",
- "smallvec",
+ "smallvec 1.15.1",
  "tokio",
  "want",
 ]
@@ -5001,7 +5066,7 @@ dependencies = [
  "icu_normalizer_data",
  "icu_properties",
  "icu_provider",
- "smallvec",
+ "smallvec 1.15.1",
  "zerovec",
 ]
 
@@ -5059,7 +5124,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"
 dependencies = [
  "idna_adapter",
- "smallvec",
+ "smallvec 1.15.1",
  "utf8_iter",
 ]
 
@@ -5205,7 +5270,7 @@ dependencies = [
  "clap",
  "crossbeam-channel 0.5.15",
  "crossbeam-utils 0.8.21",
- "dashmap",
+ "dashmap 6.1.0",
  "env_logger",
  "indexmap 2.12.0",
  "itoa",
@@ -5690,21 +5755,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "librocksdb-sys"
-version = "0.17.3+10.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cef2a00ee60fe526157c9023edab23943fae1ce2ab6f4abb2a807c1746835de9"
-dependencies = [
- "bindgen 0.72.1",
- "bzip2-sys",
- "cc",
- "libc",
- "libz-sys",
- "lz4-sys",
- "zstd-sys",
-]
-
-[[package]]
 name = "libsql"
 version = "0.9.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5779,7 +5829,7 @@ dependencies = [
  "fallible-streaming-iterator",
  "hashlink 0.8.4",
  "libsql-ffi",
- "smallvec",
+ "smallvec 1.15.1",
 ]
 
 [[package]]
@@ -5931,14 +5981,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
-name = "lz4-sys"
-version = "1.11.1+lz4-1.10.0"
+name = "lz4_flex"
+version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
-dependencies = [
- "cc",
- "libc",
-]
+checksum = "08ab2867e3eeeca90e844d1940eab391c9dc5228783db2ed999acbc0a9ed375a"
 
 [[package]]
 name = "malachite"
@@ -6319,6 +6365,18 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.10.0",
+ "cfg-if 1.0.4",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
+name = "nix"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
@@ -6417,7 +6475,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "rand 0.8.5",
- "smallvec",
+ "smallvec 1.15.1",
  "zeroize",
 ]
 
@@ -7043,7 +7101,7 @@ dependencies = [
  "cfg-if 1.0.4",
  "libc",
  "redox_syscall",
- "smallvec",
+ "smallvec 1.15.1",
  "windows-link 0.2.1",
 ]
 
@@ -7781,6 +7839,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick_cache"
+version = "0.6.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ada44a88ef953a3294f6eb55d2007ba44646015e18613d2f213016379203ef3"
+dependencies = [
+ "equivalent",
+ "hashbrown 0.16.0",
+ "parking_lot",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8440,7 +8509,7 @@ dependencies = [
  "risc0-sys",
  "risc0-zkp",
  "serde",
- "smallvec",
+ "smallvec 1.15.1",
  "tracing",
  "wide",
 ]
@@ -8697,16 +8766,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "rocksdb"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddb7af00d2b17dbd07d82c0063e25411959748ff03e8d4f96134c2ff41fce34f"
-dependencies = [
- "libc",
- "librocksdb-sys",
 ]
 
 [[package]]
@@ -9652,6 +9711,12 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "smallvec"
+version = "2.0.0-alpha.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87b96efa4bd6bdd2ff0c6615cc36fc4970cbae63cfd46ddff5cee35a1b4df570"
 
 [[package]]
 name = "snap"
@@ -11151,7 +11216,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee40835db14ddd1e3ba414292272eddde9dad04d3d4b65509656414d1c42592f"
 dependencies = [
  "ansi_term",
- "smallvec",
+ "smallvec 1.15.1",
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber 0.3.20",
@@ -11198,12 +11263,18 @@ dependencies = [
  "once_cell",
  "regex-automata",
  "sharded-slab",
- "smallvec",
+ "smallvec 1.15.1",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
 ]
+
+[[package]]
+name = "triomphe"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd69c5aa8f924c7519d6372789a74eac5b94fb0f8fcf0d4a97eb0bfc3e785f39"
 
 [[package]]
 name = "try-lock"
