@@ -444,7 +444,11 @@ impl Store {
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
 
-            let last_written = misc_tree.get(b"last_written").unwrap().unwrap().to_vec();
+            let last_written = misc_tree
+                .get(b"last_written")
+                .unwrap()
+                .map(|b| b.to_vec())
+                .unwrap_or_default();
             let last_written_account = last_written
                 .get(0..64)
                 .map(|v| Nibbles::from_hex(v.to_vec()))
