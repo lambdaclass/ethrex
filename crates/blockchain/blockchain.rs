@@ -149,7 +149,7 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    #[instrument(level = "trace", name = "Execute Block Pipeline", skip_all)]
+    #[instrument(level = "trace", name = "Execute Block", skip_all)]
     fn execute_block(
         &self,
         block: &Block,
