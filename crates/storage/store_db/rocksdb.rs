@@ -144,6 +144,7 @@ pub struct Store {
 
 impl Store {
     pub fn new(path: &Path) -> Result<Self, StoreError> {
+        std::fs::create_dir_all(path).unwrap();
         let environment = canopydb::Environment::new(path).unwrap();
 
         // Current column families that the code expects
@@ -286,9 +287,15 @@ impl Store {
 
         tokio::task::spawn_blocking(move || {
             let transaction = dbs.get(&cf_name).unwrap().begin_write().unwrap();
-            let mut tree = transaction.get_tree(b"").unwrap().unwrap();
-            tree.insert(key.as_ref(), value.as_ref())
-                .map_err(|e| StoreError::Custom(format!("CanopyDB write error: {}", e)))
+            {
+                let mut tree = transaction.get_tree(b"").unwrap().unwrap();
+                tree.insert(key.as_ref(), value.as_ref())
+                    .map_err(|e| StoreError::Custom(format!("CanopyDB write error: {}", e)))?;
+            }
+            transaction
+                .commit()
+                .map_err(|e| StoreError::Custom(format!("CanopyDB commit error: {}", e)))?;
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1126,13 +1133,14 @@ impl StoreEngine for Store {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();
         let cf = self.dbs.get(CF_PENDING_BLOCKS).unwrap();
-        cf.begin_write()
-            .unwrap()
-            .get_tree(b"")
+        let tx = cf.begin_write().unwrap();
+        tx.get_tree(b"")
             .unwrap()
             .unwrap()
             .insert(&hash_key, &block_value)
-            .map_err(StoreError::RocksdbError)
+            .map_err(StoreError::RocksdbError)?;
+        tx.commit().unwrap();
+        Ok(())
     }
 
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
