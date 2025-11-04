@@ -1462,7 +1462,7 @@ mod tests {
     use ethrex_common::{
         Bloom, H160,
         constants::EMPTY_KECCACK_HASH,
-        types::{Transaction, TxType},
+        types::{FORKS, Fork::*, PRE_MERGE_FORKS, Transaction, TxType},
     };
     use ethrex_rlp::decode::RLPDecode;
     use std::{fs, str::FromStr};
@@ -1816,22 +1816,18 @@ mod tests {
     }
 
     fn example_chain_config() -> ChainConfig {
+        let mut fork_activation_timestamps: [Option<u64>; FORKS.len()] = [None; FORKS.len()];
+        fork_activation_timestamps[Paris] = Some(0);
+        fork_activation_timestamps[Shanghai] = Some(0);
+        fork_activation_timestamps[Cancun] = Some(0);
+        fork_activation_timestamps[Prague] = Some(1718232101);
+
+        let fork_activation_blocks: [Option<u64>; PRE_MERGE_FORKS] = [Some(0); PRE_MERGE_FORKS];
+
         ChainConfig {
             chain_id: 3151908_u64,
-            homestead_block: Some(0),
-            eip150_block: Some(0),
-            eip155_block: Some(0),
-            eip158_block: Some(0),
-            byzantium_block: Some(0),
-            constantinople_block: Some(0),
-            petersburg_block: Some(0),
-            istanbul_block: Some(0),
-            berlin_block: Some(0),
-            london_block: Some(0),
-            merge_netsplit_block: Some(0),
-            shanghai_time: Some(0),
-            cancun_time: Some(0),
-            prague_time: Some(1718232101),
+            fork_activation_blocks,
+            fork_activation_timestamps,
             terminal_total_difficulty: Some(58750000000000000000000),
             terminal_total_difficulty_passed: true,
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")

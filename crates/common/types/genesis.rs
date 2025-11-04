@@ -8,13 +8,15 @@ use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{BufReader, Error},
+    ops::{Index, IndexMut},
     path::Path,
 };
 use tracing::warn;
 
+use self::Fork::*;
 use super::{
-    AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+    AccountState, Block, BlockBody, BlockHeader, INITIAL_BASE_FEE, compute_receipts_root,
+    compute_transactions_root, compute_withdrawals_root,
 };
 use crate::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
@@ -71,23 +73,12 @@ impl TryFrom<&Path> for Genesis {
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
 
-        // Try to derive if the genesis file is PoS
-        // Different genesis files have different configurations
-        // TODO: Remove once we have a way to run PoW chains, i.e Snap Sync
-        if genesis.config.terminal_total_difficulty != Some(0)
-            && genesis.config.merge_netsplit_block != Some(0)
-            && genesis.config.shanghai_time != Some(0)
-            && genesis.config.cancun_time != Some(0)
-            && genesis.config.prague_time != Some(0)
-        {
-            // Hive has a minimalistic genesis file, which is not supported
-            // return Err(GenesisError::InvalidFork());
-            warn!("Invalid fork, only post-merge networks are supported.");
-        }
-
-        if genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
-            || genesis.config.bpo4_time.is_some() && genesis.config.blob_schedule.bpo4.is_none()
-            || genesis.config.bpo5_time.is_some() && genesis.config.blob_schedule.bpo5.is_none()
+        if genesis.config.fork_activation_timestamps[BPO3].is_some()
+            && genesis.config.blob_schedule[BPO3].is_none()
+            || genesis.config.fork_activation_timestamps[BPO4].is_some()
+                && genesis.config.blob_schedule[BPO4].is_none()
+            || genesis.config.fork_activation_timestamps[BPO5].is_some()
+                && genesis.config.blob_schedule[BPO5].is_none()
         {
             warn!("BPO time set but no BPO BlobSchedule found in ChainConfig")
         }
@@ -111,89 +102,12 @@ impl TryFrom<&Path> for Genesis {
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
+    pub fork: Fork,
     pub base_fee_update_fraction: u64,
     pub max: u32,
     pub target: u32,
 }
 
-#[allow(unused)]
-#[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
-)]
-#[serde(rename_all = "camelCase")]
-pub struct BlobSchedule {
-    #[serde(default = "default_cancun_schedule")]
-    pub cancun: ForkBlobSchedule,
-    #[serde(default = "default_prague_schedule")]
-    pub prague: ForkBlobSchedule,
-    #[serde(default = "default_osaka_schedule")]
-    pub osaka: ForkBlobSchedule,
-    #[serde(default = "default_bpo1_schedule")]
-    pub bpo1: ForkBlobSchedule,
-    #[serde(default = "default_bpo2_schedule")]
-    pub bpo2: ForkBlobSchedule,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bpo3: Option<ForkBlobSchedule>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bpo4: Option<ForkBlobSchedule>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bpo5: Option<ForkBlobSchedule>,
-}
-
-impl Default for BlobSchedule {
-    fn default() -> Self {
-        BlobSchedule {
-            cancun: default_cancun_schedule(),
-            prague: default_prague_schedule(),
-            osaka: default_osaka_schedule(),
-            bpo1: default_bpo1_schedule(),
-            bpo2: default_bpo2_schedule(),
-            bpo3: None,
-            bpo4: None,
-            bpo5: None,
-        }
-    }
-}
-
-fn default_cancun_schedule() -> ForkBlobSchedule {
-    ForkBlobSchedule {
-        target: 3,
-        max: 6,
-        base_fee_update_fraction: 3338477,
-    }
-}
-
-fn default_prague_schedule() -> ForkBlobSchedule {
-    ForkBlobSchedule {
-        target: 6,
-        max: 9,
-        base_fee_update_fraction: 5007716,
-    }
-}
-
-fn default_osaka_schedule() -> ForkBlobSchedule {
-    ForkBlobSchedule {
-        target: 6,
-        max: 9,
-        base_fee_update_fraction: 5007716,
-    }
-}
-
-fn default_bpo1_schedule() -> ForkBlobSchedule {
-    ForkBlobSchedule {
-        target: 10,
-        max: 15,
-        base_fee_update_fraction: 8346193,
-    }
-}
-
-fn default_bpo2_schedule() -> ForkBlobSchedule {
-    ForkBlobSchedule {
-        target: 14,
-        max: 21,
-        base_fee_update_fraction: 11684671,
-    }
-}
 /// Blockchain settings defined per block
 #[allow(unused)]
 #[derive(
@@ -215,41 +129,13 @@ pub struct ChainConfig {
 
     /// Block numbers for the block where each fork was activated
     /// (None = no fork, 0 = fork is already active)
-    pub homestead_block: Option<u64>,
-
-    pub dao_fork_block: Option<u64>,
-    /// Whether the node supports or opposes the DAO hard-fork
-    #[serde(default)]
-    pub dao_fork_support: bool,
-
-    pub eip150_block: Option<u64>,
-    pub eip155_block: Option<u64>,
-    pub eip158_block: Option<u64>,
-
-    pub byzantium_block: Option<u64>,
-    pub constantinople_block: Option<u64>,
-    pub petersburg_block: Option<u64>,
-    pub istanbul_block: Option<u64>,
-    pub muir_glacier_block: Option<u64>,
-    pub berlin_block: Option<u64>,
-    pub london_block: Option<u64>,
-    pub arrow_glacier_block: Option<u64>,
-    pub gray_glacier_block: Option<u64>,
-    pub merge_netsplit_block: Option<u64>,
+    /// We don't need these to check if certain forks are activated given Ethrex is post-merge,
+    /// but we need the numbers to calculate the ForkID on some networks (namely mainnet)
+    pub fork_activation_blocks: [Option<u64>; PRE_MERGE_FORKS],
 
     /// Timestamp at which each fork was activated
     /// (None = no fork, 0 = fork is already active)
-    pub shanghai_time: Option<u64>,
-    pub cancun_time: Option<u64>,
-    pub prague_time: Option<u64>,
-    pub verkle_time: Option<u64>,
-    pub osaka_time: Option<u64>,
-
-    pub bpo1_time: Option<u64>,
-    pub bpo2_time: Option<u64>,
-    pub bpo3_time: Option<u64>,
-    pub bpo4_time: Option<u64>,
-    pub bpo5_time: Option<u64>,
+    pub fork_activation_timestamps: [Option<u64>; FORKS.len()],
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     pub terminal_total_difficulty: Option<u128>,
@@ -257,7 +143,7 @@ pub struct ChainConfig {
     #[serde(default)]
     pub terminal_total_difficulty_passed: bool,
     #[serde(default)]
-    pub blob_schedule: BlobSchedule,
+    pub blob_schedule: [Option<ForkBlobSchedule>; FORKS.len() - Cancun as usize],
     #[rkyv(with = rkyv_utils::H160Wrapper)]
     // Deposits system contract address
     pub deposit_contract_address: Address,
@@ -280,54 +166,57 @@ lazy_static::lazy_static! {
 }
 
 #[repr(u8)]
-#[derive(Debug, PartialEq, Eq, PartialOrd, Default, Hash, Clone, Copy, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Default,
+    Hash,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    RSerialize,
+    RDeserialize,
+    Archive,
+)]
 pub enum Fork {
-    Frontier = 0,
-    FrontierThawing = 1,
-    Homestead = 2,
-    DaoFork = 3,
-    Tangerine = 4,
-    SpuriousDragon = 5,
-    Byzantium = 6,
-    Constantinople = 7,
-    Petersburg = 8,
-    Istanbul = 9,
-    MuirGlacier = 10,
-    Berlin = 11,
-    London = 12,
-    ArrowGlacier = 13,
-    GrayGlacier = 14,
-    Paris = 15,
-    Shanghai = 16,
+    Paris = 0,
+    Shanghai = 1,
     #[default]
-    Cancun = 17,
-    Prague = 18,
-    Osaka = 19,
-    BPO1 = 20,
-    BPO2 = 21,
-    BPO3 = 22,
-    BPO4 = 23,
-    BPO5 = 24,
+    Cancun = 2,
+    Prague = 3,
+    Osaka = 4,
+    BPO1 = 5,
+    BPO2 = 6,
+    BPO3 = 7,
+    BPO4 = 8,
+    BPO5 = 9,
 }
+
+impl<T> Index<Fork> for [T] {
+    type Output = T;
+    fn index(&self, fork: Fork) -> &Self::Output {
+        &self[fork as usize]
+    }
+}
+
+impl<T> IndexMut<Fork> for [T] {
+    fn index_mut(&mut self, fork: Fork) -> &mut Self::Output {
+        &mut self[fork as usize]
+    }
+}
+
+pub const FORKS: [Fork; 10] = [
+    Paris, Shanghai, Cancun, Prague, Osaka, BPO1, BPO2, BPO3, BPO4, BPO5,
+];
+
+pub const PRE_MERGE_FORKS: usize = 15;
 
 impl From<Fork> for &str {
     fn from(fork: Fork) -> Self {
         match fork {
-            Fork::Frontier => "Frontier",
-            Fork::FrontierThawing => "FrontierThawing",
-            Fork::Homestead => "Homestead",
-            Fork::DaoFork => "DaoFork",
-            Fork::Tangerine => "Tangerine",
-            Fork::SpuriousDragon => "SpuriousDragon",
-            Fork::Byzantium => "Byzantium",
-            Fork::Constantinople => "Constantinople",
-            Fork::Petersburg => "Petersburg",
-            Fork::Istanbul => "Istanbul",
-            Fork::MuirGlacier => "MuirGlacier",
-            Fork::Berlin => "Berlin",
-            Fork::London => "London",
-            Fork::ArrowGlacier => "ArrowGlacier",
-            Fork::GrayGlacier => "GrayGlacier",
             Fork::Paris => "Paris",
             Fork::Shanghai => "Shanghai",
             Fork::Cancun => "Cancun",
@@ -343,53 +232,9 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
-    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo3_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo4_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
-        self.osaka_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_prague_activated(&self, block_timestamp: u64) -> bool {
-        self.prague_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_shanghai_activated(&self, block_timestamp: u64) -> bool {
-        self.shanghai_time
-            .is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_cancun_activated(&self, block_timestamp: u64) -> bool {
-        self.cancun_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_istanbul_activated(&self, block_number: BlockNumber) -> bool {
-        self.istanbul_block.is_some_and(|num| num <= block_number)
-    }
-
-    pub fn is_london_activated(&self, block_number: BlockNumber) -> bool {
-        self.london_block.is_some_and(|num| num <= block_number)
-    }
-
-    pub fn is_eip155_activated(&self, block_number: BlockNumber) -> bool {
-        self.eip155_block.is_some_and(|num| num <= block_number)
+    pub fn is_fork_activated(&self, fork: Fork, block_timestamp: u64) -> bool {
+        self.fork_activation_timestamps[fork]
+            .is_some_and(|activation_time| block_timestamp >= activation_time)
     }
 
     pub fn display_config(&self) -> String {
@@ -397,11 +242,10 @@ impl ChainConfig {
         let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
 
         let post_merge_forks = [
-            ("Shanghai", self.shanghai_time),
-            ("Cancun", self.cancun_time),
-            ("Prague", self.prague_time),
-            ("Verkle", self.verkle_time),
-            ("Osaka", self.osaka_time),
+            ("Shanghai", self.fork_activation_timestamps[Shanghai]),
+            ("Cancun", self.fork_activation_timestamps[Cancun]),
+            ("Prague", self.fork_activation_timestamps[Prague]),
+            ("Osaka", self.fork_activation_timestamps[Osaka]),
         ];
 
         let active_forks: Vec<_> = post_merge_forks
@@ -421,39 +265,21 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_osaka_activated(block_timestamp) {
-            Fork::Osaka
-        } else if self.is_prague_activated(block_timestamp) {
-            Fork::Prague
-        } else if self.is_cancun_activated(block_timestamp) {
-            Fork::Cancun
-        } else if self.is_shanghai_activated(block_timestamp) {
-            Fork::Shanghai
-        } else {
-            Fork::Paris
-        }
+        let Some(index) = self
+            .fork_activation_timestamps
+            .iter()
+            .rposition(|possible_time| {
+                possible_time.is_some_and(|activation_time| activation_time <= block_timestamp)
+            })
+        else {
+            return Paris;
+        };
+        FORKS[index]
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_bpo5_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo5.unwrap_or_default())
-        } else if self.is_bpo4_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo4.unwrap_or_default())
-        } else if self.is_bpo3_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo3.unwrap_or_default())
-        } else if self.is_bpo2_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2)
-        } else if self.is_bpo1_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo1)
-        } else if self.is_osaka_activated(block_timestamp) {
-            Some(self.blob_schedule.osaka)
-        } else if self.is_prague_activated(block_timestamp) {
-            Some(self.blob_schedule.prague)
-        } else if self.is_cancun_activated(block_timestamp) {
-            Some(self.blob_schedule.cancun)
-        } else {
-            None
-        }
+        let current_fork = self.get_fork(block_timestamp);
+        self.get_blob_schedule_for_fork(current_fork)
     }
 
     pub fn fork(&self, block_timestamp: u64) -> Fork {
@@ -461,141 +287,60 @@ impl ChainConfig {
     }
 
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
-        let next = if self.is_bpo5_activated(block_timestamp) {
-            None
-        } else if self.is_bpo4_activated(block_timestamp) && self.bpo5_time.is_some() {
-            Some(Fork::BPO5)
-        } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
-            Some(Fork::BPO4)
-        } else if self.is_bpo2_activated(block_timestamp) && self.bpo3_time.is_some() {
-            Some(Fork::BPO3)
-        } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
-            Some(Fork::BPO2)
-        } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
-            Some(Fork::BPO1)
-        } else if self.is_prague_activated(block_timestamp) && self.osaka_time.is_some() {
-            Some(Fork::Osaka)
-        } else if self.is_cancun_activated(block_timestamp) && self.prague_time.is_some() {
-            Some(Fork::Prague)
-        } else if self.is_shanghai_activated(block_timestamp) && self.cancun_time.is_some() {
-            Some(Fork::Cancun)
-        } else {
-            None
+        let Some(index) = self
+            .fork_activation_timestamps
+            .iter()
+            .position(|possible_time| {
+                possible_time.is_some_and(|activation_time| activation_time > block_timestamp)
+            })
+        else {
+            return None;
         };
-        match next {
-            Some(fork) if fork > self.fork(block_timestamp) => next,
-            _ => None,
-        }
+        Some(FORKS[index])
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
-        if self.bpo5_time.is_some() {
-            Fork::BPO5
-        } else if self.bpo4_time.is_some() {
-            Fork::BPO4
-        } else if self.bpo3_time.is_some() {
-            Fork::BPO3
-        } else if self.bpo2_time.is_some() {
-            Fork::BPO2
-        } else if self.bpo1_time.is_some() {
-            Fork::BPO1
-        } else if self.osaka_time.is_some() {
-            Fork::Osaka
-        } else if self.prague_time.is_some() {
-            Fork::Prague
-        } else if self.cancun_time.is_some() {
-            Fork::Cancun
-        } else {
-            Fork::Paris
-        }
+        let Some(index) = self
+            .fork_activation_timestamps
+            .iter()
+            .rposition(|possible_time| possible_time.is_some())
+        else {
+            return Paris;
+        };
+        FORKS[index]
     }
 
     pub fn get_activation_timestamp_for_fork(&self, fork: Fork) -> Option<u64> {
-        match fork {
-            Fork::Cancun => self.cancun_time,
-            Fork::Prague => self.prague_time,
-            Fork::Osaka => self.osaka_time,
-            Fork::BPO1 => self.bpo1_time,
-            Fork::BPO2 => self.bpo2_time,
-            Fork::BPO3 => self.bpo3_time,
-            Fork::BPO4 => self.bpo4_time,
-            Fork::BPO5 => self.bpo5_time,
-            Fork::Homestead => self.homestead_block,
-            Fork::DaoFork => self.dao_fork_block,
-            Fork::Byzantium => self.byzantium_block,
-            Fork::Constantinople => self.constantinople_block,
-            Fork::Petersburg => self.petersburg_block,
-            Fork::Istanbul => self.istanbul_block,
-            Fork::MuirGlacier => self.muir_glacier_block,
-            Fork::Berlin => self.berlin_block,
-            Fork::London => self.london_block,
-            Fork::ArrowGlacier => self.arrow_glacier_block,
-            Fork::GrayGlacier => self.gray_glacier_block,
-            Fork::Paris => self.merge_netsplit_block,
-            Fork::Shanghai => self.shanghai_time,
-            _ => None,
-        }
+        self.fork_activation_timestamps[fork]
     }
 
     pub fn get_blob_schedule_for_fork(&self, fork: Fork) -> Option<ForkBlobSchedule> {
-        match fork {
-            Fork::Cancun => Some(self.blob_schedule.cancun),
-            Fork::Prague => Some(self.blob_schedule.prague),
-            Fork::Osaka => Some(self.blob_schedule.osaka),
-            Fork::BPO1 => Some(self.blob_schedule.bpo1),
-            Fork::BPO2 => Some(self.blob_schedule.bpo2),
-            Fork::BPO3 => self.blob_schedule.bpo3,
-            Fork::BPO4 => self.blob_schedule.bpo4,
-            Fork::BPO5 => self.blob_schedule.bpo5,
-            _ => None,
-        }
+        *self.blob_schedule[0..fork as usize]
+            .iter()
+            .rfind(|option| {
+                option.is_some_and(|fork_blob_schedule| fork_blob_schedule.fork <= fork)
+            })
+            .unwrap_or(&None)
     }
 
     pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {
-        let mut block_number_based_forks: Vec<u64> = vec![
-            self.homestead_block,
-            if self.dao_fork_support {
-                self.dao_fork_block
-            } else {
-                None
-            },
-            self.eip150_block,
-            self.eip155_block,
-            self.eip158_block,
-            self.byzantium_block,
-            self.constantinople_block,
-            self.petersburg_block,
-            self.istanbul_block,
-            self.muir_glacier_block,
-            self.berlin_block,
-            self.london_block,
-            self.arrow_glacier_block,
-            self.gray_glacier_block,
-            self.merge_netsplit_block,
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let mut block_number_based_forks: Vec<u64> = self
+            .fork_activation_blocks
+            .to_vec()
+            .into_iter()
+            .flatten()
+            .collect();
 
         // Remove repeated values
         block_number_based_forks.sort();
         block_number_based_forks.dedup();
 
-        let mut timestamp_based_forks: Vec<u64> = vec![
-            self.shanghai_time,
-            self.cancun_time,
-            self.prague_time,
-            self.osaka_time,
-            self.bpo1_time,
-            self.bpo2_time,
-            self.bpo3_time,
-            self.bpo4_time,
-            self.bpo5_time,
-            self.verkle_time,
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let mut timestamp_based_forks: Vec<u64> = self
+            .fork_activation_timestamps
+            .to_vec()
+            .into_iter()
+            .flatten()
+            .collect();
 
         // Remove repeated values
         timestamp_based_forks.sort();
@@ -631,31 +376,27 @@ impl Genesis {
         let mut blob_gas_used: Option<u64> = None;
         let mut excess_blob_gas: Option<u64> = None;
 
-        if let Some(cancun_time) = self.config.cancun_time
+        if let Some(cancun_time) = self.config.fork_activation_timestamps[Cancun]
             && cancun_time <= self.timestamp
         {
             blob_gas_used = Some(self.blob_gas_used.unwrap_or(0));
             excess_blob_gas = Some(self.excess_blob_gas.unwrap_or(0));
         }
-        let base_fee_per_gas = self.base_fee_per_gas.or_else(|| {
-            self.config
-                .is_london_activated(0)
-                .then_some(INITIAL_BASE_FEE)
-        });
+        let base_fee_per_gas = self.base_fee_per_gas.or(Some(INITIAL_BASE_FEE));
 
         let withdrawals_root = self
             .config
-            .is_shanghai_activated(self.timestamp)
+            .is_fork_activated(Shanghai, self.timestamp)
             .then_some(compute_withdrawals_root(&[]));
 
         let parent_beacon_block_root = self
             .config
-            .is_cancun_activated(self.timestamp)
+            .is_fork_activated(Cancun, self.timestamp)
             .then_some(H256::zero());
 
         let requests_hash = self
             .config
-            .is_prague_activated(self.timestamp)
+            .is_fork_activated(Prague, self.timestamp)
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
 
         BlockHeader {
@@ -721,42 +462,39 @@ mod tests {
         let reader = BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+        let mut blob_schedule: [Option<ForkBlobSchedule>; 8] = [None; 8];
+        blob_schedule[0] = Some(ForkBlobSchedule {
+            fork: Cancun,
+            target: 2,
+            max: 3,
+            base_fee_update_fraction: 6676954,
+        });
+        blob_schedule[1] = Some(ForkBlobSchedule {
+            fork: Prague,
+            target: 3,
+            max: 4,
+            base_fee_update_fraction: 13353908,
+        });
+
+        let mut fork_activation_timestamps: [Option<u64>; FORKS.len()] = [None; FORKS.len()];
+        fork_activation_timestamps[Shanghai] = Some(0);
+        fork_activation_timestamps[Cancun] = Some(0);
+        fork_activation_timestamps[Prague] = Some(1718232101);
+
+        let fork_activation_blocks: [Option<u64>; 15] = [None; 15];
+
         // Check Genesis fields
         // Chain config
         let expected_chain_config = ChainConfig {
             chain_id: 3151908_u64,
-            homestead_block: Some(0),
-            eip150_block: Some(0),
-            eip155_block: Some(0),
-            eip158_block: Some(0),
-            byzantium_block: Some(0),
-            constantinople_block: Some(0),
-            petersburg_block: Some(0),
-            istanbul_block: Some(0),
-            berlin_block: Some(0),
-            london_block: Some(0),
-            merge_netsplit_block: Some(0),
-            shanghai_time: Some(0),
-            cancun_time: Some(0),
-            prague_time: Some(1718232101),
+            fork_activation_blocks,
+            fork_activation_timestamps,
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
             // Note this BlobSchedule config is not the default
-            blob_schedule: BlobSchedule {
-                cancun: ForkBlobSchedule {
-                    target: 2,
-                    max: 3,
-                    base_fee_update_fraction: 6676954,
-                },
-                prague: ForkBlobSchedule {
-                    target: 3,
-                    max: 4,
-                    base_fee_update_fraction: 13353908,
-                },
-                ..Default::default()
-            },
+            blob_schedule,
             ..Default::default()
         };
         assert_eq!(&genesis.config, &expected_chain_config);
@@ -918,21 +656,23 @@ mod tests {
 
         let config: ChainConfig =
             serde_json::from_str(json).expect("Failed to deserialize ChainConfig");
+        let mut blob_schedule: [Option<ForkBlobSchedule>; 8] = [None; 8];
+        blob_schedule[0] = Some(ForkBlobSchedule {
+            fork: Cancun,
+            target: 1,
+            max: 2,
+            base_fee_update_fraction: 10000,
+        });
+        blob_schedule[1] = Some(ForkBlobSchedule {
+            fork: Prague,
+            target: 3,
+            max: 4,
+            base_fee_update_fraction: 20000,
+        });
+
         let expected_chain_config = ChainConfig {
             chain_id: 123,
-            blob_schedule: BlobSchedule {
-                cancun: ForkBlobSchedule {
-                    target: 1,
-                    max: 2,
-                    base_fee_update_fraction: 10000,
-                },
-                prague: ForkBlobSchedule {
-                    target: 3,
-                    max: 4,
-                    base_fee_update_fraction: 20000,
-                },
-                ..Default::default()
-            },
+            blob_schedule,
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
             ..Default::default()
@@ -951,21 +691,22 @@ mod tests {
 
         let config: ChainConfig =
             serde_json::from_str(json).expect("Failed to deserialize ChainConfig");
+        let mut blob_schedule: [Option<ForkBlobSchedule>; 8] = [None; 8];
+        blob_schedule[0] = Some(ForkBlobSchedule {
+            fork: Cancun,
+            target: 3,
+            max: 6,
+            base_fee_update_fraction: 3338477,
+        });
+        blob_schedule[1] = Some(ForkBlobSchedule {
+            fork: Prague,
+            target: 6,
+            max: 9,
+            base_fee_update_fraction: 5007716,
+        });
         let expected_chain_config = ChainConfig {
             chain_id: 123,
-            blob_schedule: BlobSchedule {
-                cancun: ForkBlobSchedule {
-                    target: 3,
-                    max: 6,
-                    base_fee_update_fraction: 3338477,
-                },
-                prague: ForkBlobSchedule {
-                    target: 6,
-                    max: 9,
-                    base_fee_update_fraction: 5007716,
-                },
-                ..Default::default()
-            },
+            blob_schedule,
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
             ..Default::default()
@@ -991,21 +732,22 @@ mod tests {
 
         let config: ChainConfig =
             serde_json::from_str(json).expect("Failed to deserialize ChainConfig");
+        let mut blob_schedule: [Option<ForkBlobSchedule>; 8] = [None; 8];
+        blob_schedule[0] = Some(ForkBlobSchedule {
+            fork: Cancun,
+            target: 3,
+            max: 6,
+            base_fee_update_fraction: 3338477,
+        });
+        blob_schedule[1] = Some(ForkBlobSchedule {
+            fork: Prague,
+            target: 3,
+            max: 4,
+            base_fee_update_fraction: 20000,
+        });
         let expected_chain_config = ChainConfig {
             chain_id: 123,
-            blob_schedule: BlobSchedule {
-                cancun: ForkBlobSchedule {
-                    target: 3,
-                    max: 6,
-                    base_fee_update_fraction: 3338477,
-                },
-                prague: ForkBlobSchedule {
-                    target: 3,
-                    max: 4,
-                    base_fee_update_fraction: 20000,
-                },
-                ..Default::default()
-            },
+            blob_schedule,
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
             ..Default::default()
@@ -1031,21 +773,22 @@ mod tests {
 
         let config: ChainConfig =
             serde_json::from_str(json).expect("Failed to deserialize ChainConfig");
+        let mut blob_schedule: [Option<ForkBlobSchedule>; 8] = [None; 8];
+        blob_schedule[0] = Some(ForkBlobSchedule {
+            fork: Cancun,
+            target: 1,
+            max: 2,
+            base_fee_update_fraction: 10000,
+        });
+        blob_schedule[1] = Some(ForkBlobSchedule {
+            fork: Prague,
+            target: 6,
+            max: 9,
+            base_fee_update_fraction: 5007716,
+        });
         let expected_chain_config = ChainConfig {
             chain_id: 123,
-            blob_schedule: BlobSchedule {
-                cancun: ForkBlobSchedule {
-                    target: 1,
-                    max: 2,
-                    base_fee_update_fraction: 10000,
-                },
-                prague: ForkBlobSchedule {
-                    target: 6,
-                    max: 9,
-                    base_fee_update_fraction: 5007716,
-                },
-                ..Default::default()
-            },
+            blob_schedule,
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
             ..Default::default()

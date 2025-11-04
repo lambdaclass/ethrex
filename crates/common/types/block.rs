@@ -948,13 +948,13 @@ mod test {
             base_fee_per_gas: Some(30),
             ..Default::default()
         };
+        let fork = Fork::Osaka;
         let schedule = ForkBlobSchedule {
+            fork,
             target: 9,
             max: 14,
             base_fee_update_fraction: 8832827,
         };
-        let fork = Fork::Osaka;
-
         let res = calc_excess_blob_gas(&parent, schedule, fork);
         assert_eq!(res, 5617366)
     }
@@ -967,7 +967,9 @@ mod test {
             base_fee_per_gas: Some(50),
             ..Default::default()
         };
+        let fork = Fork::Osaka;
         let schedule = ForkBlobSchedule {
+            fork,
             target: 21,
             max: 32,
             base_fee_update_fraction: 20609697,
@@ -985,12 +987,14 @@ mod test {
             base_fee_per_gas: Some(0x11),
             ..Default::default()
         };
+        let fork = Fork::Osaka;
+
         let schedule = ForkBlobSchedule {
+            fork,
             target: 9,
             max: 14,
             base_fee_update_fraction: 0x86c73b,
         };
-        let fork = Fork::Osaka;
 
         let res = calc_excess_blob_gas(&parent, schedule, fork);
         assert_eq!(res, 3538944)

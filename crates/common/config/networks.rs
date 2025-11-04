@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use ethrex_common::types::{ChainConfig, Genesis, GenesisError};
+use ethrex_common::types::{ChainConfig, FORKS, Fork::Prague, Genesis, GenesisError};
 use serde::{Deserialize, Serialize};
 
 //TODO: Look for a better place to move these files
@@ -117,14 +117,19 @@ impl Network {
             }
             Network::LocalDevnet => Ok(serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS)?),
             Network::LocalDevnetL2 => Ok(serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)?),
-            Network::L2Chain(chain_id) => Ok(Genesis {
-                config: ChainConfig {
-                    chain_id: *chain_id,
-                    prague_time: Some(0),
+            Network::L2Chain(chain_id) => {
+                let mut fork_activation_timestamps: [Option<u64>; FORKS.len()] =
+                    [None; FORKS.len()];
+                fork_activation_timestamps[Prague] = Some(0);
+                Ok(Genesis {
+                    config: ChainConfig {
+                        chain_id: *chain_id,
+                        fork_activation_timestamps,
+                        ..Default::default()
+                    },
                     ..Default::default()
-                },
-                ..Default::default()
-            }),
+                })
+            }
             Network::GenesisPath(s) => Genesis::try_from(s.as_path()),
         }
     }

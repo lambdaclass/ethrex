@@ -84,6 +84,7 @@ impl EVMConfig {
         let base_fee_update_fraction: u64 = Self::get_blob_base_fee_update_fraction_value(fork);
 
         ForkBlobSchedule {
+            fork,
             target,
             max: max_blobs_per_block,
             base_fee_update_fraction,
