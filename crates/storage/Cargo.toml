@@ -32,6 +32,8 @@ rayon.workspace = true
 [features]
 default = []
 rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb", "dep:tokio"]
+sp1 = ["ethrex-common/sp1"]
+risc0 = ["ethrex-common/risc0"]
 
 [dev-dependencies]
 hex.workspace = true
