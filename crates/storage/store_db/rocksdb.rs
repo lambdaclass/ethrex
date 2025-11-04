@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Node, Trie};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap},
     path::Path,
     sync::{
         Arc, Mutex,
@@ -135,6 +135,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: canopydb::Environment,
+    dbs: Arc<HashMap<String, canopydb::Database>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
@@ -164,6 +165,8 @@ impl Store {
             CF_MISC_VALUES,
         ];
 
+        let mut dbs = HashMap::with_capacity(expected_column_families.len());
+
         // Add all existing CFs (we must open them to be able to drop obsolete ones later)
         for cf in expected_column_families {
             // default is handled automatically
@@ -173,14 +176,15 @@ impl Store {
                 .unwrap()
                 .get_or_create_tree(b"")
                 .unwrap();
+            dbs.insert(cf.to_string(), db_handle);
         }
 
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
 
         let last_written = {
-            let db = environment.get_database(CF_MISC_VALUES).unwrap().unwrap();
-            let mut transaction = db.begin_read().unwrap();
+            let db = dbs.get(CF_MISC_VALUES).unwrap();
+            let transaction = db.begin_read().unwrap();
             let mut last_written = transaction
                 .get_tree(b"")
                 .unwrap()
@@ -197,6 +201,7 @@ impl Store {
 
         let store = Self {
             db: environment,
+            dbs: Arc::new(dbs),
             trie_cache: Default::default(),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
@@ -278,16 +283,11 @@ impl Store {
         K: AsRef<[u8]> + Send + 'static,
         V: AsRef<[u8]> + Send + 'static,
     {
-        let db = self.db.clone();
+        let dbs = self.dbs.clone();
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let transaction = db
-                .get_database(&cf_name)
-                .unwrap()
-                .unwrap()
-                .begin_write()
-                .unwrap();
+            let transaction = dbs.get(&cf_name).unwrap().begin_write().unwrap();
             let tree = transaction.get_tree(b"").unwrap().unwrap();
             tree.insert(key.as_ref(), value.as_ref())
                 .map_err(|e| StoreError::Custom(format!("CanopyDB write error: {}", e)))
@@ -301,16 +301,11 @@ impl Store {
     where
         K: AsRef<[u8]> + Send + 'static,
     {
-        let db = self.db.clone();
+        let dbs = self.dbs.clone();
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let transaction = db
-                .get_database(&cf_name)
-                .unwrap()
-                .unwrap()
-                .begin_read()
-                .unwrap();
+            let transaction = dbs.get(&cf_name).unwrap().begin_read().unwrap();
             let tree = transaction.get_tree(b"").unwrap().unwrap();
             tree.get(key.as_ref())
                 .map(|b| b.map(|b| b.to_vec()))
@@ -325,13 +320,7 @@ impl Store {
     where
         K: AsRef<[u8]>,
     {
-        let transaction = self
-            .db
-            .get_database(&cf_name)
-            .unwrap()
-            .unwrap()
-            .begin_read()
-            .unwrap();
+        let transaction = self.dbs.get(cf_name).unwrap().begin_read().unwrap();
         let tree = transaction.get_tree(b"").unwrap().unwrap();
         tree.get(key.as_ref())
             .map(|b| b.map(|b| b.to_vec()))
@@ -344,17 +333,14 @@ impl Store {
         batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
+        let dbs = self.dbs.clone();
         tokio::task::spawn_blocking(move || {
             let mut transactions = BTreeMap::new();
 
             for (db_name, key, value) in batch_ops {
-                let transaction = transactions.entry(db_name).or_insert_with_key(|name| {
-                    db.get_database(name)
-                        .unwrap()
-                        .unwrap()
-                        .begin_write()
-                        .unwrap()
-                });
+                let transaction = transactions
+                    .entry(db_name)
+                    .or_insert_with_key(|name| dbs.get(name).unwrap().begin_write().unwrap());
 
                 transaction
                     .get_tree(b"")
@@ -391,11 +377,11 @@ impl Store {
         V: Send + 'static,
         F: Fn(Vec<u8>) -> Result<V, StoreError> + Send + 'static,
     {
-        let db = self.db.clone();
+        let dbs = self.dbs.clone();
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.get_database(&cf_name).unwrap().unwrap();
+            let cf = dbs.get(&cf_name).unwrap();
             let transaction = cf.begin_read().unwrap();
             let tree = transaction.get_tree(b"").unwrap().unwrap();
             let mut results = Vec::with_capacity(keys.len());
@@ -422,18 +408,11 @@ impl Store {
         &self,
         control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
-        let mut cf_misc = self
-            .db
-            .get_database(CF_MISC_VALUES)
-            .unwrap()
-            .unwrap()
-            .begin_write()
-            .unwrap();
+        let mut cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
         let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
         let mut cf_flatkeyvalue = self
-            .db
-            .get_database(CF_FLATKEYVALUE)
-            .unwrap()
+            .dbs
+            .get(CF_FLATKEYVALUE)
             .unwrap()
             .begin_write()
             .unwrap();
@@ -497,18 +476,11 @@ impl Store {
                         .group_commit([cf_misc, cf_flatkeyvalue], false)
                         .unwrap();
 
-                    cf_misc = self
-                        .db
-                        .get_database(CF_MISC_VALUES)
-                        .unwrap()
-                        .unwrap()
-                        .begin_write()
-                        .unwrap();
+                    cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
                     misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
                     cf_flatkeyvalue = self
-                        .db
-                        .get_database(CF_FLATKEYVALUE)
-                        .unwrap()
+                        .dbs
+                        .get(CF_FLATKEYVALUE)
                         .unwrap()
                         .begin_write()
                         .unwrap();
@@ -550,18 +522,11 @@ impl Store {
                             .group_commit([cf_misc, cf_flatkeyvalue], false)
                             .unwrap();
 
-                        cf_misc = self
-                            .db
-                            .get_database(CF_MISC_VALUES)
-                            .unwrap()
-                            .unwrap()
-                            .begin_write()
-                            .unwrap();
+                        cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
                         misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
                         cf_flatkeyvalue = self
-                            .db
-                            .get_database(CF_FLATKEYVALUE)
-                            .unwrap()
+                            .dbs
+                            .get(CF_FLATKEYVALUE)
                             .unwrap()
                             .begin_write()
                             .unwrap();
@@ -1051,7 +1016,7 @@ impl StoreEngine for Store {
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();
-        let cf = self.db.get_database(CF_PENDING_BLOCKS)?;
+        let cf = self.dbs.get(CF_PENDING_BLOCKS)?;
         self.db
             .put_cf(&cf, hash_key, block_value)
             .map_err(StoreError::RocksdbError)
