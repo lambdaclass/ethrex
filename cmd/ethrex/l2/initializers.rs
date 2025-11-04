@@ -13,7 +13,6 @@ use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
 use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
-
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     network::P2PContext,

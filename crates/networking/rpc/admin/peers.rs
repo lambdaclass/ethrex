@@ -122,13 +122,12 @@ pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Resu
     let start = Instant::now();
     let runtime = Duration::from_secs(10);
 
+    let cast_result = server
+        .cast(InMessage::Initiate { node: node.clone() })
+        .await;
     // This loop is necessary because connections are asynchronous, so to check if the connection with the peer was actually
     // established we need to wait.
     loop {
-        let cast_result = server
-            .cast(InMessage::Initiate { node: node.clone() })
-            .await;
-
         if peer_is_connected(&mut context.peer_handler, &node.enode_url()).await {
             return Ok(serde_json::to_value(true)?);
         }
@@ -136,7 +135,7 @@ pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Resu
         if cast_result.is_err() || start.elapsed() >= runtime {
             return Ok(serde_json::to_value(false)?);
         }
-        std::thread::sleep(Duration::from_millis(100));
+        let _ = tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -144,7 +143,7 @@ async fn peer_is_connected(peer_handler: &mut PeerHandler, enode_url: &str) -> b
     peer_handler
         .read_connected_peers()
         .await
-        .into_iter()
+        .iter()
         .any(|peer| peer.node.enode_url() == *enode_url)
 }
 
