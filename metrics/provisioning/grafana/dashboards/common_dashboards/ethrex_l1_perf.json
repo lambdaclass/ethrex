@@ -1272,6 +1272,20 @@
           "showLegend": true
         },
         "mapping": "auto",
+                "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Block"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          }
+        ],
         "series": [
           {
             "frame": {
@@ -2772,5 +2786,5 @@
   "timezone": "utc",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 29
+  "version": 30
 }
