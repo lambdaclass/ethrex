@@ -161,8 +161,8 @@ impl From<MempoolError> for RpcErr {
     }
 }
 
-impl From<secp256k1::Error> for RpcErr {
-    fn from(err: secp256k1::Error) -> Self {
+impl From<ethrex_common::Error> for RpcErr {
+    fn from(err: ethrex_common::Error) -> Self {
         Self::Internal(format!("Cryptography error: {err}"))
     }
 }
