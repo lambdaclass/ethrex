@@ -70,7 +70,7 @@ impl RLPEncode for P2PTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         match self {
             P2PTransaction::LegacyTransaction(t) => t.encode(buf),
-            tx => Bytes::copy_from_slice(&tx.encode_canonical_to_vec()).encode(buf),
+            tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
         };
     }
 }
@@ -395,7 +395,7 @@ impl RLPEncode for Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         match self {
             Transaction::LegacyTransaction(t) => t.encode(buf),
-            tx => Bytes::copy_from_slice(&tx.encode_canonical_to_vec()).encode(buf),
+            tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
         };
     }
 }
