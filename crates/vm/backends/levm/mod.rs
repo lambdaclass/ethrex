@@ -57,6 +57,13 @@ impl LEVM {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
+            if cumulative_gas_used > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded. Block gas limit {} was surpassed by executing transaction with gas used {}",
+                    block.header.gas_limit, report.gas_used
+                )));
+            }
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -101,6 +108,12 @@ impl LEVM {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
             cumulative_gas_used += report.gas_used;
+            if cumulative_gas_used > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded. Block gas limit {} was surpassed by executing transaction with gas used {}",
+                    block.header.gas_limit, report.gas_used
+                )));
+            }
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
