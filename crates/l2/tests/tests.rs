@@ -1134,13 +1134,13 @@ async fn test_deposit(
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let base_fee_vault = base_fee_vault(&l2_client).await;
+    let base_fee_vault = base_fee_vault(l2_client).await;
     let base_fee_vault_balance_before_deposit =
-        get_fee_vault_balance(&l2_client, base_fee_vault).await;
+        get_fee_vault_balance(l2_client, base_fee_vault).await;
 
-    let operator_fee_vault = operator_fee_vault(&l2_client).await;
+    let operator_fee_vault = operator_fee_vault(l2_client).await;
     let operator_fee_vault_balance_before_deposit =
-        get_fee_vault_balance(&l2_client, operator_fee_vault).await;
+        get_fee_vault_balance(l2_client, operator_fee_vault).await;
 
     println!("test_deposit: Depositing funds from L1 to L2");
 
@@ -1263,10 +1263,10 @@ async fn test_deposit(
         .await?;
 
     let base_fee_vault_balance_after_deposit =
-        get_fee_vault_balance(&l2_client, base_fee_vault).await;
+        get_fee_vault_balance(l2_client, base_fee_vault).await;
 
     let operator_fee_vault_balance_after_deposit =
-        get_fee_vault_balance(&l2_client, operator_fee_vault).await;
+        get_fee_vault_balance(l2_client, operator_fee_vault).await;
 
     assert_eq!(
         coinbase_balance_after_deposit, coinbase_balance_before_deposit,
@@ -1643,17 +1643,17 @@ async fn test_n_withdraws(
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let base_fee_vault = base_fee_vault(&l2_client).await;
+    let base_fee_vault = base_fee_vault(l2_client).await;
     let base_fee_vault_balance_before_withdrawal =
-        get_fee_vault_balance(&l2_client, base_fee_vault).await;
+        get_fee_vault_balance(l2_client, base_fee_vault).await;
 
-    let operator_fee_vault = operator_fee_vault(&l2_client).await;
+    let operator_fee_vault = operator_fee_vault(l2_client).await;
     let operator_fee_vault_balance_before_withdrawal =
-        get_fee_vault_balance(&l2_client, operator_fee_vault).await;
+        get_fee_vault_balance(l2_client, operator_fee_vault).await;
 
-    let l1_fee_vault = l1_fee_vault(&l2_client).await;
+    let l1_fee_vault = l1_fee_vault(l2_client).await;
     let l1_fee_vault_balance_before_withdrawal =
-        get_fee_vault_balance(&l2_client, l1_fee_vault).await;
+        get_fee_vault_balance(l2_client, l1_fee_vault).await;
 
     println!("test_n_withdraws: Withdrawing funds from L2 to L1");
 
@@ -1732,13 +1732,13 @@ async fn test_n_withdraws(
         .await?;
 
     let base_fee_vault_balance_after_withdrawal =
-        get_fee_vault_balance(&l2_client, base_fee_vault).await;
+        get_fee_vault_balance(l2_client, base_fee_vault).await;
 
     let operator_fee_vault_balance_after_withdrawal =
-        get_fee_vault_balance(&l2_client, operator_fee_vault).await;
+        get_fee_vault_balance(l2_client, operator_fee_vault).await;
 
     let l1_fee_vault_balance_after_withdrawal =
-        get_fee_vault_balance(&l2_client, l1_fee_vault).await;
+        get_fee_vault_balance(l2_client, l1_fee_vault).await;
 
     assert_eq!(
         coinbase_balance_after_withdrawal,
@@ -1881,18 +1881,18 @@ async fn test_total_balance_l2(
 
     println!("Coinbase balance: {coinbase_balance}");
 
-    let base_fee_vault = base_fee_vault(&l2_client).await;
-    let base_fee_vault_balance = get_fee_vault_balance(&l2_client, base_fee_vault).await;
+    let base_fee_vault = base_fee_vault(l2_client).await;
+    let base_fee_vault_balance = get_fee_vault_balance(l2_client, base_fee_vault).await;
 
     println!("Base fee vault balance: {base_fee_vault_balance}");
 
-    let operator_fee_vault = operator_fee_vault(&l2_client).await;
-    let operator_fee_vault_balance = get_fee_vault_balance(&l2_client, operator_fee_vault).await;
+    let operator_fee_vault = operator_fee_vault(l2_client).await;
+    let operator_fee_vault_balance = get_fee_vault_balance(l2_client, operator_fee_vault).await;
 
     println!("Operator fee vault balance: {operator_fee_vault_balance}");
 
-    let l1_fee_vault = l1_fee_vault(&l2_client).await;
-    let l1_fee_vault_balance = get_fee_vault_balance(&l2_client, l1_fee_vault).await;
+    let l1_fee_vault = l1_fee_vault(l2_client).await;
+    let l1_fee_vault_balance = get_fee_vault_balance(l2_client, l1_fee_vault).await;
 
     println!("L1 fee vault balance: {l1_fee_vault_balance}");
 
