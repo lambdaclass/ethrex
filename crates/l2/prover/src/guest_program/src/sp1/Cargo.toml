@@ -11,14 +11,22 @@ rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 guest_program = { path = "../../" }
 
-ethrex-common = { path = "../../../../../../common", default-features = false }
-ethrex-storage = { path = "../../../../../../storage", default-features = false }
+ethrex-common = { path = "../../../../../../common", default-features = false, features = [
+    "sp1",
+] }
+ethrex-storage = { path = "../../../../../../storage", default-features = false, features = [
+    "sp1",
+] }
 ethrex-rlp = { path = "../../../../../../common/rlp" }
 ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
     "sp1",
 ] }
-ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false }
-ethrex-l2-common = { path = "../../../../../common", default-features = false }
+ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false, features = [
+    "sp1",
+] }
+ethrex-l2-common = { path = "../../../../../common", default-features = false, features = [
+    "sp1",
+] }
 
 [patch.crates-io]
 sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0" }
