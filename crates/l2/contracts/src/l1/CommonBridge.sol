@@ -400,14 +400,40 @@ contract CommonBridge is
         bytes32 l2MessagesMerkleRoot,
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer {
-        uint256 totalValue = 0;
+        require(
+            batchL2MessagesMerkleRoots[l2MessagesBatchNumber] == bytes32(0),
+            "CommonBridge: l2 messages already published"
+        );
+        batchL2MessagesMerkleRoots[
+            l2MessagesBatchNumber
+        ] = l2MessagesMerkleRoot;
+        emit L2MessagesPublished(L2MessagesBatchNumber, l2MessagesMerkleRoot);
+\
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            totalValue += balanceDiffs[i].value;
+            Router(SHARED_BRIDGE_ROUTER).sendMessage{value: totalValue}(
+                balanceDiffs[i].chainId,
+            );
         }
+    }
 
-        Router(SHARED_BRIDGE_ROUTER).publishL2Messages{value: totalValue}(
-            dstChainId,
-            message
+    /// @inheritdoc ICommonBridge
+    function receiveMessage() public override payable {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+    }
+
+    /// @inheritdoc ICommonBridge
+    function verifyMessage(
+        bytes32 l2MessageLeaf,
+        uint256 l2MessageBatchNumber,
+        bytes32[] calldata l2MessageProof
+    ) external view override returns (bool) {
+        return MerkleProof.verify(
+            l2MessageProof,
+            batchL2MessageMerkleRoots[l2MessageBatchNumber],
+            l2MessageLeaf
         );
     }
 
@@ -527,7 +553,7 @@ contract CommonBridge is
                 withdrawalLeaf
             );
     }
-
+    
     function pendingTxHashesLength() private view returns (uint256) {
         return pendingTxHashes.length - pendingPrivilegedTxIndex;
     }
