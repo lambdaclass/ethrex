@@ -116,14 +116,25 @@ impl TrieLayerCache {
 
         let mut bloom = Self::create_filter().ok();
 
-        // add this new bloom to the global one.
+        // create the layer bloom, this is the only place where hashing of keys happens.
         if let Some(filter) = &mut bloom {
             for (p, _) in &key_values {
                 if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
-                    tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
-                    self.bloom = None;
+                    tracing::warn!("TrieLayerCache: put_batch per layer capacity exceeded");
+                    bloom = None;
                     break;
                 }
+            }
+        }
+
+        // add this new bloom to the global one via merge
+        if let Some(filter) = &mut self.bloom
+            && let Some(new_filter) = &bloom
+        {
+            if let Err(qfilter::Error::CapacityExceeded) = filter.merge(false, new_filter) {
+                tracing::warn!("TrieLayerCache: put_batch merge capacity exceeded");
+                self.bloom = None;
+                bloom = None;
             }
         }
 
