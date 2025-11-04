@@ -324,8 +324,10 @@ impl From<Node> for SizedNode {
                 SizedNode::Extension { child, prefix: prefix.try_into().unwrap() }
             }
             Node::Leaf(LeafNode { partial, mut value }) => {
+                let mut partial = partial.into_vec();
                 value.resize(108, 0);
-                let partial = partial.into_vec().try_into().unwrap();
+                partial.resize(64, 0);
+                let partial = partial.try_into().unwrap();
                 let value = value.try_into().unwrap();
                 SizedNode::Leaf { partial, value }
             },
