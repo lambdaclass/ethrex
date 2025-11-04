@@ -790,7 +790,6 @@ impl Syncer {
                 {
                     continue;
                 };
-                validate_state_root(store.clone(), pivot_header.state_root);
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
@@ -1608,16 +1607,13 @@ async fn insert_storages(
 
     scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
+        let pool_write: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(1, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
             let sender = sender.clone();
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
-            if counter >= thread_count - 1 {
-                let _ = receiver.recv();
-                counter -= 1;
-            }
             counter += 1;
-            let pool_clone = pool.clone();
+            let pool_clone = pool_write.clone();
             let mut iter = snapshot.raw_iterator();
             let task = Box::new(move || {
                 let mut buffer: [u8; 64] = [0_u8; 64];
