@@ -1036,8 +1036,8 @@ async fn handle_incoming_message(
                             .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
                             .is_err())
                 {
-                    log_peer_warn!(
-                        &state.node,
+                    warn!(
+                        peer=%state.node,
                         "disconnected from peer. Reason: Invalid/Missing Blobs",
                     );
                     send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
