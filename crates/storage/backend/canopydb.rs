@@ -11,18 +11,22 @@ use crate::api::{
 use crate::error::StoreError;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// CanopyDB backend
 #[derive(Debug, Clone)]
 pub struct CanopyDBBackend {
     /// Optimistric transaction database
     env: Environment,
+    /// Map of table names to databases
+    dbs: Arc<HashMap<&'static str, canopydb::Database>>,
 }
 
 impl CanopyDBBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let environment = Environment::with_options(EnvOptions::new(path)).unwrap();
+
+        let mut dbs = HashMap::with_capacity(TABLES.len());
 
         for table in TABLES {
             let opts = DbOptions::new();
@@ -35,17 +39,20 @@ impl CanopyDBBackend {
                 .get_or_create_tree_with(&[], TreeOptions::default())
                 .unwrap();
             write_tx.commit().unwrap();
+            dbs.insert(table, db);
         }
-        Ok(Self { env: environment })
+        Ok(Self {
+            env: environment,
+            dbs: Arc::new(dbs),
+        })
     }
 }
 
 impl StorageBackend for CanopyDBBackend {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
         let db = self
-            .env
-            .get_database(table)
-            .unwrap()
+            .dbs
+            .get(table)
             .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
         let write_tx = db.begin_write().unwrap();
@@ -56,19 +63,20 @@ impl StorageBackend for CanopyDBBackend {
 
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
         Ok(Box::new(CanopyDBRoTx {
-            env: self.env.clone(),
+            dbs: self.dbs.clone(),
         }))
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError> {
         Ok(Box::new(CanopyDBRwTx {
             env: self.env.clone(),
+            dbs: self.dbs.clone(),
             write_txs: Default::default(),
         }))
     }
 
     fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError> {
-        let db = self.env.get_database(table_name).unwrap().unwrap();
+        let db = self.dbs.get(table_name).unwrap();
         // The transaction takes a snapshot of the database
         // TODO: please remove this hack
         //   The mutex is needed because CanopyDB ReadTransaction is not Sync,
@@ -86,15 +94,14 @@ impl StorageBackend for CanopyDBBackend {
 
 /// Read-only transaction for CanopyDB
 pub struct CanopyDBRoTx {
-    env: Environment,
+    dbs: Arc<HashMap<&'static str, canopydb::Database>>,
 }
 
 impl StorageRoTx for CanopyDBRoTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
-            .env
-            .get_database(table)
-            .map_err(|err| StoreError::Custom(format!("Failed to get table {}: {}", table, err)))?
+            .dbs
+            .get(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         let tx = db.begin_read().unwrap();
@@ -109,9 +116,8 @@ impl StorageRoTx for CanopyDBRoTx {
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         todo!()
         // let db = self
-        //     .env
-        //     .get_database(table)
-        //     .map_err(|err| StoreError::Custom(format!("Failed to get table {}: {}", table, err)))?
+        //     .dbs
+        //     .get(table)
         //     .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         // let read_tx = Arc::new(db.begin_read().unwrap());
@@ -138,6 +144,8 @@ impl StorageRoTx for CanopyDBRoTx {
 pub struct CanopyDBRwTx {
     /// Database reference for writing
     env: Environment,
+    /// Map of table names to databases
+    dbs: Arc<HashMap<&'static str, canopydb::Database>>,
     /// Write batch for accumulating changes
     write_txs: HashMap<&'static str, WriteTransaction>,
 }
@@ -145,9 +153,8 @@ pub struct CanopyDBRwTx {
 impl StorageRoTx for CanopyDBRwTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self
-            .env
-            .get_database(table)
-            .unwrap()
+            .dbs
+            .get(table)
             .unwrap()
             .begin_read()
             .unwrap()
@@ -178,14 +185,10 @@ impl StorageRwTx for CanopyDBRwTx {
         batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         // TODO: this modifies the state at current time instead of time of call to begin_write
-        let rw_tx = self.write_txs.entry(table).or_insert_with(|| {
-            self.env
-                .get_database(table)
-                .unwrap()
-                .unwrap()
-                .begin_write()
-                .unwrap()
-        });
+        let rw_tx = self
+            .write_txs
+            .entry(table)
+            .or_insert_with(|| self.dbs.get(table).unwrap().begin_write().unwrap());
 
         for (key, value) in batch {
             rw_tx
@@ -199,14 +202,10 @@ impl StorageRwTx for CanopyDBRwTx {
     }
 
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
-        let rw_tx = self.write_txs.entry(table).or_insert_with(|| {
-            self.env
-                .get_database(table)
-                .unwrap()
-                .unwrap()
-                .begin_write()
-                .unwrap()
-        });
+        let rw_tx = self
+            .write_txs
+            .entry(table)
+            .or_insert_with(|| self.dbs.get(table).unwrap().begin_write().unwrap());
 
         rw_tx.get_tree(&[]).unwrap().unwrap().delete(key).unwrap();
         Ok(())
