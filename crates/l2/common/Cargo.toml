@@ -34,3 +34,8 @@ as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
 redundant_clone = "warn"
+
+[features]
+default = []
+sp1 = ["ethrex-common/sp1", "ethrex-storage/sp1", "ethrex-vm/sp1"]
+risc0 = ["ethrex-common/risc0", "ethrex-storage/risc0", "ethrex-vm/risc0"]
