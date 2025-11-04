@@ -172,7 +172,7 @@ impl Store {
         for cf in expected_column_families {
             // default is handled automatically
             let db_handle = environment.get_or_create_database(cf).unwrap();
-            let tx = db_handle.begin_write().unwrap();
+            let tx = db_handle.begin_write_concurrent().unwrap();
             tx.get_or_create_tree(b"").unwrap();
             tx.commit().unwrap();
             dbs.insert(cf.to_string(), db_handle);
@@ -286,7 +286,7 @@ impl Store {
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let transaction = dbs.get(&cf_name).unwrap().begin_write().unwrap();
+            let transaction = dbs.get(&cf_name).unwrap().begin_write_concurrent().unwrap();
             {
                 let mut tree = transaction.get_tree(b"").unwrap().unwrap();
                 tree.insert(key.as_ref(), value.as_ref())
@@ -343,9 +343,9 @@ impl Store {
             let mut transactions = BTreeMap::new();
 
             for (db_name, key, value) in batch_ops {
-                let transaction = transactions
-                    .entry(db_name)
-                    .or_insert_with_key(|name| dbs.get(name).unwrap().begin_write().unwrap());
+                let transaction = transactions.entry(db_name).or_insert_with_key(|name| {
+                    dbs.get(name).unwrap().begin_write_concurrent().unwrap()
+                });
 
                 transaction
                     .get_tree(b"")
@@ -414,12 +414,17 @@ impl Store {
         &self,
         control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
-        let mut cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+        let mut cf_misc = self
+            .dbs
+            .get(CF_MISC_VALUES)
+            .unwrap()
+            .begin_write_concurrent()
+            .unwrap();
         let mut cf_flatkeyvalue = self
             .dbs
             .get(CF_FLATKEYVALUE)
             .unwrap()
-            .begin_write()
+            .begin_write_concurrent()
             .unwrap();
         let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
         let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
@@ -498,12 +503,17 @@ impl Store {
                         .group_commit([cf_misc, cf_flatkeyvalue], false)
                         .unwrap();
 
-                    cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+                    cf_misc = self
+                        .dbs
+                        .get(CF_MISC_VALUES)
+                        .unwrap()
+                        .begin_write_concurrent()
+                        .unwrap();
                     cf_flatkeyvalue = self
                         .dbs
                         .get(CF_FLATKEYVALUE)
                         .unwrap()
-                        .begin_write()
+                        .begin_write_concurrent()
                         .unwrap();
 
                     misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
@@ -551,12 +561,17 @@ impl Store {
                             .group_commit([cf_misc, cf_flatkeyvalue], false)
                             .unwrap();
 
-                        cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+                        cf_misc = self
+                            .dbs
+                            .get(CF_MISC_VALUES)
+                            .unwrap()
+                            .begin_write_concurrent()
+                            .unwrap();
                         cf_flatkeyvalue = self
                             .dbs
                             .get(CF_FLATKEYVALUE)
                             .unwrap()
-                            .begin_write()
+                            .begin_write_concurrent()
                             .unwrap();
 
                         misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
@@ -668,8 +683,8 @@ impl Store {
         let mut trie_mut = (*trie).clone();
         let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
             open_cfs(&self.dbs, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
-        let nodes_transaction = cf_trie_nodes.begin_write().unwrap();
-        let flatkeyvalue_transaction = cf_flatkeyvalue.begin_write().unwrap();
+        let nodes_transaction = cf_trie_nodes.begin_write_concurrent().unwrap();
+        let flatkeyvalue_transaction = cf_flatkeyvalue.begin_write_concurrent().unwrap();
         {
             let mut nodes_tree = nodes_transaction.get_tree(b"").unwrap().unwrap();
             let mut flatkeyvalue_tree = flatkeyvalue_transaction.get_tree(b"").unwrap().unwrap();
@@ -769,12 +784,12 @@ impl StoreEngine for Store {
             ],
         )?;
 
-        let receipts_transaction = cf_receipts.begin_write().unwrap();
-        let codes_transaction = cf_codes.begin_write().unwrap();
-        let block_numbers_transaction = cf_block_numbers.begin_write().unwrap();
-        let txl_transaction = cf_tx_locations.begin_write().unwrap();
-        let headers_transaction = cf_headers.begin_write().unwrap();
-        let bodies_transaction = cf_bodies.begin_write().unwrap();
+        let receipts_transaction = cf_receipts.begin_write_concurrent().unwrap();
+        let codes_transaction = cf_codes.begin_write_concurrent().unwrap();
+        let block_numbers_transaction = cf_block_numbers.begin_write_concurrent().unwrap();
+        let txl_transaction = cf_tx_locations.begin_write_concurrent().unwrap();
+        let headers_transaction = cf_headers.begin_write_concurrent().unwrap();
+        let bodies_transaction = cf_bodies.begin_write_concurrent().unwrap();
         {
             let mut receipts_tree = receipts_transaction.get_tree(b"").unwrap().unwrap();
             let mut codes_tree = codes_transaction.get_tree(b"").unwrap().unwrap();
@@ -896,10 +911,10 @@ impl StoreEngine for Store {
                 ],
             )?;
 
-            let headers_tx = cf_headers.begin_write().unwrap();
-            let bodies_tx = cf_bodies.begin_write().unwrap();
-            let block_numbers_tx = cf_block_numbers.begin_write().unwrap();
-            let tx_locations_tx = cf_tx_locations.begin_write().unwrap();
+            let headers_tx = cf_headers.begin_write_concurrent().unwrap();
+            let bodies_tx = cf_bodies.begin_write_concurrent().unwrap();
+            let block_numbers_tx = cf_block_numbers.begin_write_concurrent().unwrap();
+            let tx_locations_tx = cf_tx_locations.begin_write_concurrent().unwrap();
             {
                 let mut headers_tree = headers_tx.get_tree(b"").unwrap().unwrap();
                 let mut bodies_tree = bodies_tx.get_tree(b"").unwrap().unwrap();
@@ -1026,10 +1041,10 @@ impl StoreEngine for Store {
             ],
         )?;
 
-        let canonical_tx = cf_canonical.begin_write().unwrap();
-        let bodies_tx = cf_bodies.begin_write().unwrap();
-        let headers_tx = cf_headers.begin_write().unwrap();
-        let block_numbers_tx = cf_block_numbers.begin_write().unwrap();
+        let canonical_tx = cf_canonical.begin_write_concurrent().unwrap();
+        let bodies_tx = cf_bodies.begin_write_concurrent().unwrap();
+        let headers_tx = cf_headers.begin_write_concurrent().unwrap();
+        let block_numbers_tx = cf_block_numbers.begin_write_concurrent().unwrap();
         {
             let mut canonical_tree = canonical_tx.get_tree(b"").unwrap().unwrap();
             let mut bodies_tree = bodies_tx.get_tree(b"").unwrap().unwrap();
@@ -1131,7 +1146,7 @@ impl StoreEngine for Store {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();
         let cf = self.dbs.get(CF_PENDING_BLOCKS).unwrap();
-        let tx = cf.begin_write().unwrap();
+        let tx = cf.begin_write_concurrent().unwrap();
         tx.get_tree(b"")
             .unwrap()
             .unwrap()
@@ -1294,7 +1309,7 @@ impl StoreEngine for Store {
                 .get(CF_SNAP_STATE)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
-            let tx = cf.begin_write().unwrap();
+            let tx = cf.begin_write_concurrent().unwrap();
             tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
             tx.commit().unwrap();
             Ok(())
@@ -1612,8 +1627,8 @@ impl StoreEngine for Store {
             let [cf_canonical, cf_chain_data] =
                 open_cfs(&dbs, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
 
-            let canonical_tx = cf_canonical.begin_write().unwrap();
-            let chain_data_tx = cf_chain_data.begin_write().unwrap();
+            let canonical_tx = cf_canonical.begin_write_concurrent().unwrap();
+            let chain_data_tx = cf_chain_data.begin_write_concurrent().unwrap();
             {
                 let mut canonical_tree = canonical_tx.get_tree(b"").unwrap().unwrap();
                 let mut chain_data_tree = chain_data_tx.get_tree(b"").unwrap().unwrap();
@@ -1865,7 +1880,7 @@ impl StoreEngine for Store {
                 StoreError::Custom("Column family not found: CF_TRIE_NODES".to_string())
             })?;
 
-            let tx = cf.begin_write().unwrap();
+            let tx = cf.begin_write_concurrent().unwrap();
             {
                 let mut tree = tx.get_tree(b"").unwrap().unwrap();
 
@@ -1950,7 +1965,7 @@ impl StoreEngine for Store {
                 .get(CF_FULLSYNC_HEADERS)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
-            let tx = cf.begin_write().unwrap();
+            let tx = cf.begin_write_concurrent().unwrap();
             tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
             tx.commit().unwrap();
             Ok(())

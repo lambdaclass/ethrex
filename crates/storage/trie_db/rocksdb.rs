@@ -93,8 +93,8 @@ impl TrieDB for RocksDBTrieDB {
         let cf = self.cf_handle()?;
         let cf_snapshot = self.cf_handle_flatkeyvalue()?;
 
-        let cf_tx = cf.begin_write().unwrap();
-        let cf_snapshot_tx = cf_snapshot.begin_write().unwrap();
+        let cf_tx = cf.begin_write_concurrent().unwrap();
+        let cf_snapshot_tx = cf_snapshot.begin_write_concurrent().unwrap();
         {
             let mut tree = cf_tx.get_tree(b"").unwrap().unwrap();
             let mut snapshot_tree = cf_snapshot_tx.get_tree(b"").unwrap().unwrap();
@@ -121,8 +121,8 @@ impl TrieDB for RocksDBTrieDB {
         let cf = self.cf_handle()?;
         let cf_flatkeyvalue = self.cf_handle_flatkeyvalue()?;
 
-        let cf_tx = cf.begin_write().unwrap();
-        let cf_flatkeyvalue_tx = cf_flatkeyvalue.begin_write().unwrap();
+        let cf_tx = cf.begin_write_concurrent().unwrap();
+        let cf_flatkeyvalue_tx = cf_flatkeyvalue.begin_write_concurrent().unwrap();
 
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
