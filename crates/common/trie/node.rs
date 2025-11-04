@@ -145,7 +145,7 @@ impl NodeRef {
 
         // remove and later re-insert instead of get_mut because we can't keep the mut borrow
         // maybe there is a better solution, this remove might be expensive (memmove)
-        let Some((finalized_hash, mut node_ref)) = all_nodes.remove_entry(&finalized_hash) else {
+        let Some(mut node_ref) = all_nodes.remove(&finalized_hash) else {
             return Ok(());
         };
 
