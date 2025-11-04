@@ -27,6 +27,10 @@ The following are results from measurements conducted to understand the efficien
 | Block List   |            908               |             571                |
 
 
+## Conclusion
+
+Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately 2.47x for ETH transfers and 3.26x for ERC20 transfers.
+
 ## How to run
 
 Run an L2 ethrex:
