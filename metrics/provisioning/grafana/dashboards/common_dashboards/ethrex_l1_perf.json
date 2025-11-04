@@ -1308,7 +1308,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "(\n  sum by (instance, function_name) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name!=\"Block execution\"}[$__interval]),\n      0\n    )\n  )\n)\nor\nlabel_replace(\n  sum by (instance) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Block execution\"}[$__interval]),\n      0\n    )\n  )\n  - sum by (instance) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=~\"Storage read|Account read|Account Read\"}[$__interval]),\n      0\n    )\n  ),\n  \"function_name\",\"Block execution (without db)\",\"instance\",\".*\"\n)",
+          "expr": "(\n  sum by (instance, function_name) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name!=\"Execute VM Pipeline\"}[$__rate_interval]),\n      0\n    )\n  )\n) > 0\nor\nlabel_replace(\n  sum by (instance) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Execute VM Pipeline\"}[$__rate_interval]),\n      0\n    )\n  )\n  - sum by (instance) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=~\"Storage read|Account read|Account Read\"}[$__rate_interval]),\n      0\n    )\n  ),\n  \"function_name\",\"Block execution (without db)\",\"instance\",\".*\"\n)",
           "hide": false,
           "instant": false,
           "legendFormat": "{{instance}} {{function_name}}",
@@ -1374,26 +1374,6 @@
             "byVariable": false,
             "include": {
               "pattern": "^(?!.*all_same_block).*$"
-            }
-          }
-        },
-        {
-          "id": "groupBy",
-          "options": {
-            "fields": {
-              "Block": {
-                "aggregations": []
-              },
-              "Time": {
-                "aggregations": [
-                  "lastNotNull"
-                ],
-                "operation": "aggregate"
-              },
-              "Value": {
-                "aggregations": [],
-                "operation": "groupby"
-              }
             }
           }
         }
