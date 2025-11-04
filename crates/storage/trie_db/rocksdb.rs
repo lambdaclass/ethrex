@@ -114,7 +114,8 @@ impl TrieDB for RocksDBTrieDB {
         }
         self.db
             .group_commit([cf_snapshot_tx, cf_tx], false)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
+            .unwrap();
+        Ok(())
     }
 
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
@@ -145,7 +146,9 @@ impl TrieDB for RocksDBTrieDB {
 
         self.db
             .group_commit([cf_flatkeyvalue_tx, cf_tx], false)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
+            .unwrap();
+
+        Ok(())
     }
 }
 
