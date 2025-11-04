@@ -2,7 +2,7 @@ use canopydb::{Database, ReadTransaction};
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     sync::{Arc, Mutex},
 };
 
@@ -23,7 +23,7 @@ pub struct RocksDBLockedTrieDB {
 
 impl RocksDBLockedTrieDB {
     pub fn new(
-        dbs: Arc<HashMap<String, Database>>,
+        dbs: Arc<BTreeMap<String, Database>>,
         cf_name: &str,
         address_prefix: Option<H256>,
         last_written: Vec<u8>,

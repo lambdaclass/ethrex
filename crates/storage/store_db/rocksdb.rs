@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Node, Trie};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     path::Path,
     sync::{
         Arc, Mutex,
@@ -135,7 +135,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: canopydb::Environment,
-    dbs: Arc<HashMap<String, canopydb::Database>>,
+    dbs: Arc<BTreeMap<String, canopydb::Database>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
@@ -166,7 +166,7 @@ impl Store {
             CF_MISC_VALUES,
         ];
 
-        let mut dbs = HashMap::with_capacity(expected_column_families.len());
+        let mut dbs = BTreeMap::new();
 
         // Add all existing CFs (we must open them to be able to drop obsolete ones later)
         for cf in expected_column_families {
@@ -500,7 +500,7 @@ impl Store {
                     drop(flatkeyvalue);
 
                     self.db
-                        .group_commit([cf_misc, cf_flatkeyvalue], false)
+                        .group_commit([cf_flatkeyvalue, cf_misc], false)
                         .unwrap();
 
                     cf_misc = self
@@ -558,7 +558,7 @@ impl Store {
                         drop(flatkeyvalue);
 
                         self.db
-                            .group_commit([cf_misc, cf_flatkeyvalue], false)
+                            .group_commit([cf_flatkeyvalue, cf_misc], false)
                             .unwrap();
 
                         cf_misc = self
@@ -625,7 +625,7 @@ impl Store {
                     drop(misc_tree);
                     drop(flatkeyvalue);
                     self.db
-                        .group_commit([cf_misc, cf_flatkeyvalue], false)
+                        .group_commit([cf_flatkeyvalue, cf_misc], false)
                         .unwrap();
                     *self
                         .last_computed_flatkeyvalue
@@ -723,7 +723,7 @@ impl Store {
         }
         let result = self
             .db
-            .group_commit([nodes_transaction, flatkeyvalue_transaction], false);
+            .group_commit([flatkeyvalue_transaction, nodes_transaction], false);
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
@@ -882,12 +882,12 @@ impl StoreEngine for Store {
         self.db
             .group_commit(
                 [
-                    receipts_transaction,
                     codes_transaction,
                     block_numbers_transaction,
-                    txl_transaction,
-                    headers_transaction,
                     bodies_transaction,
+                    headers_transaction,
+                    receipts_transaction,
+                    txl_transaction,
                 ],
                 false,
             )
@@ -954,7 +954,7 @@ impl StoreEngine for Store {
             }
 
             db.group_commit(
-                [headers_tx, bodies_tx, block_numbers_tx, tx_locations_tx],
+                [block_numbers_tx, bodies_tx, headers_tx, tx_locations_tx],
                 false,
             )
             .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))
@@ -1059,7 +1059,7 @@ impl StoreEngine for Store {
 
         self.db
             .group_commit(
-                [canonical_tx, bodies_tx, headers_tx, block_numbers_tx],
+                [canonical_tx, block_numbers_tx, bodies_tx, headers_tx],
                 false,
             )
             .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
@@ -2004,7 +2004,7 @@ impl StoreEngine for Store {
 
 /// Open column families
 fn open_cfs<'a, const N: usize>(
-    dbs: &'a HashMap<String, canopydb::Database>,
+    dbs: &'a BTreeMap<String, canopydb::Database>,
     names: [&str; N],
 ) -> Result<[&'a canopydb::Database; N], StoreError> {
     let mut handles = Vec::with_capacity(N);
