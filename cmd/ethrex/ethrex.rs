@@ -45,33 +45,41 @@ async fn server_shutdown(
     info!("Server shutting down!");
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
-    let CLI { opts, command } = CLI::parse();
+fn main() -> eyre::Result<()> {
+    // Create the runtime
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?;
 
-    if let Some(subcommand) = command {
-        return subcommand.run(&opts).await;
-    }
+    // Spawn the root task
+    rt.block_on(async {
+        let CLI { opts, command } = CLI::parse();
 
-    let log_filter_handler = init_tracing(&opts);
-
-    info!("ethrex version: {}", get_client_version());
-
-    let (datadir, cancel_token, peer_table, local_node_record) =
-        init_l1(opts, Some(log_filter_handler)).await?;
-
-    let mut signal_terminate = signal(SignalKind::terminate())?;
-
-    log_global_allocator();
-
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+        if let Some(subcommand) = command {
+            return subcommand.run(&opts).await;
         }
-        _ = signal_terminate.recv() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
-        }
-    }
 
-    Ok(())
+        let log_filter_handler = init_tracing(&opts);
+
+        info!("ethrex version: {}", get_client_version());
+
+        let (datadir, cancel_token, peer_table, local_node_record) =
+            init_l1(opts, Some(log_filter_handler)).await?;
+
+        let mut signal_terminate = signal(SignalKind::terminate())?;
+
+        log_global_allocator();
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+            }
+            _ = signal_terminate.recv() => {
+                server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+            }
+        }
+
+        Ok(())
+    })
 }
