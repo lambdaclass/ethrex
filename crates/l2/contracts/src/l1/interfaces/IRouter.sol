@@ -15,19 +15,17 @@ interface IRouter {
 
     /// @notice Sends a message to a specified chain via its CommonBridge.
     /// @param chainId The ID of the destination chain.
-    function sendMessage(
-        uint256 chainId
-    ) external payable;
+    function sendMessage(uint256 chainId) external payable;
 
     /// @notice Verifies a message from a specified chain via its CommonBridge.
     /// @param chainId The ID of the source chain.
-    /// @param l2MessageLeaf The leaf of the L2 message to verify.
     /// @param l2MessageBatchNumber The batch number where the L2 message was emitted.
+    /// @param l2MessageLeaf The leaf of the L2 message to verify.
     /// @param l2MessageProof The Merkle proof for the L2 message.
     function verifyMessage(
         uint256 chainId,
-        bytes32 l2MessageLeaf,
         uint256 l2MessageBatchNumber,
+        bytes32 l2MessageLeaf,
         bytes32[] calldata l2MessageProof
     ) external view returns (bool);
 

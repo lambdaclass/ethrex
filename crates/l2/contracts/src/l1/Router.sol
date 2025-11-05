@@ -53,31 +53,30 @@ contract Router is
     }
 
     /// @inheritdoc IRouter
-    function sendMessage(
-        uint256 chainId
-    ) public payable override {
+    function sendMessage(uint256 chainId) public payable override {
         if (bridges[chainId] == address(0)) {
             revert ChainNotRegistered(chainId);
         }
         ICommonBridge(bridges[chainId]).receiveMessage{value: msg.value}();
     }
-    
+
     /// @inheritdoc IRouter
     function verifyMessage(
         uint256 chainId,
-        bytes32 l2MessageLeaf,
         uint256 l2MessageBatchNumber,
+        bytes32 l2MessageLeaf,
         bytes32[] calldata l2MessageProof
     ) external view returns (bool) {
         address bridge = bridges[chainId];
         if (bridge == address(0)) {
             revert ChainNotRegistered(chainId);
         }
-        return ICommonBridge(bridge).verifyMessage(
-            l2MessageLeaf,
-            l2MessageBatchNumber,
-            l2MessageProof
-        );
+        return
+            ICommonBridge(bridge).verifyMessage(
+                l2MessageLeaf,
+                l2MessageBatchNumber,
+                l2MessageProof
+            );
     }
 
     /// @notice Allow owner to upgrade the contract.

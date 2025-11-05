@@ -89,11 +89,22 @@ impl Store {
         self.engine.get_batch_number_by_block(block_number).await
     }
 
-    pub async fn get_message_hashes_by_batch(
+    pub async fn get_l1_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
-        self.engine.get_message_hashes_by_batch(batch_number).await
+        self.engine
+            .get_l1_message_hashes_by_batch(batch_number)
+            .await
+    }
+
+    pub async fn get_l2_message_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
+        self.engine
+            .get_l2_message_hashes_by_batch(batch_number)
+            .await
     }
 
     pub async fn get_privileged_transactions_hash_by_batch(
@@ -199,8 +210,13 @@ impl Store {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;
 
-        let message_hashes = self
-            .get_message_hashes_by_batch(batch_number)
+        let l1_message_hashes = self
+            .get_l1_message_hashes_by_batch(batch_number)
+            .await?
+            .unwrap_or_default();
+
+        let l2_message_hashes = self
+            .get_l2_message_hashes_by_batch(batch_number)
             .await?
             .unwrap_or_default();
 
@@ -221,12 +237,12 @@ impl Store {
             last_block,
             state_root,
             blobs_bundle,
-            l1_message_hashes: message_hashes,
+            l1_message_hashes,
             privileged_transactions_hash,
             commit_tx,
             verify_tx,
-            balance_diffs: Vec::new(),     // TODO: Load balance diffs
-            l2_message_hashes: Vec::new(), // TODO: Load L2 message hashes
+            balance_diffs: Vec::new(), // TODO: Load balance diffs
+            l2_message_hashes,
         }))
     }
 

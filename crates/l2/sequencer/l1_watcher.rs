@@ -5,11 +5,14 @@ use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::{PrivilegedL2Transaction, TxType};
+use ethrex_common::types::{Log, PrivilegedL2Transaction, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
+use ethrex_l2_common::messages::{L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS};
+use ethrex_l2_rpc::clients::get_l2_message_proof;
 use ethrex_l2_sdk::{
     build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
+    verify_message,
 };
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
@@ -36,7 +39,8 @@ pub enum CallMessage {
 
 #[derive(Clone)]
 pub enum InMessage {
-    WatchLogs,
+    WatchLogsL1,
+    WatchLogsL2,
     UpdateL1BlobBaseFee,
 }
 
@@ -51,14 +55,24 @@ pub struct L1Watcher {
     pub store: Store,
     pub blockchain: Arc<Blockchain>,
     pub eth_client: EthClient,
-    pub l2_client: EthClient,
-    pub address: Address,
+    pub local_client: EthClient,
+    pub l2_clients: Vec<L2Client>,
+    pub bridge_address: Address,
+    pub router_address: Address,
     pub max_block_step: U256,
-    pub last_block_fetched: U256,
+    pub last_block_fetched_l1: U256,
     pub check_interval: u64,
     pub l1_block_delay: u64,
     pub sequencer_state: SequencerState,
     pub l1_blob_base_fee_update_interval: u64,
+    pub chain_id_topic: H256,
+}
+
+pub struct L2Client {
+    pub eth_client: EthClient,
+    pub last_block_fetched_l2: U256,
+    pub messenger_address: Address,
+    pub chain_id: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -84,22 +98,48 @@ impl L1Watcher {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
         // TODO: De-hardcode the rollup client URL
         #[allow(clippy::expect_used)]
-        let l2_client = EthClient::new(
+        let local_client = EthClient::new(
             Url::parse("http://localhost:1729").expect("Unreachable error. URL is hardcoded"),
         )?;
+        #[allow(clippy::expect_used)]
+        let l2_clients = vec![EthClient::new(
+            Url::parse("http://localhost:1730").expect("Unreachable error. URL is hardcoded"),
+        )?];
+        // TODO: This should be fetched from the Router logs.
+        let l2_clients = l2_clients
+            .into_iter()
+            .map(|client| L2Client {
+                eth_client: client,
+                last_block_fetched_l2: U256::zero(),
+                messenger_address: MESSENGER_ADDRESS,
+                chain_id: 1730,
+            })
+            .collect();
         let last_block_fetched = U256::zero();
+        let chain_id_topic = {
+            let u256 = U256::from(store.get_chain_config().chain_id);
+            let bytes = u256.to_big_endian();
+            H256(bytes)
+        };
+
+        // TODO: fetch from config
+        let router_address = Address::zero();
+
         Ok(Self {
             store,
             blockchain,
             eth_client,
-            l2_client,
-            address: watcher_config.bridge_address,
+            local_client,
+            l2_clients,
+            bridge_address: watcher_config.bridge_address,
+            router_address,
             max_block_step: watcher_config.max_block_step,
-            last_block_fetched,
+            last_block_fetched_l1: last_block_fetched,
             check_interval: watcher_config.check_interval_ms,
             l1_block_delay: watcher_config.watcher_block_delay,
             sequencer_state,
             l1_blob_base_fee_update_interval: watcher_config.l1_blob_base_fee_update_interval,
+            chain_id_topic,
         })
     }
 
@@ -119,9 +159,9 @@ impl L1Watcher {
         Ok(state.start())
     }
 
-    async fn watch(&mut self) {
+    async fn watch_l1(&mut self) {
         let Ok(logs) = self
-            .get_privileged_transactions()
+            .get_logs_l1()
             .await
             .inspect_err(|err| error!("L1 Watcher Error: {err}"))
         else {
@@ -137,72 +177,80 @@ impl L1Watcher {
         };
     }
 
-    pub async fn get_privileged_transactions(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
-        if self.last_block_fetched.is_zero() {
-            self.last_block_fetched = get_last_fetched_l1_block(&self.eth_client, self.address)
-                .await?
-                .into();
+    async fn get_logs_l1(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
+        // Matches the event PrivilegedTxSent from ICommonBridge.sol
+        let topic =
+            keccak(b"PrivilegedTxSent(address,address,address,uint256,uint256,uint256,bytes)");
+        if self.last_block_fetched_l1.is_zero() {
+            self.last_block_fetched_l1 =
+                get_last_fetched_l1_block(&self.eth_client, self.bridge_address)
+                    .await?
+                    .into();
         }
+        let (last_block_fetched, logs) = Self::get_privileged_transactions(
+            self.last_block_fetched_l1,
+            self.l1_block_delay,
+            &self.eth_client,
+            vec![topic],
+            self.bridge_address,
+            self.max_block_step,
+        )
+        .await?;
+        self.last_block_fetched_l1 = last_block_fetched;
+        Ok(logs)
+    }
 
-        let Some(latest_block_to_check) = self
-            .eth_client
+    pub async fn get_privileged_transactions(
+        last_block_fetched: U256,
+        block_delay: u64,
+        client: &EthClient,
+        topics: Vec<H256>,
+        address: Address,
+        max_block_step: U256,
+    ) -> Result<(U256, Vec<RpcLog>), L1WatcherError> {
+        let Some(latest_block_to_check) = client
             .get_block_number()
             .await?
-            .checked_sub(self.l1_block_delay.into())
+            .checked_sub(block_delay.into())
         else {
             warn!("Too close to genesis to request privileged transactions");
-            return Ok(vec![]);
+            return Ok((last_block_fetched, vec![]));
         };
 
         debug!(
             "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
-            self.l1_block_delay,
+            block_delay,
         );
 
         // last_block_fetched could be greater than latest_block_to_check:
         // - Right after deploying the contract as latest_block_fetched is set to the block where the contract is deployed
         // - If the node is stopped and l1_block_delay is changed
-        if self.last_block_fetched > latest_block_to_check {
+        if last_block_fetched > latest_block_to_check {
             warn!("Last block fetched is greater than latest safe block");
-            return Ok(vec![]);
+            return Ok((last_block_fetched, vec![]));
         }
 
-        let new_last_block = min(
-            self.last_block_fetched + self.max_block_step,
-            latest_block_to_check,
-        );
+        let new_last_block = min(last_block_fetched + max_block_step, latest_block_to_check);
 
-        if self.last_block_fetched == latest_block_to_check {
-            debug!("{:#x} ==  {:#x}", self.last_block_fetched, new_last_block);
-            return Ok(vec![]);
+        if last_block_fetched == latest_block_to_check {
+            debug!("{:#x} ==  {:#x}", last_block_fetched, new_last_block);
+            return Ok((last_block_fetched, vec![]));
         }
 
         debug!(
             "Looking logs from block {:#x} to {:#x}",
-            self.last_block_fetched, new_last_block
+            last_block_fetched, new_last_block
         );
 
-        // Matches the event PrivilegedTxSent from ICommonBridge.sol
-        let topic =
-            keccak(b"PrivilegedTxSent(address,address,address,uint256,uint256,uint256,bytes)");
-
-        let logs = self
-            .eth_client
-            .get_logs(
-                self.last_block_fetched + 1,
-                new_last_block,
-                self.address,
-                vec![topic],
-            )
+        let logs = client
+            .get_logs(last_block_fetched + 1, new_last_block, address, topics)
             .await?;
 
         debug!("Logs: {:#?}", logs);
 
         // If we have an error adding the tx to the mempool we may assign it to the next
         // block to fetch, but we may lose a privileged tx.
-        self.last_block_fetched = new_last_block;
-
-        Ok(logs)
+        Ok((new_last_block, logs))
     }
 
     pub async fn process_privileged_transactions(
@@ -214,7 +262,7 @@ impl L1Watcher {
         for log in logs {
             let privileged_transaction_data = PrivilegedTransactionData::from_log(log.log)?;
 
-            let gas_price = self.l2_client.get_gas_price().await?;
+            let gas_price = self.local_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()
             let gas_price: u64 = gas_price
                 .try_into()
@@ -282,25 +330,132 @@ impl L1Watcher {
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
         let pending_privileged_transactions =
-            get_pending_privileged_transactions(&self.eth_client, self.address).await?;
+            get_pending_privileged_transactions(&self.eth_client, self.bridge_address).await?;
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 
     async fn health(&mut self) -> CallResponse<Self> {
         let l1_rpc_healthcheck = self.eth_client.test_urls().await;
-        let l2_rpc_healthcheck = self.l2_client.test_urls().await;
+        let l2_rpc_healthcheck = self.local_client.test_urls().await;
 
         CallResponse::Reply(OutMessage::Health(L1WatcherHealth {
             l1_rpc_healthcheck,
             l2_rpc_healthcheck,
             max_block_step: self.max_block_step.to_string(),
-            last_block_fetched: self.last_block_fetched.to_string(),
+            last_block_fetched: self.last_block_fetched_l1.to_string(),
             check_interval: self.check_interval,
             l1_block_delay: self.l1_block_delay,
             sequencer_state: format!("{:?}", self.sequencer_state.status().await),
-            bridge_address: self.address,
+            bridge_address: self.bridge_address,
         }))
     }
+
+    async fn watch_l2s(&mut self) {
+        let Ok(logs) = self
+            .get_logs_l2()
+            .await
+            .inspect_err(|err| error!("L1 Watcher Error: {err}"))
+        else {
+            return;
+        };
+
+        // We may not have a privileged transaction nor a withdrawal, that means no events -> no logs.
+        // TODO: This was unchanged. We should continue from here.
+        // We should get privileged transactions from the new L2Message logs and inject them into the mempool.
+        if !logs.is_empty() {
+            let _ = self
+                .process_privileged_transactions(logs)
+                .await
+                .inspect_err(|err| error!("L1 Watcher Error: {}", err));
+        };
+    }
+
+    async fn get_logs_l2(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
+        let topics = vec![*L2MESSAGE_EVENT_SELECTOR, self.chain_id_topic];
+        // We don't need to delay L2 logs
+        let block_delay = 0;
+        let mut acc_logs = Vec::new();
+
+        // TODO: On errors, we may want to try updating the rest of L2 clients.
+        for l2_client in &mut self.l2_clients {
+            let (_, logs) = Self::get_privileged_transactions(
+                l2_client.last_block_fetched_l2,
+                block_delay,
+                &l2_client.eth_client,
+                topics.clone(),
+                l2_client.messenger_address,
+                self.max_block_step,
+            )
+            .await?;
+
+            let verified_logs =
+                filter_verified_messages(self.router_address, &self.eth_client, l2_client, logs)
+                    .await?;
+
+            // We need to update the last block fetched only if the logs were verified.
+            if let Some(log) = verified_logs.last() {
+                l2_client.last_block_fetched_l2 = log.block_number.into();
+            }
+
+            acc_logs.extend(verified_logs);
+        }
+        Ok(acc_logs)
+    }
+}
+
+pub async fn filter_verified_messages(
+    router_address: Address,
+    l1_client: &EthClient,
+    l2_client: &L2Client,
+    logs: Vec<RpcLog>,
+) -> Result<Vec<RpcLog>, L1WatcherError> {
+    let mut verified_logs = Vec::new();
+
+    for rpc_log in logs {
+        let Some(message_proof) =
+            get_l2_message_proof(&l2_client.eth_client, rpc_log.transaction_hash).await?
+        else {
+            // Message proof not found.
+            // Given that logs are fetched in block order, we can stop here.
+            break;
+        };
+
+        // Why is it a vec?
+        let proof = message_proof.first().ok_or(L1WatcherError::Custom(
+            "L2 Message proof is empty".to_owned(),
+        ))?;
+
+        let log = Log {
+            address: rpc_log.log.address,
+            topics: rpc_log.log.topics.clone(),
+            data: rpc_log.log.data.clone(),
+        };
+
+        let Some(l2_message) = L2Message::from_log(&log) else {
+            return Err(L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse L2Message from log".to_owned(),
+            ));
+        };
+
+        if !verify_message(
+            l2_client.chain_id,
+            l1_client,
+            &l2_message,
+            proof,
+            router_address,
+        )
+        .await?
+        {
+            // Message not verified.
+            // Given that logs are fetched in block order, we can stop here.
+            break;
+        }
+
+        // info!("L2 Message with id {message_id:#} has been verified on L1.",);
+        verified_logs.push(rpc_log);
+    }
+
+    Ok(verified_logs)
 }
 
 impl GenServer for L1Watcher {
@@ -310,10 +465,10 @@ impl GenServer for L1Watcher {
     type Error = L1WatcherError;
 
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        // Perform the check and suscribe a periodic Watch.
+        // Perform the first log watch and schedule periodic checks.
         handle
             .clone()
-            .cast(Self::CastMsg::WatchLogs)
+            .cast(Self::CastMsg::WatchLogsL1)
             .await
             .map_err(Self::Error::InternalError)?;
 
@@ -332,12 +487,20 @@ impl GenServer for L1Watcher {
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            Self::CastMsg::WatchLogs => {
+            Self::CastMsg::WatchLogsL1 => {
                 if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-                    self.watch().await;
+                    self.watch_l1().await;
                 }
                 let check_interval = random_duration(self.check_interval);
-                send_after(check_interval, handle.clone(), Self::CastMsg::WatchLogs);
+                send_after(check_interval, handle.clone(), Self::CastMsg::WatchLogsL1);
+                CastResponse::NoReply
+            }
+            Self::CastMsg::WatchLogsL2 => {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                    self.watch_l2s().await;
+                }
+                let check_interval = random_duration(self.check_interval);
+                send_after(check_interval, handle.clone(), Self::CastMsg::WatchLogsL1);
                 CastResponse::NoReply
             }
             Self::CastMsg::UpdateL1BlobBaseFee => {

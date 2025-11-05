@@ -14,6 +14,11 @@ pub const MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xfe,
 ]);
 
+// keccak256("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)")
+pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
+    keccak("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)".as_bytes())
+});
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct L1MessageProof {
     pub batch_number: u64,
@@ -83,6 +88,13 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
         .collect()
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct L2MessageProof {
+    pub batch_number: u64,
+    pub message_hash: H256,
+    pub merkle_proof: Vec<H256>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Represents a message from the L2 to another L2
 pub struct L2Message {
@@ -111,14 +123,31 @@ impl L2Message {
         bytes.extend_from_slice(&self.data);
         bytes
     }
+    pub fn from_log(log: &ethrex_common::types::Log) -> Option<L2Message> {
+        let chain_id = U256::from_big_endian(&log.topics.get(1)?.0);
+        let from = H256::from_slice(log.data.get(32..64)?);
+        let from = Address::from_slice(&from.as_fixed_bytes()[12..]);
+        let to = H256::from_slice(log.data.get(64..96)?);
+        let to = Address::from_slice(&to.as_fixed_bytes()[12..]);
+        let value = U256::from_big_endian(log.data.get(96..128)?);
+        let gas_limit = U256::from_big_endian(log.data.get(128..160)?);
+
+        // 160..192 is taken by offset_data, which we do not need
+        let calldata_len = U256::from_big_endian(log.data.get(192..224)?);
+        let calldata = log.data.get(224..224 + calldata_len.as_usize())?;
+
+        Some(L2Message {
+            chain_id,
+            from,
+            to,
+            value,
+            gas_limit,
+            data: Bytes::copy_from_slice(calldata),
+        })
+    }
 }
 
 pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
-    // keccak256("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)")
-    static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
-        keccak("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)".as_bytes())
-    });
-
     receipts
         .iter()
         .flat_map(|receipt| {
@@ -130,28 +159,7 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
                         && log.topics.first() == Some(&*L2MESSAGE_EVENT_SELECTOR)
                         && log.topics.len() >= 2 // need chainId
                 })
-                .filter_map(|log| {
-                    let chain_id = U256::from_big_endian(&log.topics.get(1)?.0);
-                    let from = H256::from_slice(log.data.get(32..64)?);
-                    let from = Address::from_slice(&from.as_fixed_bytes()[12..]);
-                    let to = H256::from_slice(log.data.get(64..96)?);
-                    let to = Address::from_slice(&to.as_fixed_bytes()[12..]);
-                    let value = U256::from_big_endian(log.data.get(96..128)?);
-                    let gas_limit = U256::from_big_endian(log.data.get(128..160)?);
-
-                    // 160..192 is taken by offset_data, which we do not need
-                    let calldata_len = U256::from_big_endian(log.data.get(192..224)?);
-                    let calldata = log.data.get(224..224 + calldata_len.as_usize())?;
-
-                    Some(L2Message {
-                        chain_id,
-                        from,
-                        to,
-                        value,
-                        gas_limit,
-                        data: Bytes::copy_from_slice(calldata),
-                    })
-                })
+                .filter_map(L2Message::from_log)
         })
         .collect()
 }

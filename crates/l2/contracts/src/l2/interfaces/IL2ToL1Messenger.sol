@@ -16,7 +16,7 @@ interface IL2ToL1Messenger {
         uint256 indexed messageId
     );
 
-    event L2ToL2Message(
+    event L2Message(
         uint256 indexed chainId,
         address from,
         address to,

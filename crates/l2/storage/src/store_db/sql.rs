@@ -28,9 +28,10 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 17] = [
+const DB_SCHEMA: [&str; 18] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
-    "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE l1_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE l2_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
     "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
@@ -141,21 +142,42 @@ impl SQLStore {
         self.execute_in_tx(queries, db_tx).await
     }
 
-    async fn store_message_hashes_by_batch_in_tx(
+    async fn store_l1_message_hashes_by_batch_in_tx(
         &self,
         batch_number: u64,
         message_hashes: Vec<H256>,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
         let mut queries = vec![(
-            "DELETE FROM messages WHERE batch = ?1",
+            "DELETE FROM l1_messages WHERE batch = ?1",
             vec![batch_number].into_params()?,
         )];
         for (index, hash) in message_hashes.iter().enumerate() {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
-                "INSERT INTO messages VALUES (?1, ?2, ?3)",
+                "INSERT INTO l1_messages VALUES (?1, ?2, ?3)",
+                (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
+            ));
+        }
+        self.execute_in_tx(queries, db_tx).await
+    }
+
+    async fn store_l2_message_hashes_by_batch_in_tx(
+        &self,
+        batch_number: u64,
+        message_hashes: Vec<H256>,
+        db_tx: Option<&Transaction>,
+    ) -> Result<(), RollupStoreError> {
+        let mut queries = vec![(
+            "DELETE FROM l2_messages WHERE batch = ?1",
+            vec![batch_number].into_params()?,
+        )];
+        for (index, hash) in message_hashes.iter().enumerate() {
+            let index = u64::try_from(index)
+                .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
+            queries.push((
+                "INSERT INTO l2_messages VALUES (?1, ?2, ?3)",
                 (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
             ));
         }
@@ -343,15 +365,38 @@ impl StoreEngineRollup for SQLStore {
         Ok(None)
     }
 
-    /// Gets the message hashes by a given batch number.
-    async fn get_message_hashes_by_batch(
+    /// Gets the L1 message hashes by a given batch number.
+    async fn get_l1_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
         let mut hashes = vec![];
         let mut rows = self
             .query(
-                "SELECT * from messages WHERE batch = ?1 ORDER BY idx ASC",
+                "SELECT * from l1_messages WHERE batch = ?1 ORDER BY idx ASC",
+                vec![batch_number],
+            )
+            .await?;
+        while let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 2)?;
+            hashes.push(H256::from_slice(&vec));
+        }
+        if hashes.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(hashes))
+        }
+    }
+
+    /// Gets the L2 message hashes by a given batch number.
+    async fn get_l2_message_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
+        let mut hashes = vec![];
+        let mut rows = self
+            .query(
+                "SELECT * from l2_messages WHERE batch = ?1 ORDER BY idx ASC",
                 vec![batch_number],
             )
             .await?;
@@ -584,7 +629,11 @@ impl StoreEngineRollup for SQLStore {
                 [batch_number].into_params()?,
             ),
             (
-                "DELETE FROM messages WHERE batch > ?1",
+                "DELETE FROM l1_messages WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
+            (
+                "DELETE FROM l2_messages WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
             (
@@ -666,9 +715,15 @@ impl StoreEngineRollup for SQLStore {
         }
         self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(&transaction))
             .await?;
-        self.store_message_hashes_by_batch_in_tx(
+        self.store_l1_message_hashes_by_batch_in_tx(
             batch.number,
             batch.l1_message_hashes,
+            Some(&transaction),
+        )
+        .await?;
+        self.store_l2_message_hashes_by_batch_in_tx(
+            batch.number,
+            batch.l2_message_hashes,
             Some(&transaction),
         )
         .await?;
@@ -897,7 +952,7 @@ mod tests {
         let store = SQLStore::new(":memory:")?;
         let tables = [
             "blocks",
-            "messages",
+            "l1_messages",
             "privileged_transactions",
             "state_roots",
             "blob_bundles",
@@ -927,9 +982,9 @@ mod tests {
             let expected_type = match (table.as_str(), name.as_str()) {
                 ("blocks", "block_number") => "INT",
                 ("blocks", "batch") => "INT",
-                ("messages", "batch") => "INT",
-                ("messages", "idx") => "INT",
-                ("messages", "message_hash") => "BLOB",
+                ("l1_messages", "batch") => "INT",
+                ("l1_messages", "idx") => "INT",
+                ("l1_messages", "message_hash") => "BLOB",
                 ("privileged_transactions", "batch") => "INT",
                 ("privileged_transactions", "transactions_hash") => "BLOB",
                 ("state_roots", "batch") => "INT",
