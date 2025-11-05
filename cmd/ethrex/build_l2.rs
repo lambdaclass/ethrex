@@ -33,12 +33,6 @@ pub fn download_script() {
     );
     let contracts_path = Path::new("../../crates/l2/contracts/src");
 
-    // If COMPILE_CONTRACTS is not set, skip and write empty files
-    if env::var_os("COMPILE_CONTRACTS").is_none() {
-        write_empty_bytecode_files(&output_contracts_path);
-        return;
-    }
-
     download_contract_deps(&output_contracts_path);
 
     // ERC1967Proxy contract.
