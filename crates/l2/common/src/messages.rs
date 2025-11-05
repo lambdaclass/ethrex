@@ -14,9 +14,9 @@ pub const MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xfe,
 ]);
 
-// keccak256("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)")
+// keccak256("L2Message(uint256,address,address,uint256,uint256,bytes)")
 pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
-    keccak("L2ToL2Message(uint256,address,address,uint256,uint256,bytes)".as_bytes())
+    keccak("L2Message(uint256,address,address,uint256,uint256,bytes)".as_bytes())
 });
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -131,10 +131,8 @@ impl L2Message {
         let to = Address::from_slice(&to.as_fixed_bytes()[12..]);
         let value = U256::from_big_endian(log.data.get(96..128)?);
         let gas_limit = U256::from_big_endian(log.data.get(128..160)?);
-
-        // 160..192 is taken by offset_data, which we do not need
-        let calldata_len = U256::from_big_endian(log.data.get(192..224)?);
-        let calldata = log.data.get(224..224 + calldata_len.as_usize())?;
+        let calldata_len = U256::from_big_endian(log.data.get(160..192)?);
+        let calldata = log.data.get(192..192 + calldata_len.as_usize())?;
 
         Some(L2Message {
             chain_id,
