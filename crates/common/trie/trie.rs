@@ -13,6 +13,7 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -229,7 +230,15 @@ impl Trie {
     /// Nodes are given with their hash pre-calculated.
     pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
         let mut acc = Vec::new();
-        if self.root.is_valid() {
+
+        if let Ok(Some(root)) = self.root.get_node_mut(self.db.as_ref(), Nibbles::default()) {
+            if let Node::Branch(node) = root {
+                acc = node.choices.par_iter_mut().enumerate().flat_map(|(choice, node)| {
+                    let mut acc = vec![];
+                    node.commit(Nibbles::from_hex(vec![choice as u8]), &mut acc);
+                    acc
+                }).collect();
+            }
             self.root.commit(Nibbles::default(), &mut acc);
         }
         if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
