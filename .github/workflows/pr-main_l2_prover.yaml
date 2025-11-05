@@ -17,6 +17,8 @@ jobs:
   lint_zk:
     name: Lint ${{ matrix.backend }} backend
     runs-on: ubuntu-latest
+    env:
+      SKIP_COMPILE_CONTRACTS: true
     strategy:
       matrix:
         backend: ["sp1", "risc0"]
