@@ -316,7 +316,7 @@ impl Trie {
                 Node::Branch(mut node) => {
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
+                            continue;
                         };
 
                         if hash.is_valid() {
@@ -331,7 +331,7 @@ impl Trie {
                 }
                 Node::Extension(mut node) => {
                     let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
+                        return Ok(node.into());
                     };
 
                     node.child = match all_nodes.get(&hash.finalize()) {
