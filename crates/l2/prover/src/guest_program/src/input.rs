@@ -19,8 +19,7 @@ pub struct ProgramInput {
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     /// Configuration for L2 fees used for each block
-    #[cfg(feature = "l2")]
-    pub fee_configs: Vec<FeeConfig>,
+    pub fee_configs: Option<Vec<FeeConfig>>,
     #[cfg(feature = "l2")]
     /// KZG commitment to the blob data
     #[serde_as(as = "[_; 48]")]
