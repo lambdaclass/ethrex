@@ -69,7 +69,7 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 Before addressing the gaps listed below, we should also consider some general improvements in our current metrics setup:
 
 - **Namespace standardisation**: Metric names and labels should follow a consistent naming convention (e.g., `ethrex_l1_` prefix) to avoid collisions and improve clarity. Right now we are not using prefixes.
-- **Panels dependant on `ethereum-metrics-exporter`**: Some metrics are only visible through the external `ethereum-metrics-exporter` (e.g., network, client version, consensus fork), we are already pulling those in our dashboard but this is not ideal. We should consider integrating this key metrics directly into Ethrex.
+- **Panels dependent on `ethereum-metrics-exporter`**: Some metrics are only visible through the external `ethereum-metrics-exporter` (e.g., network, client version, consensus fork), we are already pulling those in our dashboard but this is not ideal. We should consider integrating this key metrics directly into Ethrex.
 - **Label consistency**: We are not using labels consistently, especially in l1. We might need to take a pass to ensure similar metrics use uniform label names and values to facilitate querying and aggregation if needed or decide to not use labels when appropriate.
 - **Exemplars addition**: For histograms, adding exemplars can help trace high-latency events back to specific traces/logs. This is especially useful for latency-sensitive metrics like block execution time or RPC call durations where we could add block hashes as exemplars. This needs to be evaluated on a case-by-case basis and tested.
 
