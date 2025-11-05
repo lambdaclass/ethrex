@@ -354,7 +354,7 @@ impl Store {
     // Helper method for batch writes
     async fn write_batch_async(
         &self,
-        batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
+        batch_ops: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let writer_tx = self.writer_tx.clone();
         tokio::task::spawn_blocking(move || {
@@ -654,14 +654,10 @@ impl Store {
 
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
         let mut trie_mut = (*trie).clone();
-        let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
-            open_cfs(&self.dbs, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
-        let nodes_transaction = cf_trie_nodes.begin_write_concurrent().unwrap();
-        let flatkeyvalue_transaction = cf_flatkeyvalue.begin_write_concurrent().unwrap();
-        {
-            let mut nodes_tree = nodes_transaction.get_tree(b"").unwrap().unwrap();
-            let mut flatkeyvalue_tree = flatkeyvalue_transaction.get_tree(b"").unwrap().unwrap();
+        let [cf_misc] = open_cfs(&self.dbs, [CF_MISC_VALUES])?;
 
+        let mut batch_ops = Vec::new();
+        {
             let last_written = {
                 cf_misc
                     .begin_read()
@@ -683,20 +679,21 @@ impl Store {
                     continue;
                 }
                 let cf = if is_leaf {
-                    &mut flatkeyvalue_tree
+                    CF_FLATKEYVALUE
                 } else {
-                    &mut nodes_tree
+                    CF_TRIE_NODES
                 };
                 if value.is_empty() {
-                    cf.delete(&key).unwrap();
+                    batch_ops.push((cf, key, vec![]));
                 } else {
-                    cf.insert(&key, &value).unwrap();
+                    batch_ops.push((cf, key, value));
                 }
             }
         }
-        let result = self
-            .db
-            .group_commit([flatkeyvalue_transaction, nodes_transaction], false);
+        let msg = WriterMessage::WriteBatchAsync { batch_ops };
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        self.writer_tx.send((msg, tx)).unwrap();
+        let result = rx.recv().unwrap();
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
@@ -954,11 +951,11 @@ impl StoreEngine for Store {
             let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
             let header_value = BlockHeaderRLP::from(header.clone()).bytes().clone();
 
-            batch_ops.push((CF_HEADERS.to_string(), hash_key, header_value));
+            batch_ops.push((CF_HEADERS, hash_key, header_value));
 
             let number_key = header.number.to_le_bytes().to_vec();
             batch_ops.push((
-                CF_BLOCK_NUMBERS.to_string(),
+                CF_BLOCK_NUMBERS,
                 BlockHashRLP::from(block_hash).bytes().clone(),
                 number_key,
             ));
@@ -1241,7 +1238,7 @@ impl StoreEngine for Store {
         for (index, receipt) in receipts.into_iter().enumerate() {
             let key = (block_hash, index as u64).encode_to_vec();
             let value = receipt.encode_to_vec();
-            batch_ops.push((CF_RECEIPTS.to_string(), key, value));
+            batch_ops.push((CF_RECEIPTS, key, value));
         }
 
         self.write_batch_async(batch_ops).await
@@ -1894,7 +1891,7 @@ impl StoreEngine for Store {
                 .collect::<Vec<u8>>()
                 .as_slice()
                 .encode(&mut buf);
-            batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, buf));
+            batch_ops.push((CF_ACCOUNT_CODES, key, buf));
         }
 
         self.write_batch_async(batch_ops).await
@@ -1907,7 +1904,7 @@ impl StoreEngine for Store {
             let number_value = header.number.to_le_bytes().to_vec();
             let header_value = BlockHeaderRLP::from(header).bytes().clone();
 
-            batch_ops.push((CF_FULLSYNC_HEADERS.to_string(), number_value, header_value));
+            batch_ops.push((CF_FULLSYNC_HEADERS, number_value, header_value));
         }
 
         self.write_batch_async(batch_ops).await
@@ -2006,7 +2003,7 @@ enum WriterMessage {
         value: Vec<u8>,
     },
     WriteBatchAsync {
-        batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
+        batch_ops: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
     },
     WriteFKVBatch {
         last_written: Vec<u8>,
@@ -2063,7 +2060,7 @@ impl Writer {
 
     fn write_batch_async(
         &self,
-        batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
+        batch_ops: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
         let dbs = self.dbs.clone();
@@ -2072,14 +2069,14 @@ impl Writer {
         for (db_name, key, value) in batch_ops {
             let transaction = transactions
                 .entry(db_name)
-                .or_insert_with_key(|name| dbs.get(name).unwrap().begin_write().unwrap());
+                .or_insert_with_key(|name| dbs.get(*name).unwrap().begin_write().unwrap());
 
-            transaction
-                .get_tree(b"")
-                .unwrap()
-                .unwrap()
-                .insert(key.as_ref(), value.as_ref())
-                .unwrap();
+            let mut tree = transaction.get_tree(b"").unwrap().unwrap();
+            if value.is_empty() {
+                tree.delete(key.as_ref()).unwrap();
+            } else {
+                tree.insert(key.as_ref(), value.as_ref()).unwrap();
+            }
         }
         db.group_commit(transactions.into_values(), false).unwrap();
         Ok(())
