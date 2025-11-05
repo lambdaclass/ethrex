@@ -844,37 +844,19 @@ impl StoreEngine for Store {
             return Ok(());
         };
 
-        let [cf_canonical, cf_bodies, cf_headers, cf_block_numbers] = open_cfs(
-            &self.dbs,
-            [
-                CF_CANONICAL_BLOCK_HASHES,
-                CF_BODIES,
-                CF_HEADERS,
-                CF_BLOCK_NUMBERS,
-            ],
-        )?;
+        let mut batch_ops = vec![];
 
-        let canonical_tx = cf_canonical.begin_write_concurrent().unwrap();
-        let bodies_tx = cf_bodies.begin_write_concurrent().unwrap();
-        let headers_tx = cf_headers.begin_write_concurrent().unwrap();
-        let block_numbers_tx = cf_block_numbers.begin_write_concurrent().unwrap();
-        {
-            let mut canonical_tree = canonical_tx.get_tree(b"").unwrap().unwrap();
-            let mut bodies_tree = bodies_tx.get_tree(b"").unwrap().unwrap();
-            let mut headers_tree = headers_tx.get_tree(b"").unwrap().unwrap();
-            let mut block_numbers_tree = block_numbers_tx.get_tree(b"").unwrap().unwrap();
+        batch_ops.push((
+            CF_CANONICAL_BLOCK_HASHES,
+            block_number.to_le_bytes().to_vec(),
+            vec![],
+        ));
+        batch_ops.push((CF_BODIES, hash.as_bytes().to_vec(), vec![]));
+        batch_ops.push((CF_HEADERS, hash.as_bytes().to_vec(), vec![]));
+        batch_ops.push((CF_BLOCK_NUMBERS, hash.as_bytes().to_vec(), vec![]));
 
-            canonical_tree.delete(&block_number.to_le_bytes()).unwrap();
-            bodies_tree.delete(&hash.as_bytes()).unwrap();
-            headers_tree.delete(&hash.as_bytes()).unwrap();
-            block_numbers_tree.delete(&hash.as_bytes()).unwrap();
-        }
-
-        self.db
-            .group_commit(
-                [canonical_tx, block_numbers_tx, bodies_tx, headers_tx],
-                false,
-            )
+        self.write_batch_async(batch_ops)
+            .await
             .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
 
