@@ -1,6 +1,4 @@
 // Modified:
-//   - All instances of curly brackets need to be escaped with a second bracket to avoid Rust's
-//     `global_asm` trying to interpret them as a template substitution.
 //   - Ran `cpp` to substitute constants.
 //   - Commented out ARM assembly annotations (.size, .type) used only for debugging purposes and not understood by
 //     Rust.
