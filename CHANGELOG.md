@@ -2,6 +2,9 @@
 
 ## Perf
 
+### 2025-11-05
+- Move insertion of receipts and tx locations to the background [#5203](https://github.com/lambdaclass/ethrex/pull/5203)
+
 ### 2025-11-03
 
 - Avoid unnecessary hash validations [#5167](https://github.com/lambdaclass/ethrex/pull/5167)
