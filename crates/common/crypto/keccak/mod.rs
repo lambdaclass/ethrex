@@ -1,7 +1,7 @@
 #[cfg(target_arch = "aarch64")]
 std::arch::global_asm!(include_str!("keccak1600-armv8.s"));
 #[cfg(target_arch = "x86_64")]
-std::arch::global_asm!(include_str!("keccak1600-x86_64.s"));
+std::arch::global_asm!(include_str!("keccak1600-x86_64.s"), options(att_syntax));
 
 const BLOCK_SIZE: usize = 136;
 
