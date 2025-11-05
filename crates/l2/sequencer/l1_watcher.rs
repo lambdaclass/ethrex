@@ -208,6 +208,7 @@ impl L1Watcher {
         address: Address,
         max_block_step: U256,
     ) -> Result<(U256, Vec<RpcLog>), L1WatcherError> {
+        info!("Getting privileged transactions");
         let Some(latest_block_to_check) = client
             .get_block_number()
             .await?
@@ -246,7 +247,7 @@ impl L1Watcher {
             .get_logs(last_block_fetched + 1, new_last_block, address, topics)
             .await?;
 
-        debug!("Logs: {:#?}", logs);
+        info!("Logs: {:#?}", logs);
 
         // If we have an error adding the tx to the mempool we may assign it to the next
         // block to fetch, but we may lose a privileged tx.
@@ -359,6 +360,8 @@ impl L1Watcher {
             return;
         };
 
+        info!("Fetched {} L2 logs", logs.len());
+
         // We may not have a privileged transaction nor a withdrawal, that means no events -> no logs.
         // TODO: This was unchanged. We should continue from here.
         // We should get privileged transactions from the new L2Message logs and inject them into the mempool.
@@ -371,6 +374,7 @@ impl L1Watcher {
     }
 
     async fn get_logs_l2(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
+        info!("Getting L2 logs");
         let topics = vec![*L2MESSAGE_EVENT_SELECTOR, self.chain_id_topic];
         // We don't need to delay L2 logs
         let block_delay = 0;
@@ -472,6 +476,13 @@ impl GenServer for L1Watcher {
             .await
             .map_err(Self::Error::InternalError)?;
 
+        // Perform the first l2 log watch and schedule periodic checks.
+        handle
+            .clone()
+            .cast(Self::CastMsg::WatchLogsL2)
+            .await
+            .map_err(Self::Error::InternalError)?;
+
         // Perform the first L1 blob base fee update and schedule periodic updates.
         handle
             .clone()
@@ -496,11 +507,12 @@ impl GenServer for L1Watcher {
                 CastResponse::NoReply
             }
             Self::CastMsg::WatchLogsL2 => {
+                info!("Watching L2 logs");
                 if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
                     self.watch_l2s().await;
                 }
                 let check_interval = random_duration(self.check_interval);
-                send_after(check_interval, handle.clone(), Self::CastMsg::WatchLogsL1);
+                send_after(check_interval, handle.clone(), Self::CastMsg::WatchLogsL2);
                 CastResponse::NoReply
             }
             Self::CastMsg::UpdateL1BlobBaseFee => {
