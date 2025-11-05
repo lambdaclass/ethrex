@@ -2,13 +2,13 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
-use guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput};
+use guest_program::{input::ProgramInput, ZKVM_SP1_PROGRAM_ELF};
 use rkyv::rancor::Error;
 use sp1_prover::components::CpuProverComponents;
-#[cfg(not(feature = "gpu"))]
-use sp1_sdk::CpuProver;
 #[cfg(feature = "gpu")]
 use sp1_sdk::cuda::builder::CudaProverBuilder;
+#[cfg(not(feature = "gpu"))]
+use sp1_sdk::CpuProver;
 use sp1_sdk::{
     HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
@@ -88,7 +88,8 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     setup.client.execute(ZKVM_SP1_PROGRAM_ELF, &stdin)?;
     let elapsed = now.elapsed();
 
-    info!("Successfully executed SP1 program in {:.2?}", elapsed);
+    info!("Successfully executed SP1 program in {elapsed:.2?}");
+
     Ok(())
 }
 
@@ -107,9 +108,13 @@ pub fn prove(
         ProofFormat::Compressed => SP1ProofMode::Compressed,
         ProofFormat::Groth16 => SP1ProofMode::Groth16,
     };
-    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
 
-    info!("Successfully generated SP1Proof.");
+    let now = Instant::now();
+    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
+    let elapsed = now.elapsed();
+
+    info!("Successfully proved SP1 program in {elapsed:.2?}");
+
     Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
 
