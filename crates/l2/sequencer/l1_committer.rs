@@ -17,7 +17,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork, Genesis,
-        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
+        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
         fee_config::FeeConfig,
     },
 };

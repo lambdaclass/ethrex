@@ -1,6 +1,5 @@
 use std::{cmp::min, sync::Arc, time::Duration};
 
-use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::utils::keccak;
