@@ -84,8 +84,8 @@ pub async fn build_payload(
     Ok(context.into())
 }
 
-/// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size
-/// stays within the blob size limit after processing each transaction.
+/// Same as `blockchain::fill_transactions` but enforces that block encoded size
+/// does not exceed `SAFE_BYTES_PER_BLOB`.
 /// Also, uses a configured `block_gas_limit` to limit the gas used in the block,
 /// which can be lower than the block gas limit specified in the payload header.
 pub async fn fill_transactions(

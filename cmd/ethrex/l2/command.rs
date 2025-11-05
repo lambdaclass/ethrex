@@ -464,11 +464,13 @@ impl Command {
                             panic!("Invalid blockchain type. Expected L2.");
                         };
 
-                        let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
-                            panic!("Fee config lock was poisoned.");
-                        };
+                        {
+                            let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
+                                panic!("Fee config lock was poisoned.");
+                            };
 
-                        *fee_config_guard = fee_config;
+                            *fee_config_guard = fee_config;
+                        }
 
                         // Execute block
                         blockchain.add_block(block.clone())?;

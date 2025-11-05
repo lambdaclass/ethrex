@@ -522,7 +522,7 @@ impl L1Committer {
             let messages = get_block_l1_messages(&receipts);
             let privileged_transactions = get_block_privileged_transactions(&txs);
 
-            // // Get block account updates.
+            // Get block account updates.
             let account_updates = if let Some(account_updates) = self
                 .rollup_store
                 .get_account_updates_by_block_number(block_to_commit_number)

@@ -398,7 +398,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     // function commitBatch(
     //     uint256 batchNumber,
     //     bytes32 newStateRoot,
-    //     bytes32 stateDiffKZGVersionedHash,
+    //     bytes32 BlobKZGVersionedHash,
     //     bytes32 messagesLogsMerkleRoot,
     //     bytes32 processedPrivilegedTransactionsRollingHash,
     //     bytes[] calldata _rlpEncodedBlocks

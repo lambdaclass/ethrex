@@ -9,7 +9,6 @@ use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
-use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_rpc::signer::SignerError;
 use ethrex_metrics::MetricsError;
 use ethrex_rpc::clients::EngineClientError;
@@ -108,8 +107,6 @@ pub enum ProofCoordinatorError {
     InternalError(String),
     #[error("ProofCoordinator failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("ProofCoordinator encountered a StateDiffError")]
-    StateDiffError(#[from] StateDiffError),
     #[error("ProofCoordinator encountered a ExecutionCacheError")]
     ExecutionCacheError(#[from] ExecutionCacheError),
     #[error("ProofCoordinator encountered a BlobsBundleError: {0}")]
@@ -249,8 +246,6 @@ pub enum CommitterError {
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage: {0}")]
     FailedToGetInformationFromStorage(String),
-    #[error("Committer failed to encode state diff: {0}")]
-    FailedToEncodeStateDiff(#[from] StateDiffError),
     #[error("Committer failed to open Points file: {0}")]
     FailedToOpenPointsFile(#[from] std::io::Error),
     #[error("Committer failed to re-execute block: {0}")]

@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
-use ethrex_common::types::account_diff::{AccountStateDiff, get_accounts_diff_size};
 use ethrex_common::types::{SAFE_BYTES_PER_BLOB, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, U256};
@@ -2507,108 +2506,4 @@ async fn wait_for_verified_proof(
     }
 
     proof
-}
-
-// ======================================================================
-// Auxiliary functions to calculate account diff size for different tx
-// ======================================================================
-
-fn get_account_diff_size_for_deploy(
-    bytecode: &Bytes,
-    storage_after_deploy: BTreeMap<H256, U256>,
-) -> u64 {
-    let mut account_diffs = HashMap::new();
-    // tx sender
-    account_diffs.insert(Address::random(), sender_account_diff());
-    // Deployed contract account
-    account_diffs.insert(
-        Address::random(),
-        AccountStateDiff {
-            nonce_diff: 1,
-            bytecode: Some(bytecode.clone()),
-            storage: storage_after_deploy,
-            ..Default::default()
-        },
-    );
-    get_accounts_diff_size(&account_diffs).unwrap()
-}
-
-fn get_account_diff_size_for_withdraw() -> u64 {
-    let mut account_diffs = HashMap::new();
-    // tx sender
-    account_diffs.insert(Address::random(), sender_account_diff());
-    // L2_TO_L1_MESSENGER
-    account_diffs.insert(
-        Address::random(),
-        AccountStateDiff {
-            storage: dummy_modified_storage_slots(1),
-            ..Default::default()
-        },
-    );
-    // zero address
-    account_diffs.insert(
-        Address::zero(),
-        AccountStateDiff {
-            new_balance: Some(U256::zero()),
-            ..Default::default()
-        },
-    );
-    get_accounts_diff_size(&account_diffs).unwrap()
-}
-
-fn get_account_diff_size_for_erc20withdraw() -> u64 {
-    let mut account_diffs = HashMap::new();
-    // tx sender
-    account_diffs.insert(Address::random(), sender_account_diff());
-    // L2_TO_L1_MESSENGER
-    account_diffs.insert(
-        Address::random(),
-        AccountStateDiff {
-            storage: dummy_modified_storage_slots(1),
-            ..Default::default()
-        },
-    );
-    // ERC20 contract
-    account_diffs.insert(
-        Address::random(),
-        AccountStateDiff {
-            storage: dummy_modified_storage_slots(2),
-            ..Default::default()
-        },
-    );
-    get_accounts_diff_size(&account_diffs).unwrap()
-}
-
-fn get_account_diff_size_for_erc20approve() -> u64 {
-    let mut account_diffs = HashMap::new();
-    // tx sender
-    account_diffs.insert(Address::random(), sender_account_diff());
-
-    // ERC20 contract
-    account_diffs.insert(
-        Address::random(),
-        AccountStateDiff {
-            storage: dummy_modified_storage_slots(1),
-            ..Default::default()
-        },
-    );
-
-    get_accounts_diff_size(&account_diffs).unwrap()
-}
-
-// Account diff for the sender of the transaction
-fn sender_account_diff() -> AccountStateDiff {
-    AccountStateDiff {
-        nonce_diff: 1,
-        new_balance: Some(U256::zero()),
-        ..Default::default()
-    }
-}
-
-fn dummy_modified_storage_slots(modified_storage_slots: u64) -> BTreeMap<H256, U256> {
-    let mut storage = BTreeMap::new();
-    for _ in 0..modified_storage_slots {
-        storage.insert(H256::random(), U256::zero());
-    }
-    storage
 }

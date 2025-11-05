@@ -57,9 +57,6 @@ pub enum StatelessExecutionError {
     #[error("Invalid KZG blob proof")]
     InvalidBlobProof,
     #[cfg(feature = "l2")]
-    #[error("Invalid state diff")]
-    InvalidStateDiff,
-    #[cfg(feature = "l2")]
     #[error("FeeConfig not provided for L2 execution")]
     FeeConfigNotFound,
     #[error("Batch has no blocks")]

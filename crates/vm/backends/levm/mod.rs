@@ -12,9 +12,9 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::{
     Address, U256,
     types::{
-        AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
-        EIP7702Transaction, Fork, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
-        Transaction, TxKind, Withdrawal, requests::Requests,
+        AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
+        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
+        requests::Requests,
     },
 };
 use ethrex_levm::EVMConfig;
@@ -717,39 +717,12 @@ fn vm_from_generic<'a>(
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
 ) -> Result<VM<'a>, VMError> {
-    let tx = match &tx.authorization_list {
-        Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
-            to: match tx.to {
-                TxKind::Call(to) => to,
-                TxKind::Create => {
-                    return Err(InternalError::msg("Generic Tx cannot be create type").into());
-                }
-            },
-            value: tx.value,
-            data: tx.input.clone(),
-            access_list: tx
-                .access_list
-                .iter()
-                .map(|list| (list.address, list.storage_keys.clone()))
-                .collect(),
-            authorization_list: authorization_list
-                .iter()
-                .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
-                .collect(),
-            ..Default::default()
-        }),
-        None => Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: tx.to.clone(),
-            value: tx.value,
-            data: tx.input.clone(),
-            access_list: tx
-                .access_list
-                .iter()
-                .map(|list| (list.address, list.storage_keys.clone()))
-                .collect(),
-            ..Default::default()
-        }),
-    };
+    let tx = tx.clone().try_into().map_err(|e| {
+        VMError::Internal(InternalError::Custom(format!(
+            "Failed to convert GenericTransaction to Transaction: {e}"
+        )))
+    })?;
+
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
     VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
 }
