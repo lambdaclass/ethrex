@@ -156,7 +156,7 @@ impl TrieLayerCache {
                     if !bloom.remove(node) {
                         // This should never happen.
                         tracing::warn!(
-                            "TrieLayerCache: bloom.remove returned false, meaning this node wasn't inserted into the bloom, removing bloom entirely to avoid false negatives"
+                            "TrieLayerCache: bloom.remove failed. Removing bloom entirely to avoid false negatives"
                         );
                         bloom_needs_full_rebuild = true;
                         break;
