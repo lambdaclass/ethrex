@@ -1,5 +1,3 @@
-use std::ptr;
-
 #[cfg(target_arch = "aarch64")]
 use self::aarch64::{SHA3_absorb, SHA3_squeeze};
 #[cfg(target_arch = "x86_64")]
@@ -19,29 +17,29 @@ pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32] {
     let mut tail_buf = [0; BLOCK_SIZE];
     let mut hash_buf = [0; 32];
 
-    let data = data.as_ref();
-    if !data.is_empty() {
-        let tail_len = unsafe { SHA3_absorb(&mut state, data.as_ptr(), data.len(), BLOCK_SIZE) };
-        if tail_len != 0 {
-            let tail_ptr = unsafe { data.as_ptr().add(data.len() - tail_len) };
-            unsafe { ptr::copy_nonoverlapping(tail_ptr, tail_buf.as_mut_ptr(), tail_len) };
-        }
-
-        *unsafe { tail_buf.get_unchecked_mut(tail_len) } = 0x01;
-        if tail_len == BLOCK_SIZE - 1 {
-            tail_buf[BLOCK_SIZE - 1] = 0x01;
-            unsafe { SHA3_absorb(&mut state, tail_buf.as_ptr(), BLOCK_SIZE, BLOCK_SIZE) };
-            unsafe { ptr::write_bytes(tail_buf.as_mut_ptr(), 0x00, tail_buf.len()) };
-            tail_buf[0] = 0x01;
-        }
-    } else {
-        tail_buf[0] = 0x01;
+    let tail_len;
+    match data.as_ref() {
+        [] => tail_len = 0,
+        data if data.len() < BLOCK_SIZE => unsafe {
+            tail_len = data.len();
+            tail_buf.get_unchecked_mut(..tail_len).copy_from_slice(data);
+        },
+        data => unsafe {
+            tail_len = SHA3_absorb(&mut state, data.as_ptr(), data.len(), BLOCK_SIZE);
+            if tail_len != 0 {
+                let tail_data = data.get_unchecked(data.len() - tail_len..);
+                tail_buf
+                    .get_unchecked_mut(..tail_len)
+                    .copy_from_slice(tail_data);
+            }
+        },
     }
 
-    tail_buf[BLOCK_SIZE - 1] = 0x80;
-    unsafe { SHA3_absorb(&mut state, tail_buf.as_mut_ptr(), BLOCK_SIZE, BLOCK_SIZE) };
-
     unsafe {
+        *tail_buf.get_unchecked_mut(tail_len) = 0x01;
+        *tail_buf.get_unchecked_mut(BLOCK_SIZE - 1) |= 0x80;
+
+        SHA3_absorb(&mut state, tail_buf.as_ptr(), tail_buf.len(), BLOCK_SIZE);
         SHA3_squeeze(
             &mut state,
             hash_buf.as_mut_ptr(),
