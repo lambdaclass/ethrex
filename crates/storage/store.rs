@@ -135,7 +135,7 @@ impl Store {
         };
         let hashed_address = hash_address(&address);
 
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let Some(encoded_state) = state_trie.get(&hashed_address, "acc_info".to_owned())? else {
             return Ok(None);
         };
 
@@ -155,7 +155,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let Some(encoded_state) = state_trie.get(&account_hash.to_fixed_bytes().to_vec())? else {
+        let Some(encoded_state) = state_trie.get(&account_hash.to_fixed_bytes().to_vec(), "acc_state".to_owned())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -324,7 +324,7 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let Some(encoded_state) = state_trie.get(&hashed_address, Default::default())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -343,7 +343,7 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let Some(encoded_state) = state_trie.get(&hashed_address, Default::default())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -385,7 +385,7 @@ impl Store {
             }
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
+            let mut account_state = match state_trie.get(&hashed_address, Default::default())? {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
@@ -459,7 +459,7 @@ impl Store {
 
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
+            let mut account_state = match state_trie.get(&hashed_address, Default::default())? {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
@@ -737,7 +737,7 @@ impl Store {
             *EMPTY_TRIE_HASH
         } else {
             let state_trie = self.open_state_trie(state_root)?;
-            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+            let Some(encoded_account) = state_trie.get(&hashed_address, "vm".to_owned())? else {
                 return Ok(None);
             };
             let account = AccountState::decode(&encoded_account)?;
@@ -747,7 +747,7 @@ impl Store {
 
         let hashed_key = hash_key(&storage_key);
         storage_trie
-            .get(&hashed_key)?
+            .get(&hashed_key, "vm".to_owned())?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
             .transpose()
     }
@@ -868,7 +868,7 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+        let Some(encoded_account) = state_trie.get(&hashed_address, Default::default())? else {
             return Ok(None);
         };
         let account = AccountState::decode(&encoded_account)?;
@@ -910,7 +910,7 @@ impl Store {
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
         let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let Some(encoded_state) = state_trie.get(&hashed_address, Default::default())? else {
             return Ok(None);
         };
         Ok(Some(AccountState::decode(&encoded_state)?))
@@ -935,7 +935,7 @@ impl Store {
         let address_path = hashed_address.0.to_vec();
         let proof = state_trie.get_proof(&address_path)?;
         let account_opt = state_trie
-            .get(&address_path)?
+            .get(&address_path, Default::default())?
             .map(|encoded_state| AccountState::decode(&encoded_state))
             .transpose()?;
 
@@ -952,7 +952,7 @@ impl Store {
                 let hashed_key = hash_key(key);
                 let proof = storage_trie.get_proof(&hashed_key)?;
                 let value = storage_trie
-                    .get(&hashed_key)?
+                    .get(&hashed_key, Default::default())?
                     .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
                     .transpose()?
                     .unwrap_or_default();
@@ -1012,7 +1012,7 @@ impl Store {
         starting_slot: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
         let state_trie = self.engine.open_locked_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec(), Default::default())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
@@ -1058,7 +1058,7 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
         let state_trie = self.engine.open_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec(), Default::default())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
@@ -1096,7 +1096,7 @@ impl Store {
         }
         // Storage Trie Nodes Request
         let Some(account_state) = state_trie
-            .get(account_path)?
+            .get(account_path, Default::default())?
             .map(|ref rlp| AccountState::decode(rlp))
             .transpose()?
         else {
@@ -1391,7 +1391,7 @@ fn get_account_state_from_trie(
     address: Address,
 ) -> Result<Option<AccountState>, StoreError> {
     let hashed_address = hash_address(&address);
-    let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+    let Some(encoded_state) = state_trie.get(&hashed_address, Default::default())? else {
         return Ok(None);
     };
     Ok(Some(AccountState::decode(&encoded_state)?))

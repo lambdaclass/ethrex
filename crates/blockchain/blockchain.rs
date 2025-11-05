@@ -354,7 +354,7 @@ impl Blockchain {
                     occupied_entry.into_mut()
                 }
                 Entry::Vacant(vacant_entry) => {
-                    let account_state = match state_trie.get(&hashed_address)? {
+                    let account_state = match state_trie.get(&hashed_address, Default::default())? {
                         Some(encoded_state) => {
                             trace!(
                                 "Found account state in trie for {}",
@@ -596,7 +596,7 @@ impl Blockchain {
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
                 for withdrawal in withdrawals {
-                    trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
+                    trie.get(&hash_address(&withdrawal.address), Default::default()).map_err(|_e| {
                         ChainError::Custom("Failed to access account from trie".to_string())
                     })?;
                 }
@@ -615,7 +615,7 @@ impl Blockchain {
                 .iter()
             {
                 // Access the account from the state trie to record the nodes used to access it
-                trie.get(&hash_address(account)).map_err(|_e| {
+                trie.get(&hash_address(account), Default::default()).map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to access account from trie".to_string())
                 })?;
                 // Get storage trie at before updates
@@ -626,7 +626,7 @@ impl Blockchain {
                     // Access all the keys
                     for storage_key in acc_keys {
                         let hashed_key = hash_key(storage_key);
-                        storage_trie.get(&hashed_key).map_err(|_e| {
+                        storage_trie.get(&hashed_key, Default::default()).map_err(|_e| {
                             ChainError::WitnessGeneration(
                                 "Failed to access storage key".to_string(),
                             )

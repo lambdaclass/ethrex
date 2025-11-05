@@ -96,7 +96,7 @@ impl Trie {
     }
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
-    pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, pathrlp: &PathRLP, caller: String) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
         if pathrlp.len() == 32 && !self.dirty && self.db().flatkeyvalue_computed(path.clone()) {
@@ -107,6 +107,10 @@ impl Trie {
                 return Ok(None);
             }
             return Ok(Some(value_rlp));
+        }
+
+        if caller == "vm" {
+            println!("ERROR: Read from the on-disk trie during execution");
         }
 
         Ok(match self.root {

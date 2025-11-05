@@ -207,7 +207,7 @@ impl GuestProgramState {
             .entry(*address)
             .or_insert_with(|| hash_address(address));
 
-        let account_state_rlp = self.state_trie.as_ref()?.get(account_hash).ok()??;
+        let account_state_rlp = self.state_trie.as_ref()?.get(account_hash, "Witness".to_owned()).ok()??;
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
@@ -243,7 +243,7 @@ impl GuestProgramState {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
                 let mut account_state = match state_trie
-                    .get(hashed_address)
+                    .get(hashed_address, "Witness".to_owned())
                     .expect("failed to get account state from trie")
                 {
                     Some(encoded_state) => AccountState::decode(&encoded_state)
@@ -380,7 +380,7 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
-        let Ok(Some(encoded_state)) = state_trie.get(hashed_address) else {
+        let Ok(Some(encoded_state)) = state_trie.get(hashed_address, "Witness".to_owned()) else {
             return Ok(None);
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
@@ -430,7 +430,7 @@ impl GuestProgramState {
         };
         let hashed_key = hash_key(&key);
         if let Some(encoded_key) = storage_trie
-            .get(&hashed_key)
+            .get(&hashed_key, "Witness".to_owned())
             .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
         {
             U256::decode(&encoded_key)
