@@ -1,16 +1,19 @@
 #[cfg(target_arch = "aarch64")]
-use self::aarch64::{SHA3_absorb, SHA3_squeeze};
+std::arch::global_asm!(include_str!("keccak1600-armv8.s"));
 #[cfg(target_arch = "x86_64")]
-use self::x86_64::{SHA3_absorb, SHA3_squeeze};
-
-mod aarch64;
-mod x86_64;
+std::arch::global_asm!(include_str!("keccak1600-x86_64.s"));
 
 const BLOCK_SIZE: usize = 136;
 
 #[derive(Default)]
 #[repr(transparent)]
 struct State([u64; 25]);
+
+unsafe extern "C" {
+    #[link_name = "SHA3_absorb"]
+    unsafe fn SHA3_absorb(state: *mut State, buf: *const u8, len: usize, r: usize) -> usize;
+    unsafe fn SHA3_squeeze(state: *mut State, buf: *mut u8, len: usize, r: usize);
+}
 
 pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32] {
     let mut state = State::default();
