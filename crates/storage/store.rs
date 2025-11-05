@@ -17,7 +17,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::{collections::hash_map::Entry, sync::Arc};
+use std::{collections::hash_map::Entry, sync::Arc, time::Instant};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Mutex,
@@ -80,6 +80,7 @@ impl Store {
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
+        let start = Instant::now();
         let path = path.as_ref();
         info!(engine = ?engine_type, ?path, "Opening storage engine");
         let store = match engine_type {
@@ -95,6 +96,7 @@ impl Store {
                 latest_block_header: Default::default(),
             },
         };
+        info!("Opened storage engine in {} secs", start.elapsed().as_secs());
 
         Ok(store)
     }
