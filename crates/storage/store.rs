@@ -33,7 +33,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     pub engine: Arc<dyn StoreEngine>,
-    pub chain_config: ChainConfig,
+    pub chain_config: Arc<ChainConfig>,
     /// Keeps the latest canonical block hash
     /// It's wrapped in an ArcSwap to allow for cheap lock-free reads with infrequent writes
     /// Reading an out-of-date value is acceptable, since it's only used as:
@@ -86,12 +86,12 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
-                chain_config: Default::default(),
+                chain_config: Arc::new(Default::default()),
                 latest_block_header: Default::default(),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                chain_config: Default::default(),
+                chain_config: Arc::new(Default::default()),
                 latest_block_header: Default::default(),
             },
         };
@@ -753,12 +753,12 @@ impl Store {
     }
 
     pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        self.chain_config = *chain_config;
+        self.chain_config = Arc::new(*chain_config);
         self.engine.set_chain_config(chain_config).await
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
-        self.chain_config
+        *self.chain_config
     }
 
     pub async fn update_earliest_block_number(
