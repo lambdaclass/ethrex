@@ -93,6 +93,9 @@ pub enum StatelessExecutionError {
     InvalidParentBlockHeader,
     #[error("Failed to calculate privileged transaction hash")]
     InvalidPrivilegedTransaction,
+    #[cfg(feature = "l2")]
+    #[error("Invalid code hash: expected {0:?}, got {1:?}")]
+    InvalidCodeHash(H256, H256),
     #[error("Internal error: {0}")]
     Internal(String),
 }
