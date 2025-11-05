@@ -739,70 +739,41 @@ impl StoreEngine for Store {
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        let dbs = self.dbs.clone();
+        let mut batch_ops = Vec::new();
 
-        tokio::task::spawn_blocking(move || {
-            let [cf_headers, cf_bodies, cf_block_numbers, cf_tx_locations] = open_cfs(
-                &dbs,
-                [
-                    CF_HEADERS,
-                    CF_BODIES,
-                    CF_BLOCK_NUMBERS,
-                    CF_TRANSACTION_LOCATIONS,
-                ],
-            )?;
+        for block in blocks {
+            let block_hash = block.hash();
+            let block_number = block.header.number;
 
-            let headers_tx = cf_headers.begin_write_concurrent().unwrap();
-            let bodies_tx = cf_bodies.begin_write_concurrent().unwrap();
-            let block_numbers_tx = cf_block_numbers.begin_write_concurrent().unwrap();
-            let tx_locations_tx = cf_tx_locations.begin_write_concurrent().unwrap();
-            {
-                let mut headers_tree = headers_tx.get_tree(b"").unwrap().unwrap();
-                let mut bodies_tree = bodies_tx.get_tree(b"").unwrap().unwrap();
-                let mut block_numbers_tree = block_numbers_tx.get_tree(b"").unwrap().unwrap();
-                let mut tx_locations_tree = tx_locations_tx.get_tree(b"").unwrap().unwrap();
+            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+            let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
+            batch_ops.push((CF_HEADERS, hash_key, header_value));
 
-                for block in blocks {
-                    let block_hash = block.hash();
-                    let block_number = block.header.number;
+            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+            let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
+            batch_ops.push((CF_BODIES, hash_key, body_value));
 
-                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                    headers_tree.insert(&hash_key, &header_value).unwrap();
+            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+            batch_ops.push((
+                CF_BLOCK_NUMBERS,
+                hash_key,
+                block_number.to_le_bytes().to_vec(),
+            ));
 
-                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                    bodies_tree.insert(&hash_key, &body_value).unwrap();
-
-                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    block_numbers_tree
-                        .insert(&hash_key, &block_number.to_le_bytes())
-                        .unwrap();
-
-                    for (index, transaction) in block.body.transactions.iter().enumerate() {
-                        let tx_hash = transaction.hash();
-                        // Key: tx_hash + block_hash
-                        let mut composite_key = Vec::with_capacity(64);
-                        composite_key.extend_from_slice(tx_hash.as_bytes());
-                        composite_key.extend_from_slice(block_hash.as_bytes());
-                        let location_value =
-                            (block_number, block_hash, index as u64).encode_to_vec();
-                        tx_locations_tree
-                            .insert(&composite_key, &location_value)
-                            .unwrap();
-                    }
-                }
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let tx_hash = transaction.hash();
+                // Key: tx_hash + block_hash
+                let mut composite_key = Vec::with_capacity(64);
+                composite_key.extend_from_slice(tx_hash.as_bytes());
+                composite_key.extend_from_slice(block_hash.as_bytes());
+                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                batch_ops.push((CF_TRANSACTION_LOCATIONS, composite_key, location_value));
             }
+        }
 
-            db.group_commit(
-                [block_numbers_tx, bodies_tx, headers_tx, tx_locations_tx],
-                false,
-            )
+        self.write_batch_async(batch_ops)
+            .await
             .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn add_block_header(
