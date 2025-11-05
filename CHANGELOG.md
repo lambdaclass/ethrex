@@ -7,6 +7,8 @@
 -Avoid unnecesary work on bloom by keeping a per layer bloom [#5176](https://github.com/lambdaclass/ethrex/pull/5176)
 
 ### 2025-11-03
+
+- Avoid unnecessary hash validations [#5167](https://github.com/lambdaclass/ethrex/pull/5167)
 - Merge execution with some post-execution validations [#5170](https://github.com/lambdaclass/ethrex/pull/5170)
 
 ### 2025-10-31
