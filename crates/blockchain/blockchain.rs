@@ -216,6 +216,7 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
+            let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
             let execution_handle = s.spawn(move || -> Result<_, ChainError> {
                 let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref)?;
@@ -233,7 +234,7 @@ impl Blockchain {
                     rx,
                     &parent_header,
                     queue_length_ref,
-                    &mut max_queue_length,
+                    max_queue_length_ref,
                 )?;
                 let merkle_end_instant = Instant::now();
                 Ok((account_updates_list, merkle_end_instant))
