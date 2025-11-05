@@ -62,6 +62,7 @@ default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
 l2 = ["dep:ethrex-storage-rollup"]
+test-utils = []
 
 [lints.clippy]
 unwrap_used = "deny"
