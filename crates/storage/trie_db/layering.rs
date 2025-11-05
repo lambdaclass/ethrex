@@ -1,4 +1,5 @@
 use ethrex_common::H256;
+use qfilter::Filter;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -153,27 +154,32 @@ impl TrieLayerCache {
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
     pub fn rebuild_bloom(&mut self) {
-        let mut blooms = self.layers.values().map(|x| x.bloom.as_ref());
+        use rayon::prelude::*;
 
-        let Some(mut ret) = blooms.next().flatten().cloned() else {
-            tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
+        let blooms: Vec<_> = self
+            .layers
+            .values()
+            .filter_map(|l| l.bloom.as_ref())
+            .collect();
+
+        if blooms.len() != self.layers.len() {
             self.bloom = None;
             return;
-        };
-
-        for bloom in blooms {
-            let Some(bloom) = bloom else {
-                tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-                self.bloom = None;
-                return;
-            };
-            if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
-                tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                self.bloom = None;
-                return;
-            }
         }
-        self.bloom = Some(ret);
+
+        // Parallel tree reduce
+        let merged = blooms.into_par_iter().cloned().reduce_with(|mut a: Filter, b| {
+            if a.merge(false, &b).is_err() {
+                // poison by returning empty filter
+                return qfilter::Filter::new(0, 0.5).unwrap();
+            }
+            a
+        });
+
+        match merged {
+            Some(f) if f.capacity() > 0 => self.bloom = Some(f),
+            _ => self.bloom = None,
+        }
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
