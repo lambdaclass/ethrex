@@ -620,6 +620,7 @@ impl Store {
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
+        let start = Instant::now();
         debug!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -670,6 +671,7 @@ impl Store {
             .await?;
         self.forkchoice_update(None, genesis_block_number, genesis_hash, None, None)
             .await?;
+        info!("Added initial state in {} secs", start.elapsed().as_secs());
         Ok(())
     }
 
