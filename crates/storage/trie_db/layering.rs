@@ -3,7 +3,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, RwLock};
 
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
