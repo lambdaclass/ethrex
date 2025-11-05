@@ -356,25 +356,13 @@ impl Store {
         &self,
         batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        let dbs = self.dbs.clone();
+        let writer_tx = self.writer_tx.clone();
         tokio::task::spawn_blocking(move || {
-            let mut transactions = BTreeMap::new();
-
-            for (db_name, key, value) in batch_ops {
-                let transaction = transactions.entry(db_name).or_insert_with_key(|name| {
-                    dbs.get(name).unwrap().begin_write_concurrent().unwrap()
-                });
-
-                transaction
-                    .get_tree(b"")
-                    .unwrap()
-                    .unwrap()
-                    .insert(key.as_ref(), value.as_ref())
-                    .unwrap();
-            }
-
-            Ok(db.group_commit(transactions.into_values(), false).unwrap())
+            let msg = WriterMessage::WriteBatchAsync { batch_ops };
+            let (tx, rx) = std::sync::mpsc::sync_channel(0);
+            writer_tx.send((msg, tx)).unwrap();
+            rx.recv().unwrap()?;
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -435,11 +423,12 @@ impl Store {
     ) -> Result<(), StoreError> {
         {
             let cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_read().unwrap();
+            // We use sequential write here, so it should be deadlock-free
             let cf_flatkeyvalue = self
                 .dbs
                 .get(CF_FLATKEYVALUE)
                 .unwrap()
-                .begin_write_concurrent()
+                .begin_write()
                 .unwrap();
             let misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
             let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
@@ -2062,6 +2051,9 @@ enum WriterMessage {
         key: Vec<u8>,
         value: Vec<u8>,
     },
+    WriteBatchAsync {
+        batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
+    },
 }
 
 impl Writer {
@@ -2073,16 +2065,15 @@ impl Writer {
         )>,
     ) {
         for (message, resp_tx) in receiver {
-            match message {
+            let result = match message {
                 WriterMessage::WriteAsync {
                     cf_name,
                     key,
                     value,
-                } => {
-                    let result = self.write_async(cf_name, key, value);
-                    let _ = resp_tx.send(result);
-                }
-            }
+                } => self.write_async(cf_name, key, value),
+                WriterMessage::WriteBatchAsync { batch_ops } => self.write_batch_async(batch_ops),
+            };
+            let _ = resp_tx.send(result);
         }
     }
 
@@ -2105,6 +2096,30 @@ impl Writer {
             .commit()
             .map_err(|e| StoreError::Custom(format!("CanopyDB commit error: {}", e)))?;
 
+        Ok(())
+    }
+
+    fn write_batch_async(
+        &self,
+        batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        let dbs = self.dbs.clone();
+        let mut transactions = BTreeMap::new();
+
+        for (db_name, key, value) in batch_ops {
+            let transaction = transactions
+                .entry(db_name)
+                .or_insert_with_key(|name| dbs.get(name).unwrap().begin_write().unwrap());
+
+            transaction
+                .get_tree(b"")
+                .unwrap()
+                .unwrap()
+                .insert(key.as_ref(), value.as_ref())
+                .unwrap();
+        }
+        db.group_commit(transactions.into_values(), false).unwrap();
         Ok(())
     }
 }
