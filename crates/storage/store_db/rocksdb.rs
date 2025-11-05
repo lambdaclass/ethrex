@@ -13,7 +13,7 @@ use ethrex_common::{
         Index, Receipt, Transaction,
     },
 };
-use ethrex_trie::{Nibbles, Node, Trie};
+use ethrex_trie::{Nibbles, Node, Trie, TrieNode};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch, checkpoint::Checkpoint,
@@ -21,10 +21,7 @@ use rocksdb::{
 use std::{
     collections::HashSet,
     path::Path,
-    sync::{
-        Arc, Mutex,
-        mpsc::{SyncSender, sync_channel},
-    },
+    sync::{Arc, Mutex, mpsc::sync_channel},
 };
 use tracing::{debug, error, info};
 
@@ -125,8 +122,8 @@ pub struct TriedUpdateWorkerTxMsg {
     notify_tx: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
     parent_state_root: H256,
     last_state_root: H256,
-    account_updates: Vec<(Nibbles, Vec<u8>)>,
-    storage_updates: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+    account_updates: Vec<TrieNode>,
+    storage_updates: Vec<(H256, Vec<TrieNode>)>,
     receipts: Vec<(H256, Vec<Receipt>)>,
     blocks: Vec<Block>,
 }
@@ -408,26 +405,10 @@ impl Store {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
-                    Ok(TriedUpdateWorkerTxMsg {
-                        notify_tx,
-                        parent_state_root,
-                        last_state_root,
-                        account_updates,
-                        storage_updates,
-                        receipts,
-                        blocks,
-                    }) => {
+                    Ok(msg) => {
                         // FIXME: what should we do on error?
                         let _ = store_clone
-                            .apply_trie_updates(
-                                notify_tx,
-                                parent_state_root,
-                                last_state_root,
-                                account_updates,
-                                storage_updates,
-                                receipts,
-                                blocks,
-                            )
+                            .apply_trie_updates(msg)
                             .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
                     }
                     Err(err) => error!("Error while reading diff layer: {err}"),
@@ -702,16 +683,16 @@ impl Store {
         }
     }
 
-    fn apply_trie_updates(
-        &self,
-        notify: SyncSender<Result<(), StoreError>>,
-        parent_state_root: H256,
-        child_state_root: H256,
-        account_updates: Vec<(Nibbles, Vec<u8>)>,
-        storage_updates: StorageUpdates,
-        receipts: Vec<(H256, Vec<Receipt>)>,
-        blocks: Vec<Block>,
-    ) -> Result<(), StoreError> {
+    fn apply_trie_updates(&self, msg: TriedUpdateWorkerTxMsg) -> Result<(), StoreError> {
+        let TriedUpdateWorkerTxMsg {
+            notify_tx,
+            parent_state_root,
+            last_state_root,
+            account_updates,
+            storage_updates,
+            receipts,
+            blocks,
+        } = msg;
         let db = &*self.db;
         let fkv_ctl = &self.flatkeyvalue_control_tx;
         let trie_cache = &self.trie_cache;
@@ -732,11 +713,11 @@ impl Store {
             .map_err(|_| StoreError::LockError)?
             .clone();
         let mut trie_mut = (*trie).clone();
-        trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+        trie_mut.put_batch(parent_state_root, last_state_root, new_layer);
         let trie = Arc::new(trie_mut);
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
         // Update finished, signal block processing.
-        notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
+        notify_tx.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
         // Phase 2: update disk layer.
         let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
@@ -852,23 +833,9 @@ impl StoreEngine for Store {
 
         let _span = tracing::trace_span!("Block DB update").entered();
 
-        let [
-            cf_receipts,
-            cf_codes,
-            cf_block_numbers,
-            cf_tx_locations,
-            cf_headers,
-            cf_bodies,
-        ] = open_cfs(
+        let [cf_codes, cf_block_numbers, cf_headers, cf_bodies] = open_cfs(
             &db,
-            [
-                CF_RECEIPTS,
-                CF_ACCOUNT_CODES,
-                CF_BLOCK_NUMBERS,
-                CF_TRANSACTION_LOCATIONS,
-                CF_HEADERS,
-                CF_BODIES,
-            ],
+            [CF_ACCOUNT_CODES, CF_BLOCK_NUMBERS, CF_HEADERS, CF_BODIES],
         )?;
         let mut batch = WriteBatch::default();
 
