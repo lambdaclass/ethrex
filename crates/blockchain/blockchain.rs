@@ -839,16 +839,16 @@ impl Blockchain {
         result
     }
 
-    pub fn add_blocks_pipeline(&self, blocks: Vec<Block>) -> Result<(), ChainError> {
+    pub async fn add_blocks_pipeline(&self, blocks: Vec<Block>) -> Result<(), ChainError> {
         let mut receipts = vec![];
         let mut account_updates = vec![];
         let mut storage_updates = vec![];
         let mut code_updates = vec![];
 
         self.storage
-            .add_block_headers(blocks.iter().map(|b| b.header.clone()).collect())?;
+            .add_block_headers(blocks.iter().map(|b| b.header.clone()).collect()).await?;
         for b in blocks.iter() {
-            self.storage.add_block_number(b.hash(), b.header.number)?;
+            self.storage.add_block_number(b.hash(), b.header.number).await?;
         }
 
         for block in blocks.iter() {
