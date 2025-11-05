@@ -150,8 +150,9 @@ impl TrieLayerCache {
 
         let mut bloom_needs_full_rebuild = false;
 
-        if let Some(bloom) = self.bloom.as_mut() {
-            'layers: for (_, item) in layers_removed {
+        // note: layers_removed needs to be fully consumed to remove the layers, so we can't early break the outer for.
+        for (_, item) in layers_removed {
+            if let Some(bloom) = self.bloom.as_mut() {
                 for node in item.nodes.keys() {
                     if !bloom.remove(node) {
                         // This should never happen.
@@ -160,7 +161,7 @@ impl TrieLayerCache {
                         );
                         bloom_needs_full_rebuild = true;
                         self.bloom = None;
-                        break 'layers;
+                        break;
                     }
                 }
             }
