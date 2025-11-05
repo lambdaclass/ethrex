@@ -43,7 +43,8 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let _session_info = executor.execute(env, ZKVM_RISC0_PROGRAM_ELF)?;
     let elapsed = now.elapsed();
 
-    info!("Successfully generated session info in {:.2?}", elapsed);
+    info!("Successfully executed RISC0 program in {elapsed:.2?}");
+
     Ok(())
 }
 
@@ -65,9 +66,13 @@ pub fn prove(
         ProofFormat::Compressed => ProverOpts::succinct(),
         ProofFormat::Groth16 => ProverOpts::groth16(),
     };
-    let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)?;
 
-    info!("Successfully generated execution receipt.");
+    let now = Instant::now();
+    let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)?;
+    let elapsed = now.elapsed();
+
+    info!("Successfully proved RISC0 program in {elapsed:.2?}");
+
     Ok(prove_info.receipt)
 }
 
