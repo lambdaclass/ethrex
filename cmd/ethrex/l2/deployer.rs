@@ -1087,7 +1087,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
             Value::Address(opts.native_token_l1_address),
-            Value::Address(contract_addresses.router.unwrap_or_default())
+            Value::Address(contract_addresses.router.unwrap_or_default()),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;

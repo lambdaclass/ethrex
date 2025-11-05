@@ -7,7 +7,10 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
+    types::{
+        AccountUpdate, Blob, BlockNumber, balance_diff::BalanceDiff, batch::Batch,
+        fee_config::FeeConfig,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -24,6 +27,8 @@ struct StoreInner {
     l1_message_hashes_by_batch: HashMap<u64, Vec<H256>>,
     /// Map of l2 message hashes by batch numbers
     l2_message_hashes_by_batch: HashMap<u64, Vec<H256>>,
+    /// Map of balance diffs by batch numbers
+    balance_diffs_by_batch: HashMap<u64, Vec<BalanceDiff>>,
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
     /// Map of batch number to deposit logs hash
@@ -92,6 +97,17 @@ impl StoreEngineRollup for Store {
         Ok(self
             .inner()?
             .l2_message_hashes_by_batch
+            .get(&batch_number)
+            .cloned())
+    }
+
+    async fn get_balance_diffs_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .balance_diffs_by_batch
             .get(&batch_number)
             .cloned())
     }

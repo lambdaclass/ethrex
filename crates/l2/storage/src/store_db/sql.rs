@@ -2,9 +2,13 @@ use std::{fmt::Debug, path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{RollupStoreError, api::StoreEngineRollup};
+use ethereum_types::U256;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
+    types::{
+        AccountUpdate, Blob, BlockNumber, balance_diff::BalanceDiff, batch::Batch,
+        fee_config::FeeConfig,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -28,10 +32,11 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 18] = [
+const DB_SCHEMA: [&str; 19] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE l1_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE l2_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE balance_diffs (batch INT, chain_id BLOB, value BLOB, PRIMARY KEY (batch, chain_id))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
     "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
@@ -179,6 +184,30 @@ impl SQLStore {
             queries.push((
                 "INSERT INTO l2_messages VALUES (?1, ?2, ?3)",
                 (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
+            ));
+        }
+        self.execute_in_tx(queries, db_tx).await
+    }
+
+    async fn store_balance_diffs_by_batch_in_tx(
+        &self,
+        batch_number: u64,
+        balance_diffs: Vec<BalanceDiff>,
+        db_tx: Option<&Transaction>,
+    ) -> Result<(), RollupStoreError> {
+        let mut queries = vec![(
+            "DELETE FROM balance_diffs WHERE batch = ?1",
+            vec![batch_number].into_params()?,
+        )];
+        for balance_diff in balance_diffs {
+            queries.push((
+                "INSERT INTO balance_diffs VALUES (?1, ?2, ?3)",
+                (
+                    batch_number,
+                    Vec::from(balance_diff.chain_id.to_big_endian()),
+                    Vec::from(balance_diff.chain_id.to_big_endian()),
+                )
+                    .into_params()?,
             ));
         }
         self.execute_in_tx(queries, db_tx).await
@@ -408,6 +437,29 @@ impl StoreEngineRollup for SQLStore {
             Ok(None)
         } else {
             Ok(Some(hashes))
+        }
+    }
+
+    async fn get_balance_diffs_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError> {
+        let mut balance_diffs = vec![];
+        let mut rows = self
+            .query(
+                "SELECT * from balance_diffs WHERE batch = ?1 ORDER BY chain_id ASC",
+                vec![batch_number],
+            )
+            .await?;
+        while let Some(row) = rows.next().await? {
+            let chain_id = U256::from_big_endian(&read_from_row_blob(&row, 1)?);
+            let value = U256::from_big_endian(&read_from_row_blob(&row, 2)?);
+            balance_diffs.push(BalanceDiff { chain_id, value });
+        }
+        if balance_diffs.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(balance_diffs))
         }
     }
 
@@ -724,6 +776,12 @@ impl StoreEngineRollup for SQLStore {
         self.store_l2_message_hashes_by_batch_in_tx(
             batch.number,
             batch.l2_message_hashes,
+            Some(&transaction),
+        )
+        .await?;
+        self.store_balance_diffs_by_batch_in_tx(
+            batch.number,
+            batch.balance_diffs,
             Some(&transaction),
         )
         .await?;
