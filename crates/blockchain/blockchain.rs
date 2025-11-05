@@ -217,6 +217,11 @@ impl Blockchain {
         let mut max_queue_length = 0;
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
             let (tx, rx) = channel();
+            let execution_handle = s.spawn(move || {
+                let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref);
+                let exec_end_instant = Instant::now();
+                execution_result.map(move |r| (r, exec_end_instant))
+            });
             let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
                 let account_updates_list = self.handle_merkleization(
                     rx,
@@ -227,13 +232,10 @@ impl Blockchain {
                 let merkle_end_instant = Instant::now();
                 Ok((account_updates_list, merkle_end_instant))
             });
-            let execution_handle = {
-                let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref);
-                let exec_end_instant = Instant::now();
-                execution_result.map(move |r| (r, exec_end_instant))
-            };
             (
-                execution_handle,
+                execution_handle.join().unwrap_or_else(|_| {
+                    Err(EvmError::Custom("execution thread panicked".to_string()))
+                }),
                 merkleize_handle.join().unwrap_or_else(|_| {
                     Err(StoreError::Custom(
                         "merklization thread panicked".to_string(),
