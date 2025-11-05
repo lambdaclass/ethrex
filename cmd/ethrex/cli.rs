@@ -555,24 +555,25 @@ pub async fn import_blocks(
             let number = block.header.number;
 
             // Log progress every 10 seconds
-            if /*last_progress_log.elapsed() >= Duration::from_secs(10)*/ true {
+            if last_progress_log.elapsed() >= Duration::from_secs(10) {
                 let processed = index + 1;
                 let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
-                info!(processed, total = size, percent, "Import progress");
+                let total_time = start_time.elapsed().as_secs();
+                info!(processed, total = size, percent, total_time "Import progress");
                 last_progress_log = Instant::now();
             }
 
-            // // Check if the block is already in the blockchain, if it is do nothing, if not add it
-            // let block_number = store.get_block_number(hash).await.map_err(|_e| {
-            //     ChainError::Custom(String::from(
-            //         "Couldn't check if block is already in the blockchain",
-            //     ))
-            // })?;
+            // Check if the block is already in the blockchain, if it is do nothing, if not add it
+            let block_number = store.get_block_number(hash).await.map_err(|_e| {
+                ChainError::Custom(String::from(
+                    "Couldn't check if block is already in the blockchain",
+                ))
+            })?;
 
-            // if block_number.is_some() {
-            //     info!("Block {} is already in the blockchain", block.hash());
-            //     continue;
-            // }
+            if block_number.is_some() {
+                info!("Block {} is already in the blockchain", block.hash());
+                continue;
+            }
 
             blockchain
                 .add_block_pipeline(block)
