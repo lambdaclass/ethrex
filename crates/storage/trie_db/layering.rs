@@ -151,7 +151,7 @@ impl TrieLayerCache {
         let mut bloom_needs_full_rebuild = false;
 
         if let Some(bloom) = self.bloom.as_mut() {
-            for (_, item) in layers_removed {
+            'layers: for (_, item) in layers_removed {
                 for node in item.nodes.keys() {
                     if !bloom.remove(node) {
                         // This should never happen.
@@ -159,14 +159,14 @@ impl TrieLayerCache {
                             "TrieLayerCache: bloom.remove failed. Removing bloom entirely to avoid false negatives"
                         );
                         bloom_needs_full_rebuild = true;
-                        break;
+                        self.bloom = None;
+                        break 'layers;
                     }
                 }
             }
         }
 
         if bloom_needs_full_rebuild {
-            self.bloom = None;
             self.rebuild_bloom();
         }
 
