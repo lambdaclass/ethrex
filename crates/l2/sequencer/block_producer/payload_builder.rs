@@ -99,7 +99,7 @@ pub async fn fill_transactions(
     let VMType::L2(fee_config) = context.vm.vm_type else {
         return Err(BlockProducerError::Custom("invalid VM type".to_string()));
     };
-    let acc_encoded_size = context.payload.encode_to_vec().len();
+    let mut acc_encoded_size = context.payload.encode_to_vec().len();
     let fee_config_len = fee_config.to_vec().len();
     let chain_config = store.get_chain_config();
 
@@ -213,9 +213,12 @@ pub async fn fill_transactions(
 
         context.payload.body.transactions.pop();
 
-        // update last privileged nonce and count
+        // Update last privileged nonce and count
         last_privileged_nonce.replace(head_tx.nonce());
         privileged_tx_count += 1;
+
+        // Update acc_encoded_size
+        acc_encoded_size += head_tx.tx.encode_to_vec().len();
 
         txs.shift()?;
         // Pull transaction from the mempool
