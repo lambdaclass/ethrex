@@ -1,3 +1,4 @@
+use crate::types::Node;
 use crate::{
     discv4::{
         peer_table::PeerTableError,
@@ -13,6 +14,9 @@ use spawned_concurrency::{
 };
 use std::time::Duration;
 use tracing::{debug, error, info};
+
+#[cfg(any(test, feature = "test-utils"))]
+use crate::discv4::peer_table::PeerTable;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RLPxInitiatorError {
@@ -44,11 +48,12 @@ impl RLPxInitiator {
         }
     }
 
-    pub async fn spawn(context: P2PContext) {
+    pub async fn spawn(context: P2PContext) -> GenServerHandle<RLPxInitiator> {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(context);
         let mut server = RLPxInitiator::start(state.clone());
         let _ = server.cast(InMessage::LookForPeer).await;
+        server
     }
 
     async fn look_for_peer(&mut self) -> Result<(), RLPxInitiatorError> {
@@ -73,11 +78,21 @@ impl RLPxInitiator {
             self.lookup_interval
         }
     }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    /// Creates a dummy GenServer for tests
+    /// This should only be used in tests
+    pub async fn dummy(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
+        info!("Starting RLPx Initiator");
+        let state = RLPxInitiator::new(P2PContext::dummy(peer_table).await);
+        RLPxInitiator::start_on_thread(state)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum InMessage {
     LookForPeer,
+    Initiate { node: Node },
     Shutdown,
 }
 
@@ -115,6 +130,11 @@ impl GenServer for RLPxInitiator {
                     Self::CastMsg::LookForPeer,
                 );
 
+                CastResponse::NoReply
+            }
+            Self::CastMsg::Initiate { node } => {
+                PeerConnection::spawn_as_initiator(self.context.clone(), &node).await;
+                METRICS.record_new_rlpx_conn_attempt().await;
                 CastResponse::NoReply
             }
             Self::CastMsg::Shutdown => CastResponse::Stop,

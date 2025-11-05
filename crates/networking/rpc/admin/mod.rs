@@ -10,7 +10,7 @@ use crate::{
     utils::{RpcErr, RpcRequest},
 };
 mod peers;
-pub use peers::peers;
+pub use peers::{add_peer, peers};
 
 #[derive(Serialize, Debug)]
 struct NodeInfo {
