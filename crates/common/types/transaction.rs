@@ -3,12 +3,12 @@ use std::{cmp::min, fmt::Display};
 use crate::utils::keccak;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
+use ethrex_crypto::keccak::keccak_hash;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
-use sha3::{Digest, Keccak256};
 
 use ethrex_rlp::{
     constants::RLP_NULL,
@@ -1266,10 +1266,8 @@ pub fn recover_address_from_message(
     message: &Bytes,
 ) -> Result<Address, secp256k1::Error> {
     // Hash message
-    let payload: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
-        .finalize()
-        .into();
-    recover_address(signature, H256::from_slice(&payload))
+    let payload = keccak(message);
+    recover_address(signature, payload)
 }
 
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
@@ -1283,7 +1281,7 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
     let public = secp256k1::SECP256K1
         .recover_ecdsa(&Message::from_digest(payload.to_fixed_bytes()), &signature)?;
     // Hash public key to obtain address
-    let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
+    let hash = keccak_hash(&public.serialize_uncompressed()[1..]);
     Ok(Address::from_slice(&hash[12..]))
 }
 

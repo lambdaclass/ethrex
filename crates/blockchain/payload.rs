@@ -18,12 +18,11 @@ use ethrex_common::{
     },
 };
 
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_vm::{Evm, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
-
-use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
 
@@ -99,18 +98,19 @@ pub enum BuildPayloadArgsError {
 impl BuildPayloadArgs {
     /// Computes an 8-byte identifier by hashing the components of the payload arguments.
     pub fn id(&self) -> Result<u64, BuildPayloadArgsError> {
-        let mut hasher = Keccak256::new();
-        hasher.update(self.parent);
-        hasher.update(self.timestamp.to_be_bytes());
-        hasher.update(self.random);
-        hasher.update(self.fee_recipient);
+        let mut serialized = Vec::with_capacity(1024);
+        serialized.extend_from_slice(self.parent.as_bytes());
+        serialized.extend_from_slice(&self.timestamp.to_be_bytes());
+        serialized.extend_from_slice(self.random.as_bytes());
+        serialized.extend_from_slice(self.fee_recipient.as_bytes());
         if let Some(withdrawals) = &self.withdrawals {
-            hasher.update(withdrawals.encode_to_vec());
+            withdrawals.encode(&mut serialized);
         }
         if let Some(beacon_root) = self.beacon_root {
-            hasher.update(beacon_root);
+            serialized.extend_from_slice(beacon_root.as_bytes());
         }
-        let res = &mut hasher.finalize()[..8];
+        let mut hashed = keccak_hash(serialized);
+        let res = &mut hashed[..8];
         res[0] = self.version;
         Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
             BuildPayloadArgsError::FailedToConvertPayload
