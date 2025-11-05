@@ -9,10 +9,11 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::tracing::CallType::{
-    self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
-};
 use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
+use ethrex_common::{
+    tracing::CallType::{self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL},
+    types::Code,
+};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -656,7 +657,7 @@ impl<'a> VM<'a> {
         for (condition, reason) in checks {
             if condition {
                 self.early_revert_message_call(gas_limit, reason.to_string())?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(OpcodeResult::Continue);
             }
         }
 
@@ -665,11 +666,11 @@ impl<'a> VM<'a> {
 
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
-        if new_account.has_code_or_nonce() {
+        if new_account.create_would_collide() {
             self.current_call_frame.stack.push1(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
         let mut stack = self.stack_pool.pop().unwrap_or_default();
@@ -681,7 +682,7 @@ impl<'a> VM<'a> {
             deployer,
             new_address,
             new_address,
-            code,
+            Code::from_bytecode(code),
             value,
             Bytes::new(),
             false,
@@ -703,7 +704,7 @@ impl<'a> VM<'a> {
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        Ok(OpcodeResult::Continue { pc_increment: 0 })
+        Ok(OpcodeResult::Continue)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -726,7 +727,7 @@ impl<'a> VM<'a> {
         calldata: Bytes,
         ret_offset: usize,
         ret_size: usize,
-        bytecode: Bytes,
+        bytecode: Code,
         is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
@@ -737,7 +738,7 @@ impl<'a> VM<'a> {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(OpcodeResult::Continue);
             }
         }
 
@@ -749,7 +750,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
@@ -767,15 +768,16 @@ impl<'a> VM<'a> {
             let call_frame = &mut self.current_call_frame;
 
             // Return gas left from subcontext
+            #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
             if ctx_result.is_success() {
-                call_frame.gas_remaining = call_frame
-                    .gas_remaining
+                call_frame.gas_remaining = (call_frame.gas_remaining as u64)
                     .checked_add(
                         gas_limit
                             .checked_sub(ctx_result.gas_used)
                             .ok_or(InternalError::Underflow)?,
                     )
-                    .ok_or(InternalError::Overflow)?;
+                    .ok_or(InternalError::Overflow)?
+                    as i64;
             }
 
             // Store return data of sub-context
@@ -797,9 +799,6 @@ impl<'a> VM<'a> {
                 TxResult::Success => SUCCESS,
                 TxResult::Revert(_) => FAIL,
             })?;
-
-            // Increment PC of the parent callframe after execution of the child.
-            call_frame.increment_pc_by(1)?;
 
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
@@ -840,7 +839,7 @@ impl<'a> VM<'a> {
             self.substate.push_backup();
         }
 
-        Ok(OpcodeResult::Continue { pc_increment: 0 })
+        Ok(OpcodeResult::Continue)
     }
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.
@@ -856,6 +855,8 @@ impl<'a> VM<'a> {
     }
 
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
+    ///
+    /// Returns the pc increment.
     pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
         self.handle_state_backup(ctx_result)?;
         let executed_call_frame = self.pop_call_frame()?;
@@ -867,12 +868,10 @@ impl<'a> VM<'a> {
             self.handle_return_call(executed_call_frame, ctx_result)?;
         }
 
-        // Increment PC of the parent callframe after execution of the child.
-        self.increment_pc_by(1)?;
-
         Ok(())
     }
 
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     pub fn handle_return_call(
         &mut self,
         executed_call_frame: CallFrame,
@@ -896,7 +895,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_remaining = parent_call_frame
             .gas_remaining
-            .checked_add(child_unused_gas)
+            .checked_add(child_unused_gas as i64)
             .ok_or(InternalError::Overflow)?;
 
         // Store return data of sub-context
@@ -934,6 +933,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     pub fn handle_return_create(
         &mut self,
         executed_call_frame: CallFrame,
@@ -957,7 +957,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_remaining = parent_call_frame
             .gas_remaining
-            .checked_add(unused_gas)
+            .checked_add(unused_gas as i64)
             .ok_or(InternalError::Overflow)?;
 
         // What to do, depending on TxResult
@@ -986,6 +986,7 @@ impl<'a> VM<'a> {
     }
 
     /// Obtains the values needed for CALL, CALLCODE, DELEGATECALL and STATICCALL opcodes to calculate total gas cost
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     fn get_call_gas_params(
         &mut self,
         args_offset: usize,
@@ -1008,12 +1009,12 @@ impl<'a> VM<'a> {
         let gas_left = self
             .current_call_frame
             .gas_remaining
-            .checked_sub(eip7702_gas_consumed)
+            .checked_sub(eip7702_gas_consumed as i64)
             .ok_or(ExceptionalHalt::OutOfGas)?;
 
         Ok((
             new_memory_size,
-            gas_left,
+            gas_left as u64,
             account_is_empty,
             address_was_cold,
         ))
@@ -1023,13 +1024,14 @@ impl<'a> VM<'a> {
         self.current_call_frame.memory.load_range(offset, size)
     }
 
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
         let callframe = &mut self.current_call_frame;
 
         // Return gas_limit to callframe.
         callframe.gas_remaining = callframe
             .gas_remaining
-            .checked_add(gas_limit)
+            .checked_add(gas_limit as i64)
             .ok_or(InternalError::Overflow)?;
         callframe.stack.push1(FAIL)?; // It's the same as revert for CREATE
 

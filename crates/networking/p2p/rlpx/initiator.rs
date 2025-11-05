@@ -1,24 +1,27 @@
-use std::time::Duration;
-
+use crate::types::Node;
+use crate::{
+    discv4::{
+        peer_table::PeerTableError,
+        server::{INITIAL_LOOKUP_INTERVAL, LOOKUP_INTERVAL},
+    },
+    metrics::METRICS,
+    network::P2PContext,
+    rlpx::connection::server::PeerConnection,
+};
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, send_after},
+    tasks::{CastResponse, GenServer, GenServerHandle, InitResult, send_after, send_message_on},
 };
+use std::time::Duration;
+use tracing::{debug, error, info};
 
-use tracing::{debug, info};
-
-use crate::{metrics::METRICS, network::P2PContext};
-
-use crate::rlpx::connection::server::RLPxConnection;
+#[cfg(any(test, feature = "test-utils"))]
+use crate::discv4::peer_table::PeerTable;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RLPxInitiatorError {
-    // #[error(transparent)]
-    // IoError(#[from] std::io::Error),
-    // #[error("Failed to send message")]
-    // MessageSendFailure(std::io::Error),
-    // #[error("Only partial message was sent")]
-    // PartialMessageSent,
+    #[error(transparent)]
+    PeerTableError(#[from] PeerTableError),
 }
 
 #[derive(Debug, Clone)]
@@ -32,80 +35,65 @@ pub struct RLPxInitiator {
 
     /// The target number of RLPx connections to reach.
     target_peers: u64,
-    /// The rate at which to try new connections.
-    new_connections_per_lookup: u64,
 }
 
 impl RLPxInitiator {
     pub fn new(context: P2PContext) -> Self {
         Self {
             context,
-            initial_lookup_interval: Duration::from_secs(3),
-            lookup_interval: Duration::from_secs(5 * 60),
+            // We use the same lookup intervals as Discovery to try to get both process to check at the same rate
+            initial_lookup_interval: INITIAL_LOOKUP_INTERVAL,
+            lookup_interval: LOOKUP_INTERVAL,
             target_peers: 50,
-            new_connections_per_lookup: 5000,
         }
     }
 
-    pub async fn spawn(context: P2PContext) -> Result<(), RLPxInitiatorError> {
+    pub async fn spawn(context: P2PContext) -> GenServerHandle<RLPxInitiator> {
         info!("Starting RLPx Initiator");
-
         let state = RLPxInitiator::new(context);
-
         let mut server = RLPxInitiator::start(state.clone());
+        let _ = server.cast(InMessage::LookForPeer).await;
+        server
+    }
 
-        let _ = server.cast(InMessage::LookForPeers).await;
-
+    async fn look_for_peer(&mut self) -> Result<(), RLPxInitiatorError> {
+        if !self.context.table.target_peers_reached().await? {
+            if let Some(contact) = self.context.table.get_contact_to_initiate().await? {
+                PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
+                METRICS.record_new_rlpx_conn_attempt().await;
+            };
+        } else {
+            debug!("Target peer connections reached, no need to initiate new connections.");
+        }
         Ok(())
     }
 
-    async fn look_for_peers(&self) {
-        info!("Looking for peers");
-
-        let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
-
-        let mut tried_connections = 0;
-
-        for contact in self.context.table.table.lock().await.values() {
-            let node_id = contact.node.node_id();
-            if !self.context.table.peers.lock().await.contains_key(&node_id)
-                && !already_tried_peers.contains(&node_id)
-                && contact.knows_us
-                && !contact.unwanted
-            {
-                already_tried_peers.insert(node_id);
-
-                RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
-
-                METRICS.record_new_rlpx_conn_attempt().await;
-                tried_connections += 1;
-                if tried_connections >= self.new_connections_per_lookup {
-                    break;
-                }
-            }
-        }
-
-        if tried_connections < self.new_connections_per_lookup {
-            info!("Resetting list of tried peers.");
-            already_tried_peers.clear();
-        }
-    }
-
-    async fn get_lookup_interval(&self) -> Duration {
-        let num_peers = self.context.table.peers.lock().await.len() as u64;
+    async fn get_lookup_interval(&mut self) -> Duration {
+        let num_peers = self.context.table.peer_count().await.unwrap_or(0) as u64;
 
         if num_peers < self.target_peers {
             self.initial_lookup_interval
         } else {
-            info!("Reached target number of peers. Using longer lookup interval.");
+            debug!("Reached target number of peers. Using longer lookup interval.");
             self.lookup_interval
         }
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    /// Creates a dummy GenServer for tests
+    /// This should only be used in tests
+    pub async fn dummy(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
+        info!("Starting RLPx Initiator");
+        let state = RLPxInitiator::new(P2PContext::dummy(peer_table).await);
+        RLPxInitiator::start_on_thread(state)
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum InMessage {
-    LookForPeers,
+    LookForPeer,
+    Initiate { node: Node },
+    Shutdown,
 }
 
 #[derive(Debug, Clone)]
@@ -117,27 +105,39 @@ impl GenServer for RLPxInitiator {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type Error = RLPxInitiatorError;
+    type Error = std::convert::Infallible;
+
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
+        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
+        Ok(InitResult::Success(self))
+    }
 
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
+        handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            Self::CastMsg::LookForPeers => {
-                debug!(received = "Look for peers");
-
-                self.look_for_peers().await;
+            Self::CastMsg::LookForPeer => {
+                let _ = self
+                    .look_for_peer()
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error looking for peers"));
 
                 send_after(
                     self.get_lookup_interval().await,
                     handle.clone(),
-                    Self::CastMsg::LookForPeers,
+                    Self::CastMsg::LookForPeer,
                 );
 
                 CastResponse::NoReply
             }
+            Self::CastMsg::Initiate { node } => {
+                PeerConnection::spawn_as_initiator(self.context.clone(), &node).await;
+                METRICS.record_new_rlpx_conn_attempt().await;
+                CastResponse::NoReply
+            }
+            Self::CastMsg::Shutdown => CastResponse::Stop,
         }
     }
 }

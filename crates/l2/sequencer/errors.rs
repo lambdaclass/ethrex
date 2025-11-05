@@ -1,6 +1,8 @@
 use crate::based::block_fetcher::BlockFetcherError;
 use crate::based::state_updater::StateUpdaterError;
+use crate::sequencer::admin_server::AdminError;
 use crate::utils::error::UtilsError;
+use aligned_sdk::common::errors::SubmitError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::Address;
@@ -48,6 +50,10 @@ pub enum SequencerError {
     AlignedNetworkError(String),
     #[error("Failed to start EthrexMonitor: {0}")]
     MonitorError(#[from] MonitorError),
+    #[error("Failed to start admin api: {0}")]
+    Admin(#[from] AdminError),
+    #[error("Block gas limit cannot be greater than batch gas limit")]
+    GasLimitError,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,6 +122,8 @@ pub enum ProofCoordinatorError {
     MissingTDXPrivateKey,
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
+    #[error("Missing prover input for batch {0} (version {1})")]
+    MissingBatchProverInput(u64, String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -124,6 +132,8 @@ pub enum ProofSenderError {
     EthClientError(#[from] EthClientError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
     #[error("{0} proof is not present")]
     ProofNotPresent(ProverType),
     #[error("Unexpected Error: {0}")]
@@ -138,12 +148,20 @@ pub enum ProofSenderError {
     AlignedFeeEstimateError(String),
     #[error("Proof Sender failed to get nonce from batcher: {0}")]
     AlignedGetNonceError(String),
-    #[error("Proof Sender failed to submit proof: {0}")]
-    AlignedSubmitProofError(String),
+    #[error("Proof Sender failed to submit proof(s): {0}")]
+    AlignedSubmitProofError(Box<SubmitError>),
+    #[error("Wrong batch proof format; should be compressed but found groth16 instead")]
+    AlignedWrongProofFormat,
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
     #[error("Failed to convert integer")]
     TryIntoError(#[from] std::num::TryFromIntError),
+}
+
+impl From<SubmitError> for ProofSenderError {
+    fn from(value: SubmitError) -> Self {
+        ProofSenderError::AlignedSubmitProofError(value.into())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -160,6 +178,17 @@ pub enum ProofVerifierError {
     StoreError(#[from] StoreError),
     #[error("Block Producer failed because of a rollup store error: {0}")]
     RollupStoreError(#[from] RollupStoreError),
+    #[error("Aligned does not support prover type {0}")]
+    UnsupportedProverType(String),
+    #[error(
+        "Mismatched public inputs for batch {batch_number} and prover type {prover_type}. Existing: {existing_hex}, latest: {latest_hex}"
+    )]
+    MismatchedPublicInputs {
+        batch_number: u64,
+        prover_type: ProverType,
+        existing_hex: String,
+        latest_hex: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -194,12 +223,12 @@ pub enum BlockProducerError {
     Custom(String),
     #[error("Failed to parse withdrawal: {0}")]
     FailedToParseWithdrawal(#[from] UtilsError),
-    #[error("Failed to encode AccountStateDiff: {0}")]
-    FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
     #[error("Internal Error: {0}")]
     InternalError(#[from] GenServerError),
+    #[error("EthClientError error: {0}")]
+    EthClientError(#[from] EthClientError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -218,7 +247,7 @@ pub enum CommitterError {
     FailedToRetrieveDataFromStorage,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
-    #[error("Committer failed to get information from storage")]
+    #[error("Committer failed to get information from storage: {0}")]
     FailedToGetInformationFromStorage(String),
     #[error("Committer failed to encode state diff: {0}")]
     FailedToEncodeStateDiff(#[from] StateDiffError),
@@ -256,6 +285,16 @@ pub enum CommitterError {
     UnexpectedError(String),
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
+    #[error("Failed to generate batch witness: {0}")]
+    FailedToGenerateBatchWitness(#[source] ChainError),
+    #[error("Missing blob for batch {0}")]
+    MissingBlob(u64),
+    #[error("Failed to create checkpoint: {0}")]
+    FailedToCreateCheckpoint(String),
+    #[error("Failed to process blobs: {0}")]
+    ChainError(#[from] ChainError),
+    #[error("Failed due to invalid fork choice: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
 }
 
 #[derive(Debug, thiserror::Error)]

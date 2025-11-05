@@ -3,6 +3,7 @@ use ethrex_common::H256;
 use ethrex_common::serde_utils::bytes::deserialize;
 use ethrex_common::serde_utils::u64;
 use ethrex_common::serde_utils::u256;
+use ethrex_common::types::Code;
 use ethrex_common::types::{Account, AccountInfo, code_hash};
 use ethrex_common::{Address, U256, types::Fork};
 use serde::Deserialize;
@@ -40,7 +41,7 @@ impl From<InputAccount> for Account {
                 balance: account.balance,
                 nonce: 0,
             },
-            code: account.code,
+            code: Code::from_bytecode(account.code),
             storage: account
                 .storage
                 .into_iter()
@@ -93,7 +94,7 @@ impl From<InputTransaction> for ethrex_common::types::LegacyTransaction {
     fn from(tx: InputTransaction) -> Self {
         ethrex_common::types::LegacyTransaction {
             nonce: 0,
-            gas_price: tx.gas_price.try_into().unwrap(),
+            gas_price: tx.gas_price,
             gas: tx.gas_limit,
             to: match tx.to {
                 Some(address) => ethrex_common::types::TxKind::Call(address),

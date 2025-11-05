@@ -2,6 +2,96 @@
 
 ## Perf
 
+### 2025-11-03
+
+- Avoid unnecessary hash validations [#5167](https://github.com/lambdaclass/ethrex/pull/5167)
+- Merge execution with some post-execution validations [#5170](https://github.com/lambdaclass/ethrex/pull/5170)
+
+### 2025-10-31
+- Reduce overhead of trie opening [#5145](https://github.com/lambdaclass/ethrex/pull/5145)
+- Improved discovery and peer initialization [#5147](https://github.com/lambdaclass/ethrex/pull/5147)
+
+### 2025-10-30
+
+- Pipeline Merkleization and Execution [#5084](https://github.com/lambdaclass/ethrex/pull/5084)
+- Add bloom filters to snapshot layers [#5112](https://github.com/lambdaclass/ethrex/pull/5112)
+- Make trusted setup warmup non blocking [#5124](https://github.com/lambdaclass/ethrex/pull/5124)
+
+### 2025-10-28
+
+- Batch BlobsBundle::validate [#4993](https://github.com/lambdaclass/ethrex/pull/4993)
+- Remove latest_block_header lock [#5050](https://github.com/lambdaclass/ethrex/pull/5050)
+
+### 2025-10-27
+
+- Run "engine_newPayload" block execution in a dedicated worker thread. [#5051](https://github.com/lambdaclass/ethrex/pull/5051)
+- Reusing FindNode message per lookup loop instead of randomizing the key for each message. [#5047](https://github.com/lambdaclass/ethrex/pull/5047)
+
+### 2025-10-23
+
+- Move trie updates post block execution to a background thread. [#4989](https://github.com/lambdaclass/ethrex/pull/4989).
+
+### 2025-10-21
+
+- Instead of lazy computation of blocklist, do greedy computation of allowlist and store the result, fetch it with the DB. [#4961](https://github.com/lambdaclass/ethrex/pull/4961)
+
+### 2025-10-20
+
+- Remove duplicate subgroup check in ecpairing precompile [#4960](https://github.com/lambdaclass/ethrex/pull/4960)
+
+### 2025-10-17
+
+- Replaces incremental iteration with a one-time precompute method that scans the entire bytecode, building a `BitVec<u8, Msb0>` where bits mark valid `JUMPDEST` positions, skipping `PUSH1..PUSH32` data bytes.
+- Updates `is_blacklisted` to O(1) bit lookup.
+
+### 2025-10-14
+
+- Improve get_closest_nodes p2p performance [#4838](https://github.com/lambdaclass/ethrex/pull/4838)
+
+### 2025-10-13
+
+- Remove explicit cache-related options from RocksDB configuration and reverted optimistic transactions to reduce RAM usage [#4853](https://github.com/lambdaclass/ethrex/pull/4853)
+- Remove unnecesary mul in ecpairing [#4843](https://github.com/lambdaclass/ethrex/pull/4843)
+
+### 2025-10-06
+
+- Improve block headers vec handling in syncer [#4771](https://github.com/lambdaclass/ethrex/pull/4771)
+- Refactor current_step sync metric from a `Mutex<String>` to a simple atomic. [#4772](https://github.com/lambdaclass/ethrex/pull/4772)
+
+### 2025-10-01
+
+- Change remaining_gas to i64, improving performance in gas cost calculations [#4684](https://github.com/lambdaclass/ethrex/pull/4684)
+
+### 2025-09-30
+
+- Downloading all slots of big accounts during the initial leaves download step of snap sync [#4689](https://github.com/lambdaclass/ethrex/pull/4689)
+- Downloading and inserting intelligently accounts with the same state root and few (<= slots) [#4689](https://github.com/lambdaclass/ethrex/pull/4689)
+- Improving the performance of state trie through an ordered insertion algorithm [#4689](https://github.com/lambdaclass/ethrex/pull/4689)
+
+### 2025-09-29
+
+- Remove `OpcodeResult` to improve tight loops of lightweight opcodes [#4650](https://github.com/lambdaclass/ethrex/pull/4650)
+
+### 2025-09-24
+
+- Avoid dumping empty storage accounts to disk [#4590](https://github.com/lambdaclass/ethrex/pull/4590)
+
+### 2025-09-22
+
+- Improve instruction fetching, dynamic opcode table based on configured fork, specialized push_zero in stack #[4579](https://github.com/lambdaclass/ethrex/pull/4579)
+
+### 2025-09-17
+
+- Refactor `bls12_g1add` to use `lambdaworks` [#4500](https://github.com/lambdaclass/ethrex/pull/4500)
+- Refactor `bls12_g2add` to use `lambdaworks` [#4538](https://github.com/lambdaclass/ethrex/pull/4538)
+
+### 2025-09-15
+
+- Fix caching mechanism of the latest block's hash [#4479](https://github.com/lambdaclass/ethrex/pull/4479)
+- Add `jemalloc` as an optional global allocator used by default [#4301](https://github.com/lambdaclass/ethrex/pull/4301)
+
+- Improve time when downloading bytecodes from peers [#4487](https://github.com/lambdaclass/ethrex/pull/4487)
+
 ### 2025-09-11
 
 - Add `RocksDB` as an optional storage engine [#4272](https://github.com/lambdaclass/ethrex/pull/4272)

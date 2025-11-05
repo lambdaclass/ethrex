@@ -4,24 +4,25 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
     validate_block,
 };
 use ethrex_common::Address;
+use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
-use keccak_hash::H256;
 pub use payload_builder::build_payload;
-use spawned_concurrency::{
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+use serde::Serialize;
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     BlockProducerConfig, SequencerConfig,
@@ -35,13 +36,19 @@ use ethrex_metrics::metrics;
 use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
 #[derive(Clone)]
+pub enum CallMessage {
+    Health,
+}
+
+#[derive(Clone)]
 pub enum InMessage {
     Produce,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum OutMessage {
     Done,
+    Health(BlockProducerHealth),
 }
 
 pub struct BlockProducer {
@@ -52,6 +59,17 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
+    // Needed to ensure privileged tx nonces are sequential
+    last_privileged_nonce: Option<u64>,
+    block_gas_limit: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct BlockProducerHealth {
+    sequencer_state: String,
+    block_time_ms: u64,
+    coinbase_address: Address,
+    elasticity_multiplier: u64,
 }
 
 impl BlockProducer {
@@ -65,8 +83,26 @@ impl BlockProducer {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            base_fee_vault_address,
+            operator_fee_vault_address,
             elasticity_multiplier,
+            block_gas_limit,
         } = config;
+
+        if base_fee_vault_address.is_some_and(|base_fee_vault| base_fee_vault == *coinbase_address)
+        {
+            warn!(
+                "The coinbase address and base fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
+        }
+        if operator_fee_vault_address
+            .is_some_and(|operator_fee_vault| operator_fee_vault == *coinbase_address)
+        {
+            warn!(
+                "The coinbase address and operator fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
+        }
+
         Self {
             store,
             blockchain,
@@ -75,6 +111,9 @@ impl BlockProducer {
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
+            // FIXME: Initialize properly to the last privileged nonce in the chain
+            last_privileged_nonce: None,
+            block_gas_limit: *block_gas_limit,
         }
     }
 
@@ -84,7 +123,7 @@ impl BlockProducer {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
-    ) -> Result<(), BlockProducerError> {
+    ) -> Result<GenServerHandle<BlockProducer>, BlockProducerError> {
         let mut block_producer = Self::new(
             &cfg.block_producer,
             store,
@@ -97,7 +136,7 @@ impl BlockProducer {
             .cast(InMessage::Produce)
             .await
             .map_err(BlockProducerError::InternalError)?;
-        Ok(())
+        Ok(block_producer)
     }
 
     pub async fn produce_block(&mut self) -> Result<(), BlockProducerError> {
@@ -127,15 +166,17 @@ impl BlockProducer {
             beacon_root: Some(head_beacon_block_root),
             version,
             elasticity_multiplier: self.elasticity_multiplier,
+            gas_ceil: self.block_gas_limit,
         };
-        let payload = create_payload(&args, &self.store)?;
+        let payload = create_payload(&args, &self.store, Bytes::new())?;
 
         // Blockchain builds the payload from mempool txs and executes them
         let payload_build_result = build_payload(
             self.blockchain.clone(),
             payload,
             &self.store,
-            &self.rollup_store,
+            &mut self.last_privileged_nonce,
+            self.block_gas_limit,
         )
         .await?;
         info!(
@@ -145,7 +186,7 @@ impl BlockProducer {
 
         // Blockchain stores block
         let block = payload_build_result.payload;
-        let chain_config = self.store.get_chain_config()?;
+        let chain_config = self.store.get_chain_config();
         validate_block(
             &block,
             &head_header,
@@ -162,40 +203,57 @@ impl BlockProducer {
 
         let account_updates_list = self
             .store
-            .apply_account_updates_batch(block.header.parent_hash, &account_updates)
-            .await?
+            .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        let transactions_count = block.body.transactions.len();
+        let block_number = block.header.number;
+        let block_hash = block.hash();
+        self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
-            .store_block(&block, account_updates_list, execution_result)
-            .await?;
-        info!("Stored new block {:x}", block.hash());
+            .store_block(block, account_updates_list, execution_result)?;
+        info!(
+            "Stored new block {:x}, transaction_count {}",
+            block_hash, transactions_count
+        );
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         self.rollup_store
-            .store_account_updates_by_block_number(block.header.number, account_updates)
+            .store_account_updates_by_block_number(block_number, account_updates)
             .await?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&self.store, block.hash(), block.hash(), block.hash()).await?;
+        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
-            let _ = METRICS_BLOCKS
-            .set_block_number(block.header.number)
-            .inspect_err(|e| {
-                tracing::error!("Failed to set metric: block_number {}", e.to_string())
-            });
+            METRICS_BLOCKS.set_block_number(block_number);
             #[allow(clippy::as_conversions)]
-            let tps = block.body.transactions.len() as f64 / (self.block_time_ms as f64 / 1000_f64);
+            let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
         );
 
         Ok(())
     }
+    async fn store_fee_config_by_block(&self, block_number: u64) -> Result<(), BlockProducerError> {
+        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
+            error!("Invalid blockchain type. Expected L2.");
+            return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
+        };
+
+        let fee_config = *l2_config
+            .fee_config
+            .read()
+            .map_err(|_| BlockProducerError::Custom("Fee config lock was poisoned".to_string()))?;
+
+        self.rollup_store
+            .store_fee_config_by_block(block_number, fee_config)
+            .await?;
+        Ok(())
+    }
 }
 
 impl GenServer for BlockProducer {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = BlockProducerError;
@@ -218,5 +276,20 @@ impl GenServer for BlockProducer {
             Self::CastMsg::Produce,
         );
         CastResponse::NoReply
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match message {
+            CallMessage::Health => CallResponse::Reply(OutMessage::Health(BlockProducerHealth {
+                sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+                block_time_ms: self.block_time_ms,
+                coinbase_address: self.coinbase_address,
+                elasticity_multiplier: self.elasticity_multiplier,
+            })),
+        }
     }
 }

@@ -18,6 +18,6 @@ impl<'a> VM<'a> {
         }
         current_call_frame.stack.swap(N)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }

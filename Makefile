@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io
+		load-test-fibonacci load-test-io run-hive-eels-blobs
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -8,16 +8,27 @@ help: ## 📚 Show help for each of the Makefile recipes
 build: ## 🔨 Build the client
 	cargo build --workspace
 
-lint: ## 🧹 Linter check
-	# Note that we are compiling without the "gpu" feature (see #4048 for why)
-	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
-	cargo clippy --all-targets -F debug,risc0,sp1,sync-test \
-		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
+lint-l1:
+	cargo clippy --lib --bins -F debug,sync-test \
 		--release -- -D warnings
 
+lint-l2:
+	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
+		--workspace --exclude ethrex-prover --exclude guest_program \
+		--release -- -D warnings
+
+lint-gpu:
+	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
+		--workspace --exclude ethrex-prover --exclude guest_program \
+		--release -- -D warnings
+
+lint: lint-l1 lint-l2 ## 🧹 Linter check
+
 CRATE ?= *
+# CAUTION: It is important that the ethrex-l2 crate remains excluded here,
+# as its tests depend on external setup that is not handled by this Makefile.
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-l2
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
@@ -86,7 +97,7 @@ setup-hive: ## 🐝 Set up Hive testing framework
 		git pull origin $(HIVE_BRANCH) && \
 		go build .; \
 	else \
-		git clone --branch $(HIVE_BRANCH) https://github.com/lambdaclass/hive && \
+		git clone --branch $(HIVE_BRANCH) https://github.com/ethereum/hive && \
 		cd hive && \
 		git checkout $(HIVE_BRANCH) && \
 		go build .; \
@@ -115,16 +126,19 @@ run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
-# EEST Hive
-TEST_PATTERN_EEST ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
-run-hive-eest: build-image setup-hive ## 🧪 Generic command for running Hive EEST tests. Specify EEST_SIM
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EEST_SIM) --sim.limit "$(TEST_PATTERN_EEST)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/blockchain/.fixtures_url)
+# EELS Hive
+TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
+run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/blockchain/.fixtures_url)
 
-run-hive-eest-engine: ## Run hive EEST Engine tests
-	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-engine
+run-hive-eels-engine: ## Run hive EELS Engine tests
+	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-engine
 
-run-hive-eest-rlp: ## Run hive EEST Engine tests
-	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-rlp
+run-hive-eels-rlp: ## Run hive EELS RLP tests
+	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-rlp
+
+run-hive-eels-blobs: ## Run hive EELS Blobs tests
+	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
@@ -133,14 +147,8 @@ view-hive: ## 🛠️ Builds hiveview with the logs from the hive execution
 	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
-	@if [ -z "$$L" ]; then \
-		LEVM="revm"; \
-		echo "Running the test-node without the LEVM feature"; \
-		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
-	else \
-		LEVM="levm"; \
-		echo "Running the test-node with the LEVM feature"; \
-	fi; \
+	echo "Running the test-node with LEVM"; \
+
 	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
 	-- \

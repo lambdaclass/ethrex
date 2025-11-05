@@ -273,7 +273,7 @@ impl From<EvmError> for RpcErr {
 
 pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError> {
     if data == "0x" {
-        Ok("unknown error".to_owned())
+        Ok("Execution reverted without a reason string.".to_owned())
     // 4 byte function signature 0xXXXXXXXX
     } else if data.len() == 10 {
         Ok(data.to_owned())
@@ -328,8 +328,9 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
+    use bytes::Bytes;
     use ethrex_blockchain::Blockchain;
-    use ethrex_common::H512;
+    use ethrex_common::{H512, types::DEFAULT_BUILDER_GAS_CEIL};
     use ethrex_p2p::{
         peer_handler::PeerHandler,
         sync_manager::SyncManager,
@@ -341,7 +342,7 @@ pub mod test_utils {
 
     use crate::{
         eth::gas_tip_estimator::GasTipEstimator,
-        rpc::{NodeData, RpcApiContext, start_api},
+        rpc::{NodeData, RpcApiContext, start_api, start_block_executor},
     };
 
     pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
@@ -363,16 +364,17 @@ pub mod test_utils {
     // like eth_uninstallFilter.
     // Here's how you would use it:
     // ```
-    // let server_handle = tokio::spawn(async move { start_stest_api().await })
+    // let server_handle = start_stest_api().await;
     // ...
-    // assert!(something_that_needs_the_server)
+    // assert!(something_that_needs_the_server);
     // ...
-    // server_handle.abort()
+    // server_handle.abort();
     // ```
-    pub async fn start_test_api() {
+    pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
+        let ws_addr: SocketAddr = "127.0.0.1:8546".parse().unwrap();
         let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
-        let storage =
+        let mut storage =
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
@@ -382,40 +384,49 @@ pub mod test_utils {
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         let local_node_record = example_local_node_record();
-        start_api(
-            http_addr,
-            authrpc_addr,
-            storage,
-            blockchain,
-            jwt_secret,
-            local_p2p_node,
-            local_node_record,
-            SyncManager::dummy(),
-            PeerHandler::dummy(),
-            "ethrex/test".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
+        tokio::spawn(async move {
+            start_api(
+                http_addr,
+                Some(ws_addr),
+                authrpc_addr,
+                storage,
+                blockchain,
+                jwt_secret,
+                local_p2p_node,
+                local_node_record,
+                SyncManager::dummy().await,
+                PeerHandler::dummy().await,
+                "ethrex/test".to_string(),
+                None,
+                DEFAULT_BUILDER_GAS_CEIL,
+                String::new(),
+            )
+            .await
+            .unwrap()
+        })
     }
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let local_node_record = example_local_node_record();
+        let block_worker_channel = start_block_executor(blockchain.clone());
         RpcApiContext {
             storage,
             blockchain,
             active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            peer_handler: PeerHandler::dummy(),
+            syncer: Arc::new(SyncManager::dummy().await),
+            peer_handler: PeerHandler::dummy().await,
             node_data: NodeData {
                 jwt_secret: Default::default(),
                 local_p2p_node: example_p2p_node(),
                 local_node_record,
                 client_version: "ethrex/test".to_string(),
+                extra_data: Bytes::new(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler: None,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+            block_worker_channel,
         }
     }
 }

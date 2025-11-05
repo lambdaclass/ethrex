@@ -1,13 +1,18 @@
-use std::fmt;
+use std::collections::BTreeMap;
 
 use crate::{
-    clients::eth::errors::{CallError, GetPeerCountError, GetWitnessError, TxPoolContentError},
+    clients::eth::errors::{
+        CallError, GetBlobBaseFeeRequestError, GetEthConfigError, GetPeerCountError,
+        GetWitnessError, TxPoolContentError,
+    },
     debug::execution_witness::RpcExecutionWitness,
+    eth::client::EthConfigResponse,
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
         block_identifier::BlockIdentifier,
         receipt::{RpcLog, RpcReceipt},
+        transaction::RpcTransaction,
     },
     utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
@@ -20,12 +25,12 @@ use errors::{
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlobsBundle, Block, GenericTransaction, TxKind, TxType},
+    types::{BlobsBundle, Block, GenericTransaction, TxKind},
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{debug, trace, warn};
 
@@ -64,6 +69,7 @@ pub struct Overrides {
     pub gas_price_per_blob: Option<U256>,
     pub block: Option<BlockIdentifier>,
     pub blobs_bundle: Option<BlobsBundle>,
+    pub wrapper_version: Option<u8>,
 }
 
 pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
@@ -76,7 +82,7 @@ pub const MAX_RETRY_DELAY: u64 = 1800;
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
 impl EthClient {
-    pub fn new(url: &str) -> Result<EthClient, EthClientError> {
+    pub fn new(url: Url) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
             vec![url],
             MAX_NUMBER_OF_RETRIES,
@@ -89,7 +95,7 @@ impl EthClient {
     }
 
     pub fn new_with_config(
-        urls: Vec<&str>,
+        urls: Vec<Url>,
         max_number_of_retries: u64,
         backoff_factor: u64,
         min_retry_delay: u64,
@@ -97,14 +103,6 @@ impl EthClient {
         maximum_allowed_max_fee_per_gas: Option<u64>,
         maximum_allowed_max_fee_per_blob_gas: Option<u64>,
     ) -> Result<Self, EthClientError> {
-        let urls = urls
-            .iter()
-            .map(|url| {
-                Url::parse(url)
-                    .map_err(|_| EthClientError::ParseUrlError("Failed to parse urls".to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
         Ok(Self {
             client: Client::new(),
             urls,
@@ -117,9 +115,9 @@ impl EthClient {
         })
     }
 
-    pub fn new_with_multiple_urls(urls: Vec<String>) -> Result<EthClient, EthClientError> {
+    pub fn new_with_multiple_urls(urls: Vec<Url>) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
-            urls.iter().map(AsRef::as_ref).collect(),
+            urls,
             MAX_NUMBER_OF_RETRIES,
             BACKOFF_FACTOR,
             MIN_RETRY_DELAY,
@@ -272,10 +270,10 @@ impl EthClient {
         }
 
         // Add the nonce just if present, otherwise the RPC will use the latest nonce
-        if let Some(nonce) = transaction.nonce {
-            if let Value::Object(ref mut map) = data {
-                map.insert("nonce".to_owned(), json!(format!("{nonce:#x}")));
-            }
+        if let Some(nonce) = transaction.nonce
+            && let Value::Object(ref mut map) = data
+        {
+            map.insert("nonce".to_owned(), json!(format!("{nonce:#x}")));
         }
 
         let request = RpcRequest::new("eth_estimateGas", Some(vec![data, json!("latest")]));
@@ -292,7 +290,7 @@ impl EthClient {
             .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(EstimateGasError::RPCError(error_response.error.message.to_string()).into())
+                Err(EstimateGasError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -446,8 +444,9 @@ impl EthClient {
     pub async fn get_block_by_number(
         &self,
         block: BlockIdentifier,
+        hydrated: bool,
     ) -> Result<RpcBlock, EthClientError> {
-        let params = Some(vec![block.into(), json!(false)]); // With false it just returns the hash of the transactions.
+        let params = Some(vec![block.into(), json!(hydrated)]);
         let request = RpcRequest::new("eth_getBlockByNumber", params);
 
         match self.send_request(request).await? {
@@ -578,6 +577,19 @@ impl EthClient {
         }
     }
 
+    pub async fn get_eth_config(&self) -> Result<EthConfigResponse, EthClientError> {
+        let request = RpcRequest::new("eth_config", None);
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetEthConfigError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(GetEthConfigError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
     pub async fn get_code(
         &self,
         address: Address,
@@ -610,7 +622,7 @@ impl EthClient {
     pub async fn get_transaction_by_hash(
         &self,
         tx_hash: H256,
-    ) -> Result<Option<GetTransactionByHashTransaction>, EthClientError> {
+    ) -> Result<Option<RpcTransaction>, EthClientError> {
         let params = Some(vec![json!(format!("{tx_hash:#x}"))]);
         let request = RpcRequest::new("eth_getTransactionByHash", params);
 
@@ -661,98 +673,43 @@ impl EthClient {
             }
         }
     }
-}
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactionByHashTransaction {
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub chain_id: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub nonce: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub max_priority_fee_per_gas: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub max_fee_per_gas: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub gas_limit: u64,
-    #[serde(default)]
-    pub to: Address,
-    #[serde(default)]
-    pub value: U256,
-    #[serde(default, with = "ethrex_common::serde_utils::vec_u8", alias = "input")]
-    pub data: Vec<u8>,
-    #[serde(default)]
-    pub access_list: Vec<(Address, Vec<H256>)>,
-    #[serde(default)]
-    pub r#type: TxType,
-    #[serde(default)]
-    pub signature_y_parity: bool,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub signature_r: u64,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub signature_s: u64,
-    #[serde(default)]
-    pub block_number: U256,
-    #[serde(default)]
-    pub block_hash: H256,
-    #[serde(default)]
-    pub from: Address,
-    #[serde(default)]
-    pub hash: H256,
-    #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
-    pub transaction_index: u64,
-    #[serde(default)]
-    pub blob_versioned_hashes: Option<Vec<H256>>,
-}
+    pub async fn get_blob_base_fee(&self, block: BlockIdentifier) -> Result<u64, EthClientError> {
+        let params = Some(vec![block.into()]);
+        let request = RpcRequest::new("eth_blobBaseFee", params);
 
-impl fmt::Display for GetTransactionByHashTransaction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            r#"
-chain_id: {},
-nonce: {},
-max_priority_fee_per_gas: {},
-max_fee_per_gas: {},
-gas_limit: {},
-to: {:#x},
-value: {},
-data: {:#?},
-access_list: {:#?},
-type: {:?},
-signature_y_parity: {},
-signature_r: {:x},
-signature_s: {:x},
-block_number: {},
-block_hash: {:#x},
-from: {:#x},
-hash: {:#x},
-transaction_index: {}"#,
-            self.chain_id,
-            self.nonce,
-            self.max_priority_fee_per_gas,
-            self.max_fee_per_gas,
-            self.gas_limit,
-            self.to,
-            self.value,
-            self.data,
-            self.access_list,
-            self.r#type,
-            self.signature_y_parity,
-            self.signature_r,
-            self.signature_s,
-            self.block_number,
-            self.block_hash,
-            self.from,
-            self.hash,
-            self.transaction_index,
-        )?;
-
-        if let Some(blob_versioned_hashes) = &self.blob_versioned_hashes {
-            write!(f, "\nblob_versioned_hashes: {blob_versioned_hashes:#?}")?;
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => Ok(u64::from_str_radix(
+                serde_json::from_value::<String>(result.result)
+                    .map_err(GetBlobBaseFeeRequestError::SerdeJSONError)?
+                    .trim_start_matches("0x"),
+                16,
+            )
+            .map_err(GetBlobBaseFeeRequestError::ParseIntError)?),
+            RpcResponse::Error(error_response) => {
+                Err(GetBlobBaseFeeRequestError::RPCError(error_response.error.message).into())
+            }
         }
+    }
 
-        fmt::Result::Ok(())
+    /// Smoke test the all the urls by calling eth_blockNumber
+    pub async fn test_urls(&self) -> BTreeMap<String, serde_json::Value> {
+        let mut map = BTreeMap::new();
+        for url in self.urls.iter() {
+            let response = match self
+                .send_request_to_url(url, &RpcRequest::new("eth_blockNumber", None))
+                .await
+            {
+                Ok(RpcResponse::Success(ok)) => serde_json::to_value(ok).unwrap_or_else(|e| {
+                    serde_json::Value::String(format!("Failed to serialize success response: {e}"))
+                }),
+                Ok(RpcResponse::Error(e)) => serde_json::to_value(e).unwrap_or_else(|e| {
+                    serde_json::Value::String(format!("Failed to serialize error response: {e}"))
+                }),
+                Err(e) => serde_json::Value::String(format!("Request error: {e}")),
+            };
+            map.insert(url.to_string(), response);
+        }
+        map
     }
 }

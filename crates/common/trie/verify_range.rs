@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use ethereum_types::H256;
+use ethrex_rlp::decode::RLPDecode;
 use sha3::{Digest, Keccak256};
 
 use crate::{
@@ -142,7 +143,7 @@ impl<'a> From<&'a [Vec<u8>]> for RangeProof<'a> {
         let node_refs = proof
             .iter()
             .map(|node| {
-                let hash = H256::from_slice(&Keccak256::new_with_prefix(node).finalize());
+                let hash = H256::from_slice(&Keccak256::digest(node));
                 let encoded_data = node.as_slice();
                 (hash, encoded_data)
             })
@@ -159,7 +160,7 @@ impl RangeProof<'_> {
             NodeHash::Hashed(hash) => self.node_refs.get(&hash).copied(),
             NodeHash::Inline(_) => Some(hash.as_ref()),
         };
-        Ok(encoded_node.map(Node::decode_raw).transpose()?)
+        Ok(encoded_node.map(Node::decode).transpose()?)
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    cli::remove_db,
+    cli::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2, remove_db},
     initializers::{init_l1, init_store, init_tracing},
     l2::{
         self,
@@ -9,6 +9,7 @@ use crate::{
     utils::{self, default_datadir, init_datadir, parse_private_key},
 };
 use clap::{FromArgMatches, Parser, Subcommand};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -19,27 +20,28 @@ use ethrex_l2_sdk::call_contract;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
-use ethrex_storage::{EngineType, Store, UpdateBatch};
+use ethrex_storage::{EngineType, Store};
 use ethrex_storage_rollup::StoreRollup;
 use eyre::OptionExt;
 use itertools::Itertools;
-use keccak_hash::keccak;
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
 use std::{
     fs::{create_dir_all, read_dir},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 use tracing::{debug, info};
 
-pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
-pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
+// Compile-time check to ensure that at least one of the database features is enabled.
+#[cfg(not(feature = "rocksdb"))]
+const _: () = {
+    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
+};
 
 const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
 const UNPAUSE_CONTRACT_SELECTOR: &str = "unpause()";
 const REVERT_BATCH_SELECTOR: &str = "revertBatch(uint256)";
-
 #[derive(Parser)]
 #[clap(args_conflicts_with_subcommands = true)]
 pub struct L2Command {
@@ -69,8 +71,8 @@ impl L2Command {
 
         if l2_options.node_opts.dev {
             println!("Removing L1 and L2 databases...");
-            remove_db(DB_ETHREX_DEV_L1, true);
-            remove_db(DB_ETHREX_DEV_L2, true);
+            remove_db(DB_ETHREX_DEV_L1.as_ref(), true);
+            remove_db(DB_ETHREX_DEV_L2.as_ref(), true);
             println!("Initializing L1");
             init_l1(
                 crate::cli::Options::default_l1(),
@@ -81,10 +83,8 @@ impl L2Command {
             let contract_addresses =
                 l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;
 
-            l2_options = l2::options::Options {
-                node_opts: crate::cli::Options::default_l2(),
-                ..Default::default()
-            };
+            l2_options.node_opts = crate::cli::Options::default_l2();
+            l2_options.populate_with_defaults();
             l2_options
                 .sequencer_opts
                 .committer_opts
@@ -110,8 +110,8 @@ pub enum Command {
     },
     #[command(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value_t = default_datadir(), required = false)]
-        datadir: String,
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = default_datadir().into_os_string(), required = false)]
+        datadir: PathBuf,
         #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
     },
@@ -124,7 +124,7 @@ pub enum Command {
         )]
         contract_address: Address,
         #[arg(short = 'd', long, help = "The directory to save the blobs.")]
-        data_dir: PathBuf,
+        datadir: PathBuf,
         #[arg(short = 'e', long)]
         l1_eth_rpc: Url,
         #[arg(short = 'b', long)]
@@ -148,11 +148,11 @@ pub enum Command {
         #[arg(
             long = "datadir",
             value_name = "DATABASE_DIRECTORY",
-            default_value_t = default_datadir(),
+            default_value = default_datadir().into_os_string(),
             help = "Receives the name of the directory where the Database is located.",
             env = "ETHREX_DATADIR"
         )]
-        datadir: String,
+        datadir: PathBuf,
         #[arg(
             long = "pause",
             default_value_t = false,
@@ -202,8 +202,8 @@ pub enum Command {
         #[arg(
             long,
             value_parser = parse_private_key,
-            env = "SEQUENCER_PRIVATE_KEY", 
-            help = "The private key of the sequencer", 
+            env = "SEQUENCER_PRIVATE_KEY",
+            help = "The private key of the sequencer",
             help_heading  = "Sequencer account options",
             group = "sequencer_signing",
         )]
@@ -285,11 +285,11 @@ impl Command {
                 l1_eth_rpc,
                 l1_beacon_rpc,
                 contract_address,
-                data_dir,
+                datadir,
             } => {
-                create_dir_all(data_dir.clone())?;
+                create_dir_all(datadir.clone())?;
 
-                let eth_client = EthClient::new(l1_eth_rpc.as_str())?;
+                let eth_client = EthClient::new(l1_eth_rpc)?;
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality
@@ -320,7 +320,10 @@ impl Command {
                     if !logs.is_empty() {
                         // Get parent beacon block root hash from block
                         let block = eth_client
-                            .get_block_by_number(BlockIdentifier::Number(current_block.as_u64()))
+                            .get_block_by_number(
+                                BlockIdentifier::Number(current_block.as_u64()),
+                                false,
+                            )
                             .await?;
                         let parent_beacon_hash = block
                             .header
@@ -342,10 +345,7 @@ impl Command {
                                     "Transaction {:#x} not found",
                                     log.transaction_hash
                                 ))?;
-                            l2_blob_hashes.extend(tx.blob_versioned_hashes.ok_or_eyre(format!(
-                                "Blobs not found in transaction {:#x}",
-                                log.transaction_hash
-                            ))?);
+                            l2_blob_hashes.extend(tx.tx.blob_versioned_hashes());
                         }
 
                         // Get blobs from block's slot and only keep L2 commitment's blobs
@@ -356,7 +356,7 @@ impl Command {
                             .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
                         {
                             let blob_path =
-                                data_dir.join(format!("{target_slot}-{}.blob", blob.index));
+                                datadir.join(format!("{target_slot}-{}.blob", blob.index));
                             std::fs::write(blob_path, blob.blob)?;
                         }
 
@@ -372,36 +372,24 @@ impl Command {
                 store_path,
                 coinbase,
             } => {
-                cfg_if::cfg_if! {
-                    if #[cfg(feature = "libmdbx")] {
-                        let store_type = EngineType::Libmdbx;
-                    } else {
-                        eyre::bail!("Expected libmdbx store engine");
-                    }
-                };
-                cfg_if::cfg_if! {
-                    if #[cfg(feature = "rollup_storage_sql")] {
-                        let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
-                    } else {
-                        eyre::bail!("Expected sql rollup store engine");
-                    }
-                };
+                #[cfg(feature = "rocksdb")]
+                let store_type = EngineType::RocksDB;
+
+                #[cfg(feature = "l2-sql")]
+                let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
+                #[cfg(not(feature = "l2-sql"))]
+                let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::InMemory;
 
                 // Init stores
                 let store = Store::new_from_genesis(
-                    store_path.to_str().expect("Invalid store path"),
+                    &store_path,
                     store_type,
                     genesis.to_str().expect("Invalid genesis path"),
                 )
                 .await?;
 
-                let rollup_store = StoreRollup::new(
-                    store_path
-                        .join("./rollup_store")
-                        .to_str()
-                        .expect("Invalid store path"),
-                    rollup_store_type,
-                )?;
+                let rollup_store =
+                    StoreRollup::new(&store_path.join("./rollup_store"), rollup_store_type)?;
                 rollup_store
                     .init()
                     .await
@@ -410,11 +398,8 @@ impl Command {
 
                 // Get genesis
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
-                let genesis_block_hash = genesis_header.hash();
 
-                let mut new_trie = store
-                    .state_trie(genesis_block_hash)?
-                    .expect("Genesis block not found");
+                let mut current_state_root = genesis_header.state_root;
 
                 let mut last_block_number = 0;
                 let mut new_canonical_blocks = vec![];
@@ -438,37 +423,29 @@ impl Command {
                     let state_diff = StateDiff::decode(&blob)?;
 
                     // Apply all account updates to trie
-                    let account_updates = state_diff.to_account_updates(&new_trie)?;
+                    let mut trie = store.open_direct_state_trie(current_state_root)?;
+
+                    let account_updates = state_diff.to_account_updates(&trie)?;
+
                     let account_updates_list = store
-                        .apply_account_updates_from_trie_batch(new_trie, account_updates.values())
-                        .await
+                        .apply_account_updates_from_trie_batch(&mut trie, account_updates.values())
                         .map_err(|e| format!("Error applying account updates: {e}"))
                         .unwrap();
 
-                    let (new_state_root, state_updates, accounts_updates) = (
-                        account_updates_list.state_trie_hash,
-                        account_updates_list.state_updates,
-                        account_updates_list.storage_updates,
-                    );
+                    store
+                        .open_direct_state_trie(current_state_root)?
+                        .db()
+                        .put_batch(account_updates_list.state_updates)?;
 
-                    let pseudo_update_batch = UpdateBatch {
-                        account_updates: state_updates,
-                        storage_updates: accounts_updates,
-                        blocks: vec![],
-                        receipts: vec![],
-                        code_updates: vec![],
-                    };
+                    current_state_root = account_updates_list.state_trie_hash;
 
                     store
-                        .store_block_updates(pseudo_update_batch)
-                        .await
-                        .map_err(|e| format!("Error storing trie updates: {e}"))
-                        .unwrap();
+                        .write_storage_trie_nodes_batch(account_updates_list.storage_updates)
+                        .await?;
 
-                    new_trie = store
-                        .open_state_trie(new_state_root)
-                        .map_err(|e| format!("Error opening new state trie: {e}"))
-                        .unwrap();
+                    store
+                        .write_account_code_batch(account_updates_list.code_updates)
+                        .await?;
 
                     // Get withdrawal hashes
                     let message_hashes = state_diff
@@ -484,10 +461,7 @@ impl Command {
                     // Note that its state_root is the root of new_trie.
                     let new_block = BlockHeader {
                         coinbase,
-                        state_root: new_trie
-                            .hash()
-                            .map_err(|e| format!("Error committing state: {e}"))
-                            .unwrap(),
+                        state_root: account_updates_list.state_trie_hash,
                         ..state_diff.last_header
                     };
 
@@ -554,8 +528,8 @@ impl Command {
                 delete_blocks,
                 pause_contracts,
             } => {
-                let data_dir = init_datadir(&datadir);
-                let rollup_store_dir = data_dir.clone() + "/rollup_store";
+                init_datadir(&datadir);
+                let rollup_store_dir = datadir.join("rollup_store");
                 let owner_contract_options = ContractCallOptions {
                     contract_address,
                     private_key: owner_private_key,
@@ -597,7 +571,7 @@ impl Command {
                     delete_batch_from_rollup_store(batch, &rollup_store_dir).await?;
 
                 if delete_blocks {
-                    delete_blocks_from_batch(&data_dir, network, last_kept_block).await?;
+                    delete_blocks_from_batch(&datadir, network, last_kept_block).await?;
                 }
 
                 if pause_contracts {
@@ -668,7 +642,7 @@ pub struct ContractCallOptions {
 
 impl ContractCallOptions {
     async fn call_contract(&self, selector: &str, params: Vec<Value>) -> eyre::Result<()> {
-        let client = EthClient::new(self.rpc_url.as_str())?;
+        let client = EthClient::new(self.rpc_url.clone())?;
         let signer = parse_signer(
             self.private_key,
             self.remote_signer_url.clone(),
@@ -680,7 +654,7 @@ impl ContractCallOptions {
     }
 }
 
-async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &str) -> eyre::Result<u64> {
+async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &Path) -> eyre::Result<u64> {
     info!("Deleting batch from rollup store...");
     let rollup_store = l2::initializers::init_rollup_store(rollup_store_dir).await;
     let last_kept_block = rollup_store
@@ -694,7 +668,7 @@ async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &str) -> e
 }
 
 async fn delete_blocks_from_batch(
-    data_dir: &str,
+    datadir: &Path,
     network: Option<Network>,
     last_kept_block: u64,
 ) -> eyre::Result<()> {
@@ -705,7 +679,7 @@ async fn delete_blocks_from_batch(
     let genesis = network.get_genesis()?;
 
     let mut block_to_delete = last_kept_block + 1;
-    let store = init_store(data_dir, genesis).await;
+    let store = init_store(datadir, genesis).await;
 
     while store
         .get_canonical_block_hash(block_to_delete)

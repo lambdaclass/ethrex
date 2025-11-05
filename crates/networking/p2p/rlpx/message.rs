@@ -8,13 +8,15 @@ use crate::rlpx::snap::{
 };
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
-use super::eth::receipts::{GetReceipts, Receipts};
-use super::eth::status::StatusMessage;
+use super::eth::receipts::{GetReceipts, Receipts68, Receipts69};
+use super::eth::status::{StatusMessage68, StatusMessage69};
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
 use super::eth::update::BlockRangeUpdate;
+#[cfg(feature = "l2")]
 use super::l2::messages::{BatchSealed, L2Message, NewBlock};
+#[cfg(feature = "l2")]
 use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 
@@ -66,7 +68,8 @@ pub enum Message {
     Disconnect(DisconnectMessage),
     Ping(PingMessage),
     Pong(PongMessage),
-    Status(StatusMessage),
+    Status68(StatusMessage68),
+    Status69(StatusMessage69),
     // eth capability
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md
     GetBlockHeaders(GetBlockHeaders),
@@ -78,7 +81,8 @@ pub enum Message {
     GetPooledTransactions(GetPooledTransactions),
     PooledTransactions(PooledTransactions),
     GetReceipts(GetReceipts),
-    Receipts(Receipts),
+    Receipts68(Receipts68),
+    Receipts69(Receipts69),
     BlockRangeUpdate(BlockRangeUpdate),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
@@ -91,6 +95,7 @@ pub enum Message {
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
     // based capability
+    #[cfg(feature = "l2")]
     L2(messages::L2Message),
 }
 
@@ -103,7 +108,8 @@ impl Message {
             Message::Pong(_) => PongMessage::CODE,
 
             // eth capability
-            Message::Status(_) => eth_version.eth_capability_offset() + StatusMessage::CODE,
+            Message::Status68(_) => eth_version.eth_capability_offset() + StatusMessage68::CODE,
+            Message::Status69(_) => eth_version.eth_capability_offset() + StatusMessage69::CODE,
             Message::Transactions(_) => eth_version.eth_capability_offset() + Transactions::CODE,
             Message::GetBlockHeaders(_) => {
                 eth_version.eth_capability_offset() + GetBlockHeaders::CODE
@@ -123,7 +129,8 @@ impl Message {
                 eth_version.eth_capability_offset() + PooledTransactions::CODE
             }
             Message::GetReceipts(_) => eth_version.eth_capability_offset() + GetReceipts::CODE,
-            Message::Receipts(_) => eth_version.eth_capability_offset() + Receipts::CODE,
+            Message::Receipts68(_) => eth_version.eth_capability_offset() + Receipts68::CODE,
+            Message::Receipts69(_) => eth_version.eth_capability_offset() + Receipts68::CODE,
             Message::BlockRangeUpdate(_) => {
                 eth_version.eth_capability_offset() + BlockRangeUpdate::CODE
             }
@@ -141,6 +148,7 @@ impl Message {
             Message::GetTrieNodes(_) => eth_version.snap_capability_offset() + GetTrieNodes::CODE,
             Message::TrieNodes(_) => eth_version.snap_capability_offset() + TrieNodes::CODE,
 
+            #[cfg(feature = "l2")]
             // based capability
             Message::L2(l2_msg) => {
                 eth_version.based_capability_offset() + {
@@ -170,7 +178,12 @@ impl Message {
         } else if msg_id < eth_version.snap_capability_offset() {
             // eth capability
             match msg_id - eth_version.eth_capability_offset() {
-                StatusMessage::CODE => Ok(Message::Status(StatusMessage::decode(data)?)),
+                StatusMessage68::CODE if matches!(eth_version, EthCapVersion::V68) => {
+                    Ok(Message::Status68(StatusMessage68::decode(data)?))
+                }
+                StatusMessage69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                    Ok(Message::Status69(StatusMessage69::decode(data)?))
+                }
                 Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
                 GetBlockHeaders::CODE => {
                     Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
@@ -188,7 +201,12 @@ impl Message {
                     PooledTransactions::decode(data)?,
                 )),
                 GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
+                Receipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
+                    Ok(Message::Receipts68(Receipts68::decode(data)?))
+                }
+                Receipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                    Ok(Message::Receipts69(Receipts69::decode(data)?))
+                }
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
@@ -198,11 +216,11 @@ impl Message {
             // snap capability
             match msg_id - eth_version.snap_capability_offset() {
                 GetAccountRange::CODE => {
-                    return Ok(Message::GetAccountRange(GetAccountRange::decode(data)?));
+                    Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
                 }
                 AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
                 GetStorageRanges::CODE => {
-                    return Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?));
+                    Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
                 }
                 StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
                 GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
@@ -213,7 +231,8 @@ impl Message {
             }
         } else {
             // based capability
-            Ok(Message::L2(
+            #[cfg(feature = "l2")]
+            return Ok(Message::L2(
                 match msg_id - eth_version.based_capability_offset() {
                     messages::NewBlock::CODE => {
                         let decoded = l2::messages::NewBlock::decode(data)?;
@@ -225,7 +244,10 @@ impl Message {
                     }
                     _ => return Err(RLPDecodeError::MalformedData),
                 },
-            ))
+            ));
+
+            #[cfg(not(feature = "l2"))]
+            Err(RLPDecodeError::MalformedData)
         }
     }
 
@@ -240,7 +262,8 @@ impl Message {
             Message::Disconnect(msg) => msg.encode(buf),
             Message::Ping(msg) => msg.encode(buf),
             Message::Pong(msg) => msg.encode(buf),
-            Message::Status(msg) => msg.encode(buf),
+            Message::Status68(msg) => msg.encode(buf),
+            Message::Status69(msg) => msg.encode(buf),
             Message::Transactions(msg) => msg.encode(buf),
             Message::GetBlockHeaders(msg) => msg.encode(buf),
             Message::BlockHeaders(msg) => msg.encode(buf),
@@ -250,7 +273,8 @@ impl Message {
             Message::GetPooledTransactions(msg) => msg.encode(buf),
             Message::PooledTransactions(msg) => msg.encode(buf),
             Message::GetReceipts(msg) => msg.encode(buf),
-            Message::Receipts(msg) => msg.encode(buf),
+            Message::Receipts68(msg) => msg.encode(buf),
+            Message::Receipts69(msg) => msg.encode(buf),
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
@@ -260,10 +284,45 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
+            #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(msg) => msg.encode(buf),
                 L2Message::NewBlock(msg) => msg.encode(buf),
             },
+        }
+    }
+
+    pub fn request_id(&self) -> Option<u64> {
+        match self {
+            Message::GetBlockHeaders(message) => Some(message.id),
+            Message::GetBlockBodies(message) => Some(message.id),
+            Message::GetPooledTransactions(message) => Some(message.id),
+            Message::GetReceipts(message) => Some(message.id),
+            Message::GetAccountRange(message) => Some(message.id),
+            Message::GetStorageRanges(message) => Some(message.id),
+            Message::GetByteCodes(message) => Some(message.id),
+            Message::GetTrieNodes(message) => Some(message.id),
+            Message::BlockHeaders(message) => Some(message.id),
+            Message::BlockBodies(message) => Some(message.id),
+            Message::PooledTransactions(message) => Some(message.id),
+            Message::Receipts68(message) => Some(message.id),
+            Message::Receipts69(message) => Some(message.id),
+            Message::AccountRange(message) => Some(message.id),
+            Message::StorageRanges(message) => Some(message.id),
+            Message::ByteCodes(message) => Some(message.id),
+            Message::TrieNodes(message) => Some(message.id),
+            // The rest of the message types does not have a request id.
+            Message::Hello(_)
+            | Message::Disconnect(_)
+            | Message::Ping(_)
+            | Message::Pong(_)
+            | Message::Status68(_)
+            | Message::Status69(_)
+            | Message::Transactions(_)
+            | Message::NewPooledTransactionHashes(_)
+            | Message::BlockRangeUpdate(_) => None,
+            #[cfg(feature = "l2")]
+            Message::L2(_) => None,
         }
     }
 }
@@ -275,7 +334,8 @@ impl Display for Message {
             Message::Disconnect(_) => "p2p:Disconnect".fmt(f),
             Message::Ping(_) => "p2p:Ping".fmt(f),
             Message::Pong(_) => "p2p:Pong".fmt(f),
-            Message::Status(_) => "eth:Status".fmt(f),
+            Message::Status68(_) => "eth:Status(68)".fmt(f),
+            Message::Status69(_) => "eth:Status(69)".fmt(f),
             Message::GetBlockHeaders(_) => "eth:getBlockHeaders".fmt(f),
             Message::BlockHeaders(_) => "eth:BlockHeaders".fmt(f),
             Message::BlockBodies(_) => "eth:BlockBodies".fmt(f),
@@ -285,7 +345,8 @@ impl Display for Message {
             Message::Transactions(_) => "eth:TransactionsMessage".fmt(f),
             Message::GetBlockBodies(_) => "eth:GetBlockBodies".fmt(f),
             Message::GetReceipts(_) => "eth:GetReceipts".fmt(f),
-            Message::Receipts(_) => "eth:Receipts".fmt(f),
+            Message::Receipts68(_) => "eth:Receipts(68)".fmt(f),
+            Message::Receipts69(_) => "eth:Receipts(69)".fmt(f),
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
@@ -295,6 +356,7 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
+            #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
                 L2Message::NewBlock(_) => "based:NewBlock".fmt(f),

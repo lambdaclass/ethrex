@@ -2,18 +2,17 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use crate::types::Block;
+use crate::types::{Block, Code};
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
-    utils::decode_hex,
+    types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
+    utils::{decode_hex, keccak},
 };
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{NodeHash, NodeRLP, Trie};
-use keccak_hash::keccak;
+use ethrex_trie::{EMPTY_TRIE_HASH, NodeRLP, Trie};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -35,7 +34,7 @@ pub struct GuestProgramState {
     /// Map of code hashes to their corresponding bytecode.
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
-    pub codes_hashed: BTreeMap<H256, Vec<u8>>,
+    pub codes_hashed: BTreeMap<H256, Code>,
     /// Map of block numbers to their corresponding block headers.
     /// The block headers are pushed to the zkVM RLP-encoded, and then
     /// decoded and stored in this map during guest program execution,
@@ -149,10 +148,14 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .collect();
 
         // hash codes
+        // TODO: codes here probably needs to be Vec<Code>, rather than recomputing here. This requires rkyv implementation.
         let codes_hashed = value
             .codes
             .into_iter()
-            .map(|code| (keccak(&code), code))
+            .map(|code| {
+                let code = Code::from_bytecode(code.into());
+                (code.hash, code)
+            })
             .collect();
 
         let mut guest_program_state = GuestProgramState {
@@ -185,13 +188,10 @@ impl GuestProgramState {
             return Ok(());
         }
 
-        let state_trie = Trie::from_nodes(
-            NodeHash::Hashed(self.parent_block_header.state_root),
-            &self.nodes_hashed,
-        )
-        .map_err(|e| {
-            GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
-        })?;
+        let state_trie = Trie::from_nodes(self.parent_block_header.state_root, &self.nodes_hashed)
+            .map_err(|e| {
+                GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
+            })?;
 
         self.state_trie = Some(state_trie);
 
@@ -211,11 +211,7 @@ impl GuestProgramState {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(
-            NodeHash::Hashed(account_state.storage_root),
-            &self.nodes_hashed,
-        )
-        .ok()
+        Trie::from_nodes(account_state.storage_root, &self.nodes_hashed).ok()
     }
 
     /// Helper function to apply account updates to the execution witness
@@ -254,13 +250,16 @@ impl GuestProgramState {
                         .expect("failed to decode account state"),
                     None => AccountState::default(),
                 };
+                if update.removed_storage {
+                    account_state.storage_root = *EMPTY_TRIE_HASH;
+                }
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
                     account_state.balance = info.balance;
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.codes_hashed.insert(info.code_hash, code.to_vec());
+                        self.codes_hashed.insert(info.code_hash, code.clone());
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -363,12 +362,12 @@ impl GuestProgramState {
             .ok_or(GuestProgramStateError::MissingParentHeaderOf(block_number))
     }
 
-    /// Retrieves the account info based on what is stored in the state trie.
+    /// Retrieves the account state from the state trie.
     /// Returns an error if the state trie is not rebuilt or if decoding the account state fails.
-    pub fn get_account_info(
+    pub fn get_account_state(
         &mut self,
         address: Address,
-    ) -> Result<Option<AccountInfo>, GuestProgramStateError> {
+    ) -> Result<Option<AccountState>, GuestProgramStateError> {
         let state_trie = self
             .state_trie
             .as_ref()
@@ -388,11 +387,7 @@ impl GuestProgramState {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
         })?;
 
-        Ok(Some(AccountInfo {
-            balance: state.balance,
-            code_hash: state.code_hash,
-            nonce: state.nonce,
-        }))
+        Ok(Some(state))
     }
 
     /// Fetches the block hash for a specific block number.
@@ -455,15 +450,12 @@ impl GuestProgramState {
 
     /// Retrieves the account code for a specific account.
     /// Returns an Err if the code is not found.
-    pub fn get_account_code(
-        &self,
-        code_hash: H256,
-    ) -> Result<bytes::Bytes, GuestProgramStateError> {
+    pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
         if code_hash == *EMPTY_KECCACK_HASH {
-            return Ok(Bytes::new());
+            return Ok(Code::default());
         }
         match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(Bytes::copy_from_slice(code)),
+            Some(code) => Ok(code.clone()),
             None => {
                 // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
                 // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.
@@ -472,7 +464,7 @@ impl GuestProgramState {
                     "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
                     hex::encode(code_hash)
                 );
-                Ok(Bytes::new())
+                Ok(Code::default())
             }
         }
     }

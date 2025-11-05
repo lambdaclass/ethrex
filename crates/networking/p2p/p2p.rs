@@ -1,9 +1,7 @@
 pub mod discv4;
-pub mod kademlia;
 pub(crate) mod metrics;
 pub mod network;
 pub mod peer_handler;
-pub mod peer_score;
 pub mod rlpx;
 pub(crate) mod snap;
 pub mod sync;

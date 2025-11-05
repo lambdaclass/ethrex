@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::types::Fork;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
     types::{
@@ -17,7 +19,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::eth::{EthClient, Overrides, errors::EthClientError};
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
@@ -36,10 +37,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
+// 0xcecd5910a4404ccf2718feb58dac13e975a862a2
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x8c, 0xcf, 0x74, 0x99, 0x9c, 0x49, 0x6e, 0x4d, 0x27, 0xa2, 0xb0, 0x29, 0x41, 0x67, 0x3f, 0x41,
-    0xdd, 0x0d, 0xab, 0x2a,
+    0xce, 0xcd, 0x59, 0x10, 0xa4, 0x40, 0x4c, 0xcf, 0x27, 0x18, 0xfe, 0xb5, 0x8d, 0xac, 0x13, 0xe9,
+    0x75, 0xa8, 0x62, 0xa2,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -75,7 +76,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
+/// BRIDGE_ADDRESS or 0x36664d7c5031bd965bbb405b55495a90dd780740
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
@@ -166,6 +167,8 @@ pub async fn withdraw(
     from: Address,
     from_pk: SecretKey,
     proposer_client: &EthClient,
+    nonce: Option<u64>,
+    gas_limit: Option<u64>,
 ) -> Result<H256, EthClientError> {
     let withdraw_transaction = build_generic_tx(
         proposer_client,
@@ -178,6 +181,8 @@ pub async fn withdraw(
         )?),
         Overrides {
             value: Some(amount),
+            nonce,
+            gas_limit,
             ..Default::default()
         },
     )
@@ -342,11 +347,25 @@ where
     let hex = H256::from_slice(&secret_key.secret_bytes());
     hex.serialize(serializer)
 }
-
+// https://github.com/Arachnid/deterministic-deployment-proxy
 // 0x4e59b44847b379578588920cA78FbF26c0B4956C
-const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
+pub const DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS: Address = H160([
     0x4e, 0x59, 0xb4, 0x48, 0x47, 0xb3, 0x79, 0x57, 0x85, 0x88, 0x92, 0x0c, 0xa7, 0x8f, 0xbf, 0x26,
     0xc0, 0xb4, 0x95, 0x6c,
+]);
+
+// https://github.com/safe-global/safe-singleton-factory
+// 0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7
+pub const SAFE_SINGLETON_FACTORY_ADDRESS: Address = H160([
+    0x91, 0x4d, 0x7F, 0xec, 0x6a, 0xac, 0x8c, 0xd5, 0x42, 0xe7, 0x2b, 0xca, 0x78, 0xb3, 0x06, 0x50,
+    0xd4, 0x56, 0x43, 0xd7,
+]);
+
+// https://github.com/pcaversaccio/create2deployer
+// 0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2
+pub const CREATE2DEPLOYER_ADDRESS: Address = H160([
+    0x13, 0xb0, 0xd8, 0x5c, 0xcb, 0x8b, 0xf8, 0x60, 0xb6, 0xb7, 0x9a, 0xf3, 0x02, 0x9f, 0xca, 0x08,
+    0x1a, 0xe9, 0xbe, 0xf2,
 ]);
 
 #[derive(Default)]
@@ -518,7 +537,7 @@ async fn create2_deploy(
     let deploy_tx = build_generic_tx(
         eth_client,
         TxType::EIP1559,
-        DETERMINISTIC_CREATE2_ADDRESS,
+        DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
         deployer.address(),
         calldata.into(),
         Overrides {
@@ -545,7 +564,7 @@ fn create2_address(salt: &[u8], init_code_hash: H256) -> Address {
         &keccak(
             [
                 &[0xff],
-                DETERMINISTIC_CREATE2_ADDRESS.as_bytes(),
+                DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS.as_bytes(),
                 salt,
                 init_code_hash.as_bytes(),
             ]
@@ -701,15 +720,14 @@ pub async fn send_tx_bump_gas_exponential_backoff(
         }
 
         // Check blob gas fees only for EIP4844 transactions
-        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
-            if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
-                if *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
-                    *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
-                    warn!(
-                        "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
-                    );
-                }
-            }
+        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas
+            && let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas
+            && *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas)
+        {
+            *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+            warn!(
+                "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
+            );
         }
         let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer)
             .await
@@ -829,6 +847,7 @@ pub async fn build_generic_tx(
             .map(AccessListEntry::from)
             .collect(),
         from,
+        wrapper_version: overrides.wrapper_version,
         ..Default::default()
     };
     tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
@@ -887,10 +906,10 @@ async fn priority_fee_from_override_or_rpc(
         return Ok(priority_fee);
     }
 
-    if let Ok(priority_fee) = client.get_max_priority_fee().await {
-        if let Ok(priority_fee_u64) = priority_fee.try_into() {
-            return Ok(priority_fee_u64);
-        }
+    if let Ok(priority_fee) = client.get_max_priority_fee().await
+        && let Ok(priority_fee_u64) = priority_fee.try_into()
+    {
+        return Ok(priority_fee_u64);
     }
 
     get_fee_from_override_or_get_gas_price(client, None).await
@@ -943,6 +962,18 @@ pub async fn get_sp1_vk(
     _call_bytes32_variable(client, b"SP1_VERIFICATION_KEY()", on_chain_proposer_address).await
 }
 
+pub async fn get_risc0_vk(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+) -> Result<[u8; 32], EthClientError> {
+    _call_bytes32_variable(
+        client,
+        b"RISC0_VERIFICATION_KEY()",
+        on_chain_proposer_address,
+    )
+    .await
+}
+
 pub async fn get_last_fetched_l1_block(
     client: &EthClient,
     common_bridge_address: Address,
@@ -961,6 +992,26 @@ pub async fn get_pending_privileged_transactions(
     )
     .await?;
     from_hex_string_to_h256_array(&response)
+}
+
+// TODO: This is a work around for now, issue: https://github.com/lambdaclass/ethrex/issues/4828
+pub async fn get_l1_active_fork(
+    client: &EthClient,
+    activation_time: Option<u64>,
+) -> Result<Fork, EthClientError> {
+    let Some(osaka_activation_time) = activation_time else {
+        return Ok(Fork::Osaka);
+    };
+    let current_timestamp = client
+        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
+        .await?
+        .header
+        .timestamp;
+    if current_timestamp < osaka_activation_time {
+        Ok(Fork::Prague)
+    } else {
+        Ok(Fork::Osaka)
+    }
 }
 
 async fn _generic_call(

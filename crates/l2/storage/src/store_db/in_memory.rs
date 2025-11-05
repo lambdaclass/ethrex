@@ -1,16 +1,15 @@
 use std::{
     collections::HashMap,
     fmt::Debug,
-    ops::Range,
     sync::{Arc, Mutex, MutexGuard},
 };
 
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
 use crate::api::StoreEngineRollup;
 
@@ -31,8 +30,8 @@ struct StoreInner {
     state_roots: HashMap<u64, H256>,
     /// Map of batch number to blob
     blobs: HashMap<u64, Vec<Blob>>,
-    /// Lastest sent batch proof
-    lastest_sent_batch_proof: u64,
+    /// latest sent batch proof
+    latest_sent_batch_proof: u64,
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
     /// Map of signatures from the sequencer by block hashes
@@ -47,8 +46,10 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
-    /// Privileged transactions included in the batch being built
-    precommit_privileged: Option<Range<u64>>,
+    /// Map of (batch_number, prover_version) to serialized prover input data
+    batch_prover_input: HashMap<(u64, String), Vec<u8>>,
+    /// Map of block number to FeeConfig
+    fee_config_by_block: HashMap<BlockNumber, FeeConfig>,
 }
 
 impl Store {
@@ -216,15 +217,12 @@ impl StoreEngineRollup for Store {
             .cloned())
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
-        Ok(self.inner()?.lastest_sent_batch_proof)
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+        Ok(self.inner()?.latest_sent_batch_proof)
     }
 
-    async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.lastest_sent_batch_proof = batch_number;
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.inner()?.latest_sent_batch_proof = batch_number;
         Ok(())
     }
 
@@ -290,7 +288,9 @@ impl StoreEngineRollup for Store {
             .retain(|batch, _| *batch <= batch_number);
         store.state_roots.retain(|batch, _| *batch <= batch_number);
         store.blobs.retain(|batch, _| *batch <= batch_number);
-        store.precommit_privileged = None;
+        store
+            .batch_prover_input
+            .retain(|(batch, _), _| *batch <= batch_number);
         Ok(())
     }
 
@@ -322,19 +322,6 @@ impl StoreEngineRollup for Store {
         if let Some(verify_tx) = batch.verify_tx {
             inner.verify_txs.insert(batch.number, verify_tx);
         }
-        inner.precommit_privileged = None;
-        Ok(())
-    }
-
-    async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
-        Ok(self.inner()?.precommit_privileged.clone())
-    }
-
-    async fn update_precommit_privileged(
-        &self,
-        range: Option<Range<u64>>,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.precommit_privileged = range;
         Ok(())
     }
 
@@ -350,6 +337,69 @@ impl StoreEngineRollup for Store {
 
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
         Ok(self.inner()?.state_roots.keys().max().cloned())
+    }
+
+    async fn store_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        let witness_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&prover_input)
+            .map_err(|e| RollupStoreError::Custom(format!("Failed to serialize witness: {}", e)))?
+            .to_vec();
+
+        self.inner()?
+            .batch_prover_input
+            .insert((batch_number, prover_version.to_string()), witness_bytes);
+
+        Ok(())
+    }
+
+    async fn get_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+    ) -> Result<Option<ProverInputData>, RollupStoreError> {
+        let Some(witness_bytes) = self
+            .inner()?
+            .batch_prover_input
+            .get(&(batch_number, prover_version.to_string()))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+
+        let prover_input = rkyv::from_bytes::<ProverInputData, rkyv::rancor::Error>(&witness_bytes)
+            .map_err(|e| {
+                RollupStoreError::Custom(format!(
+                    "Failed to deserialize prover input for batch {batch_number} and version {prover_version}: {e}",
+                ))
+            })?;
+
+        Ok(Some(prover_input))
+    }
+
+    async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .fee_config_by_block
+            .insert(block_number, fee_config);
+        Ok(())
+    }
+
+    async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .fee_config_by_block
+            .get(&block_number)
+            .cloned())
     }
 }
 

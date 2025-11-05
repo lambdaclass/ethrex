@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
-
+use ethrex_common::H256;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, U256,
     types::{AccountUpdate, Fork, Genesis, code_hash},
@@ -13,7 +13,7 @@ use ethrex_levm::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_vm::backends;
-use keccak_hash::{H256, keccak};
+use rustc_hash::FxHashMap;
 
 use crate::modules::{
     error::RunnerError,
@@ -51,7 +51,7 @@ pub struct AccountMismatch {
     pub balance_diff: Option<(U256, U256)>,
     pub nonce_diff: Option<(u64, u64)>,
     pub code_diff: Option<(H256, H256)>,
-    pub storage_diff: Option<(BTreeMap<H256, U256>, BTreeMap<H256, U256>)>,
+    pub storage_diff: Option<(FxHashMap<H256, U256>, FxHashMap<H256, U256>)>,
 }
 
 /// Verify if the test has reached the expected results: if an exception was expected, check it was the corresponding
@@ -105,7 +105,7 @@ pub async fn check_root(
 ) -> Result<(), RunnerError> {
     let account_updates = backends::levm::LEVM::get_state_transitions(&mut vm.db.clone())
         .map_err(|e| RunnerError::FailedToGetAccountsUpdates(e.to_string()))?;
-    let post_state_root = post_state_root(&account_updates, initial_block_hash, store).await;
+    let post_state_root = post_state_root(&account_updates, initial_block_hash, store);
     if post_state_root != test_case.post.hash {
         check_result.passed = false;
         check_result.root_diff = Some((test_case.post.hash, post_state_root));
@@ -115,14 +115,13 @@ pub async fn check_root(
 
 /// Calculates the post state root applying the changes (the account updates) that are a
 /// result of running the transaction to the storage.
-pub async fn post_state_root(
+pub fn post_state_root(
     account_updates: &[AccountUpdate],
     initial_block_hash: H256,
     store: Store,
 ) -> H256 {
     let ret_account_updates_batch = store
         .apply_account_updates_batch(initial_block_hash, account_updates)
-        .await
         .unwrap()
         .unwrap();
     ret_account_updates_batch.state_trie_hash
@@ -159,6 +158,9 @@ fn exception_matches_expected(
             (
                 TransactionExpectedException::IntrinsicGasTooLow,
                 VMError::TxValidation(TxValidationError::IntrinsicGasTooLow)
+            ) | (
+                TransactionExpectedException::IntrinsicGasBelowFloorGasCost,
+                VMError::TxValidation(TxValidationError::IntrinsicGasBelowFloorGasCost)
             ) | (
                 TransactionExpectedException::InsufficientAccountFunds,
                 VMError::TxValidation(TxValidationError::InsufficientAccountFunds)
@@ -260,27 +262,28 @@ pub fn check_accounts_state(
     for (addr, expected_account) in expected_accounts_state {
         let acc_genesis_state = genesis.alloc.get(&addr);
         // First we check if the address appears in the `current_accounts_state`, which stores accounts modified by the tx.
-        let account: &mut LevmAccount =
-            if let Some(account) = db.current_accounts_state.get_mut(&addr) {
-                if account.storage.is_empty() && acc_genesis_state.is_some() {
-                    account.storage = acc_genesis_state
-                        .unwrap()
-                        .storage
-                        .iter()
-                        .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
-                        .collect();
-                }
-                account
+        let account: &mut LevmAccount = if let Some(account) =
+            db.current_accounts_state.get_mut(&addr)
+            && account.storage.is_empty()
+            && acc_genesis_state.is_some()
+        {
+            account.storage = acc_genesis_state
+                .unwrap()
+                .storage
+                .iter()
+                .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
+                .collect();
+            account
+        } else {
+            // Else, we take its info from the Genesis state, assuming it has not changed.
+            if let Some(account) = acc_genesis_state {
+                &mut Into::<LevmAccount>::into(account.clone())
             } else {
-                // Else, we take its info from the Genesis state, assuming it has not changed.
-                if let Some(account) = acc_genesis_state {
-                    &mut Into::<LevmAccount>::into(account.clone())
-                } else {
-                    // If we can't find it in any of the previous mappings, we provide a default account that will not pass
-                    // the comparisons checks.
-                    &mut LevmAccount::default()
-                }
-            };
+                // If we can't find it in any of the previous mappings, we provide a default account that will not pass
+                // the comparisons checks.
+                &mut LevmAccount::default()
+            }
+        };
 
         // We verify if the account matches the expected post state.
         let account_mismatch = verify_matching_accounts(addr, account, &expected_account);
@@ -303,7 +306,7 @@ fn verify_matching_accounts(
     actual_account: &LevmAccount,
     expected_account: &AccountState,
 ) -> Option<AccountMismatch> {
-    let mut formatted_expected_storage = BTreeMap::new();
+    let mut formatted_expected_storage = FxHashMap::default();
     for (key, value) in &expected_account.storage {
         let formatted_key = H256::from(key.to_big_endian());
         formatted_expected_storage.insert(formatted_key, *value);

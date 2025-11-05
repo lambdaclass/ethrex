@@ -10,7 +10,7 @@ use crate::{
     utils::{RpcErr, RpcRequest},
 };
 mod peers;
-pub use peers::peers;
+pub use peers::{add_peer, peers};
 
 #[derive(Serialize, Debug)]
 struct NodeInfo {
@@ -43,9 +43,7 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
     };
     let mut protocols = HashMap::new();
 
-    let chain_config = storage
-        .get_chain_config()
-        .map_err(|error| RpcErr::Internal(error.to_string()))?;
+    let chain_config = storage.get_chain_config();
     protocols.insert("eth".to_string(), Protocol::Eth(chain_config));
 
     let node_info = NodeInfo {

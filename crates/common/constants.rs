@@ -1,5 +1,5 @@
+use crate::H256;
 use ethrex_rlp::constants::RLP_NULL;
-use keccak_hash::H256;
 use sha3::{Digest as _, Keccak256};
 use std::{str::FromStr, sync::LazyLock};
 
@@ -35,14 +35,8 @@ pub static EMPTY_KECCACK_HASH: LazyLock<H256> = LazyLock::new(|| {
     )
 });
 
-pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| {
-    H256::from_slice(
-        Keccak256::new()
-            .chain_update([RLP_NULL])
-            .finalize()
-            .as_slice(),
-    )
-});
+pub static EMPTY_TRIE_HASH: LazyLock<H256> =
+    LazyLock::new(|| H256::from_slice(&Keccak256::digest([RLP_NULL])));
 
 // Request related
 pub static DEPOSIT_TOPIC: LazyLock<H256> = LazyLock::new(|| {

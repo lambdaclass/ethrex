@@ -110,7 +110,7 @@ pub mod test_utils {
     fn legacy_tx_for_test(nonce: u64) -> Transaction {
         Transaction::LegacyTransaction(LegacyTransaction {
             nonce,
-            gas_price: nonce * BASE_PRICE_IN_WEI,
+            gas_price: U256::from(nonce) * U256::from(BASE_PRICE_IN_WEI),
             gas: 10000,
             to: TxKind::Create,
             value: 100.into(),
@@ -150,7 +150,7 @@ pub mod test_utils {
         let genesis: &str = include_str!("../../../../fixtures/genesis/l1.json");
         let genesis: Genesis =
             serde_json::from_str(genesis).expect("Fatal: test config is invalid");
-        let store = Store::new("test-store", EngineType::InMemory)
+        let mut store = Store::new("test-store", EngineType::InMemory)
             .expect("Fail to create in-memory db test");
         store.add_initial_state(genesis).await.unwrap();
         store

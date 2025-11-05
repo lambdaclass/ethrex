@@ -1,4 +1,6 @@
 use serde::Deserialize;
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::BufReader;
 
@@ -43,19 +45,16 @@ impl HiveResult {
             "snap" => ("P2P", "Snap capability"),
             "rpc-compat" => ("RPC", "RPC API Compatibility"),
             "sync" => ("Sync", "Node Syncing"),
-            "eest/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
-            "eest/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
+            "eels/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
+            "eels/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
+            "eels/execute-blobs" => ("EVM - Execute Blobs", "Execute Blobs"),
             other => {
                 eprintln!("Warn: Unknown suite: {other}. Skipping");
                 ("", "")
             }
         };
 
-        let success_percentage = if total_tests == 0 {
-            0.0
-        } else {
-            (passed_tests as f64 / total_tests as f64) * 100.0
-        };
+        let success_percentage = calculate_success_percentage(passed_tests, total_tests);
 
         HiveResult {
             category: category.to_string(),
@@ -102,8 +101,39 @@ fn create_fork_result(json_data: &JsonFile, fork: &str, test_pattern: &str) -> H
     )
 }
 
+fn calculate_success_percentage(passed_tests: usize, total_tests: usize) -> f64 {
+    if total_tests == 0 {
+        0.0
+    } else {
+        (passed_tests as f64 / total_tests as f64) * 100.0
+    }
+}
+
+fn aggregate_result(
+    aggregated_results: &mut HashMap<(String, String), (usize, usize)>,
+    result: HiveResult,
+) {
+    if result.should_skip() {
+        return;
+    }
+
+    let HiveResult {
+        category,
+        display_name,
+        passed_tests,
+        total_tests,
+        ..
+    } = result;
+
+    let entry = aggregated_results
+        .entry((category, display_name))
+        .or_insert((0, 0));
+    entry.0 += passed_tests;
+    entry.1 += total_tests;
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut results = Vec::new();
+    let mut aggregated_results: HashMap<(String, String), (usize, usize)> = HashMap::new();
 
     for entry in fs::read_dir("hive/workspace/logs")? {
         let entry = entry?;
@@ -130,8 +160,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Both of these simulators have only 1 suite where we can find tests for 3 different forks.
             // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
-            if json_data.name.as_str() == "eest/consume-rlp"
-                || json_data.name.as_str() == "eest/consume-engine"
+            if json_data.name.as_str() == "eels/consume-rlp"
+                || json_data.name.as_str() == "eels/consume-engine"
             {
                 let result_paris = create_fork_result(&json_data, "Paris", "fork_Paris");
                 // Shanghai
@@ -143,11 +173,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let result_osaka = create_fork_result(&json_data, "Osaka", "fork_Osaka");
 
-                results.push(result_paris);
-                results.push(result_shanghai);
-                results.push(result_cancun);
-                results.push(result_prague);
-                results.push(result_osaka);
+                aggregate_result(&mut aggregated_results, result_paris);
+                aggregate_result(&mut aggregated_results, result_shanghai);
+                aggregate_result(&mut aggregated_results, result_cancun);
+                aggregate_result(&mut aggregated_results, result_prague);
+                aggregate_result(&mut aggregated_results, result_osaka);
             } else {
                 let total_tests = json_data.test_cases.len();
                 let passed_tests = json_data
@@ -158,23 +188,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let result =
                     HiveResult::new(json_data.name, String::new(), passed_tests, total_tests);
-                if !result.should_skip() {
-                    results.push(result);
-                }
+                aggregate_result(&mut aggregated_results, result);
             }
         }
     }
 
-    // First by category ascending, then by passed tests descending, then by success percentage descending.
+    let mut results: Vec<HiveResult> = aggregated_results
+        .into_iter()
+        .map(
+            |((category, display_name), (passed_tests, total_tests))| HiveResult {
+                category,
+                display_name,
+                passed_tests,
+                total_tests,
+                success_percentage: calculate_success_percentage(passed_tests, total_tests),
+            },
+        )
+        .collect();
+
+    // First by category ascending, use fork ordering newest → oldest when applicable, then by passed tests descending.
     results.sort_by(|a, b| {
-        a.category
-            .cmp(&b.category)
-            .then_with(|| b.passed_tests.cmp(&a.passed_tests))
-            .then_with(|| {
-                b.success_percentage
-                    .partial_cmp(&a.success_percentage)
-                    .unwrap()
-            })
+        let category_cmp = a.category.cmp(&b.category);
+        if category_cmp != Ordering::Equal {
+            return category_cmp;
+        }
+
+        let fork_rank = |display_name: &str| match display_name {
+            "Osaka" => Some(0),
+            "Prague" => Some(1),
+            "Cancun" => Some(2),
+            "Shanghai" => Some(3),
+            "Paris" => Some(4),
+            _ => None,
+        };
+
+        if let (Some(rank_a), Some(rank_b)) =
+            (fork_rank(&a.display_name), fork_rank(&b.display_name))
+        {
+            let order_cmp = rank_a.cmp(&rank_b);
+            if order_cmp != Ordering::Equal {
+                return order_cmp;
+            }
+        }
+
+        b.passed_tests.cmp(&a.passed_tests).then_with(|| {
+            b.success_percentage
+                .partial_cmp(&a.success_percentage)
+                .unwrap()
+        })
     });
 
     let results_by_category = results.chunk_by(|a, b| a.category == b.category);
@@ -191,7 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     let total_passed = results.iter().map(|r| r.passed_tests).sum::<usize>();
     let total_tests = results.iter().map(|r| r.total_tests).sum::<usize>();
-    let total_percentage = (total_passed as f64 / total_tests as f64) * 100.0;
+    let total_percentage = calculate_success_percentage(total_passed, total_tests);
     println!("*Total: {total_passed}/{total_tests} ({total_percentage:.02}%)*");
 
     Ok(())

@@ -1,44 +1,42 @@
-use std::fs::read_to_string;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-
-use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::Address;
-use ethrex_l2::SequencerConfig;
-use ethrex_p2p::kademlia::Kademlia;
-use ethrex_p2p::network::peer_table;
-use ethrex_p2p::peer_handler::PeerHandler;
-use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
-use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::{Node, NodeRecord};
-use ethrex_storage::Store;
-use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use secp256k1::SecretKey;
-use tokio::sync::Mutex;
-use tokio::task::JoinSet;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
-use tracing::{error, info, warn};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{EnvFilter, Registry, reload};
-use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
-
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
     get_network, get_signer, init_blockchain, init_network, init_store,
 };
-use crate::l2::L2Options;
+use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
+use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
+use ethrex_common::fd_limit::raise_fd_limit;
+use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_l2::SequencerConfig;
+use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
+use ethrex_p2p::{
+    discv4::peer_table::PeerTable,
+    network::P2PContext,
+    peer_handler::PeerHandler,
+    rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
+    sync_manager::SyncManager,
+    types::{Node, NodeRecord},
+};
+use ethrex_storage::Store;
+use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use secp256k1::SecretKey;
+use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
+use tokio::task::JoinSet;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::{error, info, warn};
+use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
+use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
+use url::Url;
 
 #[allow(clippy::too_many_arguments)]
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: Kademlia,
+    peer_handler: PeerHandler,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -47,17 +45,18 @@ async fn init_rpc_api(
     tracker: TaskTracker,
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
+    init_datadir(&opts.datadir);
 
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        &opts.syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        init_datadir(&opts.datadir),
+        opts.datadir.clone(),
     )
     .await;
 
@@ -76,6 +75,7 @@ async fn init_rpc_api(
         l2_opts.sponsor_private_key,
         rollup_store,
         log_filter_handler,
+        gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
     );
 
     tracker.spawn(rpc_api);
@@ -99,17 +99,13 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     addresses
 }
 
-pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "rollup_storage_sql")] {
-            let engine_type = EngineTypeRollup::SQL;
-        }
-        else {
-            let engine_type = EngineTypeRollup::InMemory;
-        }
-    }
+pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
+    #[cfg(feature = "l2-sql")]
+    let engine_type = EngineTypeRollup::SQL;
+    #[cfg(not(feature = "l2-sql"))]
+    let engine_type = EngineTypeRollup::InMemory;
     let rollup_store =
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+        StoreRollup::new(datadir, engine_type).expect("Failed to create StoreRollup");
     rollup_store
         .init()
         .await
@@ -152,50 +148,109 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
-    #[cfg(feature = "revm")]
-    panic!("L2 doesn't support REVM");
+    raise_fd_limit()?;
 
-    let data_dir = init_datadir(&opts.node_opts.datadir);
-    let rollup_store_dir = data_dir.clone() + "/rollup_store";
+    let datadir = opts.node_opts.datadir.clone();
+    init_datadir(&opts.node_opts.datadir);
+    let rollup_store_dir = datadir.join("rollup_store");
+
+    // Checkpoints are stored in the main datadir
+    let checkpoints_dir = datadir.clone();
 
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&data_dir, genesis).await;
+    let store = init_store(&datadir, genesis.clone()).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L2, true);
+    let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
+    let l1_fee_config = get_l1_fee_config(&opts.sequencer_opts);
 
-    let signer = get_signer(&data_dir);
+    let fee_config = FeeConfig {
+        base_fee_vault: opts
+            .sequencer_opts
+            .block_producer_opts
+            .base_fee_vault_address,
+        operator_fee_config,
+        l1_fee_config,
+    };
+
+    // We wrap fee_config in an Arc<RwLock> to let the watcher
+    // update the L1 fee periodically.
+    let l2_config = L2Config {
+        fee_config: Arc::new(std::sync::RwLock::new(fee_config)),
+    };
+
+    let blockchain_opts = ethrex_blockchain::BlockchainOptions {
+        max_mempool_size: opts.node_opts.mempool_max_size,
+        r#type: BlockchainType::L2(l2_config),
+        perf_logs_enabled: true,
+    };
+
+    let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
+
+    regenerate_head_state(&store, &rollup_store, &blockchain).await?;
+
+    let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
-    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        &data_dir,
-        &local_p2p_node,
-        &signer,
-    )));
+    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_handler = PeerHandler::new(peer_table());
+    let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
     let mut join_set = JoinSet::new();
+
+    let p2p_context = P2PContext::new(
+        local_p2p_node.clone(),
+        tracker.clone(),
+        signer,
+        peer_table.clone(),
+        store.clone(),
+        blockchain.clone(),
+        get_client_version(),
+        #[cfg(feature = "l2")]
+        Some(P2PBasedContext {
+            store_rollup: rollup_store.clone(),
+            // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
+            // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
+            // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
+            // This should be replaced with the Signer enum once the refactor is complete.
+            committer_key: Arc::new(
+                SecretKey::from_slice(
+                    &hex::decode(
+                        "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
+                    )
+                    .expect("Invalid committer key"),
+                )
+                .expect("Failed to create committer key"),
+            ),
+        }),
+        opts.node_opts.tx_broadcasting_time_interval,
+    )
+    .await
+    .expect("P2P context could not be created");
+
+    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers), initiator);
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
     init_rpc_api(
         &opts.node_opts,
         &opts,
-        peer_handler.peer_table.clone(),
+        peer_handler.clone(),
         local_p2p_node.clone(),
-        local_node_record.lock().await.clone(),
+        local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
         rollup_store.clone(),
         log_filter_handler,
+        Some(opts.sequencer_opts.block_producer_opts.block_gas_limit),
     )
     .await;
 
@@ -217,35 +272,22 @@ pub async fn init_l2(
         init_network(
             &opts.node_opts,
             &network,
-            &data_dir,
-            local_p2p_node,
-            local_node_record.clone(),
-            signer,
+            &datadir,
             peer_handler.clone(),
-            store.clone(),
             tracker,
             blockchain.clone(),
-            Some(P2PBasedContext {
-                store_rollup: rollup_store.clone(),
-                // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
-                // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
-                // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
-                // This should be replaced with the Signer enum once the refactor is complete.
-                committer_key: Arc::new(
-                    SecretKey::from_slice(
-                        &hex::decode(
-                            "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
-                        )
-                        .expect("Invalid committer key"),
-                    )
-                    .expect("Failed to create committer key"),
-                ),
-            }),
+            p2p_context,
         )
         .await;
     } else {
         info!("P2P is disabled");
     }
+
+    let l2_url = Url::parse(&format!(
+        "http://{}:{}",
+        opts.node_opts.http_addr, opts.node_opts.http_port
+    ))
+    .map_err(|err| eyre::eyre!("Failed to parse L2 RPC URL: {err}"))?;
 
     let l2_sequencer = ethrex_l2::start_l2(
         store,
@@ -253,11 +295,9 @@ pub async fn init_l2(
         blockchain,
         l2_sequencer_cfg,
         cancellation_token.clone(),
-        #[cfg(feature = "metrics")]
-        format!(
-            "http://{}:{}",
-            opts.node_opts.http_addr, opts.node_opts.http_port
-        ),
+        l2_url,
+        genesis,
+        checkpoints_dir,
     )
     .into_future();
 
@@ -271,16 +311,53 @@ pub async fn init_l2(
         }
     }
     info!("Server shut down started...");
-    let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+    let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(
-        peer_handler.peer_table,
-        local_node_record.lock().await.clone(),
-    )
-    .await;
+    let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
     store_node_config_file(node_config, node_config_path).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
     Ok(())
+}
+
+pub fn get_l1_fee_config(sequencer_opts: &SequencerOptions) -> Option<L1FeeConfig> {
+    if sequencer_opts.based {
+        // If based is enabled, skip L1 fee configuration
+        return None;
+    }
+
+    sequencer_opts
+        .block_producer_opts
+        .l1_fee_vault_address
+        .map(|addr| L1FeeConfig {
+            l1_fee_vault: addr,
+            l1_fee_per_blob_gas: 0, // This is set by the L1 watcher
+        })
+}
+
+pub async fn get_operator_fee_config(
+    sequencer_opts: &SequencerOptions,
+) -> eyre::Result<Option<OperatorFeeConfig>> {
+    if sequencer_opts.based {
+        // If based is enabled, skip operator fee configuration
+        return Ok(None);
+    }
+
+    let fee = sequencer_opts.block_producer_opts.operator_fee_per_gas;
+
+    let address = sequencer_opts
+        .block_producer_opts
+        .operator_fee_vault_address;
+
+    let operator_fee_config =
+        if let (Some(operator_fee_vault), Some(operator_fee_per_gas)) = (address, fee) {
+            Some(OperatorFeeConfig {
+                operator_fee_vault,
+                operator_fee_per_gas,
+            })
+        } else {
+            None
+        };
+    Ok(operator_fee_config)
 }

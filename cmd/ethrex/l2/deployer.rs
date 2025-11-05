@@ -8,12 +8,13 @@ use std::{
 
 use bytes::Bytes;
 use clap::Parser;
+use ethrex_common::H256;
 use ethrex_common::{
     Address, U256,
     types::{Genesis, TxType},
 };
 use ethrex_l2::utils::test_data_io::read_genesis_file;
-use ethrex_l2_common::{calldata::Value, utils::get_address_from_secret_key};
+use ethrex_l2_common::{calldata::Value, prover::ProverType, utils::get_address_from_secret_key};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode,
@@ -25,7 +26,6 @@ use ethrex_rpc::{
     clients::Overrides,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use keccak_hash::H256;
 use tracing::{debug, error, info, trace, warn};
 
 use ethrex_l2_sdk::DeployError;
@@ -35,6 +35,7 @@ use clap::ArgAction;
 use ethrex_common::H160;
 use hex::FromHexError;
 use secp256k1::SecretKey;
+use url::Url;
 
 use ethrex_config::networks::{
     LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, LOCAL_DEVNETL2_GENESIS_CONTENTS,
@@ -48,7 +49,7 @@ pub struct DeployerOptions {
         env = "ETHREX_ETH_RPC_URL",
         help_heading = "Eth options"
     )]
-    pub rpc_url: String,
+    pub rpc_url: Url,
     #[arg(
         long,
         default_value = "10000000000",
@@ -168,65 +169,76 @@ pub struct DeployerOptions {
         help = "Address of the L1 proof sender account. This is the address of the account that sends the proofs to be verified in L1."
     )]
     pub proof_sender_l1_address: Address,
-    // TODO: This should work side by side with a risc0_deploy_verifier flag.
+    #[arg(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_L2_RISC0",
+        action = ArgAction::Set,
+        help_heading = "Deployer options",
+        help = "If true, L2 will require Risc0 proofs to validate batch proofs and settle state."
+    )]
+    pub risc0: bool,
     #[arg(
         long = "risc0.verifier-address",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
-        required = true, // TODO: This should be required_unless_present = "risc0_deploy_verifier",
-        help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        env = "ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS",
+        help_heading = "Deployer options"
     )]
     pub risc0_verifier_address: Option<Address>,
     #[arg(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_L2_SP1",
+        action = ArgAction::Set,
+        help_heading = "Deployer options",
+        help = "If true, L2 will require SP1 proofs to validate batch proofs and settle state."
+    )]
+    pub sp1: bool,
+    #[arg(
         long = "sp1.verifier-address",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
-        required_if_eq("sp1_deploy_verifier", "false"),
+        env = "ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS",
         help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        help = "If no verifier address is provided, contract deployer will deploy the SP1 verifier"
     )]
     pub sp1_verifier_address: Option<Address>,
     #[arg(
-        long = "sp1.deploy-verifier",
+        long,
         default_value = "false",
         value_name = "BOOLEAN",
-        action = ArgAction::SetTrue,
-        env = "ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER",
-        required_unless_present = "sp1_verifier_address",
+        env = "ETHREX_L2_TDX",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
-        help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
+        help = "If true, L2 will require TDX proofs to validate batch proofs and settle state."
     )]
-    pub sp1_deploy_verifier: bool,
+    pub tdx: bool,
     #[arg(
         long = "tdx.verifier-address",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
-        required_if_eq("tdx_deploy_verifier", "false"),
+        env = "ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS",
         help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        help = "If no verifier address is provided, contract deployer will deploy the TDX verifier"
     )]
     pub tdx_verifier_address: Option<Address>,
     #[arg(
-        long = "tdx.deploy-verifier",
+        long,
         default_value = "false",
         value_name = "BOOLEAN",
-        action = ArgAction::SetTrue,
-        env = "ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER",
-        required_unless_present = "tdx_verifier_address",
+        env = "ETHREX_L2_ALIGNED",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
-        help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
+        help = "If true, L2 will verify proofs using Aligned Layer instead of smart contract verifiers."
     )]
-    pub tdx_deploy_verifier: bool,
+    pub aligned: bool,
     #[arg(
         long = "aligned.aggregator-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS",
-        required = true,
-        help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        help_heading = "Deployer options"
     )]
-    pub aligned_aggregator_address: Address,
+    pub aligned_aggregator_address: Option<Address>,
     #[arg(
         long,
         default_value = "false",
@@ -242,6 +254,7 @@ pub struct DeployerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_L2_VALIDIUM",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
         help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
@@ -273,22 +286,20 @@ pub struct DeployerOptions {
     pub on_chain_proposer_owner_pk: Option<SecretKey>,
     #[arg(
         long,
-        default_value_t = format!("{}/../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
         help = "Path to the SP1 verification key. This is used for proof verification."
     )]
-    pub sp1_vk_path: String,
+    pub sp1_vk_path: Option<String>,
     #[arg(
         long,
-        default_value_t = format!("{}/../../crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
         help = "Path to the Risc0 image id / verification key. This is used for proof verification."
     )]
-    pub risc0_vk_path: String,
+    pub risc0_vk_path: Option<String>,
     #[arg(
         long,
         default_value = "false",
@@ -320,16 +331,27 @@ pub struct DeployerOptions {
         long,
         default_value = "false",
         env = "ETHREX_USE_COMPILED_GENESIS",
+        action = ArgAction::Set,
         help_heading = "Deployer options",
         help = "Genesis data is extracted at compile time, used for development"
     )]
     pub use_compiled_genesis: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        default_value = "0x0000000000000000000000000000000000000000",
+        env = "ETHREX_NATIVE_TOKEN_L1_ADDRESS",
+        help_heading = "Deployer options",
+        help = "The L1 address of the L2 native token (e.g., USDC, USDT, DAI, etc. Use address(0) for ETH)"
+    )]
+    pub native_token_l1_address: Address,
 }
 
 impl Default for DeployerOptions {
     fn default() -> Self {
         Self {
-            rpc_url: "http://localhost:8545".to_string(),
+            rpc_url: Url::parse("http://localhost:8545")
+                .expect("Unreachable error. URL is hardcoded"),
             maximum_allowed_max_fee_per_gas: 10_000_000_000,
             maximum_allowed_max_fee_per_blob_gas: 10_000_000_000,
             max_number_of_retries: 10,
@@ -361,24 +383,14 @@ impl Default for DeployerOptions {
                 0xe2, 0x55, 0x83, 0x09, 0x9b, 0xa1, 0x05, 0xd9, 0xec, 0x0a, 0x67, 0xf5, 0xae, 0x86,
                 0xd9, 0x0e, 0x50, 0x03, 0x64, 0x25,
             ]),
-            risc0_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
-            sp1_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
-            sp1_deploy_verifier: false,
-            tdx_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
-            tdx_deploy_verifier: false,
-            aligned_aggregator_address: H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ]),
+            risc0: false,
+            risc0_verifier_address: None,
+            sp1: false,
+            sp1_verifier_address: None,
+            tdx: false,
+            tdx_verifier_address: None,
+            aligned: false,
+            aligned_aggregator_address: None,
             randomize_contract_deployment: false,
             validium: false,
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
@@ -394,18 +406,13 @@ impl Default for DeployerOptions {
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
             ]),
             on_chain_proposer_owner_pk: None,
-            sp1_vk_path: format!(
-                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            risc0_vk_path: format!(
-                "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
+            sp1_vk_path: None,
+            risc0_vk_path: None,
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
+            native_token_l1_address: H160::zero(),
         }
     }
 }
@@ -484,15 +491,21 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
     "/contracts/solc_out/SP1Verifier.bytecode"
 ));
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address)";
 
-#[derive(Clone, Copy)]
+// deposit(uint256 _amount, address _l2Recipient)
+const NATIVE_TOKEN_DEPOSIT_SIGNATURE: &str = "deposit(uint256,address)";
+
+// approve(address spender, uint256 amount)
+const APPROVE_SIGNATURE: &str = "approve(address,uint256)";
+
+#[derive(Clone, Copy, Default)]
 pub struct ContractAddresses {
     pub on_chain_proposer_address: Address,
     pub bridge_address: Address,
@@ -510,7 +523,7 @@ pub async fn deploy_l1_contracts(
     let signer: Signer = LocalSigner::new(opts.private_key).into();
 
     let eth_client = EthClient::new_with_config(
-        vec![&opts.rpc_url],
+        vec![opts.rpc_url.clone()],
         opts.max_number_of_retries,
         opts.backoff_factor,
         opts.min_retry_delay,
@@ -519,11 +532,21 @@ pub async fn deploy_l1_contracts(
         Some(opts.maximum_allowed_max_fee_per_blob_gas),
     )?;
 
+    info!("Deploying contracts");
+
     let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
+
+    info!("Initializing contracts");
 
     initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
 
     if opts.deposit_rich {
+        if opts.native_token_l1_address != Address::zero() {
+            info!(
+                "Begging deposits with {} ERC20 as the native tokens",
+                opts.native_token_l1_address
+            );
+        }
         let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
             .await
             .inspect_err(|err| {
@@ -531,7 +554,11 @@ pub async fn deploy_l1_contracts(
             });
     }
 
-    write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
+    write_contract_addresses_to_env(
+        contract_addresses,
+        opts.native_token_l1_address,
+        opts.env_file_path,
+    )?;
     info!("Deployer binary finished successfully");
     Ok(contract_addresses)
 }
@@ -616,40 +643,60 @@ async fn deploy_contracts(
         Default::default()
     };
 
-    let sp1_verifier_address = if opts.sp1_deploy_verifier {
-        info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
-        let (verifier_deployment_tx_hash, sp1_verifier_address) =
-            create2_deploy_from_bytecode(&[], SP1_VERIFIER_BYTECODE, deployer, &salt, eth_client)
-                .await?;
-
-        info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
-        sp1_verifier_address
-    } else {
-        opts.sp1_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "SP1Verifier address is not set and sp1_deploy_verifier is false".to_string(),
-            ))?
+    // if it's a required proof type, but no address has been specified, deploy it.
+    let sp1_verifier_address = match opts.sp1_verifier_address {
+        _ if opts.aligned => Address::zero(),
+        Some(addr) if opts.sp1 => addr,
+        None if opts.sp1 => {
+            info!("Deploying SP1Verifier");
+            let (verifier_deployment_tx_hash, sp1_verifier_address) = create2_deploy_from_bytecode(
+                &[],
+                SP1_VERIFIER_BYTECODE,
+                deployer,
+                &salt,
+                eth_client,
+            )
+            .await?;
+            info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
+            sp1_verifier_address
+        }
+        _ => Address::zero(),
     };
 
-    // TODO: Add Risc0Verifier deployment
-    let risc0_verifier_address =
-        opts.risc0_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "Risc0Verifier address is not set and risc0_deploy_verifier is false".to_string(),
-            ))?;
+    // we can't deploy the risc0 contract because of uncompatible licenses
+    let risc0_verifier_address = match opts.risc0_verifier_address {
+        _ if opts.aligned => Address::zero(),
+        Some(addr) if opts.risc0 => addr,
+        None if opts.risc0 => {
+            return Err(DeployerError::InternalError(
+                "Risc0Verifier address is not set and risc0 is a required prover".to_string(),
+            ));
+        }
+        _ => Address::zero(),
+    };
 
-    let tdx_verifier_address = if opts.tdx_deploy_verifier {
-        info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
-        let tdx_verifier_address =
-            deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
+    // if it's a required proof type, but no address has been specified, deploy it.
+    let tdx_verifier_address = match opts.tdx_verifier_address {
+        Some(addr) if opts.tdx => addr,
+        None if opts.tdx => {
+            info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
+            let tdx_verifier_address =
+                deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
 
-        info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
-        tdx_verifier_address
-    } else {
-        opts.tdx_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "TDXVerifier address is not set and tdx_deploy_verifier is false".to_string(),
-            ))?
+            info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
+            tdx_verifier_address
+        }
+        _ => Address::zero(),
+    };
+
+    // return error if no address was specified but verification with aligned is required.
+    let aligned_aggregator_address = match opts.aligned_aggregator_address {
+        Some(addr) if opts.aligned => addr,
+        None if opts.aligned => return Err(DeployerError::InternalError(
+            "Verification with Aligned Layer is required but no aggregator address was provided"
+                .to_string(),
+        )),
+        _ => Address::zero(),
     };
 
     trace!(
@@ -669,7 +716,7 @@ async fn deploy_contracts(
         risc0_verifier_address,
         tdx_verifier_address,
         sequencer_registry_address: sequencer_registry_deployment.proxy_address,
-        aligned_aggregator_address: opts.aligned_aggregator_address,
+        aligned_aggregator_address,
     })
 }
 
@@ -680,7 +727,7 @@ fn deploy_tdx_contracts(
     Command::new("make")
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
-        .env("RPC_URL", &opts.rpc_url)
+        .env("RPC_URL", opts.rpc_url.as_str())
         .env("ON_CHAIN_PROPOSER", format!("{on_chain_proposer:#x}"))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
@@ -705,24 +752,59 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-fn read_vk(path: &str) -> Bytes {
-    let Ok(str) = std::fs::read_to_string(path) else {
-        warn!(
-            ?path,
-            "Failed to read verification key file, will use 0x00..00, this is expected in dev mode"
-        );
-        return Bytes::from(vec![0u8; 32]);
+fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
+    let (required_type, vk_path) = match prover_type {
+        ProverType::SP1 => (opts.sp1, &opts.sp1_vk_path),
+        ProverType::RISC0 => (opts.risc0, &opts.risc0_vk_path),
+        _ => unimplemented!("{prover_type}"),
     };
 
-    let cleaned = str.trim().strip_prefix("0x").unwrap_or(&str);
+    info!("Reading vk in path {vk_path:?}");
+    if !required_type {
+        Ok(Bytes::new())
+    } else if let Some(vk_path) = vk_path {
+        read_vk(vk_path)
+    } else {
+        info!(?prover_type, "Using vk from local repo");
+        let vk_path = {
+            let path = match &prover_type {
+                ProverType::RISC0 => format!(
+                    "{}/../../crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
+                // the hash as a bn254 F_r element.
+                ProverType::SP1 if opts.aligned => format!(
+                    "{}/../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                ProverType::SP1 if !opts.aligned => format!(
+                    "{}/../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                // other types don't have a verification key
+                _other => {
+                    return Err(DeployerError::InternalError(format!(
+                        "missing {prover_type} vk"
+                    )));
+                }
+            };
+            std::fs::canonicalize(path)?
+        };
+        read_vk(
+            vk_path
+                .to_str()
+                .ok_or(DeployerError::FailedToGetStringFromPath)?,
+        )
+    }
+}
 
-    hex::decode(cleaned).map(Bytes::from).unwrap_or_else(|e| {
-        warn!(
-            ?path,
-            "Failed to decode hex string, will use 0x00..00, this is expected in dev mode: {}", e
-        );
-        Bytes::from(vec![0u8; 32])
-    })
+fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
+    let string = std::fs::read_to_string(path)?;
+    let trimmed = string.trim_start_matches("0x").trim();
+    let decoded = hex::decode(trimmed)
+        .map_err(|_| DeployerError::InternalError("failed to decode vk".to_string()))?;
+    Ok(Bytes::from(decoded))
 }
 
 async fn initialize_contracts(
@@ -736,8 +818,10 @@ async fn initialize_contracts(
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
     let genesis: Genesis = if opts.use_compiled_genesis {
+        info!("Using compiled genesis for OnChainProposer initialization");
         serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS).map_err(|_| DeployerError::Genesis)?
     } else {
+        info!("Using genesis file from path for OnChainProposer initialization");
         read_genesis_file(
             opts.genesis_l2_path
                 .to_str()
@@ -745,8 +829,13 @@ async fn initialize_contracts(
         )
     };
 
-    let sp1_vk = read_vk(&opts.sp1_vk_path);
-    let risc0_vk = read_vk(&opts.risc0_vk_path);
+    info!("Reading verification keys for OnChainProposer initialization");
+
+    let sp1_vk = get_vk(ProverType::SP1, opts)?;
+    info!("SP1 VK read");
+    let risc0_vk = get_vk(ProverType::RISC0, opts)?;
+
+    info!("Risc0 vk read");
 
     let deployer_address =
         get_address_from_secret_key(&opts.private_key).map_err(DeployerError::InternalError)?;
@@ -758,6 +847,10 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
+            Value::Bool(opts.risc0),
+            Value::Bool(opts.sp1),
+            Value::Bool(opts.tdx),
+            Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
@@ -812,6 +905,10 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
+            Value::Bool(opts.risc0),
+            Value::Bool(opts.sp1),
+            Value::Bool(opts.tdx),
+            Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
@@ -909,6 +1006,7 @@ async fn initialize_contracts(
             Value::Address(opts.bridge_owner),
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
+            Value::Address(opts.native_token_l1_address),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
@@ -977,13 +1075,84 @@ async fn make_deposits(
         let get_balance = eth_client
             .get_balance(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
+
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
 
+        let native_token_is_eth = opts.native_token_l1_address == Address::zero();
+        let nonce = eth_client
+            .get_nonce(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
+            .await?;
+
+        // approve the transfer in the L1 token contract if not ETH
+        if !native_token_is_eth {
+            let mint_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                opts.native_token_l1_address,
+                signer.address(),
+                encode_calldata("freeMint()", &[])?.into(),
+                Default::default(),
+            )
+            .await?;
+            if let Err(e) = send_generic_transaction(eth_client, mint_tx, &signer).await {
+                error!(address =? signer.address(), "Failed to mint {e}");
+                continue;
+            }
+
+            let calldata = encode_calldata(
+                APPROVE_SIGNATURE,
+                &[Value::Address(bridge), Value::Uint(value_to_deposit * 2)],
+            )?;
+            let approve_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                opts.native_token_l1_address,
+                signer.address(),
+                calldata.into(),
+                Overrides {
+                    from: Some(signer.address()),
+                    // We set the nonce and gas limit manually to avoid the estimation step and having nonce issues.
+                    // We do nonce + 1 because the mint transaction is sent just before.
+                    nonce: Some(nonce + 1),
+                    gas_limit: Some(1_000_000u64),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            if let Err(e) = send_generic_transaction(eth_client, approve_tx, &signer).await {
+                error!(address =? signer.address(), "Failed to approve {e}");
+                continue;
+            }
+        }
+
+        let calldata_values = vec![
+            // uint256 _amount: amount of ERC20 to deposit
+            Value::Uint(if native_token_is_eth {
+                U256::zero()
+            } else {
+                value_to_deposit
+            }),
+            // address l2Recipient: the address on L2 to receive the funds
+            Value::Address(signer.address()),
+        ];
+
+        let native_token_deposit_calldata =
+            encode_calldata(NATIVE_TOKEN_DEPOSIT_SIGNATURE, &calldata_values)?;
+
         let overrides = Overrides {
-            value: Some(value_to_deposit),
+            value: native_token_is_eth.then_some(value_to_deposit).or(None),
             from: Some(signer.address()),
+            // When doing the deposits for ERC20 as the native token, we previously did an approve and mint.
+            // So to make the deposits fast and not wait for the node to have the nonce updated, we set it manually.
+            // Also we set the gas limit manually to avoid the estimation step and having nonce issues.
+            nonce: if !native_token_is_eth {
+                Some(nonce + 2)
+            } else {
+                None
+            },
+            gas_limit: Some(1_000_000u64),
             ..Overrides::default()
         };
 
@@ -992,7 +1161,7 @@ async fn make_deposits(
             TxType::EIP1559,
             bridge,
             signer.address(),
-            Bytes::new(),
+            native_token_deposit_calldata.into(),
             overrides,
         )
         .await?;
@@ -1018,6 +1187,7 @@ async fn make_deposits(
 
 fn write_contract_addresses_to_env(
     contract_addresses: ContractAddresses,
+    native_token_l1_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
@@ -1050,13 +1220,13 @@ fn write_contract_addresses_to_env(
     )?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER={:#x}",
+        "ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS={:#x}",
         contract_addresses.sp1_verifier_address
     )?;
 
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={:#x}",
+        "ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS={:#x}",
         contract_addresses.risc0_verifier_address
     )?;
     writeln!(
@@ -1066,7 +1236,7 @@ fn write_contract_addresses_to_env(
     )?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER={:#x}",
+        "ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS={:#x}",
         contract_addresses.tdx_verifier_address
     )?;
     // TDX aux contracts, qpl-tool depends on exact env var naming
@@ -1094,6 +1264,11 @@ fn write_contract_addresses_to_env(
         writer,
         "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={:#x}",
         contract_addresses.sequencer_registry_address
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_NATIVE_TOKEN_L1_ADDRESS={:#x}",
+        native_token_l1_address
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())

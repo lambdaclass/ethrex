@@ -1,16 +1,16 @@
 use crate::rlpx::{
-    error::RLPxError,
+    error::PeerConnectionError,
     message::{Message, RLPxMessage},
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, Signature,
     types::{Block, batch::Batch},
 };
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
-use keccak_hash::keccak;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::{ops::Deref as _, sync::Arc};
 
@@ -60,13 +60,16 @@ pub struct BatchSealed {
 }
 
 impl BatchSealed {
-    pub fn from_batch_and_key(batch: Batch, secret_key: &SecretKey) -> Result<Self, RLPxError> {
+    pub fn from_batch_and_key(
+        batch: Batch,
+        secret_key: &SecretKey,
+    ) -> Result<Self, PeerConnectionError> {
         let hash = batch_hash(&batch);
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(&SecpMessage::from_digest(hash.into()), secret_key)
             .serialize_compact();
-        let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
-            RLPxError::InternalError(format!(
+        let recovery_id: u8 = Into::<i32>::into(recovery_id).try_into().map_err(|e| {
+            PeerConnectionError::InternalError(format!(
                 "Failed to convert recovery id to u8: {e}. This is a bug."
             ))
         })?;
@@ -149,6 +152,7 @@ impl RLPxMessage for BatchSealed {
                 blobs,
                 commitments,
                 proofs,
+                version: 0,
             },
             commit_tx,
             verify_tx,

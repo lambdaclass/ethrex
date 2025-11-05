@@ -1,7 +1,5 @@
 use ethereum_types::H256;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
-#[cfg(feature = "libmdbx")]
-use libmdbx::orm::{Decodable, Encodable};
 use sha3::{Digest, Keccak256};
 
 /// Struct representing a trie node hash
@@ -26,10 +24,10 @@ impl AsRef<[u8]> for NodeHash {
 
 impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
-    pub fn from_encoded_raw(encoded: &[u8]) -> NodeHash {
+    pub fn from_encoded(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
             let hash = Keccak256::new_with_prefix(encoded).finalize();
-            NodeHash::Hashed(H256::from_slice(hash.as_slice()))
+            NodeHash::Hashed(H256::from_slice(&hash))
         } else {
             NodeHash::from_slice(encoded)
         }
@@ -37,7 +35,7 @@ impl NodeHash {
 
     /// Converts a slice of an already hashed data (in case it's not inlineable) to a NodeHash.
     /// Panics if the slice is over 32 bytes
-    /// If you need to hash it in case its len >= 32 see `from_encoded_raw`
+    /// If you need to hash it in case its len >= 32 see `from_encoded`
     pub(crate) fn from_slice(slice: &[u8]) -> NodeHash {
         match slice.len() {
             0..32 => {
@@ -53,12 +51,7 @@ impl NodeHash {
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
     pub fn finalize(self) -> H256 {
         match self {
-            NodeHash::Inline(_) => H256::from_slice(
-                Keccak256::new()
-                    .chain_update(self.as_ref())
-                    .finalize()
-                    .as_slice(),
-            ),
+            NodeHash::Inline(_) => H256::from_slice(&Keccak256::digest(self.as_ref())),
             NodeHash::Hashed(x) => x,
         }
     }
@@ -113,22 +106,6 @@ impl From<NodeHash> for Vec<u8> {
 impl From<&NodeHash> for Vec<u8> {
     fn from(val: &NodeHash) -> Self {
         val.as_ref().to_vec()
-    }
-}
-
-#[cfg(feature = "libmdbx")]
-impl Encodable for NodeHash {
-    type Encoded = Vec<u8>;
-
-    fn encode(self) -> Self::Encoded {
-        self.into()
-    }
-}
-
-#[cfg(feature = "libmdbx")]
-impl Decodable for NodeHash {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(NodeHash::from_slice(b))
     }
 }
 
