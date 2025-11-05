@@ -43,7 +43,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
