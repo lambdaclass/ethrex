@@ -45,7 +45,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
-const MIN_FULL_BLOCKS: u64 = 1_000_000;
+const MIN_FULL_BLOCKS: u64 = 10_000;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 /// Amount of seconds between blocks
