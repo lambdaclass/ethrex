@@ -285,14 +285,12 @@ impl Syncer {
             current_head = last_block_hash;
             current_head_number = last_block_number;
 
-            // If the sync head is less than 64 blocks away from our current head switch to full-sync
+            // If the sync head is not 0 we search to fullsync
             if sync_head_found {
                 let latest_block_number = store.get_latest_block_number().await?;
-                if last_block_number.saturating_sub(latest_block_number) < MIN_FULL_BLOCKS as u64 {
+                if latest_block_number != 0 {
                     // Too few blocks for a snap sync, switching to full sync
-                    debug!(
-                        "Sync head is less than {MIN_FULL_BLOCKS} blocks away, switching to FullSync"
-                    );
+                    debug!("Sync head is found switching to FullSync");
                     self.snap_enabled.store(false, Ordering::Relaxed);
                     return self.sync_cycle_full(sync_head, store.clone()).await;
                 }
