@@ -1,10 +1,14 @@
-// Modified: all instances of curly brackets need to be escaped with
-// a second bracket to avoid Rust's `global_asm` trying to interpret
-// them as a template substitution.
-// Ran `cpp` to substitute constants.
-// Commented out ARM assembly annotations (.size, .type) used only
-// for debugging purposes and not understood by Rust.
-// Removed dots from local labels for correct detection in the frontend.
+// Modified:
+//   - All instances of curly brackets need to be escaped with a second bracket to avoid Rust's
+//     `global_asm` trying to interpret them as a template substitution.
+//   - Ran `cpp` to substitute constants.
+//   - Commented out ARM assembly annotations (.size, .type) used only for debugging purposes and not understood by
+//     Rust.
+//   - Removed dots from all local labels for correct detection in the frontend.
+//     Reason: `.L` local labels are ELF-specific.
+//   - Replaced instance of `adr x??,label` by `adrp x??,label@PAGE` followed by
+//     `add x??,x??,label@PAGEOFF`.
+//
 // TODO: this is probably a matter of selecting the right parameter
 // for the translator.
 
@@ -25,7 +29,7 @@ iotas:
 .quad	0x0000000000000088
 .quad	0x0000000080008009
 .quad	0x000000008000000a
-.Liotas12:
+Liotas12:
 .quad	0x000000008000808b
 .quad	0x800000000000008b
 .quad	0x8000000000008089
@@ -44,9 +48,9 @@ iotas:
 KeccakF1600_int:
 .inst	0xd503233f			// paciasp
 	stp	x28,x30,[sp,#16]		// stack is pre-allocated
-	b	.Loop
+	b	Loop
 .align	4
-.Loop:
+Loop:
 	////////////////////////////////////////// Theta
 	eor	x26,x0,x5
 	stp	x4,x9,[sp,#0]	// offload pair...
@@ -203,7 +207,7 @@ KeccakF1600_int:
 	eor	x24,x24,x30
 	eor	x22,x22,x26
 
-	bne	.Loop
+	bne	Loop
 
 	ldr	x30,[sp,#16+8]
 .inst	0xd50323bf			// autiasp
@@ -239,7 +243,8 @@ KeccakF1600:
 	ldp	x22,x23,[x26,#16*11]
 	ldr	x24,[x26,#16*12]
 
-	adr	x28,iotas
+	adrp	x28,iotas@PAGE
+	add	x28,x28,iotas@PAGEOFF
 	bl	KeccakF1600_int
 
 	ldr	x26,[sp,#16+2*8]
@@ -268,10 +273,10 @@ KeccakF1600:
 	ret
 // .size	KeccakF1600,.-KeccakF1600
 
-.globl	SHA3_absorb
+.globl	_SHA3_absorb
 // .type	SHA3_absorb,%function
 .align	5
-SHA3_absorb:
+_SHA3_absorb:
 .inst	0xd503233f			// paciasp
 	stp	x29,x30,[sp,#-16*8]!
 	add	x29,sp,#0
@@ -302,10 +307,10 @@ SHA3_absorb:
 	ldp	x20,x21,[x26,#16*10]
 	ldp	x22,x23,[x26,#16*11]
 	ldr	x24,[x26,#16*12]
-	b	.Loop_absorb
+	b	Loop_absorb
 
 .align	4
-.Loop_absorb:
+Loop_absorb:
 	subs	x26,x28,x30		// len - bsz
 	blo	Labsorbed
 
@@ -430,12 +435,13 @@ Lprocess_block:
 	add	x27,x27,x30
 	str	x27,[sp,#16+3*8]	// save inp
 
-	adr	x28,iotas
+	adrp	x28,iotas@PAGE
+	add	x28,x28,iotas@PAGEOFF
 	bl	KeccakF1600_int
 
 	ldr	x27,[sp,#16+3*8]	// restore arguments
 	ldp	x28,x30,[sp,#16+4*8]
-	b	.Loop_absorb
+	b	Loop_absorb
 
 .align	4
 Labsorbed:
@@ -465,10 +471,10 @@ Labsorbed:
 .inst	0xd50323bf			// autiasp
 	ret
 // .size	SHA3_absorb,.-SHA3_absorb
-.globl	SHA3_squeeze
+.globl	_SHA3_squeeze
 // .type	SHA3_squeeze,%function
 .align	5
-SHA3_squeeze:
+_SHA3_squeeze:
 .inst	0xd503233f			// paciasp
 	stp	x29,x30,[sp,#-6*8]!
 	add	x29,sp,#0
@@ -480,7 +486,7 @@ SHA3_squeeze:
 	mov	x21,x2
 	mov	x22,x3
 
-.Loop_squeeze:
+Loop_squeeze:
 	ldr	x4,[x0],#8
 	cmp	x21,#8
 	blo	Lsqueeze_tail
@@ -492,13 +498,13 @@ SHA3_squeeze:
 	beq	Lsqueeze_done
 
 	subs	x3,x3,#8
-	bhi	.Loop_squeeze
+	bhi	Loop_squeeze
 
 	mov	x0,x19
 	bl	KeccakF1600
 	mov	x0,x19
 	mov	x3,x22
-	b	.Loop_squeeze
+	b	Loop_squeeze
 
 .align	4
 Lsqueeze_tail:
@@ -538,7 +544,7 @@ Lsqueeze_done:
 // .type	KeccakF1600_ce,%function
 .align	5
 KeccakF1600_ce:
-.Loop_ce:
+Loop_ce:
 	////////////////////////////////////////////////// Theta
 .inst	0xce0f2a99	//eor3 v25.16b,v20.16b,v15.16b,v10.16b
 .inst	0xce102eba	//eor3 v26.16b,v21.16b,v16.16b,v11.16b
@@ -628,7 +634,7 @@ KeccakF1600_ce:
 	eor	v0.16b,v0.16b,v26.16b
 
 	tst	x10,#255
-	bne	.Loop_ce
+	bne	Loop_ce
 
 	ret
 // .size	KeccakF1600_ce,.-KeccakF1600_ce
@@ -656,7 +662,8 @@ KeccakF1600_cext:
 	ldp	d20,d21,[x0,#8*20]
 	ldp	d22,d23,[x0,#8*22]
 	ldr	d24,[x0,#8*24]
-	adr	x10,iotas
+	adrp	x10,iotas@PAGE
+	add	x10,x10,iotas@PAGEOFF
 	bl	KeccakF1600_ce
 	ldr	x30,[sp,#8]
 	stp	d0,d1,[x0,#8*0]
@@ -705,10 +712,10 @@ SHA3_absorb_cext:
 	ldp	d20,d21,[x0,#8*20]
 	ldp	d22,d23,[x0,#8*22]
 	ldr	d24,[x0,#8*24]
-	b	.Loop_absorb_ce
+	b	Loop_absorb_ce
 
 .align	4
-.Loop_absorb_ce:
+Loop_absorb_ce:
 	subs	x2,x2,x3		// len - bsz
 	blo	Labsorbed_ce
 
@@ -752,10 +759,11 @@ SHA3_absorb_cext:
 	eor	v20.16b,v20.16b,v30.16b
 
 Lprocess_block_ce:
-	adr	x10,iotas
+	adrp	x10,iotas@PAGE
+	add	x10,x10,iotas@PAGEOFF
 	bl	KeccakF1600_ce
 
-	b	.Loop_absorb_ce
+	b	Loop_absorb_ce
 
 .align	4
 Labsorbed_ce:
@@ -792,7 +800,7 @@ SHA3_squeeze_cext:
 	mov	x9,x0
 	mov	x10,x3
 
-.Loop_squeeze_ce:
+Loop_squeeze_ce:
 	ldr	x4,[x9],#8
 	cmp	x2,#8
 	blo	Lsqueeze_tail_ce
@@ -804,13 +812,13 @@ SHA3_squeeze_cext:
 
 	sub	x2,x2,#8
 	subs	x10,x10,#8
-	bhi	.Loop_squeeze_ce
+	bhi	Loop_squeeze_ce
 
 	bl	KeccakF1600_cext
 	ldr	x30,[sp,#8]
 	mov	x9,x0
 	mov	x10,x3
-	b	.Loop_squeeze_ce
+	b	Loop_squeeze_ce
 
 .align	4
 Lsqueeze_tail_ce:
