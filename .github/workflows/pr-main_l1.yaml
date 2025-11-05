@@ -187,7 +187,7 @@ jobs:
           #   artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: snap/ByteCodes
+            limit: snap
             artifact_prefix: devp2p
           # - name: "Engine Auth and EC tests"
           #   simulation: ethereum/engine
