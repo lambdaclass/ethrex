@@ -121,13 +121,15 @@ pub const CF_MISC_VALUES: &str = "misc_values";
 
 pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
-pub type TriedUpdateWorkerTx = std::sync::mpsc::SyncSender<(
-    std::sync::mpsc::SyncSender<Result<(), StoreError>>,
-    H256,
-    H256,
-    Vec<(Nibbles, Vec<u8>)>,
-    Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
-)>;
+pub struct TriedUpdateWorkerTxMsg {
+    notify_tx: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+    parent_state_root: H256,
+    last_state_root: H256,
+    account_updates: Vec<(Nibbles, Vec<u8>)>,
+    storage_updates: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+    receipts: Vec<(H256, Vec<Receipt>)>,
+    blocks: Vec<Block>,
+}
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -141,7 +143,7 @@ pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
-    trie_update_worker_tx: TriedUpdateWorkerTx,
+    trie_update_worker_tx: std::sync::mpsc::SyncSender<TriedUpdateWorkerTxMsg>,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
 }
 
@@ -406,21 +408,25 @@ impl Store {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
-                    Ok((
-                        notify,
+                    Ok(TriedUpdateWorkerTxMsg {
+                        notify_tx,
                         parent_state_root,
-                        child_state_root,
+                        last_state_root,
                         account_updates,
                         storage_updates,
-                    )) => {
+                        receipts,
+                        blocks,
+                    }) => {
                         // FIXME: what should we do on error?
                         let _ = store_clone
                             .apply_trie_updates(
-                                notify,
+                                notify_tx,
                                 parent_state_root,
-                                child_state_root,
+                                last_state_root,
                                 account_updates,
                                 storage_updates,
+                                receipts,
+                                blocks,
                             )
                             .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
                     }
@@ -703,6 +709,8 @@ impl Store {
         child_state_root: H256,
         account_updates: Vec<(Nibbles, Vec<u8>)>,
         storage_updates: StorageUpdates,
+        receipts: Vec<(H256, Vec<Receipt>)>,
+        blocks: Vec<Block>,
     ) -> Result<(), StoreError> {
         let db = &*self.db;
         let fkv_ctl = &self.flatkeyvalue_control_tx;
@@ -742,8 +750,22 @@ impl Store {
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
         let mut trie_mut = (*trie).clone();
         let mut batch = WriteBatch::default();
-        let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
-            open_cfs(db, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
+        let [
+            cf_trie_nodes,
+            cf_flatkeyvalue,
+            cf_misc,
+            cf_receipts,
+            cf_tx_locations,
+        ] = open_cfs(
+            db,
+            [
+                CF_TRIE_NODES,
+                CF_FLATKEYVALUE,
+                CF_MISC_VALUES,
+                CF_RECEIPTS,
+                CF_TRANSACTION_LOCATIONS,
+            ],
+        )?;
 
         let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
         // Commit removes the bottom layer and returns it, this is the mutation step.
@@ -765,6 +787,28 @@ impl Store {
                 batch.put_cf(cf, key, value);
             }
         }
+
+        for (block_hash, receipts) in receipts {
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                let key = (block_hash, index as u64).encode_to_vec();
+                let value = receipt.encode_to_vec();
+                batch.put_cf(&cf_receipts, key, value);
+            }
+        }
+        for block in blocks {
+            let block_hash = block.hash();
+            let block_number = block.header.number;
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let tx_hash = transaction.hash();
+                // Key: tx_hash + block_hash
+                let mut composite_key = Vec::with_capacity(64);
+                composite_key.extend_from_slice(tx_hash.as_bytes());
+                composite_key.extend_from_slice(block_hash.as_bytes());
+                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                batch.put_cf(&cf_tx_locations, composite_key, location_value);
+            }
+        }
+
         let result = db.write(batch);
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
@@ -838,13 +882,15 @@ impl StoreEngine for Store {
         let (notify_tx, notify_rx) = sync_channel(1);
         let wait_for_new_layer = notify_rx;
         trie_upd_worker_tx
-            .send((
+            .send(TriedUpdateWorkerTxMsg {
                 notify_tx,
                 parent_state_root,
                 last_state_root,
                 account_updates,
                 storage_updates,
-            ))
+                receipts: update_batch.receipts,
+                blocks: update_batch.blocks.clone(),
+            })
             .map_err(|e| {
                 StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
             })?;
@@ -863,24 +909,6 @@ impl StoreEngine for Store {
 
             let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
             batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
-
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                batch.put_cf(&cf_tx_locations, composite_key, location_value);
-            }
-        }
-
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
-                batch.put_cf(&cf_receipts, key, value);
-            }
         }
 
         for (code_hash, code) in update_batch.code_updates {
