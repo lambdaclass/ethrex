@@ -9,10 +9,6 @@ struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
-    /// Per layer bloom filter, None if the size was exceeded (exceedingly rare).
-    /// Having a bloom per layer avoids the cost of rehashing each key every time we rebuild the global bloom,
-    /// since merge simply uses the u64 hashed keys instead of rehashing.
-    bloom: Option<qfilter::Filter>,
 }
 
 #[derive(Clone, Debug)]
@@ -113,27 +109,17 @@ impl TrieLayerCache {
             return;
         }
 
-        let mut bloom = Self::create_filter().ok();
-
-        // create the layer bloom, this is the only place where hashing of keys happens.
-        if let Some(filter) = &mut bloom {
+        if let Some(filter) = self.bloom.as_mut() {
             for (p, _) in &key_values {
-                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
+                // assuming p is unique among key_values
+                if let Err(qfilter::Error::CapacityExceeded) =
+                    filter.insert_counting(129, p.as_ref())
+                {
                     tracing::warn!("TrieLayerCache: put_batch per layer capacity exceeded");
-                    bloom = None;
+                    self.bloom = None;
                     break;
                 }
             }
-        }
-
-        // add this new bloom to the global one via merge
-        if let Some(filter) = &mut self.bloom
-            && let Some(new_filter) = &bloom
-            && let Err(qfilter::Error::CapacityExceeded) = filter.merge(false, new_filter)
-        {
-            tracing::warn!("TrieLayerCache: put_batch merge capacity exceeded");
-            self.bloom = None;
-            bloom = None;
         }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
@@ -146,34 +132,8 @@ impl TrieLayerCache {
             nodes: Arc::new(nodes),
             parent,
             id: self.last_id,
-            bloom,
         };
         self.layers.insert(state_root, Arc::new(entry));
-    }
-
-    /// Rebuilds the global bloom filter accruing all current existing layers.
-    pub fn rebuild_bloom(&mut self) {
-        let mut blooms = self.layers.values().map(|x| x.bloom.as_ref());
-
-        let Some(mut ret) = blooms.next().flatten().cloned() else {
-            tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-            self.bloom = None;
-            return;
-        };
-
-        for bloom in blooms {
-            let Some(bloom) = bloom else {
-                tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-                self.bloom = None;
-                return;
-            };
-            if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
-                tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                self.bloom = None;
-                return;
-            }
-        }
-        self.bloom = Some(ret);
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -184,8 +144,23 @@ impl TrieLayerCache {
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
-        self.layers.retain(|_, item| item.id > layer.id);
-        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
+        self.layers.retain(|_, item| {
+            if item.id > layer.id {
+                true
+            } else {
+                if let Some(bloom) = self.bloom.as_mut() {
+                    for node in item.nodes.keys() {
+                        if !bloom.remove(node) {
+                            tracing::warn!("TrieLayerCache: bloom.remove returned false, meaning this node wasn't inserted into the bloom, removing bloom entirely to avoid false negatives");
+                            self.bloom = None;
+                            break;
+                        }
+                    }
+                }
+
+                false
+            }
+        });
         Some(
             parent_nodes
                 .unwrap_or_default()
