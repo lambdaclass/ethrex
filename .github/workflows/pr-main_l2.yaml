@@ -52,6 +52,8 @@ jobs:
     # "Lint L2" is a required check, don't change the name
     name: Lint L2
     runs-on: ubuntu-latest
+    env:
+      SKIP_COMPILE_CONTRACTS: true
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
@@ -85,7 +87,6 @@ jobs:
 
       - name: Run cargo clippy
         run: |
-          export SKIP_COMPILE_CONTRACTS=true
           cargo clippy --workspace --features l2,l2-sql -- -D warnings
           make lint
 
@@ -397,6 +398,7 @@ jobs:
 
       - name: Build prover
         run: |
+          export SKIP_COMPILE_CONTRACTS=true
           sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
           sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
           cd crates/l2/tee/quote-gen

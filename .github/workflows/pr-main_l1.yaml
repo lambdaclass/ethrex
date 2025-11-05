@@ -43,6 +43,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     needs: detect-changes
+    env:
+      SKIP_COMPILE_CONTRACTS: true
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
@@ -86,6 +88,8 @@ jobs:
     name: Test
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    env:
+      SKIP_COMPILE_CONTRACTS: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
