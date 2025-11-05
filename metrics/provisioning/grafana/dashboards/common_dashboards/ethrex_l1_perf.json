@@ -37,9 +37,6 @@
               "type": "auto"
             },
             "filterable": true,
-            "footer": {
-              "reducers": []
-            },
             "inspect": false
           },
           "mappings": [],
@@ -135,9 +132,6 @@
               "type": "auto"
             },
             "filterable": true,
-            "footer": {
-              "reducers": []
-            },
             "inspect": false
           },
           "mappings": [],
@@ -236,9 +230,6 @@
               "type": "auto"
             },
             "filterable": true,
-            "footer": {
-              "reducers": []
-            },
             "inspect": false
           },
           "mappings": [],
@@ -375,7 +366,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -494,7 +484,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -630,7 +619,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1268,7 +1256,6 @@
         }
       },
       "pluginVersion": "12.2.0",
-      "repeatDirection": "h",
       "targets": [
         {
           "disableTextWrap": false,
@@ -1371,7 +1358,6 @@
         }
       },
       "pluginVersion": "12.2.0",
-      "repeatDirection": "h",
       "targets": [
         {
           "disableTextWrap": false,
@@ -1385,7 +1371,7 @@
           "useBackend": false
         }
       ],
-      "title": "Block Execution and Merkleization %",
+      "title": "Block Execution and Merkleization % - $instance",
       "type": "timeseries"
     },
     {
@@ -1550,7 +1536,7 @@
           "refId": "all_same_block"
         }
       ],
-      "title": "Block Execution Deaggregated by Block",
+      "title": "Block Execution Deaggregated by Block - $instance",
       "transformations": [
         {
           "id": "joinByField",
@@ -1674,7 +1660,6 @@
         }
       },
       "pluginVersion": "12.2.0",
-      "repeatDirection": "h",
       "targets": [
         {
           "disableTextWrap": false,
@@ -1688,7 +1673,7 @@
           "useBackend": false
         }
       ],
-      "title": "Execution vs Merkleization Diff %",
+      "title": "Execution vs Merkleization Diff % - $instance",
       "type": "timeseries"
     },
     {
@@ -1945,7 +1930,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -2049,7 +2033,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -2155,7 +2138,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -2258,7 +2240,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -2386,7 +2367,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": true,
             "stacking": {
               "group": "A",
@@ -2486,7 +2466,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": true,
             "stacking": {
               "group": "A",
@@ -2678,7 +2657,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 115
+            "y": 129
           },
           "id": 56,
           "options": {
@@ -2777,7 +2756,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 115
+            "y": 129
           },
           "id": 57,
           "options": {
@@ -2877,7 +2856,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 115
+            "y": 129
           },
           "id": 58,
           "options": {
@@ -2999,5 +2978,5 @@
   "timezone": "utc",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 31
+  "version": 32
 }
