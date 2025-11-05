@@ -2,9 +2,9 @@
 
 ## Perf
 
-### 2025-11-04
+### 2025-11-05
 
--Avoid unnecesary work on bloom by keeping a per layer bloom [#5176](https://github.com/lambdaclass/ethrex/pull/5176)
+- Make bloom qfilter counting to avoid rebuilding entire filter [#5194](https://github.com/lambdaclass/ethrex/pull/5194)
 
 ### 2025-11-03
 
