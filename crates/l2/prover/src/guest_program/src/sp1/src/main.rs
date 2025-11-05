@@ -8,7 +8,7 @@ sp1_zkvm::entrypoint!(main);
 pub fn main() {
     println!("cycle-tracker-report-start: read_input");
     let mut input_bytes = sp1_zkvm::io::read_vec();
-    let mut input_archived = rkyv::access_mut::<ArchivedProgramInput, Error>(&mut input_bytes);
+    let mut input_archived = rkyv::access_mut::<ArchivedProgramInput, Error>(&mut input_bytes).unwrap();
     rkyv::munge::munge!(let ArchivedProgramInput { mut input, .. } = input_archived);
 
     println!("cycle-tracker-report-end: read_input");
