@@ -839,6 +839,37 @@ impl Blockchain {
         result
     }
 
+    pub fn add_blocks_pipeline(&self, blocks: Vec<Block>) -> Result<(), ChainError> {
+        let mut receipts = vec![];
+        let mut account_updates = vec![];
+        let mut storage_updates = vec![];
+        let mut code_updates = vec![];
+        for block in blocks.iter() {
+            let (res, acc_update, _, _) = self.execute_block_pipeline(block)?;
+            // Check state root matches the one in block header
+            validate_state_root(&block.header, acc_update.state_trie_hash)?;
+            receipts.push(res.receipts);
+            account_updates.extend(acc_update.state_updates);
+            storage_updates.extend(acc_update.storage_updates);
+            code_updates.extend(acc_update.code_updates);
+        }
+
+        let update_batch = UpdateBatch {
+            account_updates,
+            storage_updates,
+            receipts: blocks
+                .iter()
+                .map(|b| b.hash())
+                .zip(receipts.into_iter())
+                .collect(),
+            blocks,
+            code_updates,
+        };
+        self.storage.store_block_updates(update_batch)?;
+
+        Ok(())
+    }
+
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
         let (res, account_updates_list, merkle_queue_length, instants) =
             self.execute_block_pipeline(&block)?;
