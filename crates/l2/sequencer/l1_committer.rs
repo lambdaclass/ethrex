@@ -253,6 +253,21 @@ impl L1Committer {
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
         info!("Running committer main loop");
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
+        dbg!(&self.cancellation_token);
         // Get the batch to commit
         let last_committed_batch_number =
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
@@ -1016,7 +1031,8 @@ impl L1Committer {
         if let Some(token) = self.cancellation_token.take() {
             token.cancel();
             info!("L1 committer stopped");
-            CallResponse::Reply(OutMessage::Stopped)
+            CallResponse::Stop(OutMessage::Stopped)
+            // CallResponse::Reply(OutMessage::Stopped)
         } else {
             warn!("L1 committer received stop command but it is already stopped");
             CallResponse::Reply(OutMessage::Error("Already stopped".to_string()))

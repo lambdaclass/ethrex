@@ -131,7 +131,7 @@ impl BlockProducer {
             blockchain,
             sequencer_state,
         )
-        .start_blocking();
+        .start();
         block_producer
             .cast(InMessage::Produce)
             .await

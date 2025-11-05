@@ -12,6 +12,7 @@ use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
+use ethrex_l2::sequencer::l1_committer;
 use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
@@ -149,18 +150,20 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
-    raise_fd_limit()?;
-
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
+
+    let network = get_network(&opts.node_opts);
+
+    let genesis = network.get_genesis()?;
+
+    raise_fd_limit()?;
+
     let rollup_store_dir = datadir.join("rollup_store");
 
     // Checkpoints are stored in the main datadir
     let checkpoints_dir = datadir.clone();
 
-    let network = get_network(&opts.node_opts);
-
-    let genesis = network.get_genesis()?;
     let store = init_store(&datadir, genesis.clone()).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
@@ -202,7 +205,6 @@ pub async fn init_l2(
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
-    let mut join_set = JoinSet::new();
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
@@ -230,7 +232,7 @@ pub async fn init_l2(
     let l2_sequencer_cfg = SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
         error!("{err}");
     })?;
-    let cancellation_token = CancellationToken::new();
+    // let cancellation_token = CancellationToken::new();
 
     // TODO: This should be handled differently, the current problem
     // with using opts.node_opts.p2p_enabled is that with the removal
@@ -269,12 +271,12 @@ pub async fn init_l2(
         info!("P2P is disabled");
     }
 
-    let l2_sequencer = ethrex_l2::start_l2(
+    let committer_handler = ethrex_l2::start_l2(
         store,
         rollup_store,
         blockchain,
         l2_sequencer_cfg,
-        cancellation_token.clone(),
+        cancel_token.clone(),
         #[cfg(feature = "metrics")]
         Url::parse(&format!(
             "http://{}:{}",
@@ -284,15 +286,81 @@ pub async fn init_l2(
         genesis,
         checkpoints_dir,
     )
-    .into_future();
-
-    join_set.spawn(l2_sequencer);
+    .await?;
+    dbg!(committer_handler.is_some());
+    dbg!(committer_handler.is_some());
+    dbg!(committer_handler.is_some());
+    dbg!(committer_handler.is_some());
+    dbg!(committer_handler.is_some());
+    dbg!(committer_handler.is_some());
+    dbg!(committer_handler.is_some());
+    dbg!(committer_handler.is_some());
+    dbg!(committer_handler.is_some());
+    dbg!(committer_handler.is_some());
+    if let Some(mut handler) = committer_handler.clone() {
+        let _ = handler.call(l1_committer::CallMessage::Stop).await;
+    }
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            join_set.abort_all();
+            if let Some(handler) = committer_handler {
+                let ct = handler.cancellation_token();
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+            }
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            cancel_token.cancel();
         }
-        _ = cancellation_token.cancelled() => {
+        _ = cancel_token.cancelled() => {
+            if let Some(handler) = committer_handler {
+                let ct = handler.cancellation_token();
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+                dbg!(&ct);
+            }
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
+            dbg!("kaefkabsdfkjnasdkjf");
         }
     }
     info!("Server shut down started...");

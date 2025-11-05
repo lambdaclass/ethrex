@@ -21,6 +21,7 @@ use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 #[cfg(feature = "metrics")]
 use reqwest::Url;
+use spawned_concurrency::tasks::GenServerHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -50,7 +51,7 @@ pub async fn start_l2(
     #[cfg(feature = "metrics")] l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
-) -> Result<(), errors::SequencerError> {
+) -> Result<Option<GenServerHandle<L1Committer>>, errors::SequencerError> {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
     } else {
@@ -77,7 +78,7 @@ pub async fn start_l2(
     )
     .await
     .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
-        return Ok(());
+        return Ok(None);
     };
 
     if needed_proof_types.contains(&ProverType::TDX)
@@ -86,7 +87,7 @@ pub async fn start_l2(
         error!(
             "A private key for TDX is required. Please set the flag `--proof-coordinator.tdx-private-key <KEY>` or use the `ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY` environment variable to set the private key"
         );
-        return Ok(());
+        return Ok(None);
     }
 
     let l1_watcher = L1Watcher::spawn(
@@ -121,7 +122,7 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting Proof Coordinator: {err}");
     });
-
+    //
     let l1_proof_sender = L1ProofSender::spawn(
         cfg.clone(),
         shared_state.clone(),
@@ -132,17 +133,17 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting L1 Proof Sender: {err}");
     });
-    let block_producer = BlockProducer::spawn(
-        store.clone(),
-        rollup_store.clone(),
-        blockchain.clone(),
-        cfg.clone(),
-        shared_state.clone(),
-    )
-    .await
-    .inspect_err(|err| {
-        error!("Error starting Block Producer: {err}");
-    });
+    // let block_producer = BlockProducer::spawn(
+    //     store.clone(),
+    //     rollup_store.clone(),
+    //     blockchain.clone(),
+    //     cfg.clone(),
+    //     shared_state.clone(),
+    // )
+    // .await
+    // .inspect_err(|err| {
+    //     error!("Error starting Block Producer: {err}");
+    // });
 
     #[cfg(feature = "metrics")]
     let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
@@ -196,15 +197,16 @@ pub async fn start_l2(
         .await?;
     }
 
+    let a = l1_committer.ok();
     let admin_server = start_api(
         format!(
             "{}:{}",
             cfg.admin_server.listen_ip, cfg.admin_server.listen_port
         ),
-        l1_committer.ok(),
+        a.clone(),
         l1_watcher.ok(),
         l1_proof_sender.ok(),
-        block_producer.ok(),
+        None,
         #[cfg(feature = "metrics")]
         metrics_gatherer.ok(),
     )
@@ -233,7 +235,29 @@ pub async fn start_l2(
         (None, None) => {}
     }
 
-    Ok(())
+    // let shutdown_token = cancellation_token.clone();
+    // let committer_for_shutdown = a.clone().unwrap();
+    // let c = committer_for_shutdown.cancellation_token();
+    // dbg!(&c);
+    // c.cancel();
+    // dbg!(&c);
+    // tokio::select! {
+    //     _ = cancellation_token.cancelled() => {
+    //         committer_for_shutdown.call(l1_committer::CallMessage::Stop).await;
+    //     }
+    // // }
+    // let mut producer_for_shutdown = block_producer.cloned();
+    // tokio::spawn(async move {
+    //
+    //     shutdown_token.cancelled().await;
+    //     dbg!(&c);
+    //     dbg!(&c);
+    //     let _ = committer_for_shutdown
+    //         .call(l1_committer::CallMessage::Stop)
+    //         .await;
+    // });
+
+    Ok(a)
 }
 
 async fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {
