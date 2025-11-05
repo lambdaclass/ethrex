@@ -99,7 +99,7 @@ pub enum StatelessExecutionError {
     Internal(String),
 }
 
-pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
+pub fn execution_program(input: &mut ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
     let ProgramInput {
         blocks,
         execution_witness,
@@ -118,7 +118,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         return stateless_validation_l2(
             &blocks,
             execution_witness,
-            elasticity_multiplier,
+            *elasticity_multiplier,
             _fee_configs,
             blob_commitment,
             blob_proof,
@@ -126,12 +126,12 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         );
     }
 
-    stateless_validation_l1(&blocks, execution_witness, elasticity_multiplier, chain_id)
+    stateless_validation_l1(&blocks, execution_witness, *elasticity_multiplier, chain_id)
 }
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
-    execution_witness: ExecutionWitness,
+    execution_witness: &mut ExecutionWitness,
     elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -141,7 +141,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, None)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, &mut None)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
@@ -161,11 +161,11 @@ pub fn stateless_validation_l1(
 #[cfg(feature = "l2")]
 pub fn stateless_validation_l2(
     blocks: &[Block],
-    execution_witness: ExecutionWitness,
+    execution_witness: &mut ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_configs: Option<Vec<FeeConfig>>,
-    blob_commitment: Commitment,
-    blob_proof: Proof,
+    fee_configs: &mut Option<Vec<FeeConfig>>,
+    blob_commitment: &mut Commitment,
+    blob_proof: &mut Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let initial_db = execution_witness.clone();
@@ -198,7 +198,7 @@ pub fn stateless_validation_l2(
         )?;
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
-    let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
+    let validium = (*blob_commitment, *blob_proof) == ([0; 48], [0; 48]);
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
@@ -235,9 +235,11 @@ pub fn stateless_validation_l2(
             account_updates.values().cloned().collect(),
         )?;
 
-        verify_blob(state_diff, blob_commitment, blob_proof)?
+        //verify_blob(state_diff, blob_commitment, blob_proof)?
+        todo!();
     } else {
-        H256::zero()
+        todo!();
+        //H256::zero()
     };
 
     Ok(ProgramOutput {
@@ -274,31 +276,29 @@ struct StatelessResult {
 
 fn execute_stateless(
     blocks: &[Block],
-    execution_witness: ExecutionWitness,
+    execution_witness: &mut ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_configs: Option<Vec<FeeConfig>>,
+    fee_configs: &mut Option<Vec<FeeConfig>>,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    let guest_program_state: GuestProgramState = execution_witness
-        .try_into()
-        .map_err(StatelessExecutionError::GuestProgramState)?;
+    execution_witness.init_state();
 
     // Cache these L2-specific state fields for later state diff blob validation
     // to avoid expensive recomputation after the guest_program_state is moved
     // to the wrapper
     #[cfg(feature = "l2")]
-    let nodes_hashed = guest_program_state.nodes_hashed.clone();
+    let nodes_hashed = execution_witness.guest_program_state.as_ref().unwrap().nodes_hashed.clone();
     #[cfg(feature = "l2")]
-    let codes_hashed = guest_program_state
+    let codes_hashed = execution_witness.guest_program_state.as_ref().unwrap()
         .codes_hashed
         .iter()
         .map(|(h, c)| (*h, c.bytecode.to_vec()))
         .collect();
     #[cfg(feature = "l2")]
-    let parent_block_header_clone = guest_program_state.parent_block_header.clone();
+    let parent_block_header_clone = execution_witness.guest_program_state.as_ref().unwrap().parent_block_header.clone();
     #[cfg(feature = "l2")]
-    let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
+    let fee_configs = fee_configs.clone().ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
 
-    let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
+    let mut wrapped_db = GuestProgramStateWrapper::new(execution_witness.guest_program_state.as_ref().unwrap().clone());
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
     })?;

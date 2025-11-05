@@ -56,6 +56,17 @@ pub struct Trie {
     pending_removal: HashSet<Nibbles>,
 }
 
+// temp
+impl Clone for Trie {
+    fn clone(&self) -> Self {
+        Trie {
+            db: Box::new(InMemoryTrieDB::new_empty()),
+            root: self.root.clone(),
+            pending_removal: self.pending_removal.clone()
+        }
+    }
+}
+
 impl Default for Trie {
     fn default() -> Self {
         Self::new_temp()

@@ -15,6 +15,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
+use rkyv::with::Skip;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -27,6 +28,7 @@ use sha3::{Digest, Keccak256};
 /// Some data is prepared before the stateless validation, and some data is
 /// built on-demand during the stateless validation.
 /// This struct must be instantiated, filled, and consumed inside the zkVM.
+#[derive(Clone)]
 pub struct GuestProgramState {
     /// Map of node hash to RLP-encoded node.
     /// This is computed during guest program execution inside the zkVM,
@@ -69,7 +71,7 @@ pub struct GuestProgramState {
 ///
 /// It is essentially an `RpcExecutionWitness` but it also contains `ChainConfig`,
 /// and `first_block_number`.
-#[derive(Default, Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
+#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
 pub struct ExecutionWitness {
     // Contract bytecodes needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
@@ -87,6 +89,10 @@ pub struct ExecutionWitness {
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub keys: Vec<Vec<u8>>,
+    // temp
+    #[rkyv(with = Skip)]
+    #[serde(skip)]
+    pub guest_program_state: Option<GuestProgramState>
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -109,47 +115,48 @@ pub enum GuestProgramStateError {
     Custom(String),
 }
 
-impl TryFrom<ExecutionWitness> for GuestProgramState {
-    type Error = GuestProgramStateError;
-
-    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
-        let block_headers: BTreeMap<u64, BlockHeader> = value
+impl ExecutionWitness {
+    pub fn init_state(&mut self) {
+        let block_headers: BTreeMap<u64, BlockHeader> = self
             .block_headers_bytes
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|bytes| BlockHeader::decode(bytes.as_ref()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| {
                 GuestProgramStateError::Custom(format!("Failed to decode block headers: {}", e))
-            })?
+            }).unwrap()
             .into_iter()
             .map(|header| (header.number, header))
             .collect();
 
         let parent_number =
-            value
+            self
                 .first_block_number
                 .checked_sub(1)
                 .ok_or(GuestProgramStateError::Custom(
                     "First block number cannot be zero".to_string(),
-                ))?;
+                )).unwrap();
 
         let parent_header = block_headers.get(&parent_number).cloned().ok_or(
-            GuestProgramStateError::MissingParentHeaderOf(value.first_block_number),
-        )?;
+            GuestProgramStateError::MissingParentHeaderOf(self.first_block_number),
+        ).unwrap();
 
         // hash nodes
-        let nodes_hashed = value
+        let nodes_hashed = self
             .nodes
-            .into_iter()
+            .iter()
+            .cloned()
             .map(Node::from)
             .map(|node| (node.compute_hash().finalize(), Arc::new(node)))
             .collect();
 
         // hash codes
         // TODO: codes here probably needs to be Vec<Code>, rather than recomputing here. This requires rkyv implementation.
-        let codes_hashed = value
+        let codes_hashed = self
             .codes
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|code| {
                 let code = Code::from_bytecode(code.into());
                 (code.hash, code)
@@ -162,8 +169,8 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             storage_tries: BTreeMap::new(),
             block_headers,
             parent_block_header: parent_header,
-            first_block_number: value.first_block_number,
-            chain_config: value.chain_config,
+            first_block_number: self.first_block_number,
+            chain_config: self.chain_config,
             nodes_hashed,
             account_hashes_by_address: BTreeMap::new(),
         };
@@ -172,10 +179,11 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             GuestProgramStateError::RebuildTrie(
                 "Failed to rebuild state trie from execution witness".to_owned(),
             )
-        })?;
+        }).unwrap();
 
-        Ok(guest_program_state)
+        self.guest_program_state = Some(guest_program_state)
     }
+
 }
 
 impl GuestProgramState {

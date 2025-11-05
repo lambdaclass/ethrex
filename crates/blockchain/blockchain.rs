@@ -500,6 +500,7 @@ impl Blockchain {
             chain_config,
             nodes,
             keys,
+            guest_program_state: None
         })
     }
 
