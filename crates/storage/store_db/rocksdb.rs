@@ -424,6 +424,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         {
             let cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_read().unwrap();
+            trace!("Removing initial FlatKeyValue entries...");
             // We use sequential write here, so it should be deadlock-free
             let cf_flatkeyvalue = self
                 .dbs
@@ -441,10 +442,12 @@ impl Store {
                     .unwrap_or_else(|| vec![0u8; 64])
             };
             if last_written == vec![0xff] {
+                trace!("Finished removing initial FlatKeyValue entries...");
                 return Ok(());
             }
 
             flatkeyvalue.delete_range(last_written..vec![0xff])?;
+            trace!("Finished removing initial FlatKeyValue entries...");
         }
 
         loop {
