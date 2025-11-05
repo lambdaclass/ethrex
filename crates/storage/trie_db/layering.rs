@@ -110,11 +110,13 @@ impl TrieLayerCache {
             return;
         }
 
+        // insert_counting requires a max_count argument, we need this to be minimum 129, but the count may be bigger due to forks
+        const MAX_COUNT_FILTER: u64 = 10000;
         if let Some(filter) = self.bloom.as_mut() {
             for (p, _) in &key_values {
                 // assuming p is unique among key_values
                 if let Err(qfilter::Error::CapacityExceeded) =
-                    filter.insert_counting(129, p.as_ref())
+                    filter.insert_counting(MAX_COUNT_FILTER, p.as_ref())
                 {
                     tracing::warn!("TrieLayerCache: put_batch per layer capacity exceeded");
                     self.bloom = None;
