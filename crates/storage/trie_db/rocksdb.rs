@@ -4,14 +4,20 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use std::{collections::BTreeMap, sync::Arc};
 
-use crate::{store_db::rocksdb::CF_FLATKEYVALUE, trie_db::layering::apply_prefix};
+use crate::{
+    error::StoreError,
+    store_db::rocksdb::{CF_FLATKEYVALUE, CF_TRIE_NODES, WriterMessage},
+    trie_db::layering::apply_prefix,
+};
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    db: Environment,
-    /// RocksDB database
     dbs: Arc<BTreeMap<String, Database>>,
+    writer_tx: std::sync::mpsc::SyncSender<(
+        WriterMessage,
+        std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+    )>,
     /// Column family name
     cf_name: String,
     /// Storage trie address prefix
@@ -22,8 +28,12 @@ pub struct RocksDBTrieDB {
 
 impl RocksDBTrieDB {
     pub fn new(
-        db: Environment,
+        _db: Environment,
         dbs: Arc<BTreeMap<String, Database>>,
+        writer_tx: std::sync::mpsc::SyncSender<(
+            WriterMessage,
+            std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+        )>,
         cf_name: &str,
         address_prefix: Option<H256>,
         last_written: Vec<u8>,
@@ -38,8 +48,8 @@ impl RocksDBTrieDB {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
 
         Ok(Self {
-            db,
             dbs,
+            writer_tx,
             cf_name: cf_name.to_string(),
             address_prefix,
             last_computed_flatkeyvalue,
@@ -90,64 +100,44 @@ impl TrieDB for RocksDBTrieDB {
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let cf = self.cf_handle()?;
-        let cf_snapshot = self.cf_handle_flatkeyvalue()?;
+        let mut batch_ops = Vec::with_capacity(key_values.len());
 
-        let cf_tx = cf.begin_write_concurrent().unwrap();
-        let cf_snapshot_tx = cf_snapshot.begin_write_concurrent().unwrap();
-        {
-            let mut tree = cf_tx.get_tree(b"").unwrap().unwrap();
-            let mut snapshot_tree = cf_snapshot_tx.get_tree(b"").unwrap().unwrap();
-            for (key, value) in key_values {
-                let cf = if key.is_leaf() {
-                    &mut snapshot_tree
-                } else {
-                    &mut tree
-                };
-                let db_key = self.make_key(key);
-                if value.is_empty() {
-                    cf.delete(&db_key).unwrap();
-                } else {
-                    cf.insert(&db_key, &value).unwrap();
-                }
+        for (key, value) in key_values {
+            let cf = if key.is_leaf() {
+                CF_FLATKEYVALUE
+            } else {
+                CF_TRIE_NODES
+            };
+            let db_key = self.make_key(key);
+            if value.is_empty() {
+                batch_ops.push((cf, db_key, vec![]));
+            } else {
+                batch_ops.push((cf, db_key.clone(), value));
             }
         }
-        self.db
-            .group_commit([cf_snapshot_tx, cf_tx], false)
-            .unwrap();
+        let msg = WriterMessage::WriteBatchAsync { batch_ops };
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        self.writer_tx.send((msg, tx)).unwrap();
+        rx.recv().unwrap().unwrap();
         Ok(())
     }
 
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
-        let cf = self.cf_handle()?;
-        let cf_flatkeyvalue = self.cf_handle_flatkeyvalue()?;
+        let mut batch_ops = Vec::with_capacity(key_values.len());
 
-        let cf_tx = cf.begin_write_concurrent().unwrap();
-        let cf_flatkeyvalue_tx = cf_flatkeyvalue.begin_write_concurrent().unwrap();
-
-        // 532 is the maximum size of an encoded branch node.
-        let mut buffer = Vec::with_capacity(532);
-
-        {
-            let mut tree = cf_tx.get_tree(b"").unwrap().unwrap();
-            let mut flatkeyvalue_tree = cf_flatkeyvalue_tx.get_tree(b"").unwrap().unwrap();
-            for (hash, node) in key_values {
-                let cf = if hash.is_leaf() {
-                    &mut flatkeyvalue_tree
-                } else {
-                    &mut tree
-                };
-                let db_key = self.make_key(hash.clone());
-                buffer.clear();
-                node.encode(&mut buffer);
-                cf.insert(&db_key, &buffer).unwrap();
-            }
+        for (key, node) in key_values {
+            let cf = if key.is_leaf() {
+                CF_FLATKEYVALUE
+            } else {
+                CF_TRIE_NODES
+            };
+            let db_key = self.make_key(key.clone());
+            batch_ops.push((cf, db_key, node.encode_to_vec()));
         }
-
-        self.db
-            .group_commit([cf_flatkeyvalue_tx, cf_tx], false)
-            .unwrap();
-
+        let msg = WriterMessage::WriteBatchAsync { batch_ops };
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        self.writer_tx.send((msg, tx)).unwrap();
+        rx.recv().unwrap().unwrap();
         Ok(())
     }
 }

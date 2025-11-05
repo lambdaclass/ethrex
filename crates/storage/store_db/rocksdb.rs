@@ -94,7 +94,7 @@ const CF_SNAP_STATE: &str = "snap_state";
 /// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
 /// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-const CF_TRIE_NODES: &str = "trie_nodes";
+pub(crate) const CF_TRIE_NODES: &str = "trie_nodes";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -477,6 +477,7 @@ impl Store {
                     RocksDBTrieDB::new(
                         self.db.clone(),
                         self.dbs.clone(),
+                        self.writer_tx.clone(),
                         CF_TRIE_NODES,
                         None,
                         self.last_written()?,
@@ -519,6 +520,7 @@ impl Store {
                         RocksDBTrieDB::new(
                             self.db.clone(),
                             self.dbs.clone(),
+                            self.writer_tx.clone(),
                             CF_TRIE_NODES,
                             Some(account_hash),
                             self.last_written()?,
@@ -1293,6 +1295,7 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
             self.dbs.clone(),
+            self.writer_tx.clone(),
             CF_TRIE_NODES,
             None,
             self.last_written()?,
@@ -1315,6 +1318,7 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
             self.dbs.clone(),
+            self.writer_tx.clone(),
             CF_TRIE_NODES,
             None,
             self.last_written()?,
@@ -1340,6 +1344,7 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
             self.dbs.clone(),
+            self.writer_tx.clone(),
             CF_TRIE_NODES,
             Some(hashed_address),
             self.last_written()?,
@@ -1351,6 +1356,7 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
             self.dbs.clone(),
+            self.writer_tx.clone(),
             CF_TRIE_NODES,
             None,
             self.last_written()?,
@@ -1790,7 +1796,7 @@ struct Writer {
     trie_update_worker_tx: TriedUpdateWorkerTx,
 }
 
-enum WriterMessage {
+pub(crate) enum WriterMessage {
     WriteAsync {
         cf_name: &'static str,
         key: Vec<u8>,
