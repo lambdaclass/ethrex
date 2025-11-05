@@ -513,6 +513,8 @@ pub async fn import_blocks(
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
+    const IMPORT_BATCH_SIZE: usize = 1024;
+    const MIN_FULL_BLOCKS: usize = 128;
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
@@ -578,9 +580,9 @@ pub async fn import_blocks(
                 continue;
             }
 
-            if index < size - 128 {
+            if index + MIN_FULL_BLOCKS < size  {
                 block_batch.push(block);
-                if block_batch.len() >= 128 || index == size - 128 - 1 {
+                if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
                     blockchain
                         .add_blocks_in_batch(mem::take(&mut block_batch), CancellationToken::new())
                         .await
