@@ -1,5 +1,4 @@
 use ethrex_common::H256;
-use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -154,19 +153,15 @@ impl TrieLayerCache {
 
     /// Rebuilds the global bloom filter accruing all current existing layers.
     pub fn rebuild_bloom(&mut self) {
-        let mut blooms: Vec<_> = self
-            .layers
-            .values()
-            .par_bridge()
-            .map(|entry| entry.bloom.as_ref())
-            .collect();
+        let mut blooms = self.layers.values().map(|x| x.bloom.as_ref());
 
-        let Some(mut ret) = blooms.pop().flatten().cloned() else {
+        let Some(mut ret) = blooms.next().flatten().cloned() else {
             tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
             self.bloom = None;
             return;
         };
-        for bloom in blooms.iter() {
+
+        for bloom in blooms {
             let Some(bloom) = bloom else {
                 tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
                 self.bloom = None;
