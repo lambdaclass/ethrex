@@ -133,7 +133,7 @@ impl LEVM {
 
             receipts.push(receipt);
         }
-        if queue_length.load(Ordering::Relaxed) == 0 {
+        if queue_length.load(Ordering::Relaxed) > 0 {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
@@ -150,9 +150,6 @@ impl LEVM {
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
             account.info.balance += increment.into();
-            if queue_length.load(Ordering::Relaxed) == 0 {
-                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
-            }
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
