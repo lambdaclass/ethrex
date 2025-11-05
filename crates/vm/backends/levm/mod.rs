@@ -102,6 +102,8 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
+        let mut tx_since_last_flush = 2;
+
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
@@ -114,7 +116,12 @@ impl LEVM {
             }
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-            LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                tx_since_last_flush = 0;
+            } else {
+                tx_since_last_flush += 1;
+            }
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -125,6 +132,9 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+        if queue_length.load(Ordering::Relaxed) == 0 {
+            LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
         for (address, increment) in block
@@ -140,8 +150,10 @@ impl LEVM {
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
             account.info.balance += increment.into();
+            if queue_length.load(Ordering::Relaxed) == 0 {
+                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+            }
         }
-        LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
@@ -157,6 +169,7 @@ impl LEVM {
             )?,
             VMType::L2(_) => Default::default(),
         };
+        LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         Ok(BlockExecutionResult { receipts, requests })
     }
@@ -589,11 +602,9 @@ pub fn extract_all_requests_levm_pipeline(
     let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type)?
         .output
         .into();
-    LEVM::send_state_transitions_tx(merkleizer, db, queue_length)?;
     let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
         .output
         .into();
-    LEVM::send_state_transitions_tx(merkleizer, db, queue_length)?;
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
         .ok_or(EvmError::InvalidDepositRequest)?;
