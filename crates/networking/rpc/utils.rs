@@ -384,7 +384,7 @@ pub mod test_utils {
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         let local_node_record = example_local_node_record();
-        tokio::spawn(async move {
+        smol::spawn(async move {
             start_api(
                 http_addr,
                 Some(ws_addr),

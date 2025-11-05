@@ -373,7 +373,7 @@ impl PeerHandler {
             let mut peer_table = self.peer_table.clone();
 
             // run download_chunk_from_peer in a different Tokio task
-            tokio::spawn(async move {
+            smol::spawn(async move {
                 trace!(
                     "Sync Log 5: Requesting block headers from peer {peer_id}, chunk_limit: {chunk_limit}"
                 );
@@ -393,7 +393,7 @@ impl PeerHandler {
                     .inspect_err(|err| {
                         error!("Failed to send headers result through channel. Error: {err}")
                     })
-            });
+            }).detach();
         }
 
         let elapsed = start_time.elapsed().unwrap_or_default();
@@ -833,7 +833,7 @@ impl PeerHandler {
 
             let peer_table = self.peer_table.clone();
 
-            tokio::spawn(PeerHandler::request_account_range_worker(
+            smol::spawn(PeerHandler::request_account_range_worker(
                 peer_id,
                 connection,
                 peer_table,
@@ -841,7 +841,8 @@ impl PeerHandler {
                 chunk_end,
                 pivot_header.state_root,
                 tx,
-            ));
+            ))
+            .detach();
         }
 
         write_set
@@ -1103,7 +1104,7 @@ impl PeerHandler {
 
             let mut peer_table = self.peer_table.clone();
 
-            tokio::spawn(async move {
+            smol::spawn(async move {
                 let empty_task_result = TaskResult {
                     start_index: chunk_start,
                     bytecodes: vec![],
@@ -1155,7 +1156,7 @@ impl PeerHandler {
                     tracing::debug!("Failed to get bytecode");
                     tx.send(empty_task_result).await.ok();
                 }
-            });
+            }).detach();
         }
 
         METRICS
@@ -1623,7 +1624,7 @@ impl PeerHandler {
             }
             let peer_table = self.peer_table.clone();
 
-            tokio::spawn(PeerHandler::request_storage_ranges_worker(
+            smol::spawn(PeerHandler::request_storage_ranges_worker(
                 task,
                 peer_id,
                 connection,
@@ -1632,7 +1633,8 @@ impl PeerHandler {
                 chunk_account_hashes,
                 chunk_storage_roots,
                 tx,
-            ));
+            ))
+            .detach();
         }
 
         {

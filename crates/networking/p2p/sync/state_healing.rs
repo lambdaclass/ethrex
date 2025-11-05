@@ -239,7 +239,7 @@ async fn heal_state_trie(
                 inflight_tasks += 1;
 
                 let peer_table = peers.peer_table.clone();
-                tokio::spawn(async move {
+                smol::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
                         peer_id,
@@ -253,7 +253,8 @@ async fn heal_state_trie(
                     tx.send((peer_id, response, batch)).await.inspect_err(
                         |err| debug!(error=?err, "Failed to send state trie nodes response"),
                     )
-                });
+                })
+                .detach();
                 tokio::task::yield_now().await;
             }
         }

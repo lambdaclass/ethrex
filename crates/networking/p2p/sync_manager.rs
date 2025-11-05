@@ -124,7 +124,7 @@ impl SyncManager {
         let store = self.store.clone();
         let sync_head = self.last_fcu_head.clone();
 
-        tokio::spawn(async move {
+        smol::spawn(async move {
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             let Ok(mut syncer) = syncer.try_lock() else {
                 return;
@@ -157,7 +157,8 @@ impl SyncManager {
                     break;
                 }
             }
-        });
+        })
+        .detach();
     }
 
     pub fn get_last_fcu_head(&self) -> Result<H256, tokio::sync::TryLockError> {
