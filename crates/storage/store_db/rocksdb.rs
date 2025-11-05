@@ -1828,6 +1828,7 @@ impl Writer {
             std::sync::mpsc::SyncSender<Result<(), StoreError>>,
         )>,
     ) {
+        debug!("Writer thread started");
         for (message, resp_tx) in receiver {
             let result = match message {
                 WriterMessage::WriteAsync {
@@ -1849,6 +1850,7 @@ impl Writer {
             };
             let _ = resp_tx.send(result);
         }
+        debug!("Writer thread finished");
     }
 
     // Helper method for async writes
