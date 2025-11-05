@@ -550,6 +550,7 @@ pub async fn import_blocks(
             .collect::<Vec<_>>();
         // Execute block by block
         let mut last_progress_log = Instant::now();
+        let mut block_batch = vec![];
         for (index, block) in blocks.into_iter().enumerate() {
             let hash = block.hash();
             let number = block.header.number;
@@ -559,7 +560,13 @@ pub async fn import_blocks(
                 let processed = index + 1;
                 let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
                 let total_time = start_time.elapsed().as_secs();
-                info!(processed, total = size, percent, total_time, "Import progress");
+                info!(
+                    processed,
+                    total = size,
+                    percent,
+                    total_time,
+                    "Import progress"
+                );
                 last_progress_log = Instant::now();
             }
 
@@ -575,13 +582,18 @@ pub async fn import_blocks(
                 continue;
             }
 
-            blockchain
-                .add_block_pipeline(block)
+            block_batch.push(block);
+            if block_batch.len() >= 128 || index == size -1 {
+                blockchain
+                .add_blocks_pipeline(block_batch)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                     _ => warn!("Failed to add block {number} with hash {hash:#x}"),
                 })?;
+                block_batch.clear();
+            }
+
         }
 
         // Make head canonical and label all special blocks correctly.

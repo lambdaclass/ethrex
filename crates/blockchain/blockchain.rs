@@ -891,7 +891,9 @@ impl Blockchain {
                 stored
             }
         });
-        if /*self.options.perf_logs_enabled*/ true {
+        if
+        /*self.options.perf_logs_enabled*/
+        true {
             Self::print_add_block_pipeline_logs(
                 gas_used,
                 gas_limit,

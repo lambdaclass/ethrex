@@ -96,7 +96,10 @@ impl Store {
                 latest_block_header: Default::default(),
             },
         };
-        info!("Opened storage engine in {} secs", start.elapsed().as_secs());
+        info!(
+            "Opened storage engine in {} secs",
+            start.elapsed().as_secs()
+        );
 
         Ok(store)
     }
