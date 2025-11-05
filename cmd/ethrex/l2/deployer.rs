@@ -448,9 +448,7 @@ pub enum DeployerError {
     InternalError(String),
     #[error("IO error: {0}")]
     IO(#[from] std::io::Error),
-    #[error(
-        "Contract bytecode not found. Make sure to compile the deployer with `COMPILE_CONTRACTS` set."
-    )]
+    #[error("Contract bytecode not found.")]
     BytecodeNotFound,
     #[error("Failed to parse genesis")]
     Genesis,

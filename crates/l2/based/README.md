@@ -131,7 +131,6 @@ Running a based stack locally is essentially the same as running an ethrex stack
 In a console with `crates/l2` as the current directory, run the following command to deploy the L1 contracts for a based L2:
 
 ```bash
-COMPILE_CONTRACTS=true \ 
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
@@ -152,8 +151,7 @@ This command will:
 2. Deposit funds in the accounts from `../../fixtures/keys/private_keys_l1.txt`.
 3. Skip deploying the verifier contracts by specifying `0x00000000000000000000000000000000000000aa` as their address. This means that the node will run in "dev mode" and that the proof verification will not be performed. This is useful for local development and testing, but should not be used in production environments.
 
-> [!NOTE]  
-> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
+> [!NOTE]
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
 After deploying the contracts, a `.env` file will be created, containing the addresses of the new contracts. These have to be loaded with the following command:

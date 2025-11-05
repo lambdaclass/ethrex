@@ -29,7 +29,6 @@ This will generate the SP1 ELF program and verification key under:
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
 ```bash
-COMPILE_CONTRACTS=true \
 ETHREX_L2_ALIGNED=true \
 ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=<ALIGNED_AGGREGATOR_ADDRESS> \
 ETHREX_L2_SP1=true \
@@ -44,7 +43,6 @@ cargo run --release --features l2,l2-sql --manifest-path "../../Cargo.toml" -- l
 ```
 
 > [!NOTE]
-> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 > In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers, you can find the address for the aligned aggegator service [here](https://docs.alignedlayer.com/guides/7_contract_addresses)
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 > Both the private key and the addresses for the on chain proposer, bridge and proof sender should have funds.
@@ -201,7 +199,6 @@ let ws_stream_future =
 1. In another terminal let's deploy the L1 contracts, specifying the `AlignedProofAggregatorService` contract address, and adding the required prover types (Risc0 or SP1):
 ```
 cd ethrex/crates/l2
-COMPILE_CONTRACTS=true \
 ETHREX_L2_ALIGNED=true \
 ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=0xcbEAF3BDe82155F56486Fb5a1072cb8baAf547cc \
 ETHREX_L2_SP1=true \
@@ -210,9 +207,6 @@ make deploy-l1
 ```
 
 Both `ETHREX_L2_SP1` and `ETHREX_L2_RISC0` are optional
-
-> [!NOTE]
-> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 
 You will see that some deposits fail with the following error:
 

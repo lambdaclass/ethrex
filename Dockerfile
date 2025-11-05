@@ -53,7 +53,6 @@ COPY .cargo/ ./.cargo
 
 # Optional build flags
 ARG BUILD_FLAGS=""
-ENV COMPILE_CONTRACTS=true
 RUN cargo build --release $BUILD_FLAGS
 
 # --- Final Image ---

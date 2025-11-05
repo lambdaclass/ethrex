@@ -155,29 +155,6 @@ pub fn download_script() {
     decode_to_bytecode(&file_path, &output_file_path);
 }
 
-fn write_empty_bytecode_files(output_contracts_path: &Path) {
-    let bytecode_dir = output_contracts_path.join("solc_out");
-    fs::create_dir_all(&bytecode_dir).expect("Failed to create solc_out directory");
-
-    let contract_names = [
-        "ERC1967Proxy",
-        "SP1Verifier",
-        "OnChainProposer",
-        "CommonBridge",
-        "CommonBridgeL2",
-        "L2ToL1Messenger",
-        "UpgradeableSystemContract",
-        "SequencerRegistry",
-        "OnChainProposerBased",
-    ];
-
-    for name in &contract_names {
-        let filename = format!("{name}.bytecode");
-        let path = bytecode_dir.join(filename);
-        fs::write(&path, []).expect("Failed to write empty bytecode.");
-    }
-}
-
 /// Clones OpenZeppelin, SP1 contracts and create2deployer into the specified path.
 fn download_contract_deps(contracts_path: &Path) {
     fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib dir");
@@ -281,9 +258,7 @@ pub enum SystemContractsUpdaterError {
     FailedToWriteModifiedGenesisFile(#[from] std::io::Error),
     #[error("Failed to read path: {0}")]
     InvalidPath(String),
-    #[error(
-        "Contract bytecode not found. Make sure to compile the updater with `COMPILE_CONTRACTS` set."
-    )]
+    #[error("Contract bytecode not found.")]
     BytecodeNotFound,
 }
 

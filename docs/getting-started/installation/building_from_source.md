@@ -9,14 +9,6 @@ Build ethrex yourself for maximum flexibility and experimental features.
 - [Git](https://git-scm.com/downloads)
 - [solc](https://docs.soliditylang.org/en/v0.8.30/installing-solidity.html) (for L2 development)
 
-### L2 contracts
-
-If you want to install ethrex for L2 development, you may set the `COMPILE_CONTRACTS` env var, so the binary have the necessary contract code.
-
-```sh
-export COMPILE_CONTRACTS=true
-```
-
 ## Install via `cargo install`
 
 The fastest way to install ethrex from source:
