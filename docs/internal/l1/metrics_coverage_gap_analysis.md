@@ -48,7 +48,7 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 | Error & anomaly counters | Yes | Yes | Partial (basic reorgs) | No |
 
 - **Block execution pipeline**
-  - Gauges exposed in `crates/blockchain/metrics/metrics_blocks.rs`: `gas_limit`, `gas_used`, `gigagas`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`, plus block-building focused gauges that need to be reviewed first (`gigagas_block_building`, `block_building_ms`, `block_building_base_fee`).
+  - Gauges exposed in `ethrex_metrics::metrics_blocks`: `gas_limit`, `gas_used`, `gigagas`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`, plus block-building focused gauges that need to be reviewed first (`gigagas_block_building`, `block_building_ms`, `block_building_base_fee`).
   - Updated on the hot path in `crates/blockchain/blockchain.rs`, `crates/blockchain/payload.rs`, and `crates/blockchain/fork_choice.rs`; block-building throughput updates live in `crates/blockchain/payload.rs`.
   - Exposed via `/metrics` when the `metrics` feature or CLI flag is enabled and visualised in Grafana panels "Gas Used %", "Ggas/s", "Ggas/s by Block", "Block Height", and "Block Execution Breakdown" inside `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`.
 - **Transaction pipeline**
