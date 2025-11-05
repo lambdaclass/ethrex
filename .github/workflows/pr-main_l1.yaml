@@ -189,27 +189,27 @@ jobs:
             simulation: devp2p
             limit: discv4|eth|snap/Ping|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate|AccountRange|GetTrieNodes|GetByteCodes|GetStorageRanges|Findnode|BlobViolations
             artifact_prefix: devp2p
-          # - name: "Engine Auth and EC tests"
-          #   simulation: ethereum/engine
-          #   limit: engine-(auth|exchange-capabilities)/
-          #   artifact_prefix: engine_auth_ec
-          # - name: "Cancun Engine tests"
-          #   simulation: ethereum/engine
-          #   limit: "engine-cancun"
-          #   artifact_prefix: engine_cancun
-          # - name: "Paris Engine tests"
-          #   simulation: ethereum/engine
-          #   limit: "engine-api"
-          #   artifact_prefix: engine_paris
-          # - name: "Engine withdrawal tests"
-          #   simulation: ethereum/engine
-          #   limit: "engine-withdrawals"
-          #   artifact_prefix: engine_withdrawals
-          # Investigate this test
-          # - name: "Sync"
-          #   simulation: ethereum/sync
-          #   limit: ""
-          #   artifact_prefix: sync
+          - name: "Engine Auth and EC tests"
+            simulation: ethereum/engine
+            limit: engine-(auth|exchange-capabilities)/
+            artifact_prefix: engine_auth_ec
+          - name: "Cancun Engine tests"
+            simulation: ethereum/engine
+            limit: "engine-cancun"
+            artifact_prefix: engine_cancun
+          - name: "Paris Engine tests"
+            simulation: ethereum/engine
+            limit: "engine-api"
+            artifact_prefix: engine_paris
+          - name: "Engine withdrawal tests"
+            simulation: ethereum/engine
+            limit: "engine-withdrawals"
+            artifact_prefix: engine_withdrawals
+          Investigate this test
+          - name: "Sync"
+            simulation: ethereum/sync
+            limit: ""
+            artifact_prefix: sync
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
