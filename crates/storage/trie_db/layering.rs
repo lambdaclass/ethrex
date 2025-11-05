@@ -1,4 +1,5 @@
 use ethrex_common::H256;
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -143,24 +144,32 @@ impl TrieLayerCache {
         };
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
+
         // older layers are useless
-        self.layers.retain(|_, item| {
-            if item.id > layer.id {
-                true
-            } else {
-                if let Some(bloom) = self.bloom.as_mut() {
-                    for node in item.nodes.keys() {
-                        if !bloom.remove(node) {
-                            tracing::warn!("TrieLayerCache: bloom.remove returned false, meaning this node wasn't inserted into the bloom, removing bloom entirely to avoid false negatives");
-                            self.bloom = None;
-                            break;
-                        }
+        let layers_removed = self.layers.extract_if(|_, item| item.id <= layer.id);
+
+        let mut bloom_needs_full_rebuild = false;
+
+        if let Some(bloom) = self.bloom.as_mut() {
+            for (_, item) in layers_removed {
+                for node in item.nodes.keys() {
+                    if !bloom.remove(node) {
+                        // This should never happen.
+                        tracing::warn!(
+                            "TrieLayerCache: bloom.remove returned false, meaning this node wasn't inserted into the bloom, removing bloom entirely to avoid false negatives"
+                        );
+                        bloom_needs_full_rebuild = true;
+                        break;
                     }
                 }
-
-                false
             }
-        });
+        }
+
+        if bloom_needs_full_rebuild {
+            self.bloom = None;
+            self.rebuild_bloom();
+        }
+
         Some(
             parent_nodes
                 .unwrap_or_default()
@@ -168,6 +177,47 @@ impl TrieLayerCache {
                 .chain(layer.nodes.as_ref().clone())
                 .collect(),
         )
+    }
+
+    pub fn rebuild_bloom(&mut self) {
+        tracing::warn!("TrieLayerCache: triggered full bloom rebuild");
+        let mut blooms: Vec<_> = self
+            .layers
+            .values()
+            .par_bridge()
+            .map(|entry| {
+                let Ok(mut bloom) = Self::create_filter() else {
+                    tracing::warn!("TrieLayerCache: rebuild_bloom could not create filter");
+                    return None;
+                };
+                for (p, _) in entry.nodes.iter() {
+                    if let Err(qfilter::Error::CapacityExceeded) = bloom.insert(p) {
+                        tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                        return None;
+                    }
+                }
+                Some(bloom)
+            })
+            .collect();
+
+        let Some(mut ret) = blooms.pop().flatten() else {
+            tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
+            self.bloom = None;
+            return;
+        };
+        for bloom in blooms.iter() {
+            let Some(bloom) = bloom else {
+                tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
+                self.bloom = None;
+                return;
+            };
+            if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
+                tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                self.bloom = None;
+                return;
+            }
+        }
+        self.bloom = Some(ret);
     }
 }
 
