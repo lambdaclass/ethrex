@@ -85,6 +85,7 @@ jobs:
 
       - name: Run cargo clippy
         run: |
+          export SKIP_COMPILE_CONTRACTS=true
           cargo clippy --workspace --features l2,l2-sql -- -D warnings
           make lint
 

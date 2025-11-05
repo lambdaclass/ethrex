@@ -317,4 +317,6 @@ jobs:
         run: cargo build --bin ethrex
 
       - name: Run reorg tests
-        run: cd tooling/reorgs && cargo run
+        run: |
+          export SKIP_COMPILE_CONTRACTS=true;
+          cd tooling/reorgs && cargo run
