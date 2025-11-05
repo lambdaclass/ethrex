@@ -3,7 +3,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, RwLock};
 
-use ethrex_trie::{Nibbles, TrieDB, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
@@ -232,14 +232,20 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
 
-    //TODO: Check if this is well implemented, for now it works at least for inserting state nodes
+    // Warning, use this carefully as it's not battle tested. It's useful for manipulating the trie though.
     fn put_batch(&self, mut key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        // No-op for empty batches. This occurs when committing without logical changes.
+        if key_values.is_empty() {
+            return Ok(());
+        }
+
         // State root is the hash of the node that doesn't have nibbles in path.
+        // If state root is not in the batch I believe it should be invalid.
         let state_root = key_values
             .iter()
             .find(|(key, _)| *key == Nibbles::default())
-            .and_then(|(_, value)| Some(keccak(value)))
-            .unwrap();
+            .map(|(_, value)| keccak(value))
+            .ok_or(TrieError::InvalidInput)?;
 
         // Apply prefix to every key
         for (key, _value) in &mut key_values {
