@@ -331,13 +331,10 @@ pub mod test_utils {
     use bytes::Bytes;
     use ethrex_blockchain::Blockchain;
     use ethrex_common::{H512, types::DEFAULT_BUILDER_GAS_CEIL};
-    use ethrex_p2p::{
-        peer_handler::PeerHandler,
-        sync_manager::SyncManager,
-        types::{Node, NodeRecord},
-    };
+    use ethrex_p2p::types::{Node, NodeRecord};
     use ethrex_storage::{EngineType, Store};
     use secp256k1::SecretKey;
+    use test_utils::{dummy_peer_handler, dummy_sync_manager};
     use tokio::sync::Mutex as TokioMutex;
 
     use crate::{
@@ -394,8 +391,8 @@ pub mod test_utils {
                 jwt_secret,
                 local_p2p_node,
                 local_node_record,
-                SyncManager::dummy().await,
-                PeerHandler::dummy().await,
+                dummy_sync_manager().await,
+                dummy_peer_handler().await,
                 "ethrex/test".to_string(),
                 None,
                 DEFAULT_BUILDER_GAS_CEIL,
@@ -414,8 +411,8 @@ pub mod test_utils {
             storage,
             blockchain,
             active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy().await),
-            peer_handler: PeerHandler::dummy().await,
+            syncer: Arc::new(dummy_sync_manager().await),
+            peer_handler: dummy_peer_handler().await,
             node_data: NodeData {
                 jwt_secret: Default::default(),
                 local_p2p_node: example_p2p_node(),

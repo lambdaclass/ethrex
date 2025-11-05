@@ -24,8 +24,6 @@ use ethrex_common::{
     types::{AccountState, Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-#[cfg(any(test, feature = "test-utils"))]
-use ethrex_storage::EngineType;
 use ethrex_storage::{STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{Trie, TrieError};
@@ -119,22 +117,6 @@ impl Syncer {
             cancel_token,
             blockchain,
             datadir,
-        }
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    /// Creates a dummy Syncer for tests where syncing is not needed
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub async fn dummy() -> Self {
-        Self {
-            snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::dummy().await,
-            // This won't be used
-            cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
-            )),
-            datadir: ".".into(),
         }
     }
 

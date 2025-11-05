@@ -12,6 +12,8 @@ ethrex-common.workspace = true
 ethrex-config.workspace = true
 ethrex-storage.workspace = true
 
+test-utils.workspace = true
+
 bytes.workspace = true
 tokio.workspace = true
 serde_json.workspace = true

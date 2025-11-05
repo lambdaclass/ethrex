@@ -1,0 +1,15 @@
+[package]
+name = "test-utils"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ethrex-p2p.workspace = true
+ethrex-storage.workspace = true
+ethrex-blockchain.workspace = true
+tokio.workspace = true
+spawned-concurrency.workspace = true
+tokio-util = { workspace = true, features = ["codec", "net"] }
+tracing.workspace = true
+ethrex-common.workspace = true
+secp256k1.workspace = true
