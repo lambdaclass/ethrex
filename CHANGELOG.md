@@ -2,6 +2,9 @@
 
 ## Perf
 
+### 2025-11-05
+- Merkelization backpressure and batching [#5200](https://github.com/lambdaclass/ethrex/pull/5200)
+
 ### 2025-11-03
 
 - Avoid unnecessary hash validations [#5167](https://github.com/lambdaclass/ethrex/pull/5167)
