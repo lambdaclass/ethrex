@@ -2,13 +2,13 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
-use guest_program::{input::ProgramInput, ZKVM_SP1_PROGRAM_ELF};
+use guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput};
 use rkyv::rancor::Error;
 use sp1_prover::components::CpuProverComponents;
-#[cfg(feature = "gpu")]
-use sp1_sdk::cuda::builder::CudaProverBuilder;
 #[cfg(not(feature = "gpu"))]
 use sp1_sdk::CpuProver;
+#[cfg(feature = "gpu")]
+use sp1_sdk::cuda::builder::CudaProverBuilder;
 use sp1_sdk::{
     HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
