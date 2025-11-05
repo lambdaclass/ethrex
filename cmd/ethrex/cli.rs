@@ -559,7 +559,7 @@ pub async fn import_blocks(
                 let processed = index + 1;
                 let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
                 let total_time = start_time.elapsed().as_secs();
-                info!(processed, total = size, percent, total_time "Import progress");
+                info!(processed, total = size, percent, total_time, "Import progress");
                 last_progress_log = Instant::now();
             }
 
