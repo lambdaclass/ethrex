@@ -140,6 +140,10 @@ pub struct Store {
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    writer_tx: std::sync::mpsc::SyncSender<(
+        WriterMessage,
+        std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+    )>,
 }
 
 impl Store {
@@ -172,7 +176,8 @@ impl Store {
         for cf in expected_column_families {
             // default is handled automatically
             let db_handle = environment.get_or_create_database(cf).unwrap();
-            let tx = db_handle.begin_write_concurrent().unwrap();
+            // Write outside Writer, because we still didn't start that
+            let tx = db_handle.begin_write().unwrap();
             tx.get_or_create_tree(b"").unwrap();
             tx.commit().unwrap();
             dbs.insert(cf.to_string(), db_handle);
@@ -180,6 +185,7 @@ impl Store {
 
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
+        let (writer_tx, writer_rx) = std::sync::mpsc::sync_channel(0);
 
         let last_written = {
             let db = dbs.get(CF_MISC_VALUES).unwrap();
@@ -205,6 +211,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            writer_tx,
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -273,28 +280,40 @@ impl Store {
                 }
             }
         });
+
+        let writer = Writer {
+            db: store.db.clone(),
+            dbs: store.dbs.clone(),
+        };
+
+        std::thread::spawn(move || {
+            writer.run(writer_rx);
+        });
         Ok(store)
     }
 
     // Helper method for async writes
-    async fn write_async<K, V>(&self, cf_name: &str, key: K, value: V) -> Result<(), StoreError>
+    async fn write_async<K, V>(
+        &self,
+        cf_name: &'static str,
+        key: K,
+        value: V,
+    ) -> Result<(), StoreError>
     where
         K: AsRef<[u8]> + Send + 'static,
         V: AsRef<[u8]> + Send + 'static,
     {
-        let dbs = self.dbs.clone();
-        let cf_name = cf_name.to_string();
+        let writer_tx = self.writer_tx.clone();
 
         tokio::task::spawn_blocking(move || {
-            let transaction = dbs.get(&cf_name).unwrap().begin_write_concurrent().unwrap();
-            {
-                let mut tree = transaction.get_tree(b"").unwrap().unwrap();
-                tree.insert(key.as_ref(), value.as_ref())
-                    .map_err(|e| StoreError::Custom(format!("CanopyDB write error: {}", e)))?;
-            }
-            transaction
-                .commit()
-                .map_err(|e| StoreError::Custom(format!("CanopyDB commit error: {}", e)))?;
+            let msg = WriterMessage::WriteAsync {
+                cf_name,
+                key: key.as_ref().to_vec(),
+                value: value.as_ref().to_vec(),
+            };
+            let (tx, rx) = std::sync::mpsc::sync_channel(0);
+            writer_tx.send((msg, tx)).unwrap();
+            rx.recv().unwrap()?;
             Ok(())
         })
         .await
@@ -2030,4 +2049,62 @@ fn open_cfs<'a, const N: usize>(
     handles
         .try_into()
         .map_err(|_| StoreError::Custom("Unexpected number of column families".to_string()))
+}
+
+struct Writer {
+    db: canopydb::Environment,
+    dbs: Arc<BTreeMap<String, canopydb::Database>>,
+}
+
+enum WriterMessage {
+    WriteAsync {
+        cf_name: &'static str,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    },
+}
+
+impl Writer {
+    fn run(
+        self,
+        receiver: std::sync::mpsc::Receiver<(
+            WriterMessage,
+            std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+        )>,
+    ) {
+        for (message, resp_tx) in receiver {
+            match message {
+                WriterMessage::WriteAsync {
+                    cf_name,
+                    key,
+                    value,
+                } => {
+                    let result = self.write_async(cf_name, key, value);
+                    let _ = resp_tx.send(result);
+                }
+            }
+        }
+    }
+
+    // Helper method for async writes
+    fn write_async<K, V>(&self, cf_name: &str, key: K, value: V) -> Result<(), StoreError>
+    where
+        K: AsRef<[u8]> + Send + 'static,
+        V: AsRef<[u8]> + Send + 'static,
+    {
+        let dbs = self.dbs.clone();
+        let cf_name = cf_name.to_string();
+
+        let transaction = dbs.get(&cf_name).unwrap().begin_write().unwrap();
+        {
+            let mut tree = transaction.get_tree(b"").unwrap().unwrap();
+            tree.insert(key.as_ref(), value.as_ref())
+                .map_err(|e| StoreError::Custom(format!("CanopyDB write error: {}", e)))?;
+        }
+        transaction
+            .commit()
+            .map_err(|e| StoreError::Custom(format!("CanopyDB commit error: {}", e)))?;
+
+        Ok(())
+    }
 }
