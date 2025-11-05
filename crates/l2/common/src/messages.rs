@@ -161,7 +161,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
     for m in messages {
         let entry = acc.entry(m.chain_id).or_insert(BalanceDiff {
             chain_id: m.chain_id,
-            value: m.value,
+            value: U256::zero(),
         });
         entry.value += m.value;
     }

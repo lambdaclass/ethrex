@@ -66,7 +66,8 @@ interface IOnChainProposer {
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
-        bytes32 lastBlockHash
+        bytes32 lastBlockHash,
+        BalanceDiff[] balanceDiffs
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.

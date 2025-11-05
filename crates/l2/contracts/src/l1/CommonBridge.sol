@@ -335,10 +335,7 @@ contract CommonBridge is
 
         bytes memory hashes;
         for (uint i = 0; i < number; i++) {
-            hashes = bytes.concat(
-                hashes,
-                pendingTxHashes[i + pendingPrivilegedTxIndex]
-            );
+            hashes = bytes.concat(hashes, pendingTxHashes[i + pendingPrivilegedTxIndex]);
         }
 
         return
@@ -363,9 +360,7 @@ contract CommonBridge is
         if (pendingTxHashesLength() == 0) {
             return false;
         }
-        return
-            block.timestamp >
-            privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]];
+        return block.timestamp > privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]];
     }
 
     /// @inheritdoc ICommonBridge
@@ -410,7 +405,7 @@ contract CommonBridge is
         emit L2MessagesPublished(L2MessagesBatchNumber, l2MessagesMerkleRoot);
 \
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            Router(SHARED_BRIDGE_ROUTER).sendMessage{value: totalValue}(
+            Router(SHARED_BRIDGE_ROUTER).sendMessage{value: balanceDiffs[i].value}(
                 balanceDiffs[i].chainId,
             );
         }
