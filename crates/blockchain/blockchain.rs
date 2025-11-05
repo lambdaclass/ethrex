@@ -844,6 +844,10 @@ impl Blockchain {
         let mut account_updates = vec![];
         let mut storage_updates = vec![];
         let mut code_updates = vec![];
+
+        self.storage
+            .add_block_headers(blocks.iter().map(|b| b.header.clone()).collect());
+
         for block in blocks.iter() {
             let (res, acc_update, _, _) = self.execute_block_pipeline(block)?;
             // Check state root matches the one in block header
