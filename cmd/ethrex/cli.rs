@@ -1,10 +1,5 @@
 use std::{
-    fmt::Display,
-    fs::{File, metadata, read_dir},
-    io::{self, Write},
-    path::{Path, PathBuf},
-    str::FromStr,
-    time::{Duration, Instant},
+    fmt::Display, fs::{metadata, read_dir, File}, io::{self, Write}, mem, path::{Path, PathBuf}, str::FromStr, time::{Duration, Instant}
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
@@ -585,13 +580,12 @@ pub async fn import_blocks(
             block_batch.push(block);
             if block_batch.len() >= 128 || index == size -1 {
                 blockchain
-                .add_blocks_pipeline(block_batch)
+                .add_blocks_pipeline(mem::take(&mut block_batch))
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                     _ => warn!("Failed to add block {number} with hash {hash:#x}"),
                 })?;
-                block_batch.clear();
             }
 
         }
