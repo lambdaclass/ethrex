@@ -205,11 +205,11 @@ jobs:
             simulation: ethereum/engine
             limit: "engine-withdrawals"
             artifact_prefix: engine_withdrawals
-          Investigate this test
-          - name: "Sync"
-            simulation: ethereum/sync
-            limit: ""
-            artifact_prefix: sync
+          # Investigate this test
+          # - name: "Sync"
+          #   simulation: ethereum/sync
+          #   limit: ""
+          #   artifact_prefix: sync
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
