@@ -1,6 +1,6 @@
 use ethrex_common::H256;
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use rustc_hash::{FxBuildHasher, FxHashMap};
+use std::{collections::hash_map::Entry, sync::Arc};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -9,57 +9,22 @@ struct TrieLayer {
     nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
     parent: H256,
     id: usize,
-    /// Per layer bloom filter, None if the size was exceeded (exceedingly rare).
-    /// Having a bloom per layer avoids the cost of rehashing each key every time we rebuild the global bloom,
-    /// since merge simply uses the u64 hashed keys instead of rehashing.
-    bloom: Option<qfilter::Filter>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
     layers: FxHashMap<H256, Arc<TrieLayer>>,
-    /// Global bloom that accrues all layer blooms.
-    ///
-    /// The bloom filter is used to avoid looking up all layers when the given path doesn't exist in any
-    /// layer, thus going directly to the database.
-    ///
-    /// In case a bloom filter insert or merge fails, we need to mark the bloom filter as poisoned
-    /// so we never use it again, because if we don't we may be misled into believing a key is not present
-    /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
-    bloom: Option<qfilter::Filter>,
-}
-
-impl Default for TrieLayerCache {
-    fn default() -> Self {
-        // Try to create the bloom filter, if it fails use poison mode.
-        let bloom = Self::create_filter().ok();
-        Self {
-            bloom,
-            last_id: 0,
-            layers: Default::default(),
-        }
-    }
+    counter: FxHashMap<Vec<u8>, usize>,
 }
 
 impl TrieLayerCache {
-    // TODO: tune this
-    fn create_filter() -> Result<qfilter::Filter, qfilter::Error> {
-        qfilter::Filter::new_resizeable(1_000_000, 100_000_000, 0.02)
-            .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
-    }
-
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         let key = key.as_ref();
 
-        // Fast check to know if any layer may contains the given key.
-        // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
-        if let Some(filter) = &self.bloom
-            && !filter.contains(key)
-        {
-            // TrieWrapper goes to db when returning None.
+        if !matches!(self.counter.get(key), Some(count) if *count > 0) {
             return None;
         }
 
@@ -113,67 +78,24 @@ impl TrieLayerCache {
             return;
         }
 
-        let mut bloom = Self::create_filter().ok();
+        let mut nodes = FxHashMap::with_capacity_and_hasher(key_values.len(), FxBuildHasher);
 
-        // create the layer bloom, this is the only place where hashing of keys happens.
-        if let Some(filter) = &mut bloom {
-            for (p, _) in &key_values {
-                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
-                    tracing::warn!("TrieLayerCache: put_batch per layer capacity exceeded");
-                    bloom = None;
-                    break;
-                }
-            }
+        for (path, value) in key_values {
+            let path = path.into_vec();
+            self.counter
+                .entry(path.clone())
+                .and_modify(|x| *x = *x + 1)
+                .or_insert(1);
+            nodes.insert(path, value);
         }
-
-        // add this new bloom to the global one via merge
-        if let Some(filter) = &mut self.bloom
-            && let Some(new_filter) = &bloom
-            && let Err(qfilter::Error::CapacityExceeded) = filter.merge(false, new_filter)
-        {
-            tracing::warn!("TrieLayerCache: put_batch merge capacity exceeded");
-            self.bloom = None;
-            bloom = None;
-        }
-
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
-            .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
-            .collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
             nodes: Arc::new(nodes),
             parent,
             id: self.last_id,
-            bloom,
         };
         self.layers.insert(state_root, Arc::new(entry));
-    }
-
-    /// Rebuilds the global bloom filter accruing all current existing layers.
-    pub fn rebuild_bloom(&mut self) {
-        let mut blooms = self.layers.values().map(|x| x.bloom.as_ref());
-
-        let Some(mut ret) = blooms.next().flatten().cloned() else {
-            tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-            self.bloom = None;
-            return;
-        };
-
-        for bloom in blooms {
-            let Some(bloom) = bloom else {
-                tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-                self.bloom = None;
-                return;
-            };
-            if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
-                tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                self.bloom = None;
-                return;
-            }
-        }
-        self.bloom = Some(ret);
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -184,8 +106,23 @@ impl TrieLayerCache {
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
-        self.layers.retain(|_, item| item.id > layer.id);
-        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
+        self.layers.retain(|_, item| {
+            if item.id > layer.id {
+                true
+            } else {
+                for node in item.nodes.keys() {
+                    if let Entry::Occupied(mut entry) = self.counter.entry(node.clone()) {
+                        let value = entry.get_mut();
+                        *value -= 1;
+
+                        if *value == 0 {
+                            entry.remove();
+                        }
+                    }
+                }
+                false
+            }
+        });
         Some(
             parent_nodes
                 .unwrap_or_default()
