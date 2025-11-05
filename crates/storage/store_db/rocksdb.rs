@@ -22,7 +22,7 @@ use std::{
         mpsc::{SyncSender, sync_channel},
     },
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
@@ -1854,6 +1854,7 @@ impl Writer {
         K: AsRef<[u8]> + Send + 'static,
         V: AsRef<[u8]> + Send + 'static,
     {
+        trace!(%cf_name, "Write async called");
         let dbs = self.dbs.clone();
         let cf_name = cf_name.to_string();
 
@@ -1867,6 +1868,7 @@ impl Writer {
             .commit()
             .map_err(|e| StoreError::Custom(format!("CanopyDB commit error: {}", e)))?;
 
+        trace!(%cf_name, "Write async finished");
         Ok(())
     }
 
@@ -1874,6 +1876,7 @@ impl Writer {
         &self,
         batch_ops: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
+        trace!("Write batch async called");
         let db = self.db.clone();
         let dbs = self.dbs.clone();
         let mut transactions = BTreeMap::new();
@@ -1890,7 +1893,9 @@ impl Writer {
                 tree.insert(key.as_ref(), value.as_ref()).unwrap();
             }
         }
+        let cfs_len = transactions.len();
         db.group_commit(transactions.into_values(), false).unwrap();
+        trace!(%cfs_len, "Write batch async finished");
         Ok(())
     }
 
@@ -1899,6 +1904,7 @@ impl Writer {
         last_written: Vec<u8>,
         batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
+        trace!("Write FKV batch called");
         let cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
         let cf_flatkeyvalue = self
             .dbs
@@ -1920,6 +1926,7 @@ impl Writer {
             .group_commit([cf_flatkeyvalue, cf_misc], false)
             .unwrap();
 
+        trace!("Write FKV batch finished");
         Ok(())
     }
 
@@ -1928,6 +1935,7 @@ impl Writer {
         parent_state_root: H256,
         update_batch: UpdateBatch,
     ) -> Result<(), StoreError> {
+        trace!("Apply update batch called");
         let last_state_root = update_batch
             .blocks
             .last()
@@ -2063,10 +2071,14 @@ impl Writer {
                 ],
                 false,
             )
-            .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))
+            .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))?;
+
+        trace!("Apply update batch finished");
+        Ok(())
     }
 
     fn clear_snap_state(&self) -> Result<(), StoreError> {
+        trace!("Clear snap state called");
         let dbs = self.dbs.clone();
 
         let cf = dbs
@@ -2076,10 +2088,12 @@ impl Writer {
         let tx = cf.begin_write().unwrap();
         tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
         tx.commit().unwrap();
+        trace!("Clear snap state finished");
         Ok(())
     }
 
     fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
+        trace!("Clear fullsync headers called");
         let dbs = self.dbs.clone();
 
         let cf = dbs
@@ -2089,6 +2103,7 @@ impl Writer {
         let tx = cf.begin_write().unwrap();
         tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
         tx.commit().unwrap();
+        trace!("Clear fullsync headers finished");
         Ok(())
     }
 }
