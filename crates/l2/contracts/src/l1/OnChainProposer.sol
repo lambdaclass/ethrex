@@ -14,7 +14,6 @@ import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
-import {BalanceDiff} from "./interfaces/ICommonBridge.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -197,7 +196,7 @@ contract OnChainProposer is
         bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
-        BalanceDiff[] balanceDiffs
+        ICommonBridge.BalanceDiff[] calldata balanceDiffs
     ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
         require(

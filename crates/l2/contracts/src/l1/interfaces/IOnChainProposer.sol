@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
+import {ICommonBridge} from "./ICommonBridge.sol";
+
 /// @title Interface for the OnChainProposer contract.
 /// @author LambdaClass
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
@@ -67,7 +69,7 @@ interface IOnChainProposer {
         bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
-        BalanceDiff[] balanceDiffs
+        ICommonBridge.BalanceDiff[] calldata balanceDiffs
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.

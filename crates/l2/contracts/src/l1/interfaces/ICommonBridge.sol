@@ -34,6 +34,15 @@ interface ICommonBridge {
         bytes32 indexed withdrawalsLogsMerkleRoot
     );
 
+     /// @notice L2 messages have been published on L1.
+    /// @dev Event emitted when the L2 messages are published on L1.
+    /// @param l2MessagesBatchNumber the batch number where the l2 messages were emitted.
+    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
+    event L2MessagesPublished(
+        uint256 indexed l2MessagesBatchNumber,
+        bytes32 indexed l2MessagesMerkleRoot
+    );
+
     /// @notice A withdrawal has been claimed.
     /// @dev Event emitted when a withdrawal is claimed.
     /// @param withdrawalId the message Id of the claimed withdrawal
@@ -136,7 +145,6 @@ interface ICommonBridge {
     /// @notice Receives a message from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
-    /// @param message The message details to receive.
     function receiveMessage() external payable;
 
     /// @notice Method that claims an L2 withdrawal.

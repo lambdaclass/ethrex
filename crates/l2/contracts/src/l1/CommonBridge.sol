@@ -396,17 +396,16 @@ contract CommonBridge is
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer {
         require(
-            batchL2MessagesMerkleRoots[l2MessagesBatchNumber] == bytes32(0),
+            l2MessagesMerkleRoots[l2MessagesBatchNumber] == bytes32(0),
             "CommonBridge: l2 messages already published"
         );
-        batchL2MessagesMerkleRoots[
+        l2MessagesMerkleRoots[
             l2MessagesBatchNumber
         ] = l2MessagesMerkleRoot;
-        emit L2MessagesPublished(L2MessagesBatchNumber, l2MessagesMerkleRoot);
-\
+        emit L2MessagesPublished(l2MessagesBatchNumber, l2MessagesMerkleRoot);
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            Router(SHARED_BRIDGE_ROUTER).sendMessage{value: balanceDiffs[i].value}(
-                balanceDiffs[i].chainId,
+            IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: balanceDiffs[i].value}(
+                balanceDiffs[i].chainId
             );
         }
     }
@@ -427,7 +426,7 @@ contract CommonBridge is
     ) external view override returns (bool) {
         return MerkleProof.verify(
             l2MessageProof,
-            batchL2MessageMerkleRoots[l2MessageBatchNumber],
+            l2MessagesMerkleRoots[l2MessageBatchNumber],
             l2MessageLeaf
         );
     }

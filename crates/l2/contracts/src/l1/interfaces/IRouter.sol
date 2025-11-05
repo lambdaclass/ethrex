@@ -15,10 +15,8 @@ interface IRouter {
 
     /// @notice Sends a message to a specified chain via its CommonBridge.
     /// @param chainId The ID of the destination chain.
-    /// @param message The message details to send.
     function sendMessage(
-        uint256 chainId,
-        ICommonBridge.BalanceDiff calldata message
+        uint256 chainId
     ) external payable;
 
     /// @notice Verifies a message from a specified chain via its CommonBridge.
