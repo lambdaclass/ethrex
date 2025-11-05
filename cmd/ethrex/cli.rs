@@ -574,6 +574,7 @@ pub async fn import_blocks(
                 continue;
             }
 
+            // We are testing why this is slow on ci
             blockchain
                 .add_block_pipeline(block)
                 .inspect_err(|err| match err {
