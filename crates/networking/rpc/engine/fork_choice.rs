@@ -4,7 +4,6 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
-use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{info, warn};
 
