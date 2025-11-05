@@ -1,5 +1,4 @@
 use ethrex_common::H256;
-use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
