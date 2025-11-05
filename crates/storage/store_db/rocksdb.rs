@@ -447,31 +447,15 @@ impl Store {
         }
 
         loop {
-            let mut cf_misc = self
-                .dbs
-                .get(CF_MISC_VALUES)
-                .unwrap()
-                .begin_write_concurrent()
-                .unwrap();
-            let mut cf_flatkeyvalue = self
-                .dbs
-                .get(CF_FLATKEYVALUE)
-                .unwrap()
-                .begin_write_concurrent()
-                .unwrap();
-            let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-            let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
-
             let root = self
                 .read_sync(CF_TRIE_NODES, [])?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
 
-            let last_written = misc_tree
-                .get(b"last_written")
+            let mut last_written = self
+                .read_sync(CF_MISC_VALUES, b"last_written")
                 .unwrap()
-                .map(|b| b.to_vec())
                 .unwrap_or_default();
             let last_written_account = last_written
                 .get(0..64)
@@ -485,6 +469,8 @@ impl Store {
             debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
 
             let mut ctr = 0;
+            let mut batch = Vec::new();
+
             let mut iter = {
                 let db = Box::new(
                     RocksDBTrieDB::new(
@@ -509,39 +495,22 @@ impl Store {
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
-                misc_tree.insert(b"last_written", path.as_ref()).unwrap();
-                flatkeyvalue
-                    .insert(path.as_ref(), node.value.as_ref())
-                    .unwrap();
+                last_written = path.clone().into_vec();
+                batch.push((path.into_vec(), node.value));
                 ctr += 1;
                 if ctr > 10_000 {
-                    drop(misc_tree);
-                    drop(flatkeyvalue);
-
-                    self.db
-                        .group_commit([cf_flatkeyvalue, cf_misc], false)
-                        .unwrap();
-
-                    cf_misc = self
-                        .dbs
-                        .get(CF_MISC_VALUES)
-                        .unwrap()
-                        .begin_write_concurrent()
-                        .unwrap();
-                    cf_flatkeyvalue = self
-                        .dbs
-                        .get(CF_FLATKEYVALUE)
-                        .unwrap()
-                        .begin_write_concurrent()
-                        .unwrap();
-
-                    misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-                    flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+                    let msg = WriterMessage::WriteFKVBatch {
+                        last_written: last_written.clone(),
+                        batch: std::mem::take(&mut batch),
+                    };
+                    let (tx, rx) = std::sync::mpsc::sync_channel(0);
+                    self.writer_tx.send((msg, tx)).unwrap();
+                    rx.recv().unwrap()?;
 
                     *self
                         .last_computed_flatkeyvalue
                         .lock()
-                        .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
+                        .map_err(|_| StoreError::LockError)? = last_written.clone();
                 }
 
                 let mut iter_inner = {
@@ -567,39 +536,22 @@ impl Store {
                         continue;
                     };
                     let key = apply_prefix(Some(account_hash), path);
-                    misc_tree.insert(b"last_written", key.as_ref()).unwrap();
-                    flatkeyvalue
-                        .insert(key.as_ref(), node.value.as_ref())
-                        .unwrap();
+                    last_written = key.clone().into_vec();
+                    batch.push((key.into_vec(), node.value));
                     ctr += 1;
                     if ctr > 10_000 {
-                        drop(misc_tree);
-                        drop(flatkeyvalue);
-
-                        self.db
-                            .group_commit([cf_flatkeyvalue, cf_misc], false)
-                            .unwrap();
-
-                        cf_misc = self
-                            .dbs
-                            .get(CF_MISC_VALUES)
-                            .unwrap()
-                            .begin_write_concurrent()
-                            .unwrap();
-                        cf_flatkeyvalue = self
-                            .dbs
-                            .get(CF_FLATKEYVALUE)
-                            .unwrap()
-                            .begin_write_concurrent()
-                            .unwrap();
-
-                        misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-                        flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+                        let msg = WriterMessage::WriteFKVBatch {
+                            last_written: last_written.clone(),
+                            batch: std::mem::take(&mut batch),
+                        };
+                        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+                        self.writer_tx.send((msg, tx)).unwrap();
+                        rx.recv().unwrap()?;
 
                         *self
                             .last_computed_flatkeyvalue
                             .lock()
-                            .map_err(|_| StoreError::LockError)? = key.as_ref().to_vec();
+                            .map_err(|_| StoreError::LockError)? = last_written.clone();
                     }
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
@@ -640,12 +592,14 @@ impl Store {
                 }
                 Err(err) => return Err(err),
                 Ok(()) => {
-                    misc_tree.insert(b"last_written", [0xff].as_ref()).unwrap();
-                    drop(misc_tree);
-                    drop(flatkeyvalue);
-                    self.db
-                        .group_commit([cf_flatkeyvalue, cf_misc], false)
-                        .unwrap();
+                    let msg = WriterMessage::WriteFKVBatch {
+                        last_written: vec![0xff],
+                        batch: std::mem::take(&mut batch),
+                    };
+                    let (tx, rx) = std::sync::mpsc::sync_channel(0);
+                    self.writer_tx.send((msg, tx)).unwrap();
+                    rx.recv().unwrap()?;
+
                     *self
                         .last_computed_flatkeyvalue
                         .lock()
@@ -2054,6 +2008,10 @@ enum WriterMessage {
     WriteBatchAsync {
         batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
     },
+    WriteFKVBatch {
+        last_written: Vec<u8>,
+        batch: Vec<(Vec<u8>, Vec<u8>)>,
+    },
 }
 
 impl Writer {
@@ -2072,6 +2030,10 @@ impl Writer {
                     value,
                 } => self.write_async(cf_name, key, value),
                 WriterMessage::WriteBatchAsync { batch_ops } => self.write_batch_async(batch_ops),
+                WriterMessage::WriteFKVBatch {
+                    last_written,
+                    batch,
+                } => self.write_fkv_batch(last_written, batch),
             };
             let _ = resp_tx.send(result);
         }
@@ -2120,6 +2082,35 @@ impl Writer {
                 .unwrap();
         }
         db.group_commit(transactions.into_values(), false).unwrap();
+        Ok(())
+    }
+
+    fn write_fkv_batch(
+        &self,
+        last_written: Vec<u8>,
+        batch: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
+        let cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+        let cf_flatkeyvalue = self
+            .dbs
+            .get(CF_FLATKEYVALUE)
+            .unwrap()
+            .begin_write()
+            .unwrap();
+        {
+            let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
+            let mut flatkeyvalue_tree = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+            for (key, value) in batch {
+                flatkeyvalue_tree
+                    .insert(key.as_ref(), value.as_ref())
+                    .map_err(|e| StoreError::Custom(format!("CanopyDB write error: {}", e)))?;
+            }
+            misc_tree.insert(b"last_written", &last_written).unwrap();
+        }
+        self.db
+            .group_commit([cf_flatkeyvalue, cf_misc], false)
+            .unwrap();
+
         Ok(())
     }
 }
