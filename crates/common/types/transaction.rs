@@ -10,6 +10,9 @@ use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
 use sha3::{Digest, Keccak256};
 
+/// The serialized lenght of a default eip1559 transaction
+pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
+
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
@@ -3130,5 +3133,11 @@ mod tests {
         assert_eq!(generic_tx.access_list.len(), 1);
         assert_eq!(generic_tx.access_list[0].address, access_list[0].0);
         assert_eq!(generic_tx.access_list[0].storage_keys, access_list[0].1);
+    }
+
+    #[test]
+    fn test_eip1559_simple_transfer_size() {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
+        assert_eq!(tx.encode_to_vec().len(), 15);
     }
 }

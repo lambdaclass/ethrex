@@ -4,9 +4,8 @@ use ethrex_blockchain::{
     constants::TX_GAS_COST,
     payload::{PayloadBuildContext, PayloadBuildResult, TransactionQueue, apply_plain_transaction},
 };
-use ethrex_common::{
-    U256,
-    types::{Block, SAFE_BYTES_PER_BLOB},
+use ethrex_common::types::{
+    Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction,
 };
 use ethrex_l2_common::privileged_transactions::PRIVILEGED_TX_BUDGET;
 use ethrex_levm::vm::VMType;
@@ -100,8 +99,8 @@ pub async fn fill_transactions(
     let VMType::L2(fee_config) = context.vm.vm_type else {
         return Err(BlockProducerError::Custom("invalid VM type".to_string()));
     };
+    let acc_encoded_size = context.payload.encode_to_vec().len();
     let fee_config_len = fee_config.to_vec().len();
-
     let chain_config = store.get_chain_config();
 
     debug!("Fetching transactions from mempool");
@@ -123,7 +122,13 @@ pub async fn fill_transactions(
             break;
         }
 
-        // TODO: Check if we have enough blob space to run more transactions
+        // Check if we have enough blob space to run more transactions
+        if acc_encoded_size + fee_config_len + EIP1559_DEFAULT_SERIALIZED_LENGTH
+            > SAFE_BYTES_PER_BLOB
+        {
+            debug!("No more blob space to run transactions");
+            break;
+        };
 
         // Fetch the next transaction
         let Some(head_tx) = txs.peek() else {
@@ -144,6 +149,28 @@ pub async fn fill_transactions(
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
             continue;
+        }
+
+        // Check if we have enough blob space to add this transaction
+        let tx: Transaction = head_tx.clone().into();
+        if acc_encoded_size + fee_config_len + tx.encode_to_vec().len() > SAFE_BYTES_PER_BLOB {
+            debug!("No more blob space to run transactions");
+            break;
+        };
+
+        // Check we don't have an excessive number of privileged transactions
+        if head_tx.is_privileged() {
+            if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
+                debug!("Ran out of space for privileged transactions");
+                txs.pop();
+                continue;
+            }
+            let id = head_tx.nonce();
+            if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
+                debug!("Ignoring out-of-order privileged transaction");
+                txs.pop();
+                continue;
+            }
         }
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
@@ -172,10 +199,6 @@ pub async fn fill_transactions(
             continue;
         }
 
-        // Copy remaining gas and block value before executing the transaction
-        let previous_remaining_gas = context.remaining_gas;
-        let previous_block_value = context.block_value;
-
         // Execute tx
         let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => receipt,
@@ -188,47 +211,11 @@ pub async fn fill_transactions(
             }
         };
 
-        // Temporary add transaction to block
-        context
-            .payload
-            .body
-            .transactions
-            .push(head_tx.clone().into());
-        let encoded_block = context.payload.encode_to_vec();
-
-        if encoded_block.len() + fee_config_len > SAFE_BYTES_PER_BLOB {
-            debug!(
-                "No more blob space to run this transactions. Skipping transaction: {:?}",
-                tx_hash
-            );
-            txs.pop();
-
-            // This transaction state change is too big, we need to undo it.
-            undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-            context.payload.body.transactions.pop();
-            continue;
-        }
-
         context.payload.body.transactions.pop();
 
-        // Check we don't have an excessive number of privileged transactions
-        if head_tx.is_privileged() {
-            if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
-                debug!("Ran out of space for privileged transactions");
-                txs.pop();
-                undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-                continue;
-            }
-            let id = head_tx.nonce();
-            if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
-                debug!("Ignoring out-of-order privileged transaction");
-                txs.pop();
-                undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-                continue;
-            }
-            last_privileged_nonce.replace(id);
-            privileged_tx_count += 1;
-        }
+        // update last privileged nonce and count
+        last_privileged_nonce.replace(head_tx.nonce());
+        privileged_tx_count += 1;
 
         txs.shift()?;
         // Pull transaction from the mempool
@@ -265,15 +252,4 @@ fn fetch_mempool_transactions(
         blob_txs.pop();
     }
     Ok(plain_txs)
-}
-
-fn undo_last_tx(
-    context: &mut PayloadBuildContext,
-    previous_remaining_gas: u64,
-    previous_block_value: U256,
-) -> Result<(), BlockProducerError> {
-    context.vm.undo_last_tx()?;
-    context.remaining_gas = previous_remaining_gas;
-    context.block_value = previous_block_value;
-    Ok(())
 }

@@ -102,7 +102,7 @@ impl FeeConfig {
         }
 
         if let Some(operator_fee_config) = self.operator_fee_config {
-            // base fee vault is set
+            // operator fee vault is set
             let base_fee_vault_type: u8 = FeeConfigType::OperatorFee.into();
             fee_config_type += base_fee_vault_type;
             encoded.extend_from_slice(&operator_fee_config.operator_fee_vault.0);
@@ -110,7 +110,7 @@ impl FeeConfig {
         }
 
         if let Some(l1_fee_config) = self.l1_fee_config {
-            // base fee vault is set
+            // l1 fee vault is set
             let l1_fee_type: u8 = FeeConfigType::L1Fee.into();
             fee_config_type += l1_fee_type;
             encoded.extend_from_slice(&l1_fee_config.l1_fee_vault.0);
@@ -128,14 +128,16 @@ impl FeeConfig {
     pub fn decode(bytes: &[u8]) -> Result<(usize, Self), FeeConfigError> {
         let mut decoder = Decoder::new(bytes);
 
+        // Read version
         let version = decoder.get_u8()?;
-
         if version != 0 {
             return Err(FeeConfigError::UnsupportedVersion(version));
         }
 
+        // Read fee config type
         let fee_config_type = decoder.get_u8()?;
 
+        // Read base fee vault if present
         let base_fee_vault = if FeeConfigType::BaseFeeVault.is_in(fee_config_type) {
             let address = decoder.get_address()?;
             Some(address)
@@ -143,6 +145,7 @@ impl FeeConfig {
             None
         };
 
+        // Read operator fee config if present
         let operator_fee_config = if FeeConfigType::OperatorFee.is_in(fee_config_type) {
             let operator_fee_vault = decoder.get_address()?;
             let operator_fee_per_gas = decoder.get_u64()?;
@@ -153,6 +156,8 @@ impl FeeConfig {
         } else {
             None
         };
+
+        // Read L1 fee config if present
         let l1_fee_config = if FeeConfigType::L1Fee.is_in(fee_config_type) {
             let l1_fee_vault = decoder.get_address()?;
             let l1_fee_per_blob_gas = decoder.get_u64()?;
