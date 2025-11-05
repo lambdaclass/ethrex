@@ -579,7 +579,7 @@ pub async fn import_blocks(
                 continue;
             }
 
-            if index + MIN_FULL_BLOCKS < size  {
+            if index + MIN_FULL_BLOCKS < size {
                 block_batch.push(block);
                 if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
                     blockchain
