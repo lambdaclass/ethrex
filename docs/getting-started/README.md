@@ -44,7 +44,7 @@ lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execu
 Install ethrex and lighthouse:
 
 > [!NOTE]
-> Go to https://github.com/sigp/lighthouse/releases/ and use the latest package there and replace that in the below commands, in this example this was: lighthouse-v8.0.0-rc.2-x86_64-unknown-linux-gnu.tar.gz at the time
+> Go to https://github.com/sigp/lighthouse/releases/ and use the latest package there and replace that in the below commands
 
 ```sh
 # create secrets directory and jwt secret
