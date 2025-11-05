@@ -3310,6 +3310,8 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
@@ -3348,8 +3350,10 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "rustc-hash 2.1.1",
  "secp256k1",
  "serde_json",
  "sha3",
@@ -3377,6 +3381,7 @@ dependencies = [
  "once_cell",
  "rayon",
  "rkyv",
+ "rustc-hash 2.1.1",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3558,6 +3563,7 @@ dependencies = [
  "malachite 0.6.1",
  "p256",
  "ripemd",
+ "rustc-hash 2.1.1",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3707,6 +3713,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -3763,6 +3771,8 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
+ "qfilter",
+ "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",
  "serde",
@@ -7751,6 +7761,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qfilter"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "746341cd2357c9a4df2d951522b4a8dd1ef553e543119899ad7bf87e938c8fbe"
+dependencies = [
+ "xxhash-rust",
+]
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8817,6 +8836,7 @@ dependencies = [
  "log",
  "num-bigint 0.4.6",
  "num-traits",
+ "rustc-hash 2.1.1",
  "serde",
  "serde_json",
 ]
@@ -12224,6 +12244,12 @@ checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yaml-rust2"

@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
@@ -36,10 +37,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x79d6af40f7c9145b0741639ea969c13d5faa3cc6
+// 0xcecd5910a4404ccf2718feb58dac13e975a862a2
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x79, 0xd6, 0xaf, 0x40, 0xf7, 0xc9, 0x14, 0x5b, 0x07, 0x41, 0x63, 0x9e, 0xa9, 0x69, 0xc1, 0x3d,
-    0x5f, 0xaa, 0x3c, 0xc6,
+    0xce, 0xcd, 0x59, 0x10, 0xa4, 0x40, 0x4c, 0xcf, 0x27, 0x18, 0xfe, 0xb5, 0x8d, 0xac, 0x13, 0xe9,
+    0x75, 0xa8, 0x62, 0xa2,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -846,6 +847,7 @@ pub async fn build_generic_tx(
             .map(AccessListEntry::from)
             .collect(),
         from,
+        wrapper_version: overrides.wrapper_version,
         ..Default::default()
     };
     tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
@@ -990,6 +992,26 @@ pub async fn get_pending_privileged_transactions(
     )
     .await?;
     from_hex_string_to_h256_array(&response)
+}
+
+// TODO: This is a work around for now, issue: https://github.com/lambdaclass/ethrex/issues/4828
+pub async fn get_l1_active_fork(
+    client: &EthClient,
+    activation_time: Option<u64>,
+) -> Result<Fork, EthClientError> {
+    let Some(osaka_activation_time) = activation_time else {
+        return Ok(Fork::Osaka);
+    };
+    let current_timestamp = client
+        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
+        .await?
+        .header
+        .timestamp;
+    if current_timestamp < osaka_activation_time {
+        Ok(Fork::Prague)
+    } else {
+        Ok(Fork::Osaka)
+    }
 }
 
 async fn _generic_call(
