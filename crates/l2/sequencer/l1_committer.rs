@@ -80,6 +80,7 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Commit,
+    Abort,
 }
 
 #[derive(Clone)]
@@ -1031,8 +1032,7 @@ impl L1Committer {
         if let Some(token) = self.cancellation_token.take() {
             token.cancel();
             info!("L1 committer stopped");
-            CallResponse::Stop(OutMessage::Stopped)
-            // CallResponse::Reply(OutMessage::Stopped)
+            CallResponse::Reply(OutMessage::Stopped)
         } else {
             warn!("L1 committer received stop command but it is already stopped");
             CallResponse::Reply(OutMessage::Error("Already stopped".to_string()))
@@ -1087,58 +1087,64 @@ impl GenServer for L1Committer {
     // Right now we only have the `Commit` message, so we ignore the `message` parameter
     async fn handle_cast(
         &mut self,
-        _message: Self::CastMsg,
+        message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let current_last_committed_batch =
-                get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
-                    .await
-                    .unwrap_or(self.last_committed_batch);
-            let Some(current_time) = utils::system_now_ms() else {
-                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
-                return CastResponse::NoReply;
-            };
+        match message {
+            InMessage::Commit => {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                    let current_last_committed_batch =
+                        get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
+                            .await
+                            .unwrap_or(self.last_committed_batch);
+                    let Some(current_time) = utils::system_now_ms() else {
+                        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
+                        return CastResponse::NoReply;
+                    };
 
-            // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
-            if current_last_committed_batch > self.last_committed_batch {
-                info!(
-                    l1_batch = current_last_committed_batch,
-                    last_batch_registered = self.last_committed_batch,
-                    "Committer was not aware of new L1 committed batches, updating internal state accordingly"
-                );
-                self.last_committed_batch = current_last_committed_batch;
-                self.last_committed_batch_timestamp = current_time;
-                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
-                return CastResponse::NoReply;
-            }
+                    // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
+                    if current_last_committed_batch > self.last_committed_batch {
+                        info!(
+                            l1_batch = current_last_committed_batch,
+                            last_batch_registered = self.last_committed_batch,
+                            "Committer was not aware of new L1 committed batches, updating internal state accordingly"
+                        );
+                        self.last_committed_batch = current_last_committed_batch;
+                        self.last_committed_batch_timestamp = current_time;
+                        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
+                        return CastResponse::NoReply;
+                    }
 
-            let commit_time: u128 = self.commit_time_ms.into();
-            let should_send_commitment =
-                current_time - self.last_committed_batch_timestamp > commit_time;
+                    let commit_time: u128 = self.commit_time_ms.into();
+                    let should_send_commitment =
+                        current_time - self.last_committed_batch_timestamp > commit_time;
 
-            debug!(
-                last_committed_batch_at = self.last_committed_batch_timestamp,
-                will_send_commitment = should_send_commitment,
-                last_committed_batch = self.last_committed_batch,
-                "Committer woke up"
-            );
+                    debug!(
+                        last_committed_batch_at = self.last_committed_batch_timestamp,
+                        will_send_commitment = should_send_commitment,
+                        last_committed_batch = self.last_committed_batch,
+                        "Committer woke up"
+                    );
 
-            #[expect(clippy::collapsible_if)]
-            if should_send_commitment {
-                if self
-                    .commit_next_batch_to_l1()
-                    .await
-                    .inspect_err(|e| error!("L1 Committer Error: {e}"))
-                    .is_ok()
-                {
-                    self.last_committed_batch_timestamp = system_now_ms().unwrap_or(current_time);
-                    self.last_committed_batch = current_last_committed_batch + 1;
+                    #[expect(clippy::collapsible_if)]
+                    if should_send_commitment {
+                        if self
+                            .commit_next_batch_to_l1()
+                            .await
+                            .inspect_err(|e| error!("L1 Committer Error: {e}"))
+                            .is_ok()
+                        {
+                            self.last_committed_batch_timestamp =
+                                system_now_ms().unwrap_or(current_time);
+                            self.last_committed_batch = current_last_committed_batch + 1;
+                        }
+                    }
                 }
+                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
+                CastResponse::NoReply
             }
+            InMessage::Abort => CastResponse::Stop,
         }
-        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
-        CastResponse::NoReply
     }
 
     async fn handle_call(
