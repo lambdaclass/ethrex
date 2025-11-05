@@ -9,7 +9,7 @@ pub fn main() {
     println!("cycle-tracker-report-start: read_input");
     let mut input_bytes = sp1_zkvm::io::read_vec();
     let mut input_archived = rkyv::access_mut::<ProgramInput, Error>(&mut input_bytes);
-    munge!(let ArchivedExample { mut input, .. } = input_archived);
+    rkyv::munge::munge!(let ArchivedExample { mut input, .. } = input_archived);
 
     println!("cycle-tracker-report-end: read_input");
 

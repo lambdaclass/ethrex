@@ -1,7 +1,7 @@
 use ethrex_common::types::{
     Block, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
 };
-use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
+use rkyv::{Archive, Deserialize as RDeserialize, Portable, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -10,7 +10,9 @@ use ethrex_common::types::blobs_bundle;
 
 /// Private input variables passed into the zkVM execution program.
 #[serde_as]
+#[cfg_attr(not(feature = "l2"), derive(Portable))]
 #[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive)]
+#[repr(C)]
 pub struct ProgramInput {
     /// blocks to execute
     pub blocks: Vec<Block>,
@@ -19,7 +21,8 @@ pub struct ProgramInput {
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     /// Configuration for L2 fees used for each block
-    pub fee_configs: Option<Vec<FeeConfig>>,
+    #[cfg(feature = "l2")]
+    pub fee_configs: Vec<FeeConfig>,
     #[cfg(feature = "l2")]
     /// KZG commitment to the blob data
     #[serde_as(as = "[_; 48]")]
