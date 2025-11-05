@@ -940,14 +940,15 @@ impl StoreEngine for Store {
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();
-        let cf = self.dbs.get(CF_PENDING_BLOCKS).unwrap();
-        let tx = cf.begin_write_concurrent().unwrap();
-        tx.get_tree(b"")
-            .unwrap()
-            .unwrap()
-            .insert(&hash_key, &block_value)
-            .map_err(StoreError::RocksdbError)?;
-        tx.commit().unwrap();
+
+        let msg = WriterMessage::WriteAsync {
+            cf_name: CF_PENDING_BLOCKS,
+            key: hash_key,
+            value: block_value,
+        };
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        self.writer_tx.send((msg, tx)).unwrap();
+        rx.recv().unwrap()?;
         Ok(())
     }
 
@@ -1097,16 +1098,13 @@ impl StoreEngine for Store {
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        let dbs = self.dbs.clone();
+        let writer_tx = self.writer_tx.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = dbs
-                .get(CF_SNAP_STATE)
-                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-
-            let tx = cf.begin_write_concurrent().unwrap();
-            tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
-            tx.commit().unwrap();
+            let msg = WriterMessage::ClearSnapState;
+            let (tx, rx) = std::sync::mpsc::sync_channel(0);
+            writer_tx.send((msg, tx)).unwrap();
+            rx.recv().unwrap()?;
             Ok(())
         })
         .await
@@ -1415,65 +1413,55 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         // Get current latest block number to know what to clean up
         let latest = self.get_latest_block_number().await?.unwrap_or(0);
-        let db = self.db.clone();
-        let dbs = self.dbs.clone();
 
-        tokio::task::spawn_blocking(move || {
-            let [cf_canonical, cf_chain_data] =
-                open_cfs(&dbs, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
+        let mut batch_ops = Vec::new();
 
-            let canonical_tx = cf_canonical.begin_write_concurrent().unwrap();
-            let chain_data_tx = cf_chain_data.begin_write_concurrent().unwrap();
-            {
-                let mut canonical_tree = canonical_tx.get_tree(b"").unwrap().unwrap();
-                let mut chain_data_tree = chain_data_tx.get_tree(b"").unwrap().unwrap();
-
-                // Update canonical block hashes
-                if let Some(canonical_blocks) = new_canonical_blocks {
-                    for (block_number, block_hash) in canonical_blocks {
-                        let number_key = block_number.to_le_bytes();
-                        let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
-                        canonical_tree.insert(&number_key, &hash_value).unwrap();
-                    }
-                }
-
-                // Remove anything after the head from the canonical chain
-                for number in (head_number + 1)..=(latest) {
-                    canonical_tree.delete(&number.to_le_bytes()).unwrap();
-                }
-
-                // Make head canonical
-                let head_key = head_number.to_le_bytes();
-                let head_value = BlockHashRLP::from(head_hash).bytes().clone();
-                canonical_tree.insert(&head_key, &head_value).unwrap();
-
-                // Update chain data
-
-                let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
-                chain_data_tree
-                    .insert(&latest_key, &head_number.to_le_bytes())
-                    .unwrap();
-
-                if let Some(safe_number) = safe {
-                    let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
-                    chain_data_tree
-                        .insert(&safe_key, &safe_number.to_le_bytes())
-                        .unwrap();
-                }
-
-                if let Some(finalized_number) = finalized {
-                    let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
-                    chain_data_tree
-                        .insert(&finalized_key, &finalized_number.to_le_bytes())
-                        .unwrap();
-                }
+        // Update canonical block hashes
+        if let Some(canonical_blocks) = new_canonical_blocks {
+            for (block_number, block_hash) in canonical_blocks {
+                let number_key = block_number.to_le_bytes();
+                let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
+                batch_ops.push((CF_CANONICAL_BLOCK_HASHES, number_key.to_vec(), hash_value));
             }
+        }
 
-            db.group_commit([canonical_tx, chain_data_tx], false)
-                .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        // Remove anything after the head from the canonical chain
+        for number in (head_number + 1)..=(latest) {
+            batch_ops.push((
+                CF_CANONICAL_BLOCK_HASHES,
+                number.to_le_bytes().to_vec(),
+                vec![],
+            ));
+        }
+
+        // Make head canonical
+        let head_key = head_number.to_le_bytes();
+        let head_value = BlockHashRLP::from(head_hash).bytes().clone();
+        batch_ops.push((CF_CANONICAL_BLOCK_HASHES, head_key.to_vec(), head_value));
+
+        // Update chain data
+
+        let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
+        batch_ops.push((
+            CF_CHAIN_DATA,
+            latest_key,
+            head_number.to_le_bytes().to_vec(),
+        ));
+
+        if let Some(safe_number) = safe {
+            let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
+            batch_ops.push((CF_CHAIN_DATA, safe_key, safe_number.to_le_bytes().to_vec()));
+        }
+
+        if let Some(finalized_number) = finalized {
+            let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+            batch_ops.push((
+                CF_CHAIN_DATA,
+                finalized_key,
+                finalized_number.to_le_bytes().to_vec(),
+            ));
+        }
+        self.write_batch_async(batch_ops).await
     }
 
     async fn get_receipts_for_block(
@@ -1753,16 +1741,13 @@ impl StoreEngine for Store {
     }
 
     async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
-        let dbs = self.dbs.clone();
+        let writer_tx = self.writer_tx.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = dbs
-                .get(CF_FULLSYNC_HEADERS)
-                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-
-            let tx = cf.begin_write_concurrent().unwrap();
-            tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
-            tx.commit().unwrap();
+            let msg = WriterMessage::ClearFullsyncHeaders;
+            let (tx, rx) = std::sync::mpsc::sync_channel(0);
+            writer_tx.send((msg, tx)).unwrap();
+            rx.recv().unwrap()?;
             Ok(())
         })
         .await
@@ -1839,6 +1824,8 @@ enum WriterMessage {
         parent_state_root: H256,
         update_batch: UpdateBatch,
     },
+    ClearSnapState,
+    ClearFullsyncHeaders,
 }
 
 impl Writer {
@@ -1865,6 +1852,8 @@ impl Writer {
                     parent_state_root,
                     update_batch,
                 } => self.apply_update_batch(parent_state_root, update_batch),
+                WriterMessage::ClearSnapState => self.clear_snap_state(),
+                WriterMessage::ClearFullsyncHeaders => self.clear_fullsync_headers(),
             };
             let _ = resp_tx.send(result);
         }
@@ -2086,5 +2075,31 @@ impl Writer {
                 false,
             )
             .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))
+    }
+
+    fn clear_snap_state(&self) -> Result<(), StoreError> {
+        let dbs = self.dbs.clone();
+
+        let cf = dbs
+            .get(CF_SNAP_STATE)
+            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+        let tx = cf.begin_write().unwrap();
+        tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
+        tx.commit().unwrap();
+        Ok(())
+    }
+
+    fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
+        let dbs = self.dbs.clone();
+
+        let cf = dbs
+            .get(CF_FULLSYNC_HEADERS)
+            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+        let tx = cf.begin_write().unwrap();
+        tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 }
