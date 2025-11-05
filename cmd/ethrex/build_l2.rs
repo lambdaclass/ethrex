@@ -100,6 +100,10 @@ pub fn download_script() {
             &Path::new("../../crates/l2/contracts/src/l1/CommonBridge.sol"),
             "CommonBridge",
         ),
+        (
+            &Path::new("../../crates/l2/contracts/src/l1/Router.sol"),
+            "Router",
+        ),
     ];
     for (path, name) in l1_contracts {
         compile_contract_to_bytecode(
@@ -170,6 +174,7 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
         "SP1Verifier",
         "OnChainProposer",
         "CommonBridge",
+        "Router",
         "CommonBridgeL2",
         "L2ToL1Messenger",
         "UpgradeableSystemContract",

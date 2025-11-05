@@ -104,7 +104,7 @@ contract CommonBridge is
     uint256 private pendingPrivilegedTxIndex = 0;
 
     /// @notice Address of the SharedBridgeRouter contract
-    address public SHARED_BRIDGE_ROUTER;
+    address public SHARED_BRIDGE_ROUTER = address(0);
 
     modifier onlyOnChainProposer() {
         require(
@@ -197,8 +197,6 @@ contract CommonBridge is
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
-        _burnGas(sendValues.gasLimit);
-
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes20(from),
@@ -231,6 +229,7 @@ contract CommonBridge is
     function sendToL2(
         SendValues calldata sendValues
     ) public override whenNotPaused {
+        _burnGas(sendValues.gasLimit);
         _sendToL2(_getSenderAlias(), sendValues);
     }
 
@@ -239,6 +238,11 @@ contract CommonBridge is
         uint256 _amount,
         address l2Recipient
     ) public payable override whenNotPaused {
+        _burnGas(21000 * 5);
+        _deposit(_amount, l2Recipient);
+    }
+
+    function _deposit(uint256 _amount, address l2Recipient) private {
         uint256 value;
 
         // Here we define value depending on whether the native token is ETH or an ERC20
