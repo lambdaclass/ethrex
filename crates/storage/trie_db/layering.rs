@@ -156,17 +156,13 @@ impl TrieLayerCache {
     pub fn rebuild_bloom_threaded(
         layers: &FxHashMap<H256, Arc<TrieLayer>>,
     ) -> Option<qfilter::Filter> {
-        let mut blooms: Vec<_> = layers
-            .values()
-            .par_bridge()
-            .map(|entry| entry.bloom.as_ref())
-            .collect();
+        let mut blooms = layers.values().map(|x| x.bloom.as_ref());
 
-        let Some(mut ret) = blooms.pop().flatten().cloned() else {
+        let Some(mut ret) = blooms.next().flatten().cloned() else {
             tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
             return None;
         };
-        for bloom in blooms.iter() {
+        for bloom in blooms {
             let Some(bloom) = bloom else {
                 tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
 
