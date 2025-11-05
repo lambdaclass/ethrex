@@ -846,7 +846,10 @@ impl Blockchain {
         let mut code_updates = vec![];
 
         self.storage
-            .add_block_headers(blocks.iter().map(|b| b.header.clone()).collect());
+            .add_block_headers(blocks.iter().map(|b| b.header.clone()).collect())?;
+        for b in blocks.iter() {
+            self.storage.add_block_number(b.hash(), b.header.number)?;
+        }
 
         for block in blocks.iter() {
             let (res, acc_update, _, _) = self.execute_block_pipeline(block)?;
