@@ -1,9 +1,17 @@
-.text
+// Modified: all instances of curly brackets need to be escaped with
+// a second bracket to avoid Rust's `global_asm` trying to interpret
+// them as a template substitution.
+// Ran `cpp` to substitute constants.
+// Commented out ARM assembly annotations (.size, .type) used only
+// for debugging purposes and not understood by Rust.
+// Removed dots from local labels for correct detection in the frontend.
+// TODO: this is probably a matter of selecting the right parameter
+// for the translator.
 
 .align	8	// strategic alignment and padding that allows to use
 		// address value as loop termination condition...
 .quad	0,0,0,0,0,0,0,0
-.type	iotas,%object
+// .type	iotas,%object
 iotas:
 .quad	0x0000000000000001
 .quad	0x0000000000008082
@@ -30,8 +38,8 @@ iotas:
 .quad	0x8000000000008080
 .quad	0x0000000080000001
 .quad	0x8000000080008008
-.size	iotas,.-iotas
-.type	KeccakF1600_int,%function
+// .size	iotas,.-iotas
+// .type	KeccakF1600_int,%function
 .align	5
 KeccakF1600_int:
 .inst	0xd503233f			// paciasp
@@ -197,25 +205,25 @@ KeccakF1600_int:
 
 	bne	.Loop
 
-	ldr	x30,[sp,#16+__SIZEOF_POINTER__]
+	ldr	x30,[sp,#16+8]
 .inst	0xd50323bf			// autiasp
 	ret
-.size	KeccakF1600_int,.-KeccakF1600_int
+// .size	KeccakF1600_int,.-KeccakF1600_int
 
-.type	KeccakF1600,%function
+// .type	KeccakF1600,%function
 .align	5
 KeccakF1600:
 .inst	0xd503233f			// paciasp
-	stp	x29,x30,[sp,#-16*__SIZEOF_POINTER__]!
+	stp	x29,x30,[sp,#-16*8]!
 	add	x29,sp,#0
-	stp	x19,x20,[sp,#2*__SIZEOF_POINTER__]
-	stp	x21,x22,[sp,#4*__SIZEOF_POINTER__]
-	stp	x23,x24,[sp,#6*__SIZEOF_POINTER__]
-	stp	x25,x26,[sp,#8*__SIZEOF_POINTER__]
-	stp	x27,x28,[sp,#10*__SIZEOF_POINTER__]
-	sub	sp,sp,#16+4*__SIZEOF_POINTER__
+	stp	x19,x20,[sp,#2*8]
+	stp	x21,x22,[sp,#4*8]
+	stp	x23,x24,[sp,#6*8]
+	stp	x25,x26,[sp,#8*8]
+	stp	x27,x28,[sp,#10*8]
+	sub	sp,sp,#16+4*8
 
-	str	x0,[sp,#16+2*__SIZEOF_POINTER__]	// offload argument
+	str	x0,[sp,#16+2*8]	// offload argument
 	mov	x26,x0
 	ldp	x0,x1,[x0,#16*0]
 	ldp	x2,x3,[x26,#16*1]
@@ -234,7 +242,7 @@ KeccakF1600:
 	adr	x28,iotas
 	bl	KeccakF1600_int
 
-	ldr	x26,[sp,#16+2*__SIZEOF_POINTER__]
+	ldr	x26,[sp,#16+2*8]
 	stp	x0,x1,[x26,#16*0]
 	stp	x2,x3,[x26,#16*1]
 	stp	x4,x5,[x26,#16*2]
@@ -249,33 +257,33 @@ KeccakF1600:
 	stp	x22,x23,[x26,#16*11]
 	str	x24,[x26,#16*12]
 
-	ldp	x19,x20,[x29,#2*__SIZEOF_POINTER__]
-	add	sp,sp,#16+4*__SIZEOF_POINTER__
-	ldp	x21,x22,[x29,#4*__SIZEOF_POINTER__]
-	ldp	x23,x24,[x29,#6*__SIZEOF_POINTER__]
-	ldp	x25,x26,[x29,#8*__SIZEOF_POINTER__]
-	ldp	x27,x28,[x29,#10*__SIZEOF_POINTER__]
-	ldp	x29,x30,[sp],#16*__SIZEOF_POINTER__
+	ldp	x19,x20,[x29,#2*8]
+	add	sp,sp,#16+4*8
+	ldp	x21,x22,[x29,#4*8]
+	ldp	x23,x24,[x29,#6*8]
+	ldp	x25,x26,[x29,#8*8]
+	ldp	x27,x28,[x29,#10*8]
+	ldp	x29,x30,[sp],#16*8
 .inst	0xd50323bf			// autiasp
 	ret
-.size	KeccakF1600,.-KeccakF1600
+// .size	KeccakF1600,.-KeccakF1600
 
 .globl	SHA3_absorb
-.type	SHA3_absorb,%function
+// .type	SHA3_absorb,%function
 .align	5
 SHA3_absorb:
 .inst	0xd503233f			// paciasp
-	stp	x29,x30,[sp,#-16*__SIZEOF_POINTER__]!
+	stp	x29,x30,[sp,#-16*8]!
 	add	x29,sp,#0
-	stp	x19,x20,[sp,#2*__SIZEOF_POINTER__]
-	stp	x21,x22,[sp,#4*__SIZEOF_POINTER__]
-	stp	x23,x24,[sp,#6*__SIZEOF_POINTER__]
-	stp	x25,x26,[sp,#8*__SIZEOF_POINTER__]
-	stp	x27,x28,[sp,#10*__SIZEOF_POINTER__]
-	sub	sp,sp,#16+4*__SIZEOF_POINTER__+16
+	stp	x19,x20,[sp,#2*8]
+	stp	x21,x22,[sp,#4*8]
+	stp	x23,x24,[sp,#6*8]
+	stp	x25,x26,[sp,#8*8]
+	stp	x27,x28,[sp,#10*8]
+	sub	sp,sp,#16+4*8 +16
 
-	stp	x0,x1,[sp,#16+2*__SIZEOF_POINTER__]	// offload arguments
-	stp	x2,x3,[sp,#16+4*__SIZEOF_POINTER__]
+	stp	x0,x1,[sp,#16+2*8]	// offload arguments
+	stp	x2,x3,[sp,#16+4*8]
 
 	mov	x26,x0			// uint64_t A[5][5]
 	mov	x27,x1			// const void *inp
@@ -299,139 +307,139 @@ SHA3_absorb:
 .align	4
 .Loop_absorb:
 	subs	x26,x28,x30		// len - bsz
-	blo	.Labsorbed
+	blo	Labsorbed
 
-	str	x26,[sp,#16+4*__SIZEOF_POINTER__]	// save len - bsz
+	str	x26,[sp,#16+4*8]	// save len - bsz
 	cmp	x30,#104
 	ldr	x26,[x27,#0]		// A[0][0] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x0,x0,x26
 	ldr	x26,[x27,#8]		// A[0][1] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x1,x1,x26
 	ldr	x26,[x27,#16]		// A[0][2] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x2,x2,x26
 	ldr	x26,[x27,#24]		// A[0][3] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x3,x3,x26
 	ldr	x26,[x27,#32]		// A[0][4] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x4,x4,x26
 	ldr	x26,[x27,#40]		// A[1][0] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x5,x5,x26
 	ldr	x26,[x27,#48]		// A[1][1] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x6,x6,x26
 	ldr	x26,[x27,#56]		// A[1][2] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x7,x7,x26
 	ldr	x26,[x27,#64]		// A[1][3] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x8,x8,x26
-	blo	.Lprocess_block
+	blo	Lprocess_block
 
 	ldr	x26,[x27,#72]		// A[1][4] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x9,x9,x26
 	ldr	x26,[x27,#80]		// A[2][0] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x10,x10,x26
 	ldr	x26,[x27,#88]		// A[2][1] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x11,x11,x26
 	ldr	x26,[x27,#96]		// A[2][2] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x12,x12,x26
-	beq	.Lprocess_block
+	beq	Lprocess_block
 
 	cmp	x30,#144
 	ldr	x26,[x27,#104]		// A[2][3] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x13,x13,x26
 	ldr	x26,[x27,#112]		// A[2][4] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x14,x14,x26
 	ldr	x26,[x27,#120]		// A[3][0] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x15,x15,x26
 	ldr	x26,[x27,#128]		// A[3][1] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x16,x16,x26
-	blo	.Lprocess_block
+	blo	Lprocess_block
 
 	ldr	x26,[x27,#136]		// A[3][2] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x17,x17,x26
-	beq	.Lprocess_block
+	beq	Lprocess_block
 
 	ldr	x26,[x27,#144]		// A[3][3] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x25,x25,x26
 	ldr	x26,[x27,#152]		// A[3][4] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x19,x19,x26
 	ldr	x26,[x27,#160]		// A[4][0] ^= *inp++
-#ifdef	__AARCH64EB__
-	rev	x26,x26
-#endif
+
+
+
 	eor	x20,x20,x26
 
-.Lprocess_block:
+Lprocess_block:
 	add	x27,x27,x30
-	str	x27,[sp,#16+3*__SIZEOF_POINTER__]	// save inp
+	str	x27,[sp,#16+3*8]	// save inp
 
 	adr	x28,iotas
 	bl	KeccakF1600_int
 
-	ldr	x27,[sp,#16+3*__SIZEOF_POINTER__]	// restore arguments
-	ldp	x28,x30,[sp,#16+4*__SIZEOF_POINTER__]
+	ldr	x27,[sp,#16+3*8]	// restore arguments
+	ldp	x28,x30,[sp,#16+4*8]
 	b	.Loop_absorb
 
 .align	4
-.Labsorbed:
-	ldr	x27,[sp,#16+2*__SIZEOF_POINTER__]
+Labsorbed:
+	ldr	x27,[sp,#16+2*8]
 	stp	x0,x1,[x27,#16*0]
 	stp	x2,x3,[x27,#16*1]
 	stp	x4,x5,[x27,#16*2]
@@ -447,25 +455,25 @@ SHA3_absorb:
 	str	x24,[x27,#16*12]
 
 	mov	x0,x28			// return value
-	ldp	x19,x20,[x29,#2*__SIZEOF_POINTER__]
-	add	sp,sp,#16+4*__SIZEOF_POINTER__+16
-	ldp	x21,x22,[x29,#4*__SIZEOF_POINTER__]
-	ldp	x23,x24,[x29,#6*__SIZEOF_POINTER__]
-	ldp	x25,x26,[x29,#8*__SIZEOF_POINTER__]
-	ldp	x27,x28,[x29,#10*__SIZEOF_POINTER__]
-	ldp	x29,x30,[sp],#16*__SIZEOF_POINTER__
+	ldp	x19,x20,[x29,#2*8]
+	add	sp,sp,#16+4*8 +16
+	ldp	x21,x22,[x29,#4*8]
+	ldp	x23,x24,[x29,#6*8]
+	ldp	x25,x26,[x29,#8*8]
+	ldp	x27,x28,[x29,#10*8]
+	ldp	x29,x30,[sp],#16*8
 .inst	0xd50323bf			// autiasp
 	ret
-.size	SHA3_absorb,.-SHA3_absorb
+// .size	SHA3_absorb,.-SHA3_absorb
 .globl	SHA3_squeeze
-.type	SHA3_squeeze,%function
+// .type	SHA3_squeeze,%function
 .align	5
 SHA3_squeeze:
 .inst	0xd503233f			// paciasp
-	stp	x29,x30,[sp,#-6*__SIZEOF_POINTER__]!
+	stp	x29,x30,[sp,#-6*8]!
 	add	x29,sp,#0
-	stp	x19,x20,[sp,#2*__SIZEOF_POINTER__]
-	stp	x21,x22,[sp,#4*__SIZEOF_POINTER__]
+	stp	x19,x20,[sp,#2*8]
+	stp	x21,x22,[sp,#4*8]
 
 	mov	x19,x0			// put aside arguments
 	mov	x20,x1
@@ -475,13 +483,13 @@ SHA3_squeeze:
 .Loop_squeeze:
 	ldr	x4,[x0],#8
 	cmp	x21,#8
-	blo	.Lsqueeze_tail
-#ifdef	__AARCH64EB__
-	rev	x4,x4
-#endif
+	blo	Lsqueeze_tail
+
+
+
 	str	x4,[x20],#8
 	subs	x21,x21,#8
-	beq	.Lsqueeze_done
+	beq	Lsqueeze_done
 
 	subs	x3,x3,#8
 	bhi	.Loop_squeeze
@@ -493,41 +501,41 @@ SHA3_squeeze:
 	b	.Loop_squeeze
 
 .align	4
-.Lsqueeze_tail:
+Lsqueeze_tail:
 	strb	w4,[x20],#1
 	lsr	x4,x4,#8
 	subs	x21,x21,#1
-	beq	.Lsqueeze_done
+	beq	Lsqueeze_done
 	strb	w4,[x20],#1
 	lsr	x4,x4,#8
 	subs	x21,x21,#1
-	beq	.Lsqueeze_done
+	beq	Lsqueeze_done
 	strb	w4,[x20],#1
 	lsr	x4,x4,#8
 	subs	x21,x21,#1
-	beq	.Lsqueeze_done
+	beq	Lsqueeze_done
 	strb	w4,[x20],#1
 	lsr	x4,x4,#8
 	subs	x21,x21,#1
-	beq	.Lsqueeze_done
+	beq	Lsqueeze_done
 	strb	w4,[x20],#1
 	lsr	x4,x4,#8
 	subs	x21,x21,#1
-	beq	.Lsqueeze_done
+	beq	Lsqueeze_done
 	strb	w4,[x20],#1
 	lsr	x4,x4,#8
 	subs	x21,x21,#1
-	beq	.Lsqueeze_done
+	beq	Lsqueeze_done
 	strb	w4,[x20],#1
 
-.Lsqueeze_done:
-	ldp	x19,x20,[sp,#2*__SIZEOF_POINTER__]
-	ldp	x21,x22,[sp,#4*__SIZEOF_POINTER__]
-	ldp	x29,x30,[sp],#6*__SIZEOF_POINTER__
+Lsqueeze_done:
+	ldp	x19,x20,[sp,#2*8]
+	ldp	x21,x22,[sp,#4*8]
+	ldp	x29,x30,[sp],#6*8
 .inst	0xd50323bf			// autiasp
 	ret
-.size	SHA3_squeeze,.-SHA3_squeeze
-.type	KeccakF1600_ce,%function
+// .size	SHA3_squeeze,.-SHA3_squeeze
+// .type	KeccakF1600_ce,%function
 .align	5
 KeccakF1600_ce:
 .Loop_ce:
@@ -591,7 +599,7 @@ KeccakF1600_ce:
 .inst	0xce3a62f7	//bcax v23.16b,v23.16b,v26.16b,   v24.16b
 .inst	0xce286b18	//bcax v24.16b,v24.16b,v8.16b,v26.16b	// A[1][3]=A[4][1]
 
-	ld1r	{v26.2d},[x10],#8
+	ld1r	{{v26.2d}},[x10],#8
 
 .inst	0xce330fd1	//bcax v17.16b,v30.16b,   v19.16b,v3.16b	// A[0][3]=A[3][3]
 .inst	0xce2f4c72	//bcax v18.16b,v3.16b,v15.16b,v19.16b	// A[0][3]=A[3][3]
@@ -623,18 +631,18 @@ KeccakF1600_ce:
 	bne	.Loop_ce
 
 	ret
-.size	KeccakF1600_ce,.-KeccakF1600_ce
+// .size	KeccakF1600_ce,.-KeccakF1600_ce
 
-.type	KeccakF1600_cext,%function
+// .type	KeccakF1600_cext,%function
 .align	5
 KeccakF1600_cext:
 .inst	0xd503233f		// paciasp
-	stp	x29,x30,[sp,#-2*__SIZEOF_POINTER__-64]!
+	stp	x29,x30,[sp,#-2*8 -64]!
 	add	x29,sp,#0
-	stp	d8,d9,[sp,#2*__SIZEOF_POINTER__+0]	// per ABI requirement
-	stp	d10,d11,[sp,#2*__SIZEOF_POINTER__+16]
-	stp	d12,d13,[sp,#2*__SIZEOF_POINTER__+32]
-	stp	d14,d15,[sp,#2*__SIZEOF_POINTER__+48]
+	stp	d8,d9,[sp,#2*8 +0]	// per ABI requirement
+	stp	d10,d11,[sp,#2*8 +16]
+	stp	d12,d13,[sp,#2*8 +32]
+	stp	d14,d15,[sp,#2*8 +48]
 	ldp	d0,d1,[x0,#8*0]
 	ldp	d2,d3,[x0,#8*2]
 	ldp	d4,d5,[x0,#8*4]
@@ -650,7 +658,7 @@ KeccakF1600_cext:
 	ldr	d24,[x0,#8*24]
 	adr	x10,iotas
 	bl	KeccakF1600_ce
-	ldr	x30,[sp,#__SIZEOF_POINTER__]
+	ldr	x30,[sp,#8]
 	stp	d0,d1,[x0,#8*0]
 	stp	d2,d3,[x0,#8*2]
 	stp	d4,d5,[x0,#8*4]
@@ -665,25 +673,25 @@ KeccakF1600_cext:
 	stp	d22,d23,[x0,#8*22]
 	str	d24,[x0,#8*24]
 
-	ldp	d8,d9,[sp,#2*__SIZEOF_POINTER__+0]
-	ldp	d10,d11,[sp,#2*__SIZEOF_POINTER__+16]
-	ldp	d12,d13,[sp,#2*__SIZEOF_POINTER__+32]
-	ldp	d14,d15,[sp,#2*__SIZEOF_POINTER__+48]
-	ldr	x29,[sp],#2*__SIZEOF_POINTER__+64
+	ldp	d8,d9,[sp,#2*8 +0]
+	ldp	d10,d11,[sp,#2*8 +16]
+	ldp	d12,d13,[sp,#2*8 +32]
+	ldp	d14,d15,[sp,#2*8 +48]
+	ldr	x29,[sp],#2*8 +64
 .inst	0xd50323bf		// autiasp
 	ret
-.size	KeccakF1600_cext,.-KeccakF1600_cext
+// .size	KeccakF1600_cext,.-KeccakF1600_cext
 .globl	SHA3_absorb_cext
-.type	SHA3_absorb_cext,%function
+// .type	SHA3_absorb_cext,%function
 .align	5
 SHA3_absorb_cext:
 .inst	0xd503233f		// paciasp
-	stp	x29,x30,[sp,#-2*__SIZEOF_POINTER__-64]!
+	stp	x29,x30,[sp,#-2*8 -64]!
 	add	x29,sp,#0
-	stp	d8,d9,[sp,#2*__SIZEOF_POINTER__+0]	// per ABI requirement
-	stp	d10,d11,[sp,#2*__SIZEOF_POINTER__+16]
-	stp	d12,d13,[sp,#2*__SIZEOF_POINTER__+32]
-	stp	d14,d15,[sp,#2*__SIZEOF_POINTER__+48]
+	stp	d8,d9,[sp,#2*8 +0]	// per ABI requirement
+	stp	d10,d11,[sp,#2*8 +16]
+	stp	d12,d13,[sp,#2*8 +32]
+	stp	d14,d15,[sp,#2*8 +48]
 	ldp	d0,d1,[x0,#8*0]
 	ldp	d2,d3,[x0,#8*2]
 	ldp	d4,d5,[x0,#8*4]
@@ -702,55 +710,55 @@ SHA3_absorb_cext:
 .align	4
 .Loop_absorb_ce:
 	subs	x2,x2,x3		// len - bsz
-	blo	.Labsorbed_ce
+	blo	Labsorbed_ce
 
 	cmp	x3,#104
-	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
+	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
 	eor	v0.16b,v0.16b,v27.16b
 	eor	v1.16b,v1.16b,v28.16b
 	eor	v2.16b,v2.16b,v29.16b
 	eor	v3.16b,v3.16b,v30.16b
-	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
+	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
 	eor	v4.16b,v4.16b,v27.16b
 	eor	v5.16b,v5.16b,v28.16b
 	eor	v6.16b,v6.16b,v29.16b
 	eor	v7.16b,v7.16b,v30.16b
-	ld1	{v31.8b},[x1],#8	// A[1][4] ^= *inp++
+	ld1	{{v31.8b}},[x1],#8	// A[1][4] ^= *inp++
 	eor	v8.16b,v8.16b,v31.16b
-	blo	.Lprocess_block_ce
+	blo	Lprocess_block_ce
 
-	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
+	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
 	eor	v9.16b,v9.16b,v27.16b
 	eor	v10.16b,v10.16b,v28.16b
 	eor	v11.16b,v11.16b,v29.16b
 	eor	v12.16b,v12.16b,v30.16b
-	beq	.Lprocess_block_ce
+	beq	Lprocess_block_ce
 
 	cmp	x3,#144
-	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
+	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
 	eor	v13.16b,v13.16b,v27.16b
 	eor	v14.16b,v14.16b,v28.16b
 	eor	v15.16b,v15.16b,v29.16b
 	eor	v16.16b,v16.16b,v30.16b
-	blo	.Lprocess_block_ce
+	blo	Lprocess_block_ce
 
-	ld1	{v31.8b},[x1],#8	// A[3][3] ^= *inp++
+	ld1	{{v31.8b}},[x1],#8	// A[3][3] ^= *inp++
 	eor	v17.16b,v17.16b,v31.16b
-	beq	.Lprocess_block_ce
+	beq	Lprocess_block_ce
 
-	ld1	{v28.8b,v29.8b,v30.8b},[x1],#24
+	ld1	{{v28.8b,v29.8b,v30.8b}},[x1],#24
 	eor	v18.16b,v18.16b,v28.16b
 	eor	v19.16b,v19.16b,v29.16b
 	eor	v20.16b,v20.16b,v30.16b
 
-.Lprocess_block_ce:
+Lprocess_block_ce:
 	adr	x10,iotas
 	bl	KeccakF1600_ce
 
 	b	.Loop_absorb_ce
 
 .align	4
-.Labsorbed_ce:
+Labsorbed_ce:
 	stp	d0,d1,[x0,#8*0]
 	stp	d2,d3,[x0,#8*2]
 	stp	d4,d5,[x0,#8*4]
@@ -766,20 +774,20 @@ SHA3_absorb_cext:
 	str	d24,[x0,#8*24]
 	add	x0,x2,x3		// return value
 
-	ldp	d8,d9,[sp,#2*__SIZEOF_POINTER__+0]
-	ldp	d10,d11,[sp,#2*__SIZEOF_POINTER__+16]
-	ldp	d12,d13,[sp,#2*__SIZEOF_POINTER__+32]
-	ldp	d14,d15,[sp,#2*__SIZEOF_POINTER__+48]
-	ldp	x29,x30,[sp],#2*__SIZEOF_POINTER__+64
+	ldp	d8,d9,[sp,#2*8 +0]
+	ldp	d10,d11,[sp,#2*8 +16]
+	ldp	d12,d13,[sp,#2*8 +32]
+	ldp	d14,d15,[sp,#2*8 +48]
+	ldp	x29,x30,[sp],#2*8 +64
 .inst	0xd50323bf		// autiasp
 	ret
-.size	SHA3_absorb_cext,.-SHA3_absorb_cext
+// .size	SHA3_absorb_cext,.-SHA3_absorb_cext
 .globl	SHA3_squeeze_cext
-.type	SHA3_squeeze_cext,%function
+// .type	SHA3_squeeze_cext,%function
 .align	5
 SHA3_squeeze_cext:
 .inst	0xd503233f		// paciasp
-	stp	x29,x30,[sp,#-2*__SIZEOF_POINTER__]!
+	stp	x29,x30,[sp,#-2*8]!
 	add	x29,sp,#0
 	mov	x9,x0
 	mov	x10,x3
@@ -787,55 +795,55 @@ SHA3_squeeze_cext:
 .Loop_squeeze_ce:
 	ldr	x4,[x9],#8
 	cmp	x2,#8
-	blo	.Lsqueeze_tail_ce
-#ifdef	__AARCH64EB__
-	rev	x4,x4
-#endif
+	blo	Lsqueeze_tail_ce
+
+
+
 	str	x4,[x1],#8
-	beq	.Lsqueeze_done_ce
+	beq	Lsqueeze_done_ce
 
 	sub	x2,x2,#8
 	subs	x10,x10,#8
 	bhi	.Loop_squeeze_ce
 
 	bl	KeccakF1600_cext
-	ldr	x30,[sp,#__SIZEOF_POINTER__]
+	ldr	x30,[sp,#8]
 	mov	x9,x0
 	mov	x10,x3
 	b	.Loop_squeeze_ce
 
 .align	4
-.Lsqueeze_tail_ce:
+Lsqueeze_tail_ce:
 	strb	w4,[x1],#1
 	lsr	x4,x4,#8
 	subs	x2,x2,#1
-	beq	.Lsqueeze_done_ce
+	beq	Lsqueeze_done_ce
 	strb	w4,[x1],#1
 	lsr	x4,x4,#8
 	subs	x2,x2,#1
-	beq	.Lsqueeze_done_ce
+	beq	Lsqueeze_done_ce
 	strb	w4,[x1],#1
 	lsr	x4,x4,#8
 	subs	x2,x2,#1
-	beq	.Lsqueeze_done_ce
+	beq	Lsqueeze_done_ce
 	strb	w4,[x1],#1
 	lsr	x4,x4,#8
 	subs	x2,x2,#1
-	beq	.Lsqueeze_done_ce
+	beq	Lsqueeze_done_ce
 	strb	w4,[x1],#1
 	lsr	x4,x4,#8
 	subs	x2,x2,#1
-	beq	.Lsqueeze_done_ce
+	beq	Lsqueeze_done_ce
 	strb	w4,[x1],#1
 	lsr	x4,x4,#8
 	subs	x2,x2,#1
-	beq	.Lsqueeze_done_ce
+	beq	Lsqueeze_done_ce
 	strb	w4,[x1],#1
 
-.Lsqueeze_done_ce:
-	ldr	x29,[sp],#2*__SIZEOF_POINTER__
+Lsqueeze_done_ce:
+	ldr	x29,[sp],#2*8
 .inst	0xd50323bf		// autiasp
 	ret
-.size	SHA3_squeeze_cext,.-SHA3_squeeze_cext
+// .size	SHA3_squeeze_cext,.-SHA3_squeeze_cext
 .byte	75,101,99,99,97,107,45,49,54,48,48,32,97,98,115,111,114,98,32,97,110,100,32,115,113,117,101,101,122,101,32,102,111,114,32,65,82,77,118,56,44,32,67,82,89,80,84,79,71,65,77,83,32,98,121,32,64,100,111,116,45,97,115,109,0
 .align	2
