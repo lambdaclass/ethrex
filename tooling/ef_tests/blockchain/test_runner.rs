@@ -197,6 +197,11 @@ fn exception_is_expected(
                 ),
                 ChainError::EvmError(EvmError::SystemContractCallFailed(_))
             ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::RlpBlockLimitExceeded
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::MaximumRlpSizeExceeded(_, _))
+            ) | (
                 BlockChainExpectedException::Other,
                 _ //TODO: Decide whether to support more specific errors.
             ),
@@ -353,7 +358,6 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
             for (key, value) in expected_account.storage {
                 let db_storage_value = db
                     .get_storage_at(latest_block_number, *addr, key)
-                    .await
                     .expect("Failed to read from DB")
                     .unwrap_or_else(|| {
                         panic!("Storage missing for address {addr} key {key} in DB test:{test_key}")
