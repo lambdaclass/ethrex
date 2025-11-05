@@ -100,6 +100,9 @@ impl Trie {
         let path = Nibbles::from_bytes(pathrlp);
 
         if pathrlp.len() == 32 && !self.dirty && self.db().flatkeyvalue_computed(path.clone()) {
+            if caller == "vm" {
+                println!("Success: Read from the snapshot during execution");
+            }
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
