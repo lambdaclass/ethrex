@@ -45,8 +45,7 @@ async fn server_shutdown(
     info!("Server shutting down!");
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+async fn ethrex() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
     if let Some(subcommand) = command {
@@ -74,4 +73,8 @@ async fn main() -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+pub fn main() -> eyre::Result<()> {
+    smol::block_on(ethrex())
 }

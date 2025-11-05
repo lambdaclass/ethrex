@@ -51,7 +51,8 @@ reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
-
+smol.workspace = true
+async-executor.workspace = true
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 

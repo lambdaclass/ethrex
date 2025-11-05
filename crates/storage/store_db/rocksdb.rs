@@ -450,7 +450,7 @@ impl Store {
         let db = self.db.clone();
         let cf_name = cf_name.to_string();
 
-        tokio::task::spawn_blocking(move || {
+        smol::unblock(move || {
             let cf = db.cf_handle(&cf_name).ok_or_else(|| {
                 StoreError::Custom(format!("Column family not found: {}", cf_name))
             })?;
@@ -458,7 +458,6 @@ impl Store {
                 .map_err(|e| StoreError::Custom(format!("RocksDB write error: {}", e)))
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     // Helper method for async reads
