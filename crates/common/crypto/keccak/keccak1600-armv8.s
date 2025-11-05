@@ -605,7 +605,7 @@ Loop_ce:
 .inst	0xce3a62f7	//bcax v23.16b,v23.16b,v26.16b,   v24.16b
 .inst	0xce286b18	//bcax v24.16b,v24.16b,v8.16b,v26.16b	// A[1][3]=A[4][1]
 
-	ld1r	{{v26.2d}},[x10],#8
+	ld1r	{v26.2d},[x10],#8
 
 .inst	0xce330fd1	//bcax v17.16b,v30.16b,   v19.16b,v3.16b	// A[0][3]=A[3][3]
 .inst	0xce2f4c72	//bcax v18.16b,v3.16b,v15.16b,v19.16b	// A[0][3]=A[3][3]
@@ -720,21 +720,21 @@ Loop_absorb_ce:
 	blo	Labsorbed_ce
 
 	cmp	x3,#104
-	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
+	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
 	eor	v0.16b,v0.16b,v27.16b
 	eor	v1.16b,v1.16b,v28.16b
 	eor	v2.16b,v2.16b,v29.16b
 	eor	v3.16b,v3.16b,v30.16b
-	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
+	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
 	eor	v4.16b,v4.16b,v27.16b
 	eor	v5.16b,v5.16b,v28.16b
 	eor	v6.16b,v6.16b,v29.16b
 	eor	v7.16b,v7.16b,v30.16b
-	ld1	{{v31.8b}},[x1],#8	// A[1][4] ^= *inp++
+	ld1	{v31.8b},[x1],#8	// A[1][4] ^= *inp++
 	eor	v8.16b,v8.16b,v31.16b
 	blo	Lprocess_block_ce
 
-	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
+	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
 	eor	v9.16b,v9.16b,v27.16b
 	eor	v10.16b,v10.16b,v28.16b
 	eor	v11.16b,v11.16b,v29.16b
@@ -742,18 +742,18 @@ Loop_absorb_ce:
 	beq	Lprocess_block_ce
 
 	cmp	x3,#144
-	ld1	{{v27.8b,v28.8b,v29.8b,v30.8b}},[x1],#32
+	ld1	{v27.8b,v28.8b,v29.8b,v30.8b},[x1],#32
 	eor	v13.16b,v13.16b,v27.16b
 	eor	v14.16b,v14.16b,v28.16b
 	eor	v15.16b,v15.16b,v29.16b
 	eor	v16.16b,v16.16b,v30.16b
 	blo	Lprocess_block_ce
 
-	ld1	{{v31.8b}},[x1],#8	// A[3][3] ^= *inp++
+	ld1	{v31.8b},[x1],#8	// A[3][3] ^= *inp++
 	eor	v17.16b,v17.16b,v31.16b
 	beq	Lprocess_block_ce
 
-	ld1	{{v28.8b,v29.8b,v30.8b}},[x1],#24
+	ld1	{v28.8b,v29.8b,v30.8b},[x1],#24
 	eor	v18.16b,v18.16b,v28.16b
 	eor	v19.16b,v19.16b,v29.16b
 	eor	v20.16b,v20.16b,v30.16b
