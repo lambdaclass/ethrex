@@ -138,10 +138,9 @@ impl TrieLayerCache {
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
-            Ok(layer) => layer,
-            Err(layer) => TrieLayer::clone(&layer),
-        };
+        let layer = Arc::try_unwrap(self.layers.remove(&state_root)?)
+            .unwrap_or_else(|layer| TrieLayer::clone(&layer));
+
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
 
