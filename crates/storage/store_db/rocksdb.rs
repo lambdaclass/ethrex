@@ -1657,35 +1657,18 @@ impl StoreEngine for Store {
         &self,
         storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        let dbs = self.dbs.clone();
-        tokio::task::spawn_blocking(move || {
-            let cf = dbs.get(CF_TRIE_NODES).ok_or_else(|| {
-                StoreError::Custom("Column family not found: CF_TRIE_NODES".to_string())
-            })?;
-
-            let tx = cf.begin_write_concurrent().unwrap();
-            {
-                let mut tree = tx.get_tree(b"").unwrap().unwrap();
-
-                for (address_hash, nodes) in storage_trie_nodes {
-                    for (node_hash, node_data) in nodes {
-                        let key = apply_prefix(Some(address_hash), node_hash);
-                        if node_data.is_empty() {
-                            tree.delete(key.as_ref()).unwrap();
-                        } else {
-                            tree.insert(key.as_ref(), &node_data).unwrap();
-                        }
-                    }
+        let mut batch_ops = vec![];
+        for (address_hash, nodes) in storage_trie_nodes {
+            for (node_hash, node_data) in nodes {
+                let key = apply_prefix(Some(address_hash), node_hash).into_vec();
+                if node_data.is_empty() {
+                    batch_ops.push((CF_TRIE_NODES, key, Vec::new()));
+                } else {
+                    batch_ops.push((CF_TRIE_NODES, key, node_data));
                 }
             }
-
-            tx.commit()
-                .map_err(|e| StoreError::Custom(format!("CanopyDB batch write error: {}", e)))?;
-
-            Ok(())
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        }
+        self.write_batch_async(batch_ops).await
     }
 
     async fn write_account_code_batch(
