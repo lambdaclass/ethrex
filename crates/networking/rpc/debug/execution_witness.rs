@@ -90,7 +90,7 @@ pub fn execution_witness_from_rpc_chain_config(
     let storage_roots: Vec<_> = keys
         .iter()
         .filter(|k| {
-            dbg!(k);
+            dbg!(k.len());
             k.len() == 20
         })
         .map(|k| Address::from_slice(k))
