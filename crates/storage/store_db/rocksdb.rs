@@ -508,6 +508,7 @@ impl Store {
                         batch: std::mem::take(&mut batch),
                     };
                     let (tx, rx) = std::sync::mpsc::sync_channel(0);
+                    trace!("FKV: Sending batch to writer...");
                     self.writer_tx.send((msg, tx)).unwrap();
                     rx.recv().unwrap()?;
 
@@ -551,6 +552,7 @@ impl Store {
                             batch: std::mem::take(&mut batch),
                         };
                         let (tx, rx) = std::sync::mpsc::sync_channel(0);
+                        trace!("FKV: Sending storage batch to writer...");
                         self.writer_tx.send((msg, tx)).unwrap();
                         rx.recv().unwrap()?;
 
@@ -602,6 +604,7 @@ impl Store {
                         batch: std::mem::take(&mut batch),
                     };
                     let (tx, rx) = std::sync::mpsc::sync_channel(0);
+                    trace!("FKV: Sending final batch to writer...");
                     self.writer_tx.send((msg, tx)).unwrap();
                     rx.recv().unwrap()?;
 
@@ -646,6 +649,7 @@ impl Store {
         let trie = Arc::new(trie_mut);
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
         // Update finished, signal block processing.
+        trace!("Trie updates applied. Sending notification to block processing...");
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
         // Phase 2: update disk layer.
@@ -655,6 +659,7 @@ impl Store {
         };
         // Stop the flat-key-value generator thread, as the underlying trie is about to change.
         // Ignore the error, if the channel is closed it means there is no worker to notify.
+        trace!("Sending stop to fkv...");
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
@@ -697,9 +702,12 @@ impl Store {
         }
         let msg = WriterMessage::WriteBatchAsync { batch_ops };
         let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        trace!("Sending msg to writer...");
         self.writer_tx.send((msg, tx)).unwrap();
+        trace!("Receiving response from writer...");
         let result = rx.recv().unwrap();
         // We want to send this message even if there was an error during the batch write
+        trace!("Sending continue to fkv...");
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
         // Phase 3: update diff layers with the removal of bottom layer.
@@ -2056,6 +2064,7 @@ impl Writer {
                 codes_tree.insert(&code_hash.0, &buf).unwrap();
             }
 
+            trace!("Waiting for new layer...");
             // Wait for an updated top layer so every caller afterwards sees a consistent view.
             // Specifically, the next block produced MUST see this upper layer.
             wait_for_new_layer
