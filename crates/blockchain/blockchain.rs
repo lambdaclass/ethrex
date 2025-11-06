@@ -165,7 +165,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header);
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -190,7 +190,7 @@ impl Blockchain {
             AccountUpdatesList,
             // FIXME: extract to stats struct
             usize,
-            [Instant; 7],
+            [Instant; 6],
         ),
         ChainError,
     > {
@@ -208,7 +208,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
         let mut vm = self.new_evm(vm_db)?;
 
         let exec_merkle_start = Instant::now();
@@ -216,25 +216,43 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
+            let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
-            let execution_handle = s.spawn(move || {
-                let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref);
-                let exec_end_instant = Instant::now();
-                execution_result.map(move |r| (r, exec_end_instant))
-            });
-            let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
-                let account_updates_list = self.handle_merkleization(
-                    rx,
-                    &parent_header,
-                    queue_length_ref,
-                    &mut max_queue_length,
-                )?;
-                let merkle_end_instant = Instant::now();
-                Ok((account_updates_list, merkle_end_instant))
-            });
+            let execution_handle = std::thread::Builder::new()
+                .name("block_executor_execution".to_string())
+                .spawn_scoped(s, move || -> Result<_, ChainError> {
+                    let execution_result =
+                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+
+                    // Validate execution went alright
+                    validate_gas_used(&execution_result.receipts, &block.header)?;
+                    validate_receipts_root(&block.header, &execution_result.receipts)?;
+                    validate_requests_hash(
+                        &block.header,
+                        &chain_config,
+                        &execution_result.requests,
+                    )?;
+
+                    let exec_end_instant = Instant::now();
+                    Ok((execution_result, exec_end_instant))
+                })
+                .expect("Failed to spawn block_executor exec thread");
+            let merkleize_handle = std::thread::Builder::new()
+                .name("block_executor_merkleizer".to_string())
+                .spawn_scoped(s, move || -> Result<_, StoreError> {
+                    let account_updates_list = self.handle_merkleization(
+                        rx,
+                        &parent_header,
+                        queue_length_ref,
+                        max_queue_length_ref,
+                    )?;
+                    let merkle_end_instant = Instant::now();
+                    Ok((account_updates_list, merkle_end_instant))
+                })
+                .expect("Failed to spawn block_executor merkleizer thread");
             (
                 execution_handle.join().unwrap_or_else(|_| {
-                    Err(EvmError::Custom("execution thread panicked".to_string()))
+                    Err(ChainError::Custom("execution thread panicked".to_string()))
                 }),
                 merkleize_handle.join().unwrap_or_else(|_| {
                     Err(StoreError::Custom(
@@ -247,12 +265,6 @@ impl Blockchain {
         let (execution_result, exec_end_instant) = execution_result?;
         let exec_merkle_end_instant = Instant::now();
 
-        // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts)?;
-        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
-        let results_validated_instant = Instant::now();
-
         Ok((
             execution_result,
             account_updates_list,
@@ -264,7 +276,6 @@ impl Blockchain {
                 exec_end_instant,
                 merkle_end_instant,
                 exec_merkle_end_instant,
-                results_validated_instant,
             ],
         ))
     }
@@ -532,6 +543,11 @@ impl Blockchain {
 
         for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;
+            let parent_header = self
+                .storage
+                .get_block_header_by_hash(parent_hash)
+                .map_err(ChainError::StoreError)?
+                .ok_or(ChainError::ParentNotFound)?;
 
             // This assumes that the user has the necessary state stored already,
             // so if the user only has the state previous to the first block, it
@@ -539,7 +555,7 @@ impl Blockchain {
             // doesn't fail, later in this function we store the new state after
             // re-execution.
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header));
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
@@ -937,9 +953,8 @@ impl Blockchain {
             exec_end_instant,
             merkle_end_instant,
             exec_merkle_end_instant,
-            results_validated_instant,
             stored_instant,
-        ]: [Instant; 8],
+        ]: [Instant; 7],
     ) {
         let interval = stored_instant.duration_since(start_instant).as_secs_f64();
         if interval != 0f64 {
@@ -969,13 +984,12 @@ impl Blockchain {
             };
             let extra_log = if as_gigas > 0.0 {
                 format!(
-                    " block validation: {}% exec+merkle: {}% (exec: {}% merkle: {}% max_queue_length: {merkle_queue_length}) results validation: {}% store: {}%",
+                    " block validation: {}% exec+merkle: {}% (exec: {}% merkle: {}% max_queue_length: {merkle_queue_length}) store: {}%",
                     percentage(start_instant, block_validated_instant),
                     percentage(exec_merkle_start, exec_merkle_end_instant),
                     percentage(exec_merkle_start, exec_end_instant),
                     percentage(exec_merkle_start, merkle_end_instant),
-                    percentage(merkle_end_instant, results_validated_instant),
-                    percentage(results_validated_instant, stored_instant),
+                    percentage(merkle_end_instant, stored_instant),
                 )
             } else {
                 "".to_string()
@@ -1007,9 +1021,14 @@ impl Blockchain {
         // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
+        let parent_header = self
+            .storage
+            .get_block_header_by_hash(first_block_header.parent_hash)
+            .map_err(|e| (ChainError::StoreError(e), None))?
+            .ok_or((ChainError::ParentNotFound, None))?;
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
-            first_block_header.parent_hash,
+            parent_header,
             block_hash_cache,
         );
         let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;

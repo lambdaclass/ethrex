@@ -52,6 +52,9 @@ thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
 
+spawned-rt.workspace = true
+spawned-concurrency.workspace = true
+
 # L2 external dependencies
 
 tui-logger = { workspace = true, optional = true }
