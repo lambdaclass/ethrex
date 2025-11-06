@@ -4,10 +4,7 @@ use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
-use crate::{
-    store_db::rocksdb::CF_MISC_VALUES,
-    trie_db::layering::apply_prefix,
-};
+use crate::{store_db::rocksdb::CF_MISC_VALUES, trie_db::layering::apply_prefix};
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
@@ -65,19 +62,21 @@ impl RocksDBTrieDB {
     }
 
     fn cf_handle(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
-        println!("############### About to use trie_cf_name={}", self.cf_name);
-        self.db
-            .cf_handle(&self.trie_cf_name)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family for the trie not found")))
+        self.db.cf_handle(&self.trie_cf_name).ok_or_else(|| {
+            TrieError::DbError(anyhow::anyhow!("Column family for the trie not found"))
+        })
     }
 
     fn cf_handle_flatkeyvalue(
         &self,
     ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
-        println!("############### About to use flatkeyvalue_cf_name={}", CF_FLATKEYVALUE);
         self.db
             .cf_handle(&self.flatkeyvalue_cf_name)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family for the flat key value store not found")))
+            .ok_or_else(|| {
+                TrieError::DbError(anyhow::anyhow!(
+                    "Column family for the flat key value store not found"
+                ))
+            })
     }
 
     fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
@@ -85,18 +84,24 @@ impl RocksDBTrieDB {
             .as_ref()
             .to_vec()
     }
+
+    // Gets the correct column family handle based on whether the key is a leaf or not.
+    fn cf_handle_for_key(&self, key: &Nibbles) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
+        if key.is_leaf() {
+            self.cf_handle_flatkeyvalue()
+        } else {
+            self.cf_handle()
+        }
+    }
 }
 
 impl TrieDB for RocksDBTrieDB {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
         self.last_computed_flatkeyvalue >= key
     }
+
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let cf = if key.is_leaf() {
-            self.cf_handle_flatkeyvalue()?
-        } else {
-            self.cf_handle()?
-        };
+        let cf = self.cf_handle_for_key(&key)?;
         let db_key = self.make_key(key);
 
         let res = self
@@ -104,27 +109,22 @@ impl TrieDB for RocksDBTrieDB {
             .get_cf(&cf, &db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
 
-        println!("############### RocksDBTrieDB::get key={:?} res={:?}", hex::encode(db_key), res.clone().map(|v| hex::encode(v)));
         Ok(res)
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let cf = self.cf_handle()?;
-        let cf_snapshot = self.cf_handle_flatkeyvalue()?;
         let mut batch = rocksdb::WriteBatch::default();
 
         for (key, value) in key_values {
-            let cf = if key.is_leaf() { &cf_snapshot } else { &cf };
+            let cf = self.cf_handle_for_key(&key)?;
             let db_key = self.make_key(key);
+
             if value.is_empty() {
-                println!("############### RocksDBTrieDB::delete key={:?}", hex::encode(&db_key));
-                batch.delete_cf(cf, db_key);
+                batch.delete_cf(&cf, db_key);
             } else {
-                println!("############### RocksDBTrieDB::put key={:?} value={:?}", hex::encode(&db_key), hex::encode(&value));
-                batch.put_cf(cf, db_key, value);
+                batch.put_cf(&cf, db_key, value);
             }
         }
-
 
         self.db
             .write(batch)
@@ -132,22 +132,17 @@ impl TrieDB for RocksDBTrieDB {
     }
 
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
-        let cf = self.cf_handle()?;
-        let cf_flatkeyvalue = self.cf_handle_flatkeyvalue()?;
         let mut batch = rocksdb::WriteBatch::default();
+
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
 
         for (hash, node) in key_values {
-            let cf = if hash.is_leaf() {
-                &cf_flatkeyvalue
-            } else {
-                &cf
-            };
+            let cf = self.cf_handle_for_key(&hash)?;
             let db_key = self.make_key(hash.clone());
             buffer.clear();
             node.encode(&mut buffer);
-            batch.put_cf(cf, db_key, &buffer);
+            batch.put_cf(&cf, db_key, &buffer);
         }
 
         self.db
@@ -159,10 +154,10 @@ impl TrieDB for RocksDBTrieDB {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store_db::rocksdb::CF_MISC_VALUES;
     use ethrex_trie::Nibbles;
     use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
     use tempfile::TempDir;
-    use crate::store_db::rocksdb::CF_MISC_VALUES;
 
     #[test]
     fn test_trie_db_basic_operations() {
@@ -174,7 +169,7 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-                let cf_trie = ColumnFamilyDescriptor::new("test_trie_cf", Options::default());
+        let cf_trie = ColumnFamilyDescriptor::new("test_trie_cf", Options::default());
         let cf_fkv = ColumnFamilyDescriptor::new("test_flatkey_cf", Options::default());
         let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
@@ -229,7 +224,8 @@ mod tests {
 
         // Create TrieDB with address prefix
         let address = H256::from([0xaa; 32]);
-        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", Some(address)).unwrap();
+        let trie_db =
+            RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", Some(address)).unwrap();
 
         // Test data
         let node_hash = Nibbles::from_hex(vec![1]);
