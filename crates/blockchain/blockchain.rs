@@ -708,7 +708,11 @@ impl Blockchain {
             && *number < first_block_header.number.saturating_sub(1)
         {
             // First block hash is going to be from BLOBHASH opcode
-            block_hashes.get(number).unwrap().clone()
+            *block_hashes
+                .get(number)
+                .ok_or(ChainError::WitnessGeneration(
+                    "Block hash not found".to_string(),
+                ))?
         } else {
             // First block hash is going to be from the parent block of the first block to execute.
             first_block_header.hash()
