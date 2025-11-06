@@ -23,7 +23,7 @@ use std::{
     sync::Mutex,
 };
 use std::{fmt::Debug, path::Path};
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
