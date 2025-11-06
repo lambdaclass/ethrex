@@ -12,6 +12,7 @@ use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
+use ethrex_l2::sequencer::block_producer;
 use ethrex_l2::sequencer::l1_committer;
 use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
 use ethrex_p2p::{
@@ -233,7 +234,6 @@ pub async fn init_l2(
     let l2_sequencer_cfg = SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
         error!("{err}");
     })?;
-    // let cancellation_token = CancellationToken::new();
 
     // TODO: This should be handled differently, the current problem
     // with using opts.node_opts.p2p_enabled is that with the removal
@@ -272,7 +272,7 @@ pub async fn init_l2(
         info!("P2P is disabled");
     }
 
-    let (committer_handle, admin_handler) = ethrex_l2::start_l2(
+    let (committer_handle, block_producer_handle, admin_handler) = ethrex_l2::start_l2(
         store,
         rollup_store,
         blockchain,
@@ -289,27 +289,31 @@ pub async fn init_l2(
     )
     .await?;
     join_set.spawn(admin_handler);
-    // if let Some(mut handler) = committer_handler.clone() {
-    //     let _ = handler.cast(l1_committer::InMessage::Abort).await;
-    // }
-
     let committer = committer_handle.clone();
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             cancel_token.cancel();
             if let Some(mut handle) = committer {
-                // Fire and forget the shutdown cast; log the error if you care.
                 if let Err(err) = handle.cast(l1_committer::InMessage::Abort).await {
                     tracing::warn!("Failed to send committer abort: {err:?}");
                 }
             }
-            join_set.abort_all(); // or whatever you use to stop the other tasks
-        }
+            if let Some(mut handle) = block_producer_handle {
+                if let Err(err) = handle.cast(block_producer::InMessage::Abort).await {
+                    tracing::warn!("Failed to send block producer abort: {err:?}");
+                }
+            }
+            join_set.abort_all();        }
+
         _ = cancel_token.cancelled() => {
             if let Some(mut handle) = committer {
                 let _ = handle.cast(l1_committer::InMessage::Abort).await;
             }
+            if let Some(mut handle) = block_producer_handle {
+                let _ = handle.cast(block_producer::InMessage::Abort).await;
+            }
+
         }
     }
     info!("Server shut down started...");

@@ -55,6 +55,7 @@ pub async fn start_l2(
 ) -> Result<
     (
         Option<GenServerHandle<L1Committer>>,
+        Option<GenServerHandle<BlockProducer>>,
         Pin<Box<dyn Future<Output = Result<(), errors::SequencerError>> + Send>>,
     ),
     errors::SequencerError,
@@ -87,6 +88,7 @@ pub async fn start_l2(
     .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
         return Ok((
             None,
+            None,
             Box::pin(async { Ok::<(), errors::SequencerError>(()) }),
         ));
     };
@@ -98,6 +100,7 @@ pub async fn start_l2(
             "A private key for TDX is required. Please set the flag `--proof-coordinator.tdx-private-key <KEY>` or use the `ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY` environment variable to set the private key"
         );
         return Ok((
+            None,
             None,
             Box::pin(async { Ok::<(), errors::SequencerError>(()) }),
         ));
@@ -146,17 +149,17 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting L1 Proof Sender: {err}");
     });
-    // let block_producer = BlockProducer::spawn(
-    //     store.clone(),
-    //     rollup_store.clone(),
-    //     blockchain.clone(),
-    //     cfg.clone(),
-    //     shared_state.clone(),
-    // )
-    // .await
-    // .inspect_err(|err| {
-    //     error!("Error starting Block Producer: {err}");
-    // });
+    let block_producer = BlockProducer::spawn(
+        store.clone(),
+        rollup_store.clone(),
+        blockchain.clone(),
+        cfg.clone(),
+        shared_state.clone(),
+    )
+    .await
+    .inspect_err(|err| {
+        error!("Error starting Block Producer: {err}");
+    });
 
     #[cfg(feature = "metrics")]
     let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
@@ -210,16 +213,17 @@ pub async fn start_l2(
         .await?;
     }
 
-    let a = l1_committer.ok();
+    let l1_commiter_handle = l1_committer.ok();
+    let block_producer_handle = block_producer.ok();
     let admin_server = start_api(
         format!(
             "{}:{}",
             cfg.admin_server.listen_ip, cfg.admin_server.listen_port
         ),
-        a.clone(),
+        l1_commiter_handle.clone(),
         l1_watcher.ok(),
         l1_proof_sender.ok(),
-        None,
+        block_producer_handle.clone(),
         #[cfg(feature = "metrics")]
         metrics_gatherer.ok(),
     )
@@ -231,25 +235,6 @@ pub async fn start_l2(
 
     let driver_verifier = verifier_handle;
     let driver_admin = admin_server;
-
-    // match (verifier_handle, admin_server) {
-    //     (Some(handle), Some(admin_server)) => {
-    //         let (server_res, verifier_res) = tokio::join!(admin_server.into_future(), handle);
-    //         if let Err(e) = server_res {
-    //             error!("Admin server task error: {e}");
-    //         }
-    //         handle_verifier_result(verifier_res).await;
-    //     }
-    //     (Some(handle), None) => {
-    //         handle_verifier_result(tokio::join!(handle).0).await;
-    //     }
-    //     (None, Some(admin_server)) => {
-    //         if let Err(e) = admin_server.into_future().await {
-    //             error!("Admin server task error: {e}");
-    //         }
-    //     }
-    //     (None, None) => {}
-    // }
 
     let driver = Box::pin(async move {
         match (driver_verifier, driver_admin) {
@@ -271,7 +256,7 @@ pub async fn start_l2(
 
         Ok(())
     });
-    Ok((a, driver))
+    Ok((l1_commiter_handle, block_producer_handle, driver))
 }
 
 async fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {

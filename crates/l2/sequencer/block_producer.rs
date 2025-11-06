@@ -43,6 +43,7 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Produce,
+    Abort,
 }
 
 #[derive(Clone)]
@@ -264,22 +265,26 @@ impl GenServer for BlockProducer {
 
     async fn handle_cast(
         &mut self,
-        _message: Self::CastMsg,
+        message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        // Right now we only have the Produce message, so we ignore the message
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self
-                .produce_block()
-                .await
-                .inspect_err(|e| error!("Block Producer Error: {e}"));
+        match message {
+            InMessage::Produce => {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                    let _ = self
+                        .produce_block()
+                        .await
+                        .inspect_err(|e| error!("Block Producer Error: {e}"));
+                }
+                send_after(
+                    Duration::from_millis(self.block_time_ms),
+                    handle.clone(),
+                    Self::CastMsg::Produce,
+                );
+                CastResponse::NoReply
+            }
+            InMessage::Abort => CastResponse::Stop,
         }
-        send_after(
-            Duration::from_millis(self.block_time_ms),
-            handle.clone(),
-            Self::CastMsg::Produce,
-        );
-        CastResponse::NoReply
     }
 
     async fn handle_call(
