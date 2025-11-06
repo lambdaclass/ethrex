@@ -422,30 +422,32 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.target_peers);
+    // let peer_table = PeerTable::spawn(opts.target_peers);
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    let p2p_context = P2PContext::new(
-        local_p2p_node.clone(),
-        tracker.clone(),
-        signer,
-        peer_table.clone(),
-        store.clone(),
-        blockchain.clone(),
-        get_client_version(),
-        None,
-        opts.tx_broadcasting_time_interval,
-    )
-    .await
-    .expect("P2P context could not be created");
+    // let p2p_context = P2PContext::new(
+    //     local_p2p_node.clone(),
+    //     tracker.clone(),
+    //     signer,
+    //     peer_table.clone(),
+    //     store.clone(),
+    //     blockchain.clone(),
+    //     get_client_version(),
+    //     None,
+    //     opts.tx_broadcasting_time_interval,
+    // )
+    // .await
+    // .expect("P2P context could not be created");
 
-    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+    // let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
 
-    let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
+    // let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
+
+    let peer_handler = PeerHandler::dummy().await;
 
     init_rpc_api(
         &opts,
@@ -460,27 +462,27 @@ pub async fn init_l1(
     )
     .await;
 
-    if opts.metrics_enabled {
-        init_metrics(&opts, tracker.clone());
-    }
+    // if opts.metrics_enabled {
+    //     init_metrics(&opts, tracker.clone());
+    // }
 
-    if opts.dev {
-        #[cfg(feature = "dev")]
-        init_dev_network(&opts, &store, tracker.clone()).await;
-    } else if opts.p2p_enabled {
-        init_network(
-            &opts,
-            &network,
-            datadir,
-            peer_handler.clone(),
-            tracker.clone(),
-            blockchain.clone(),
-            p2p_context,
-        )
-        .await;
-    } else {
-        info!("P2P is disabled");
-    }
+    // if opts.dev {
+    //     #[cfg(feature = "dev")]
+    //     init_dev_network(&opts, &store, tracker.clone()).await;
+    // } else if opts.p2p_enabled {
+    //     init_network(
+    //         &opts,
+    //         &network,
+    //         datadir,
+    //         peer_handler.clone(),
+    //         tracker.clone(),
+    //         blockchain.clone(),
+    //         p2p_context,
+    //     )
+    //     .await;
+    // } else {
+    //     info!("P2P is disabled");
+    // }
 
     Ok((
         datadir.clone(),

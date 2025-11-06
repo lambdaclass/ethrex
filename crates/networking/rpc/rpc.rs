@@ -262,16 +262,16 @@ pub async fn start_api(
     };
 
     // Periodically clean up the active filters for the filters endpoints.
-    tokio::task::spawn(async move {
-        let mut interval = tokio::time::interval(FILTER_DURATION);
-        let filters = active_filters.clone();
-        loop {
-            interval.tick().await;
-            tracing::debug!("Running filter clean task");
-            filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
-            tracing::debug!("Filter clean task complete");
-        }
-    });
+    // tokio::task::spawn(async move {
+    //     let mut interval = tokio::time::interval(FILTER_DURATION);
+    //     let filters = active_filters.clone();
+    //     loop {
+    //         interval.tick().await;
+    //         tracing::debug!("Running filter clean task");
+    //         filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
+    //         tracing::debug!("Filter clean task complete");
+    //     }
+    // });
 
     // All request headers allowed.
     // All methods allowed.
@@ -279,22 +279,22 @@ pub async fn start_api(
     // All headers exposed.
     let cors = CorsLayer::permissive();
 
-    let http_router = Router::new()
-        .route("/debug/pprof/allocs", axum::routing::get(handle_get_heap))
-        .route(
-            "/debug/pprof/allocs/flamegraph",
-            axum::routing::get(handle_get_heap_flamegraph),
-        )
-        .route("/", post(handle_http_request))
-        .layer(cors.clone())
-        .with_state(service_context.clone());
-    let http_listener = TcpListener::bind(http_addr)
-        .await
-        .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let http_server = axum::serve(http_listener, http_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .into_future();
-    info!("Starting HTTP server at {http_addr}");
+    // let http_router = Router::new()
+    //     .route("/debug/pprof/allocs", axum::routing::get(handle_get_heap))
+    //     .route(
+    //         "/debug/pprof/allocs/flamegraph",
+    //         axum::routing::get(handle_get_heap_flamegraph),
+    //     )
+    //     .route("/", post(handle_http_request))
+    //     .layer(cors.clone())
+    //     .with_state(service_context.clone());
+    // let http_listener = TcpListener::bind(http_addr)
+    //     .await
+    //     .map_err(|error| RpcErr::Internal(error.to_string()))?;
+    // let http_server = axum::serve(http_listener, http_router)
+    //     .with_graceful_shutdown(shutdown_signal())
+    //     .into_future();
+    // info!("Starting HTTP server at {http_addr}");
 
     let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
     let authrpc_router = Router::new()
@@ -312,28 +312,31 @@ pub async fn start_api(
         .into_future();
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
-    if let Some(address) = ws_addr {
-        let ws_handler = |ws: WebSocketUpgrade, ctx| async {
-            ws.on_upgrade(|socket| handle_websocket(socket, ctx))
-        };
-        let ws_router = Router::new()
-            .route("/", axum::routing::any(ws_handler))
-            .layer(cors)
-            .with_state(service_context);
-        let ws_listener = TcpListener::bind(address)
-            .await
-            .map_err(|error| RpcErr::Internal(error.to_string()))?;
-        let ws_server = axum::serve(ws_listener, ws_router)
-            .with_graceful_shutdown(shutdown_signal())
-            .into_future();
-        info!("Starting WS server at {address}");
+    // if let Some(address) = ws_addr {
+    //     let ws_handler = |ws: WebSocketUpgrade, ctx| async {
+    //         ws.on_upgrade(|socket| handle_websocket(socket, ctx))
+    //     };
+    //     let ws_router = Router::new()
+    //         .route("/", axum::routing::any(ws_handler))
+    //         .layer(cors)
+    //         .with_state(service_context);
+    //     let ws_listener = TcpListener::bind(address)
+    //         .await
+    //         .map_err(|error| RpcErr::Internal(error.to_string()))?;
+    //     let ws_server = axum::serve(ws_listener, ws_router)
+    //         .with_graceful_shutdown(shutdown_signal())
+    //         .into_future();
+    //     info!("Starting WS server at {address}");
 
-        let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
-            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
-    } else {
-        let _ = tokio::try_join!(authrpc_server, http_server)
-            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
-    }
+    //     let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
+    //         .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    // } else {
+    //     let _ = tokio::try_join!(authrpc_server, http_server)
+    //         .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    // }
+
+    let _ = tokio::try_join!(authrpc_server);
+
 
     Ok(())
 }
