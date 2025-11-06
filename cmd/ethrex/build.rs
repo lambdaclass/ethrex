@@ -38,8 +38,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         download_script();
 
-        let out_dir = env::var_os("OUT_DIR").unwrap();
-        update_genesis_file(L2_GENESIS_PATH.as_ref(), Path::new(&out_dir))?;
+        if env::var_os("SKIP_COMPILE_CONTRACTS").is_none() {
+            let out_dir = env::var_os("OUT_DIR").unwrap();
+            update_genesis_file(L2_GENESIS_PATH.as_ref(), Path::new(&out_dir))?;
+        }
     }
 
     Ok(())
