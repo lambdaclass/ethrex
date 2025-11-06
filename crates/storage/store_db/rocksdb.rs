@@ -284,7 +284,6 @@ impl Store {
         let writer = Writer {
             db: store.db.clone(),
             dbs: store.dbs.clone(),
-            trie_update_worker_tx: store.trie_update_worker_tx.clone(),
         };
 
         std::thread::spawn(move || {
@@ -739,13 +738,102 @@ impl StoreEngine for Store {
             .map(|header| header.state_root)
             .unwrap_or_default();
 
-        let msg = WriterMessage::ApplyUpdateBatch {
-            parent_state_root,
-            update_batch,
-        };
+        let last_state_root = update_batch
+            .blocks
+            .last()
+            .ok_or(StoreError::UpdateBatchNoBlocks)?
+            .header
+            .state_root;
+
+        let _span = tracing::trace_span!("Block DB update").entered();
+
+        let mut batch_ops = vec![];
+
+        let UpdateBatch {
+            account_updates,
+            storage_updates,
+            ..
+        } = update_batch;
+
+        // Capacity one ensures sender just notifies and goes on
+        let (notify_tx, notify_rx) = sync_channel(1);
+        let wait_for_new_layer = notify_rx;
+        self.trie_update_worker_tx
+            .send((
+                notify_tx,
+                parent_state_root,
+                last_state_root,
+                account_updates,
+                storage_updates,
+            ))
+            .map_err(|e| {
+                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+            })?;
+
+        for block in update_batch.blocks {
+            let block_number = block.header.number;
+            let block_hash = block.hash();
+
+            let hash_key_rlp = BlockHashRLP::from(block_hash);
+            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+            batch_ops.push((
+                CF_HEADERS,
+                hash_key_rlp.into_bytes(),
+                header_value_rlp.into_bytes(),
+            ));
+
+            let hash_key: AccountCodeHashRLP = block_hash.into();
+            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+            batch_ops.push((CF_BODIES, hash_key.into_bytes(), body_value.into_bytes()));
+
+            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+            batch_ops.push((
+                CF_BLOCK_NUMBERS,
+                hash_key,
+                block_number.to_le_bytes().to_vec(),
+            ));
+
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let tx_hash = transaction.hash();
+                // Key: tx_hash + block_hash
+                let mut composite_key = Vec::with_capacity(64);
+                composite_key.extend_from_slice(tx_hash.as_bytes());
+                composite_key.extend_from_slice(block_hash.as_bytes());
+                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                batch_ops.push((CF_TRANSACTION_LOCATIONS, composite_key, location_value));
+            }
+        }
+
+        for (block_hash, receipts) in update_batch.receipts {
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                let key = (block_hash, index as u64).encode_to_vec();
+                let value = receipt.encode_to_vec();
+                batch_ops.push((CF_RECEIPTS, key, value));
+            }
+        }
+
+        for (code_hash, code) in update_batch.code_updates {
+            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            code.bytecode.encode(&mut buf);
+            code.jump_targets
+                .into_iter()
+                .flat_map(|t| t.to_le_bytes())
+                .collect::<Vec<u8>>()
+                .as_slice()
+                .encode(&mut buf);
+            batch_ops.push((CF_ACCOUNT_CODES, code_hash.0.to_vec(), buf));
+        }
+        // Wait for an updated top layer so every caller afterwards sees a consistent view.
+        // Specifically, the next block produced MUST see this upper layer.
+        wait_for_new_layer
+            .recv()
+            .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
+
+        let msg = WriterMessage::WriteBatchAsync { batch_ops };
         let (tx, rx) = std::sync::mpsc::sync_channel(0);
         self.writer_tx.send((msg, tx)).unwrap();
-        rx.recv().unwrap()
+        rx.recv().unwrap()?;
+        Ok(())
     }
 
     /// Add a batch of blocks in a single transaction.
@@ -1803,7 +1891,6 @@ fn open_cfs<'a, const N: usize>(
 struct Writer {
     db: canopydb::Environment,
     dbs: Arc<BTreeMap<String, canopydb::Database>>,
-    trie_update_worker_tx: TriedUpdateWorkerTx,
 }
 
 pub(crate) enum WriterMessage {
@@ -1818,10 +1905,6 @@ pub(crate) enum WriterMessage {
     WriteFKVBatch {
         last_written: Vec<u8>,
         batch: Vec<(Vec<u8>, Vec<u8>)>,
-    },
-    ApplyUpdateBatch {
-        parent_state_root: H256,
-        update_batch: UpdateBatch,
     },
     ClearSnapState,
     ClearFullsyncHeaders,
@@ -1848,10 +1931,6 @@ impl Writer {
                     last_written,
                     batch,
                 } => self.write_fkv_batch(last_written, batch),
-                WriterMessage::ApplyUpdateBatch {
-                    parent_state_root,
-                    update_batch,
-                } => self.apply_update_batch(parent_state_root, update_batch),
                 WriterMessage::ClearSnapState => self.clear_snap_state(),
                 WriterMessage::ClearFullsyncHeaders => self.clear_fullsync_headers(),
             };
@@ -1939,109 +2018,6 @@ impl Writer {
             .unwrap();
 
         trace!("Write FKV batch finished");
-        Ok(())
-    }
-
-    fn apply_update_batch(
-        &self,
-        parent_state_root: H256,
-        update_batch: UpdateBatch,
-    ) -> Result<(), StoreError> {
-        trace!("Apply update batch called");
-        let last_state_root = update_batch
-            .blocks
-            .last()
-            .ok_or(StoreError::UpdateBatchNoBlocks)?
-            .header
-            .state_root;
-
-        let _span = tracing::trace_span!("Block DB update").entered();
-
-        let mut batch_ops = vec![];
-
-        let UpdateBatch {
-            account_updates,
-            storage_updates,
-            ..
-        } = update_batch;
-
-        // Capacity one ensures sender just notifies and goes on
-        let (notify_tx, notify_rx) = sync_channel(1);
-        let wait_for_new_layer = notify_rx;
-        self.trie_update_worker_tx
-            .send((
-                notify_tx,
-                parent_state_root,
-                last_state_root,
-                account_updates,
-                storage_updates,
-            ))
-            .map_err(|e| {
-                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-            })?;
-
-        for block in update_batch.blocks {
-            let block_number = block.header.number;
-            let block_hash = block.hash();
-
-            let hash_key_rlp = BlockHashRLP::from(block_hash);
-            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            batch_ops.push((
-                CF_HEADERS,
-                hash_key_rlp.into_bytes(),
-                header_value_rlp.into_bytes(),
-            ));
-
-            let hash_key: AccountCodeHashRLP = block_hash.into();
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            batch_ops.push((CF_BODIES, hash_key.into_bytes(), body_value.into_bytes()));
-
-            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-            batch_ops.push((
-                CF_BLOCK_NUMBERS,
-                hash_key,
-                block_number.to_le_bytes().to_vec(),
-            ));
-
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                batch_ops.push((CF_TRANSACTION_LOCATIONS, composite_key, location_value));
-            }
-        }
-
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
-                batch_ops.push((CF_RECEIPTS, key, value));
-            }
-        }
-
-        for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
-            code.bytecode.encode(&mut buf);
-            code.jump_targets
-                .into_iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>()
-                .as_slice()
-                .encode(&mut buf);
-            batch_ops.push((CF_ACCOUNT_CODES, code_hash.0.to_vec(), buf));
-        }
-        // Wait for an updated top layer so every caller afterwards sees a consistent view.
-        // Specifically, the next block produced MUST see this upper layer.
-        wait_for_new_layer
-            .recv()
-            .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
-        // After top-level is added, we can make the rest of the changes visible.
-        self.write_batch_async(batch_ops)?;
-
-        trace!("Apply update batch finished");
         Ok(())
     }
 
