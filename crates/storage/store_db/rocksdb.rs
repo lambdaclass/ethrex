@@ -2011,6 +2011,13 @@ impl Writer {
                     StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
                 })?;
 
+                trace!("Waiting for new layer...");
+                // Wait for an updated top layer so every caller afterwards sees a consistent view.
+                // Specifically, the next block produced MUST see this upper layer.
+                wait_for_new_layer
+                    .recv()
+                    .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
+
             for block in update_batch.blocks {
                 let block_number = block.header.number;
                 let block_hash = block.hash();
@@ -2063,13 +2070,6 @@ impl Writer {
                     .encode(&mut buf);
                 codes_tree.insert(&code_hash.0, &buf).unwrap();
             }
-
-            trace!("Waiting for new layer...");
-            // Wait for an updated top layer so every caller afterwards sees a consistent view.
-            // Specifically, the next block produced MUST see this upper layer.
-            wait_for_new_layer
-                .recv()
-                .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
         }
         // After top-level is added, we can make the rest of the changes visible.
         self.db
