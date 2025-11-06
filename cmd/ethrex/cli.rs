@@ -729,7 +729,7 @@ pub async fn import_blocks_bench(
                     _ => warn!("Failed to add block {number} with hash {hash:#x}"),
                 })?;
 
-            tokio::time::sleep(Duration::from_millis(400)).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
         // Make head canonical and label all special blocks correctly.
