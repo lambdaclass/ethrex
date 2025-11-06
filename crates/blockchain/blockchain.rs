@@ -981,6 +981,25 @@ impl Blockchain {
                 "".to_string()
             };
             info!("{}{}", base_log, extra_log);
+            if as_gigas > 0.0 {
+                let dur = move |init: Instant, end: Instant| {
+                    end.duration_since(init).as_micros() as f64 / 1000.0
+                };
+                info!(
+                    "+#+ {} {:.3} {} {} {} {} {} {} {} {} {}",
+                    block_number,
+                    throughput,
+                    transactions_count,
+                    dur(start_instant, block_validated_instant),
+                    dur(block_validated_instant, exec_merkle_start),
+                    dur(exec_merkle_start, exec_end_instant),
+                    dur(exec_merkle_start, merkle_end_instant),
+                    dur(exec_merkle_start, exec_merkle_end_instant),
+                    dur(exec_merkle_end_instant, results_validated_instant),
+                    dur(results_validated_instant, stored_instant),
+                    dur(start_instant, stored_instant),
+                )
+            }
         }
     }
 
