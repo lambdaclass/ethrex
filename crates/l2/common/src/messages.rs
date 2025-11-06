@@ -8,15 +8,14 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
 
 use serde::{Deserialize, Serialize};
-
 pub const MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfe,
 ]);
 
-// keccak256("L2Message(uint256,address,address,uint256,uint256,bytes)")
+// keccak256("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)")
 pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
-    keccak("L2Message(uint256,address,address,uint256,uint256,bytes)".as_bytes())
+    keccak("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)".as_bytes())
 });
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -108,6 +107,8 @@ pub struct L2Message {
     pub value: U256,
     /// Gas limit for the transaction execution in the destination chain
     pub gas_limit: U256,
+    /// Unique transaction id for the message in the destination chain
+    pub tx_id: U256,
     /// Calldata for the transaction in the destination chain
     pub data: Bytes,
 }
@@ -125,14 +126,16 @@ impl L2Message {
     }
     pub fn from_log(log: &ethrex_common::types::Log) -> Option<L2Message> {
         let chain_id = U256::from_big_endian(&log.topics.get(1)?.0);
-        let from = H256::from_slice(log.data.get(32..64)?);
+        let from = H256::from_slice(log.data.get(0..32)?);
         let from = Address::from_slice(&from.as_fixed_bytes()[12..]);
-        let to = H256::from_slice(log.data.get(64..96)?);
+        let to = H256::from_slice(log.data.get(32..64)?);
         let to = Address::from_slice(&to.as_fixed_bytes()[12..]);
-        let value = U256::from_big_endian(log.data.get(96..128)?);
-        let gas_limit = U256::from_big_endian(log.data.get(128..160)?);
-        let calldata_len = U256::from_big_endian(log.data.get(160..192)?);
-        let calldata = log.data.get(192..192 + calldata_len.as_usize())?;
+        let value = U256::from_big_endian(log.data.get(64..96)?);
+        let gas_limit = U256::from_big_endian(log.data.get(96..128)?);
+        let tx_id = U256::from_big_endian(log.data.get(128..160)?);
+        // 160 to 192 is the offset for calldata
+        let calldata_len = U256::from_big_endian(log.data.get(192..224)?);
+        let calldata = log.data.get(224..224 + calldata_len.as_usize())?;
 
         Some(L2Message {
             chain_id,
@@ -140,6 +143,7 @@ impl L2Message {
             to,
             value,
             gas_limit,
+            tx_id,
             data: Bytes::copy_from_slice(calldata),
         })
     }

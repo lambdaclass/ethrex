@@ -5,7 +5,7 @@ use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::{Log, PrivilegedL2Transaction, TxType};
+use ethrex_common::types::{Log, PrivilegedL2Transaction, SourceChainId, TxKind, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
 use ethrex_l2_common::messages::{L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS};
@@ -28,6 +28,7 @@ use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
 };
 use std::collections::BTreeMap;
+use std::str::FromStr;
 use std::time::Duration;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
@@ -123,7 +124,8 @@ impl L1Watcher {
         };
 
         // TODO: fetch from config
-        let router_address = Address::zero();
+        let router_address = Address::from_str("0x2bc74c22739625e06609ac16eea025f31fd350e3")
+            .expect("Invalid router address");
 
         Ok(Self {
             store,
@@ -314,6 +316,68 @@ impl L1Watcher {
         Ok(privileged_txs)
     }
 
+    async fn process_l2_transactions(
+        &mut self,
+        l2_txs: Vec<(L2Message, u64)>,
+    ) -> Result<(), L1WatcherError> {
+        let mut privileged_txs = Vec::new();
+
+        for (tx, source_chain_id) in l2_txs {
+            let gas_price = self.local_client.get_gas_price().await?;
+            // Avoid panicking when using as_u64()
+            let gas_price: u64 = gas_price
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
+
+            info!("Add mint tx with nonce: {}", tx.tx_id.as_u64());
+
+            let mint_transaction = PrivilegedL2Transaction {
+                chain_id: tx.chain_id.as_u64(),
+                nonce: tx.tx_id.as_u64(),
+                max_priority_fee_per_gas: gas_price,
+                max_fee_per_gas: gas_price,
+                gas_limit: tx.gas_limit.as_u64(),
+                to: TxKind::Call(tx.to),
+                value: tx.value,
+                data: tx.data.clone(),
+                access_list: vec![],
+                from: tx.from,
+                inner_hash: Default::default(),
+                source_chain_id: SourceChainId::L2(source_chain_id),
+            };
+
+            let privileged_tx = Transaction::PrivilegedL2Transaction(mint_transaction);
+
+            if self
+                .store
+                .get_transaction_by_hash(privileged_tx.hash())
+                .await
+                .map_err(L1WatcherError::FailedAccessingStore)?
+                .is_some()
+            {
+                warn!(
+                    "L2 transaction already processed (to: {:x}, value: {:x}, transactionId: {:#}), skipping.",
+                    tx.to, tx.value, tx.tx_id
+                );
+                continue;
+            }
+
+            let Ok(hash) = self
+                .blockchain
+                .add_transaction_to_pool(privileged_tx)
+                .await
+                .inspect_err(|e| warn!("Failed to add mint transaction to the mempool: {e:#?}"))
+            else {
+                // TODO: Figure out if we want to continue or not
+                continue;
+            };
+
+            info!("L2 Mint transaction added to mempool {hash:#x}",);
+            privileged_txs.push(hash);
+        }
+        Ok(())
+    }
+
     async fn privileged_transaction_already_processed(
         &mut self,
         tx_hash: H256,
@@ -352,7 +416,7 @@ impl L1Watcher {
     }
 
     async fn watch_l2s(&mut self) {
-        let Ok(logs) = self
+        let Ok(l2_txs) = self
             .get_logs_l2()
             .await
             .inspect_err(|err| error!("L1 Watcher Error: {err}"))
@@ -360,20 +424,20 @@ impl L1Watcher {
             return;
         };
 
-        info!("Fetched {} L2 logs", logs.len());
+        info!("Fetched {} L2 logs", l2_txs.len());
 
         // We may not have a privileged transaction nor a withdrawal, that means no events -> no logs.
         // TODO: This was unchanged. We should continue from here.
         // We should get privileged transactions from the new L2Message logs and inject them into the mempool.
-        if !logs.is_empty() {
+        if !l2_txs.is_empty() {
             let _ = self
-                .process_privileged_transactions(logs)
+                .process_l2_transactions(l2_txs)
                 .await
                 .inspect_err(|err| error!("L1 Watcher Error: {}", err));
         };
     }
 
-    async fn get_logs_l2(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
+    async fn get_logs_l2(&mut self) -> Result<Vec<(L2Message, u64)>, L1WatcherError> {
         info!("Getting L2 logs");
         let topics = vec![*L2MESSAGE_EVENT_SELECTOR, self.chain_id_topic];
         // We don't need to delay L2 logs
@@ -392,18 +456,25 @@ impl L1Watcher {
             )
             .await?;
 
+            info!("Fetched {} L2 logs from L2 client", logs.len());
+
             let verified_logs =
                 filter_verified_messages(self.router_address, &self.eth_client, l2_client, logs)
                     .await?;
 
+            info!("Verified {} L2 logs from L2 client", verified_logs.len());
+
             // We need to update the last block fetched only if the logs were verified.
-            if let Some(log) = verified_logs.last() {
-                l2_client.last_block_fetched_l2 = log.block_number.into();
+            if let Some((_, block_number, _)) = verified_logs.last() {
+                l2_client.last_block_fetched_l2 = (*block_number).into();
             }
 
             acc_logs.extend(verified_logs);
         }
-        Ok(acc_logs)
+        Ok(acc_logs
+            .iter()
+            .map(|(msg, _, chain_id)| (msg.clone(), chain_id.clone()))
+            .collect())
     }
 }
 
@@ -412,10 +483,14 @@ pub async fn filter_verified_messages(
     l1_client: &EthClient,
     l2_client: &L2Client,
     logs: Vec<RpcLog>,
-) -> Result<Vec<RpcLog>, L1WatcherError> {
+) -> Result<Vec<(L2Message, u64, u64)>, L1WatcherError> {
     let mut verified_logs = Vec::new();
 
     for rpc_log in logs {
+        info!(
+            "Verifying L2 Message with tx hash {:#}",
+            rpc_log.transaction_hash
+        );
         let Some(message_proof) =
             get_l2_message_proof(&l2_client.eth_client, rpc_log.transaction_hash).await?
         else {
@@ -423,6 +498,7 @@ pub async fn filter_verified_messages(
             // Given that logs are fetched in block order, we can stop here.
             break;
         };
+        info!("Got message proof");
 
         // Why is it a vec?
         let proof = message_proof.first().ok_or(L1WatcherError::Custom(
@@ -441,6 +517,8 @@ pub async fn filter_verified_messages(
             ));
         };
 
+        info!("l2 message parsed from log");
+
         if !verify_message(
             l2_client.chain_id,
             l1_client,
@@ -456,7 +534,7 @@ pub async fn filter_verified_messages(
         }
 
         // info!("L2 Message with id {message_id:#} has been verified on L1.",);
-        verified_logs.push(rpc_log);
+        verified_logs.push((l2_message, rpc_log.block_number, l2_client.chain_id));
     }
 
     Ok(verified_logs)

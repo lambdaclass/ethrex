@@ -130,10 +130,6 @@ impl RpcHandler for GetL2MessageProof {
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.l1_ctx.storage;
-        info!(
-            "Requested l2message proof for transaction {:#x}",
-            self.transaction_hash,
-        );
 
         // Gets the transaction from the storage
         let (tx_block_number, _, tx_index) = match storage

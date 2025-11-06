@@ -277,6 +277,41 @@ pub struct EIP7702Transaction {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub enum SourceChainId {
+    #[default]
+    L1,
+    L2(u64), // chain id
+}
+
+impl RLPEncode for SourceChainId {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        match self {
+            SourceChainId::L1 => 0u8.encode(buf),
+            SourceChainId::L2(chain_id) => {
+                1u8.encode(buf);
+                chain_id.encode(buf)
+            }
+        }
+    }
+}
+
+impl RLPDecode for SourceChainId {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let (val, rem) = u8::decode_unfinished(rlp)?;
+        match val {
+            0 => Ok((SourceChainId::L1, rem)),
+            1 => {
+                let (chain_id, rem) = u64::decode_unfinished(rem)?;
+                Ok((SourceChainId::L2(chain_id), rem))
+            }
+            _ => Err(RLPDecodeError::Custom(format!(
+                "Invalid SourceChainId value: {val}"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
     pub chain_id: u64,
     pub nonce: u64,
@@ -294,6 +329,7 @@ pub struct PrivilegedL2Transaction {
     pub from: Address,
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
+    pub source_chain_id: SourceChainId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -606,6 +642,7 @@ impl RLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.data)
             .encode_field(&self.access_list)
             .encode_field(&self.from)
+            .encode_field(&self.source_chain_id)
             .finish()
     }
 }
@@ -715,6 +752,7 @@ impl PayloadRLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.data)
             .encode_field(&self.access_list)
             .encode_field(&self.from)
+            .encode_field(&self.source_chain_id)
             .finish();
     }
 }
@@ -914,6 +952,7 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
         let (from, decoder) = decoder.decode_field("from")?;
+        let (source_chain_id, decoder) = decoder.decode_field("source_chain_id")?;
         let inner_hash = OnceCell::new();
 
         let tx = PrivilegedL2Transaction {
@@ -927,6 +966,7 @@ impl RLPDecode for PrivilegedL2Transaction {
             data,
             access_list,
             from,
+            source_chain_id,
             inner_hash,
         };
         Ok((tx, decoder.finish()?))

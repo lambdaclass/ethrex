@@ -16,6 +16,8 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     address public constant NATIVE_TOKEN_L2 =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
+    mapping(uint256 chainId => uint256 tx_id) public transactionIds;
+
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
     modifier onlySelf() {
         require(
@@ -117,8 +119,10 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             msg.sender,
             to,
             destGasLimit,
+            transactionIds[chainId],
             data
         );
+        transactionIds[chainId] += 1;
     }
 
     /// Burns at least {amount} gas

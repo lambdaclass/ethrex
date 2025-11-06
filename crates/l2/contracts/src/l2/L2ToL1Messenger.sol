@@ -24,8 +24,9 @@ contract L2ToL1Messenger is IL2ToL1Messenger {
         address from,
         address to,
         uint256 gasLimit,
+        uint256 txId,
         bytes calldata data
     ) external payable {
-        emit L2Message(chainId, from, to, msg.value, gasLimit, data);
+        emit L2Message(chainId, from, to, msg.value, gasLimit, txId, data);
     }
 }

@@ -6,7 +6,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     U256,
-    types::{Block, SAFE_BYTES_PER_BLOB},
+    types::{Block, SAFE_BYTES_PER_BLOB, Transaction},
 };
 use ethrex_l2_common::privileged_transactions::PRIVILEGED_TX_BUDGET;
 use ethrex_levm::vm::VMType;
@@ -18,8 +18,8 @@ use ethrex_metrics::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
-use std::ops::Div;
 use std::sync::Arc;
+use std::{collections::HashMap, ops::Div};
 use tokio::time::Instant;
 use tracing::debug;
 
@@ -31,6 +31,7 @@ pub async fn build_payload(
     payload: Block,
     store: &Store,
     last_privileged_nonce: &mut Option<u64>,
+    l2_privileged_nonces: &mut HashMap<u64, u64>,
     block_gas_limit: u64,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
@@ -44,6 +45,7 @@ pub async fn build_payload(
         &mut context,
         store,
         last_privileged_nonce,
+        l2_privileged_nonces,
         block_gas_limit,
     )
     .await?;
@@ -94,6 +96,7 @@ pub async fn fill_transactions(
     context: &mut PayloadBuildContext,
     store: &Store,
     last_privileged_nonce: &mut Option<u64>,
+    l2_privileged_nonces: &mut HashMap<u64, u64>,
     configured_block_gas_limit: u64,
 ) -> Result<(), BlockProducerError> {
     let mut privileged_tx_count = 0;
@@ -211,7 +214,8 @@ pub async fn fill_transactions(
         context.payload.body.transactions.pop();
 
         // Check we don't have an excessive number of privileged transactions
-        if head_tx.is_privileged() {
+
+        if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
             if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
                 debug!("Ran out of space for privileged transactions");
                 txs.pop();
@@ -219,13 +223,28 @@ pub async fn fill_transactions(
                 continue;
             }
             let id = head_tx.nonce();
-            if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
-                debug!("Ignoring out-of-order privileged transaction");
-                txs.pop();
-                undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-                continue;
+            match privileged_tx.source_chain_id {
+                ethrex_common::types::SourceChainId::L1 => {
+                    if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
+                        debug!("Ignoring out-of-order privileged transaction");
+                        txs.pop();
+                        undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                        continue;
+                    }
+                    last_privileged_nonce.replace(id);
+                }
+                ethrex_common::types::SourceChainId::L2(chain_id) => {
+                    let entry = l2_privileged_nonces.entry(chain_id).or_insert(0);
+                    if id != *entry {
+                        debug!("Ignoring out-of-order l2 privileged transaction");
+                        txs.pop();
+                        undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                        continue;
+                    }
+                    l2_privileged_nonces.insert(chain_id, id + 1);
+                }
             }
-            last_privileged_nonce.replace(id);
+
             privileged_tx_count += 1;
         }
 

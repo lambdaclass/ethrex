@@ -22,6 +22,7 @@ interface IL2ToL1Messenger {
         address to,
         uint256 value,
         uint256 gasLimit,
+        uint256 txId,
         bytes data
     );
 
@@ -34,12 +35,14 @@ interface IL2ToL1Messenger {
     /// @param from the sender address on the source chain
     /// @param to the recipient address on the destination chain
     /// @param gasLimit the gas limit for the message execution on the destination chain
+    /// @param txId the unique transaction id for the message
     /// @param data the calldata to be sent to the recipient on the destination chain
     function sendMessageToL2(
         uint256 chainId,
         address from,
         address to,
         uint256 gasLimit,
+        uint256 txId,
         bytes calldata data
     ) external payable;
 }

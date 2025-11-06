@@ -28,7 +28,7 @@ use ethrex_l2_common::{
     messages::get_block_l1_messages,
     privileged_transactions::{
         PrivilegedTransactionError, compute_privileged_transactions_hash,
-        get_block_privileged_transactions,
+        get_l1_block_privileged_transactions,
     },
 };
 
@@ -311,7 +311,7 @@ fn execute_stateless(
         }
 
         non_privileged_count += block.body.transactions.len()
-            - get_block_privileged_transactions(&block.body.transactions).len();
+            - get_l1_block_privileged_transactions(&block.body.transactions).len();
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
@@ -358,7 +358,7 @@ fn get_batch_l1messages_and_privileged_transactions(
 
     for (block, receipts) in blocks.iter().zip(receipts) {
         let txs = &block.body.transactions;
-        privileged_transactions.extend(get_block_privileged_transactions(txs));
+        privileged_transactions.extend(get_l1_block_privileged_transactions(txs));
         l1messages.extend(get_block_l1_messages(receipts));
     }
 

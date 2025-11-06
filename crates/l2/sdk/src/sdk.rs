@@ -25,7 +25,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::{fs::read_to_string, path::Path};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
@@ -1022,9 +1022,14 @@ pub async fn verify_message(
     message_proof: &L2MessageProof,
     router_address: Address,
 ) -> Result<bool, EthClientError> {
-    const VERIFY_MESSAGE_SIGNATURE: &str = "verifyMessage(uint256,bytes32,uint256,bytes32[])";
+    info!("Verifying L2 message on chain id {chain_id} via router at {router_address:#x}");
+    const VERIFY_MESSAGE_SIGNATURE: &str = "verifyMessage(uint256,uint256,bytes32,bytes32[])";
 
     let message_leaf: Vec<u8> = get_l2_message_hash(l2_message).as_bytes().to_vec();
+    info!("L2 message leaf: 0x{}", hex::encode(&message_leaf));
+    info!("proofs: {}", message_proof.merkle_proof.len());
+    info!("batch number: {}", message_proof.batch_number);
+    info!("message hash : 0x{}", message_proof.message_hash);
 
     let proof_values = message_proof
         .merkle_proof
@@ -1034,12 +1039,18 @@ pub async fn verify_message(
 
     let calldata_values = vec![
         Value::Uint(chain_id.into()),
-        Value::FixedBytes(message_leaf.into()),
         Value::Uint(message_proof.batch_number.into()),
+        Value::FixedBytes(message_leaf.into()),
         Value::Array(proof_values),
     ];
 
     let calldata = encode_calldata(VERIFY_MESSAGE_SIGNATURE, &calldata_values)?;
+
+    info!(
+        "calling eth client to verify message... {:?}",
+        eth_client.urls
+    );
+    info!("router address: {router_address:#x}");
 
     let hex_string = eth_client
         .call(router_address, calldata.into(), Overrides::default())

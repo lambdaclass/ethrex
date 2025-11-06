@@ -1,5 +1,5 @@
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{PrivilegedL2Transaction, Transaction};
+use ethrex_common::types::{PrivilegedL2Transaction, SourceChainId, Transaction};
 use ethrex_common::utils::keccak;
 use serde::{Deserialize, Serialize};
 
@@ -30,11 +30,16 @@ pub enum PrivilegedTransactionError {
     LengthTooLarge(#[from] std::num::TryFromIntError),
 }
 
-pub fn get_block_privileged_transactions(txs: &[Transaction]) -> Vec<PrivilegedL2Transaction> {
+pub fn get_l1_block_privileged_transactions(txs: &[Transaction]) -> Vec<PrivilegedL2Transaction> {
     txs.iter()
-        .filter_map(|tx| match tx {
-            Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
-            _ => None,
+        .filter_map(|tx| {
+            if let Transaction::PrivilegedL2Transaction(tx) = tx
+                && matches!(tx.source_chain_id, SourceChainId::L1)
+            {
+                Some(tx.clone())
+            } else {
+                None
+            }
         })
         .collect()
 }

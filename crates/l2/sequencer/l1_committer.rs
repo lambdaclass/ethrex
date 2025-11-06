@@ -30,7 +30,7 @@ use ethrex_l2_common::{
     },
     privileged_transactions::{
         PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash,
-        get_block_privileged_transactions,
+        get_l1_block_privileged_transactions,
     },
     prover::ProverInputData,
 };
@@ -387,7 +387,8 @@ impl L1Committer {
         }
 
         let balance_diffs = get_balance_diffs(&l2_messages);
-        let l2_message_hashes = l2_messages.iter().map(get_l2_message_hash).collect();
+        let l2_message_hashes: Vec<H256> = l2_messages.iter().map(get_l2_message_hash).collect();
+        info!("l2 messages hashes in batch: {}", l2_message_hashes.len());
 
         let batch = Batch {
             number: batch_number,
@@ -541,7 +542,8 @@ impl L1Committer {
             // Get block messages and privileged transactions
             let l1_messages = get_block_l1_messages(&receipts);
             let l2_messages = get_block_l2_messages(&receipts);
-            let privileged_transactions = get_block_privileged_transactions(&txs);
+            info!("Got l2 messages: {}", l2_messages.len());
+            let privileged_transactions = get_l1_block_privileged_transactions(&txs);
 
             // // Get block account updates.
             let account_updates = if let Some(account_updates) = self
@@ -919,6 +921,8 @@ impl L1Committer {
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
         let l1_messages_merkle_root = compute_merkle_root(&batch.l1_message_hashes);
         let l2_messages_merkle_root = compute_merkle_root(&batch.l2_message_hashes);
+        info!("l2 messages merkle root: {l2_messages_merkle_root:#x}");
+        info!("l2 messages hashes len: {}", batch.l2_message_hashes.len());
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
         let balance_diffs: Vec<Value> = batch
             .balance_diffs
