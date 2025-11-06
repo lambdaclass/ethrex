@@ -730,6 +730,7 @@ pub async fn import_blocks_bench(
                 })?;
         }
 
+        // Make head canonical and label all special blocks correctly.
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
