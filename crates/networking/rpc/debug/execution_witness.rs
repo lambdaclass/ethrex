@@ -76,49 +76,38 @@ pub fn execution_witness_from_rpc_chain_config(
         .map(|b| Ok((keccak(&b), Node::decode(&b.to_vec())?)))
         .collect::<Result<_, RLPDecodeError>>()
         .map_err(|e| GuestProgramStateError::Custom(format!("failed to rlp decode nodes: {e}")))?;
+
+    // get state trie root and embed the rest of the trie into it
     let state_trie_root = (*Trie::get_embedded_root(&nodes, initial_state_root)
         .unwrap()
         .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
         .unwrap()
         .unwrap())
     .clone();
-
     let mut state_trie = Trie::default();
     state_trie.root = state_trie_root.clone().into();
 
-    // keys podria estar incompleto (quiza un empty trie?)
-    let keys: Vec<_> = rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect();
-    let storage_roots: Vec<_> = keys
-        .iter()
-        .filter(|k| {
-            if !(k.len() == 20 || k.len() == 32) {
-                panic!("unexpected size");
-            }
-            k.len() == 20
-        })
-        .map(|k| Address::from_slice(k))
-        .filter_map(|a| {
-            let Some(encoded_account) = state_trie.get(&hash_address(&a)).unwrap() else {
-                return None
-            };
-            Some(AccountState::decode(&encoded_account).unwrap().storage_root)
-        })
-        .collect();
+    // get all storage trie roots and embed the rest of the trie into it
+    let mut storage_trie_roots = Vec::new();
+    for key in &rpc_witness.keys {
+        if key.len() != 20 {
+            continue; // not an address
+        }
+        let hashed_address = hash_address(&Address::from_slice(key));
+        let Some(encoded_account) = state_trie.get(&hashed_address).unwrap() else {
+            continue; // empty account, doesn't have a storage trie
+        };
+        let storage_root_hash = AccountState::decode(&encoded_account).unwrap().storage_root;
 
-    let storage_trie_roots: Vec<_> = storage_roots
-        .into_iter()
-        .filter_map(|storage_root| {
-            if !nodes.contains_key(&storage_root) {
-                return None;
-            }
-            let node = Trie::get_embedded_root(&nodes, storage_root).unwrap();
-            let NodeRef::Node(node, _) = node else {
-                return None
-            };
-            Some((*node).clone())
-        })
-        .collect();
-    dbg!(storage_trie_roots.len());
+        if !nodes.contains_key(&storage_root_hash) {
+            continue; // storage trie isn't relevant to this execution
+        }
+        let node = Trie::get_embedded_root(&nodes, storage_root_hash).unwrap();
+        let NodeRef::Node(node, _) = node else {
+            continue; // empty storage trie
+        };
+        storage_trie_roots.push((*node).clone());
+    }
 
     let witness = ExecutionWitness {
         codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
@@ -131,7 +120,7 @@ pub fn execution_witness_from_rpc_chain_config(
             .collect(),
         state_trie_root,
         storage_trie_roots,
-        keys,
+        keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
 
     Ok(witness)
