@@ -280,8 +280,11 @@ fn execute_stateless(
     // to avoid expensive recomputation after the guest_program_state is moved
     // to the wrapper
     #[cfg(feature = "l2")]
-    let mut original_state_trie = Trie::default();
-    original_state_trie.root = guest_program_state.state_trie.root.clone();
+    let original_state_trie = {
+        let mut trie = Trie::default();
+        trie.root = guest_program_state.state_trie.root.clone();
+        trie
+    };
     #[cfg(feature = "l2")]
     let codes_hashed = guest_program_state
         .codes_hashed
