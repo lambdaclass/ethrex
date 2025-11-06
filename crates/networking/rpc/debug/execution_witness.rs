@@ -102,7 +102,7 @@ pub fn execution_witness_from_rpc_chain_config(
     let storage_trie_roots: Vec<_> = storage_roots
         .into_iter()
         .map(|storage_root| {
-            (*Trie::get_embedded_root(&nodes, initial_state_root)
+            (*Trie::get_embedded_root(&nodes, storage_root)
                 .unwrap()
                 .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
                 .unwrap()
