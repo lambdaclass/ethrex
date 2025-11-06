@@ -1,5 +1,5 @@
 use ethrex_common::H256;
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use fastbloom_rs::{Deletable, FilterBuilder, Membership};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -26,15 +26,15 @@ pub struct TrieLayerCache {
     /// In case a bloom filter insert or merge fails, we need to mark the bloom filter as poisoned
     /// so we never use it again, because if we don't we may be misled into believing a key is not present
     /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
-    bloom: Option<qfilter::Filter>,
+    bloom: Option<fastbloom_rs::CountingBloomFilter>,
 }
 
 impl Default for TrieLayerCache {
     fn default() -> Self {
         // Try to create the bloom filter, if it fails use poison mode.
-        let bloom = Self::create_filter().ok();
+        let bloom = Self::create_filter();
         Self {
-            bloom,
+            bloom: Some(bloom),
             last_id: 0,
             layers: Default::default(),
         }
@@ -43,9 +43,8 @@ impl Default for TrieLayerCache {
 
 impl TrieLayerCache {
     // TODO: tune this
-    fn create_filter() -> Result<qfilter::Filter, qfilter::Error> {
-        qfilter::Filter::new_resizeable(1_000_000, 100_000_000, 0.02)
-            .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
+    fn create_filter() -> fastbloom_rs::CountingBloomFilter {
+        fastbloom_rs::CountingBloomFilter::new(FilterBuilder::new(100_000_000, 0.02))
     }
 
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
@@ -110,18 +109,10 @@ impl TrieLayerCache {
             return;
         }
 
-        // insert_counting requires a max_count argument, we need this to be minimum 129, but the count may be bigger due to forks
-        const MAX_COUNT_FILTER: u64 = 10000;
         if let Some(filter) = self.bloom.as_mut() {
             for (p, _) in &key_values {
                 // assuming p is unique among key_values
-                if let Err(qfilter::Error::CapacityExceeded) =
-                    filter.insert_counting(MAX_COUNT_FILTER, p.as_ref())
-                {
-                    tracing::warn!("TrieLayerCache: put_batch per layer capacity exceeded");
-                    self.bloom = None;
-                    break;
-                }
+                filter.add(p.as_ref())
             }
         }
 
@@ -149,27 +140,13 @@ impl TrieLayerCache {
         // older layers are useless
         let layers_removed = self.layers.extract_if(|_, item| item.id <= layer.id);
 
-        let mut bloom_needs_full_rebuild = false;
-
         // note: layers_removed needs to be fully consumed to remove the layers, so we can't early break the outer for.
         for (_, item) in layers_removed {
             if let Some(bloom) = self.bloom.as_mut() {
                 for node in item.nodes.keys() {
-                    if !bloom.remove(node) {
-                        // This should never happen.
-                        tracing::warn!(
-                            "TrieLayerCache: bloom.remove failed. Removing bloom entirely to avoid false negatives"
-                        );
-                        bloom_needs_full_rebuild = true;
-                        self.bloom = None;
-                        break;
-                    }
+                    bloom.remove(&node);
                 }
             }
-        }
-
-        if bloom_needs_full_rebuild {
-            self.rebuild_bloom();
         }
 
         Some(
@@ -179,47 +156,6 @@ impl TrieLayerCache {
                 .chain(layer.nodes.as_ref().clone())
                 .collect(),
         )
-    }
-
-    pub fn rebuild_bloom(&mut self) {
-        tracing::warn!("TrieLayerCache: triggered full bloom rebuild");
-        let mut blooms: Vec<_> = self
-            .layers
-            .values()
-            .par_bridge()
-            .map(|entry| {
-                let Ok(mut bloom) = Self::create_filter() else {
-                    tracing::warn!("TrieLayerCache: rebuild_bloom could not create filter");
-                    return None;
-                };
-                for (p, _) in entry.nodes.iter() {
-                    if let Err(qfilter::Error::CapacityExceeded) = bloom.insert(p) {
-                        tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                        return None;
-                    }
-                }
-                Some(bloom)
-            })
-            .collect();
-
-        let Some(mut ret) = blooms.pop().flatten() else {
-            tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-            self.bloom = None;
-            return;
-        };
-        for bloom in blooms.iter() {
-            let Some(bloom) = bloom else {
-                tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-                self.bloom = None;
-                return;
-            };
-            if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
-                tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                self.bloom = None;
-                return;
-            }
-        }
-        self.bloom = Some(ret);
     }
 }
 
