@@ -44,7 +44,7 @@ impl Default for TrieLayerCache {
 impl TrieLayerCache {
     // TODO: tune this
     fn create_filter() -> fastbloom_rs::CountingBloomFilter {
-        fastbloom_rs::CountingBloomFilter::new(FilterBuilder::new(100_000_000, 0.02))
+        fastbloom_rs::CountingBloomFilter::new(FilterBuilder::new(10_000_000, 0.02))
     }
 
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
