@@ -66,9 +66,12 @@ impl StoreVmDatabase {
         let common_slot = match COMMON_SLOTS.get() {
             Some(val) => val,
             None => {
-                let mut slots = vec![h256_str(
-                    "75b20eef8615de99c108b05f0dbda081c91897128caa336d75dffb97c4132b4d",
-                )?];
+                let mut slots = vec![
+                    // eip1967.proxy.implementation
+                    h256_str("75b20eef8615de99c108b05f0dbda081c91897128caa336d75dffb97c4132b4d")?,
+                    // eip1967.proxy.admin
+                    h256_str("b53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?,
+                ];
                 for i in 0..20 {
                     slots.push(H256::from_slice(&U256::from(i).to_big_endian()));
                 }
