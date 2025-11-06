@@ -265,8 +265,8 @@ pub async fn init_l2(
     let cancellation_token = CancellationToken::new();
 
     // TODO: This should be handled differently, the current problem
-    // with using opts.node_opts.p2p_enabled is that with the removal
-    // of the l2 feature flag, p2p_enabled is set to true by default
+    // with using opts.node_opts.p2p_diabled is that with the removal
+    // of the l2 feature flag, p2p_diabled is set to false by default
     // prioritizing the L1 UX.
     if l2_sequencer_cfg.based.enabled {
         init_network(
