@@ -39,5 +39,9 @@ sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
 l2 = []
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 
+# When this feature is enabled, the cycles used in the code inside the 
+# report_cycles! macro will be reported to stdout when running inside SP1 zkVM.
+sp1-cycles = []
+
 [lib]
 path = "./src/lib.rs"

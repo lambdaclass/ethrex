@@ -16,3 +16,14 @@ pub static ZKVM_RISC0_PROGRAM_VK: &str = include_str!(concat!("./risc0/out/riscv
 // To avoid compilation errors, we override it with an empty slice.
 #[cfg(any(clippy, not(feature = "risc0")))]
 pub const ZKVM_RISC0_PROGRAM_VK: &str = "";
+
+#[macro_export]
+macro_rules! report_cycles {
+    ($label:expr, $($code:tt)*) => {
+        #[cfg(feature = "sp1-cycles")]
+        println!("cycle-tracker-report-start: {}", $label);
+        $($code)*
+        #[cfg(feature = "sp1-cycles")]
+        println!("cycle-tracker-report-end: {}", $label);
+    };
+}
