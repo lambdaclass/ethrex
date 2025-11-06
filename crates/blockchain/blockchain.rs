@@ -670,7 +670,7 @@ impl Blockchain {
 
             let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
                 self.storage
-                    .state_trie(block.header.clone().hash())
+                    .state_trie(block.header.hash())
                     .map_err(|_| ChainError::ParentStateNotFound)?
                     .ok_or(ChainError::ParentStateNotFound)?,
             );
