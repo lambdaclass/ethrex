@@ -572,6 +572,7 @@ impl Store {
                         .last_computed_flatkeyvalue
                         .lock()
                         .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
+                    ctr = 0;
                 }
 
                 let mut iter_inner = {
@@ -625,6 +626,7 @@ impl Store {
                             .last_computed_flatkeyvalue
                             .lock()
                             .map_err(|_| StoreError::LockError)? = key.as_ref().to_vec();
+                        ctr = 0;
                     }
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
@@ -885,7 +887,6 @@ impl StoreEngine for Store {
                 .encode(&mut buf);
             batch_ops.push((CF_ACCOUNT_CODES, code_hash.0.to_vec(), buf));
         }
-
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
         // Specifically, the next block produced MUST see this upper layer.
         wait_for_new_layer
