@@ -74,8 +74,7 @@ pub struct ExecutionWitness {
     #[rkyv(with = crate::rkyv_utils::VecCodeWrapper)]
     pub codes: Vec<Code>,
     /// RLP-encoded block headers needed for stateless execution.
-    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
-    pub block_headers_bytes: Vec<Vec<u8>>,
+    pub block_headers: Vec<BlockHeader>,
     /// The block number of the first block
     pub first_block_number: u64,
     // The chain config.
@@ -114,13 +113,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
 
     fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
         let block_headers: BTreeMap<u64, BlockHeader> = value
-            .block_headers_bytes
-            .into_iter()
-            .map(|bytes| BlockHeader::decode(bytes.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| {
-                GuestProgramStateError::Custom(format!("Failed to decode block headers: {}", e))
-            })?
+            .block_headers
             .into_iter()
             .map(|header| (header.number, header))
             .collect();

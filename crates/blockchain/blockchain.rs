@@ -766,7 +766,7 @@ impl Blockchain {
             let header = self.storage.get_block_header_by_hash(*hash)?.ok_or(
                 ChainError::WitnessGeneration(format!("Failed to get block {block_number} header")),
             )?;
-            block_headers_bytes.push(header.encode_to_vec());
+            block_headers_bytes.push(header);
         }
 
         let chain_config = self.storage.get_chain_config();
@@ -784,7 +784,7 @@ impl Blockchain {
 
         Ok(ExecutionWitness {
             codes,
-            block_headers_bytes,
+            block_headers: block_headers_bytes,
             first_block_number: first_block_header.number,
             chain_config,
             nodes,
