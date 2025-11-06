@@ -99,7 +99,7 @@ pub fn execution_witness_from_rpc_chain_config(
         })
         .collect();
 
-    let storage_trie_roots = storage_roots
+    let storage_trie_roots: Vec<_> = storage_roots
         .into_iter()
         .map(|storage_root| {
             (*Trie::get_embedded_root(&nodes, initial_state_root)
@@ -110,6 +110,7 @@ pub fn execution_witness_from_rpc_chain_config(
             .clone()
         })
         .collect();
+    dbg!(storage_trie_roots.len());
 
     let witness = ExecutionWitness {
         codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
