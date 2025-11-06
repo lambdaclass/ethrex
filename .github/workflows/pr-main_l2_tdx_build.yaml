@@ -18,7 +18,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     env:
-      SKIP_COMPILE_CONTRACTS: true
+      SKIP_COMPILE_CONTRACTS: "1"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4

@@ -53,7 +53,7 @@ jobs:
     name: Lint L2
     runs-on: ubuntu-latest
     env:
-      SKIP_COMPILE_CONTRACTS: true
+      SKIP_COMPILE_CONTRACTS: "1"
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
