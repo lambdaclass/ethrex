@@ -1526,14 +1526,10 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(
-            
             self.db.clone(),
-           
             CF_STORAGE_TRIE_NODES,
             CF_STORAGE_FLATKEYVALUE,
-           
             None,
-        ,
             self.last_written()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
@@ -1552,14 +1548,10 @@ impl StoreEngine for Store {
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(
-            
             self.db.clone(),
-           
             CF_ACCOUNT_TRIE_NODES,
             CF_ACCOUNT_FLATKEYVALUE,
-           
             None,
-        ,
             self.last_written()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
@@ -1592,14 +1584,10 @@ impl StoreEngine for Store {
 
     fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
-            
             self.db.clone(),
-           
             CF_ACCOUNT_TRIE_NODES,
             CF_ACCOUNT_FLATKEYVALUE,
-           
             None,
-        ,
             self.last_written()?,
         )?);
         Ok(Trie::open(db, state_root))
