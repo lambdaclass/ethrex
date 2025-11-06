@@ -88,7 +88,8 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     setup.client.execute(ZKVM_SP1_PROGRAM_ELF, &stdin)?;
     let elapsed = now.elapsed();
 
-    info!("Successfully executed SP1 program in {:.2?}", elapsed);
+    info!("Successfully executed SP1 program in {elapsed:.2?}");
+
     Ok(())
 }
 
@@ -107,9 +108,13 @@ pub fn prove(
         ProofFormat::Compressed => SP1ProofMode::Compressed,
         ProofFormat::Groth16 => SP1ProofMode::Groth16,
     };
-    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
 
-    info!("Successfully generated SP1Proof.");
+    let now = Instant::now();
+    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
+    let elapsed = now.elapsed();
+
+    info!("Successfully proved SP1 program in {elapsed:.2?}");
+
     Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
 
