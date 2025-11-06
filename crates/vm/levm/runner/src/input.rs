@@ -35,13 +35,14 @@ pub struct InputAccount {
 
 impl From<InputAccount> for Account {
     fn from(account: InputAccount) -> Self {
+        let hash = code_hash(&account.code);
         Account {
             info: AccountInfo {
-                code_hash: code_hash(&account.code),
+                code_hash: hash,
                 balance: account.balance,
                 nonce: 0,
             },
-            code: Code::from_bytecode(account.code),
+            code: Code::from_hashed_bytecode(hash, account.code),
             storage: account
                 .storage
                 .into_iter()

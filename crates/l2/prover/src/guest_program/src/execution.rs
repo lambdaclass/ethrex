@@ -11,6 +11,7 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     block_execution_witness::GuestProgramState, block_execution_witness::GuestProgramStateError,
 };
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, U256};
 use ethrex_common::{
     H256,
@@ -92,6 +93,9 @@ pub enum StatelessExecutionError {
     InvalidParentBlockHeader,
     #[error("Failed to calculate privileged transaction hash")]
     InvalidPrivilegedTransaction,
+    #[cfg(feature = "l2")]
+    #[error("Invalid code hash: expected {0:?}, got {1:?}")]
+    InvalidCodeHash(H256, H256),
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -202,11 +206,20 @@ pub fn stateless_validation_l2(
         use bytes::Bytes;
         use ethrex_common::types::Code;
 
+        let codes_hashed_verified: BTreeMap<H256, Code> = codes_hashed
+            .into_iter()
+            .map(|(h, c)| {
+                let bytes = Bytes::from_owner(c);
+                let got = keccak(bytes.as_ref());
+                if got != h {
+                    return Err(StatelessExecutionError::InvalidCodeHash(h, got));
+                }
+                Ok((h, Code::from_hashed_bytecode(h, bytes)))
+            })
+            .collect::<Result<_, _>>()?;
+
         let mut guest_program_state = GuestProgramState {
-            codes_hashed: codes_hashed
-                .into_iter()
-                .map(|(h, c)| (h, Code::from_bytecode(Bytes::from_owner(c))))
-                .collect(),
+            codes_hashed: codes_hashed_verified,
             parent_block_header,
             first_block_number: initial_db.first_block_number,
             chain_config: initial_db.chain_config,

@@ -950,14 +950,15 @@ impl Syncer {
                             .map_err(SyncError::PeerHandler)?
                             .ok_or(SyncError::BytecodesNotFound)?;
 
-                        store
-                            .write_account_code_batch(
-                                code_hashes_to_download
-                                    .drain(..)
-                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
-                                    .collect(),
-                            )
-                            .await?;
+                        // Download side validates bytecode hashes; here we rely on that
+                        // and construct Code using the known hash without rehashing.
+                        let account_codes: Vec<(H256, Code)> = code_hashes_to_download
+                            .drain(..)
+                            .zip(bytecodes.into_iter())
+                            .map(|(h, b)| (h, Code::from_hashed_bytecode(h, b)))
+                            .collect();
+
+                        store.write_account_code_batch(account_codes).await?;
                     }
                 }
             }
@@ -971,14 +972,15 @@ impl Syncer {
                 .await
                 .map_err(SyncError::PeerHandler)?
                 .ok_or(SyncError::BytecodesNotFound)?;
-            store
-                .write_account_code_batch(
-                    code_hashes_to_download
-                        .drain(..)
-                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
-                        .collect(),
-                )
-                .await?;
+            // Download side validates bytecode hashes; here we rely on that
+            // and construct Code using the known hash without rehashing.
+            let account_codes: Vec<(H256, Code)> = code_hashes_to_download
+                .drain(..)
+                .zip(bytecodes.into_iter())
+                .map(|(h, b)| (h, Code::from_hashed_bytecode(h, b)))
+                .collect();
+
+            store.write_account_code_batch(account_codes).await?;
         }
 
         std::fs::remove_dir_all(code_hashes_dir)

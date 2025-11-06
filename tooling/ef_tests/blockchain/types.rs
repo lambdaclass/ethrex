@@ -561,13 +561,14 @@ impl From<Transaction> for EIP2930Transaction {
 
 impl From<Account> for ethrexAccount {
     fn from(val: Account) -> Self {
+        let hash = code_hash(&val.code);
         ethrexAccount {
             info: AccountInfo {
-                code_hash: code_hash(&val.code),
+                code_hash: hash,
                 balance: val.balance,
                 nonce: val.nonce.as_u64(),
             },
-            code: Code::from_bytecode(val.code),
+            code: Code::from_hashed_bytecode(hash, val.code),
             storage: val
                 .storage
                 .into_iter()
