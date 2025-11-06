@@ -11,7 +11,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::hash_address;
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, NodeRef, Trie};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -101,13 +101,12 @@ pub fn execution_witness_from_rpc_chain_config(
 
     let storage_trie_roots: Vec<_> = storage_roots
         .into_iter()
-        .map(|storage_root| {
-            (*Trie::get_embedded_root(&nodes, storage_root)
-                .unwrap()
-                .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
-                .unwrap()
-                .unwrap())
-            .clone()
+        .filter_map(|storage_root| {
+            let node = Trie::get_embedded_root(&nodes, storage_root).unwrap();
+            let NodeRef::Node(node, _) = node else {
+                return None
+            };
+            Some((*node).clone())
         })
         .collect();
     dbg!(storage_trie_roots.len());
