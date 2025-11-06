@@ -483,6 +483,21 @@ impl Blockchain {
             ))?
             .header;
 
+        // Later on, we need to access block hashes by number. To avoid needing
+        // to apply fork choice for each block, we cache them here.
+        // The clone is not redundant, the hash function modifies the original block.
+        #[allow(clippy::redundant_clone)]
+        let mut block_hashes_map: BTreeMap<u64, H256> = blocks
+            .iter()
+            .cloned()
+            .map(|block| (block.header.number, block.hash()))
+            .collect();
+
+        block_hashes_map.insert(
+            first_block_header.number.saturating_sub(1),
+            first_block_header.parent_hash,
+        );
+
         // Get state at previous block
         let trie = self
             .storage
@@ -669,7 +684,14 @@ impl Blockchain {
 
             let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
                 self.storage
-                    .state_trie(block.header.clone().hash())
+                    .state_trie(
+                        block_hashes_map
+                            .get(&block.header.number)
+                            .ok_or(ChainError::WitnessGeneration(
+                                "Block hash not found for witness generation".to_string(),
+                            ))?
+                            .to_owned(),
+                    )
                     .map_err(|_| ChainError::ParentStateNotFound)?
                     .ok_or(ChainError::ParentStateNotFound)?,
             );
@@ -700,45 +722,39 @@ impl Blockchain {
             used_trie_nodes.push(root.encode_to_vec());
         }
 
-        // First number in block hashes is going to be the
-        let first_blockhash_number = block_hashes.keys().min();
+        let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
 
-        let first_needed_block_hash = if let Some(number) = first_blockhash_number
-            && *number < first_block_header.number.saturating_sub(1)
+        needed_block_numbers.sort();
+
+        // Last needed block header for the witness is the parent of the last block we need to execute
+        let last_needed_block_number = blocks
+            .last()
+            .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
+            .header
+            .number
+            .saturating_sub(1);
+
+        // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
+        let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
+
+        if let Some(block_number_from_logger) = needed_block_numbers.first()
+            && **block_number_from_logger < first_needed_block_number
         {
-            // First block hash is going to be from BLOBHASH opcode
-            block_hashes.get(number).unwrap().clone()
-        } else {
-            // First block hash is going to be from the parent block of the first block to execute.
-            first_block_header.hash()
-        };
+            first_needed_block_number = **block_number_from_logger;
+        }
 
         let mut block_headers_bytes = Vec::new();
 
-        let mut current_header = blocks
-            .last()
-            .ok_or_else(|| ChainError::WitnessGeneration("Empty batch".to_string()))?
-            .header
-            .clone();
-
-        // Headers from latest - 1 until we reach first block header.
-        loop {
-            let current_hash = current_header.parent_hash;
-            let current_number = current_header.number - 1;
-            current_header = self
-                .storage
-                .get_block_header_by_hash(current_hash)?
-                .ok_or_else(|| {
-                    ChainError::WitnessGeneration(format!(
-                        "Failed to get block {current_number} header"
-                    ))
-                })?;
-
-            block_headers_bytes.push(current_header.encode_to_vec());
-
-            if current_header.hash() == first_needed_block_hash {
-                break;
-            }
+        for block_number in first_needed_block_number..=last_needed_block_number {
+            let hash = block_hashes_map
+                .get(&block_number)
+                .ok_or(ChainError::WitnessGeneration(format!(
+                    "Failed to get block {block_number} hash"
+                )))?;
+            let header = self.storage.get_block_header_by_hash(*hash)?.ok_or(
+                ChainError::WitnessGeneration(format!("Failed to get block {block_number} header")),
+            )?;
+            block_headers_bytes.push(header.encode_to_vec());
         }
 
         let chain_config = self.storage.get_chain_config();
