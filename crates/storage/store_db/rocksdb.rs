@@ -176,7 +176,7 @@ impl Store {
             CF_MISC_VALUES,
         ];
 
-        let db = Arc::new(environment.get_or_create_database("").unwrap());
+        let db = Arc::new(environment.get_or_create_database("ethrex").unwrap());
         // Write outside Writer, because we still didn't start that
         let tx = db.begin_write().unwrap();
 
