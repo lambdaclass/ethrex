@@ -9,7 +9,6 @@ members = [
   "loc",
   "migrations",
   "reorgs",
-  "test_utils",
 ]
 exclude = ["ef_tests/state"]
 resolver = "2"
