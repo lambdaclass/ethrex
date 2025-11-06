@@ -33,7 +33,7 @@ pub trait TrieDB: Send + Sync {
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 #[derive(Default)]
 pub struct InMemoryTrieDB {
-    pub inner: NodeMap,
+    inner: NodeMap,
     prefix: Option<Nibbles>,
 }
 
@@ -81,6 +81,10 @@ impl InMemoryTrieDB {
             Some(prefix) => prefix.concat(&path),
             None => path,
         }
+    }
+
+    pub fn inner(&self) -> NodeMap {
+        Arc::clone(&self.inner)
     }
 }
 
