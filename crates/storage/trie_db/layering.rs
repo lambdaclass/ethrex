@@ -1,7 +1,6 @@
 use ethrex_common::H256;
 use fastbloom_rs::{Deletable, FilterBuilder, Membership};
 use rustc_hash::FxHashMap;
-use tracing::info;
 use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
