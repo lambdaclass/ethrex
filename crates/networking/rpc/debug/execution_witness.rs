@@ -102,6 +102,9 @@ pub fn execution_witness_from_rpc_chain_config(
     let storage_trie_roots: Vec<_> = storage_roots
         .into_iter()
         .filter_map(|storage_root| {
+            if !nodes.contains_key(&storage_root) {
+                return None;
+            }
             let node = Trie::get_embedded_root(&nodes, storage_root).unwrap();
             let NodeRef::Node(node, _) = node else {
                 return None
