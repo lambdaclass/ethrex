@@ -926,10 +926,8 @@ async fn handle_incoming_message(
             send(state, Message::AccountRange(response)).await?
         }
         Message::Transactions(txs) if peer_supports_eth => {
-            //println!("GOT A TRANSACTION");
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
-                //println!("IS SYNCED, ADDING TXS");
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
                 for tx in &txs.transactions {
@@ -941,7 +939,6 @@ async fn handle_incoming_message(
                     }
 
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        //println!("Error adding transaction: {}", e);
                         debug!(
                             peer=%state.node,
                             error=%e,
@@ -958,8 +955,6 @@ async fn handle_incoming_message(
                     ))
                     .await
                     .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
-            } else {
-                //println!("NOT SYNCED, SKIPPING TXS");
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
