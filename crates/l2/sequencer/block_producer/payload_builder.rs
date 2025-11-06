@@ -154,7 +154,7 @@ pub async fn fill_transactions(
         // Check if we have enough blob space to add this transaction
         let tx: Transaction = head_tx.clone().into();
         let tx_size = tx.encode_to_vec().len();
-        if acc_encoded_size + fee_config_len + tx.encode_to_vec().len() > SAFE_BYTES_PER_BLOB {
+        if acc_encoded_size + fee_config_len + tx_size > SAFE_BYTES_PER_BLOB {
             debug!("No more blob space to run transactions");
             break;
         };
