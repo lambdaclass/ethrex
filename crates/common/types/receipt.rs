@@ -227,6 +227,8 @@ impl RLPDecode for ReceiptWithBloom {
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        // The minimum size for a ReceiptWithBloom is > 256 bytes (due to the Bloom type field) meaning that it is safe
+        // to check for bytes prefix to diferenticate between legacy receipts and non-legacy receipt payloads
         let (tx_type, rlp) = if is_encoded_as_bytes(rlp)? {
             let payload = get_rlp_bytes_item_payload(rlp)?;
             let tx_type = match payload.first().ok_or(RLPDecodeError::InvalidLength)? {

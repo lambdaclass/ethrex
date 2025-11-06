@@ -216,24 +216,44 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
+            let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
-            let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
-                let account_updates_list = self.handle_merkleization(
-                    rx,
-                    &parent_header,
-                    queue_length_ref,
-                    &mut max_queue_length,
-                )?;
-                let merkle_end_instant = Instant::now();
-                Ok((account_updates_list, merkle_end_instant))
-            });
-            let execution_handle = {
-                let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref);
-                let exec_end_instant = Instant::now();
-                execution_result.map(move |r| (r, exec_end_instant))
-            };
+            let execution_handle = std::thread::Builder::new()
+                .name("block_executor_execution".to_string())
+                .spawn_scoped(s, move || -> Result<_, ChainError> {
+                    let execution_result =
+                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+
+                    // Validate execution went alright
+                    validate_gas_used(&execution_result.receipts, &block.header)?;
+                    validate_receipts_root(&block.header, &execution_result.receipts)?;
+                    validate_requests_hash(
+                        &block.header,
+                        &chain_config,
+                        &execution_result.requests,
+                    )?;
+
+                    let exec_end_instant = Instant::now();
+                    Ok((execution_result, exec_end_instant))
+                })
+                .expect("Failed to spawn block_executor exec thread");
+            let merkleize_handle = std::thread::Builder::new()
+                .name("block_executor_merkleizer".to_string())
+                .spawn_scoped(s, move || -> Result<_, StoreError> {
+                    let account_updates_list = self.handle_merkleization(
+                        rx,
+                        &parent_header,
+                        queue_length_ref,
+                        max_queue_length_ref,
+                    )?;
+                    let merkle_end_instant = Instant::now();
+                    Ok((account_updates_list, merkle_end_instant))
+                })
+                .expect("Failed to spawn block_executor merkleizer thread");
             (
-                execution_handle,
+                execution_handle.join().unwrap_or_else(|_| {
+                    Err(ChainError::Custom("execution thread panicked".to_string()))
+                }),
                 merkleize_handle.join().unwrap_or_else(|_| {
                     Err(StoreError::Custom(
                         "merklization thread panicked".to_string(),

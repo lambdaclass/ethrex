@@ -209,7 +209,7 @@ pub fn start_block_executor(
     let (block_worker_channel, mut block_receiver) =
         unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
     std::thread::Builder::new()
-        .name("block-executor".to_string())
+        .name("block_executor".to_string())
         .spawn(move || {
             while let Some((notify, block)) = block_receiver.blocking_recv() {
                 let _ = notify
@@ -217,7 +217,7 @@ pub fn start_block_executor(
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
             }
         })
-        .expect("Failed to spawn block-executor thread");
+        .expect("Falied to spawn block_executor thread");
     block_worker_channel
 }
 
