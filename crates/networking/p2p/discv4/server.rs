@@ -110,9 +110,9 @@ impl DiscoveryServer {
 
         info!(count = bootnodes.len(), "Adding bootnodes");
 
-        for bootnode in &bootnodes {
-            discovery_server.send_ping(bootnode).await?;
-        }
+        // for bootnode in &bootnodes {
+        //     discovery_server.send_ping(bootnode).await?;
+        // }
         peer_table
             .new_contacts(bootnodes, local_node.node_id())
             .await?;
@@ -494,34 +494,34 @@ impl GenServer for DiscoveryServer {
     ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
         let stream = UdpFramed::new(self.udp_socket.clone(), Discv4Codec::new(self.signer));
 
-        spawn_listener(
-            handle.clone(),
-            stream.filter_map(|result| async move {
-                match result {
-                    Ok((msg, addr)) => {
-                        Some(InMessage::Message(Box::new(Discv4Message::from(msg, addr))))
-                    }
-                    Err(e) => {
-                        debug!(error=?e, "Error receiving Discv4 message");
-                        // Skipping invalid data
-                        None
-                    }
-                }
-            }),
-        );
-        send_interval(
-            REVALIDATION_CHECK_INTERVAL,
-            handle.clone(),
-            InMessage::Revalidate,
-        );
-        send_interval(PRUNE_INTERVAL, handle.clone(), InMessage::Prune);
-        send_interval(
-            CHANGE_FIND_NODE_MESSAGE_INTERVAL,
-            handle.clone(),
-            InMessage::ChangeFindNodeMessage,
-        );
-        let _ = handle.clone().cast(InMessage::Lookup).await;
-        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
+        // spawn_listener(
+        //     handle.clone(),
+        //     stream.filter_map(|result| async move {
+        //         match result {
+        //             Ok((msg, addr)) => {
+        //                 Some(InMessage::Message(Box::new(Discv4Message::from(msg, addr))))
+        //             }
+        //             Err(e) => {
+        //                 debug!(error=?e, "Error receiving Discv4 message");
+        //                 // Skipping invalid data
+        //                 None
+        //             }
+        //         }
+        //     }),
+        // );
+        // send_interval(
+        //     REVALIDATION_CHECK_INTERVAL,
+        //     handle.clone(),
+        //     InMessage::Revalidate,
+        // );
+        // send_interval(PRUNE_INTERVAL, handle.clone(), InMessage::Prune);
+        // send_interval(
+        //     CHANGE_FIND_NODE_MESSAGE_INTERVAL,
+        //     handle.clone(),
+        //     InMessage::ChangeFindNodeMessage,
+        // );
+        // let _ = handle.clone().cast(InMessage::Lookup).await;
+        // send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
 
         Ok(Success(self))
     }

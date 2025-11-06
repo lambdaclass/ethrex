@@ -52,7 +52,7 @@ impl RLPxInitiator {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(context);
         let mut server = RLPxInitiator::start(state.clone());
-        let _ = server.cast(InMessage::LookForPeer).await;
+        //let _ = server.cast(InMessage::LookForPeer).await;
         server
     }
 
@@ -108,7 +108,7 @@ impl GenServer for RLPxInitiator {
     type Error = std::convert::Infallible;
 
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
+        //send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
         Ok(InitResult::Success(self))
     }
 
