@@ -1985,7 +1985,7 @@ impl StoreEngine for Store {
                 let mut values = Vec::new();
                 let hashed_address = hash_address(&address);
                 let account_nibbles = Nibbles::from_bytes(&hashed_address);
-                if account_nibbles.as_ref() < &last_computed_flatkeyvalue[0..64] {
+                if account_nibbles.as_ref() >= &last_computed_flatkeyvalue[0..64] {
                     return (values, fkvs);
                 }
                 let tlc_get = tlc.get(state_root, account_nibbles.clone());
