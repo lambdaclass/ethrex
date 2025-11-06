@@ -474,6 +474,12 @@ impl Store {
                 .map(|v| Nibbles::from_hex(v.to_vec()))
                 .unwrap_or_default();
 
+            let last_written_prefix0 = last_written.first().cloned().unwrap_or(0);
+            let last_written_prefix1 = last_written.get(1).cloned().unwrap_or(0);
+            let last_written_prefix =
+                ((last_written_prefix0 as u16) << 4) | (last_written_prefix1 as u16 & 0x0f);
+            info!(last_written_prefix=%format!("{last_written_prefix:x}"), "FlatKeyValue generation in progress");
+
             debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
 
             let mut ctr = 0;
