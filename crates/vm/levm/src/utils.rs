@@ -33,8 +33,9 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, HashMap};
-pub type Storage = HashMap<U256, H256>;
+use std::collections::BTreeMap;
+
+pub type Storage = BTreeMap<U256, H256>;
 
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
@@ -173,8 +174,8 @@ pub fn restore_cache_state(
 pub fn get_account_diffs_in_tx(
     db: &GeneralizedDatabase,
     transaction_backup: CallFrameBackup,
-) -> Result<HashMap<Address, AccountStateDiff>, VMError> {
-    let mut modified_accounts = HashMap::new();
+) -> Result<BTreeMap<Address, AccountStateDiff>, VMError> {
+    let mut modified_accounts = BTreeMap::new();
 
     // First we add the account info
     for (address, original_account) in transaction_backup.original_accounts_info.iter() {

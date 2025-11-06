@@ -8,9 +8,9 @@ use crate::constants::{
     MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
 };
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
-pub type TransientStorage = HashMap<(Address, U256), U256>;
+pub type TransientStorage = BTreeMap<(Address, U256), U256>;
 
 #[derive(Debug, Default, Clone)]
 /// Environmental information that the execution agent must provide.

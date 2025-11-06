@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use tracing::debug;
 
 #[derive(Debug, thiserror::Error)]
@@ -79,7 +79,7 @@ impl AccountStateDiffType {
 }
 
 pub fn get_accounts_diff_size(
-    account_diffs: &HashMap<Address, AccountStateDiff>,
+    account_diffs: &BTreeMap<Address, AccountStateDiff>,
 ) -> Result<u64, AccountDiffError> {
     let mut new_accounts_diff_size = 0;
 

@@ -28,7 +28,7 @@ use ethrex_metrics::{
     metrics_transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_storage::Store;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::ops::Div;
 use std::sync::Arc;
 use tokio::time::Instant;
@@ -110,7 +110,7 @@ pub async fn fill_transactions(
     // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + BLOCK_HEADER_LEN + 2 + 2 + 2;
     let mut size_accounts_diffs = 0;
-    let mut account_diffs = HashMap::new();
+    let mut account_diffs = BTreeMap::new();
     let safe_bytes_per_blob: u64 = SAFE_BYTES_PER_BLOB.try_into()?;
     let mut privileged_tx_count = 0;
 
@@ -297,9 +297,9 @@ fn fetch_mempool_transactions(
 /// Transaction diffs represent state changes from the latest transaction execution,
 /// while previous diffs accumulate all changes included in the block so far.
 fn merge_diffs(
-    previous_diffs: &HashMap<Address, AccountStateDiff>,
-    tx_diffs: HashMap<Address, AccountStateDiff>,
-) -> HashMap<Address, AccountStateDiff> {
+    previous_diffs: &BTreeMap<Address, AccountStateDiff>,
+    tx_diffs: BTreeMap<Address, AccountStateDiff>,
+) -> BTreeMap<Address, AccountStateDiff> {
     let mut merged_diffs = previous_diffs.clone();
     for (address, diff) in tx_diffs {
         if let Some(existing_diff) = merged_diffs.get_mut(&address) {
@@ -333,7 +333,7 @@ fn merge_diffs(
 /// This is necessary because each transaction can modify accounts that were already
 /// changed by previous transactions, so we must recalculate the total diff size each time.
 fn calculate_tx_diff_size(
-    merged_diffs: &HashMap<Address, AccountStateDiff>,
+    merged_diffs: &BTreeMap<Address, AccountStateDiff>,
     head_tx: &HeadTransaction,
     receipt: &Receipt,
 ) -> Result<(u64, u64), BlockProducerError> {

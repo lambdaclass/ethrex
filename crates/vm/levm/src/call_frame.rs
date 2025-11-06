@@ -9,7 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt};
+use std::{collections::BTreeMap, fmt};
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -269,8 +269,8 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: HashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+    pub original_accounts_info: BTreeMap<Address, LevmAccount>,
+    pub original_account_storage_slots: BTreeMap<Address, BTreeMap<H256, U256>>,
 }
 
 impl CallFrameBackup {

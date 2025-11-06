@@ -7,14 +7,14 @@ use ethrex_levm::db::Database as LevmDatabase;
 use crate::VmDatabase;
 use crate::db::DynVmDatabase;
 use ethrex_levm::errors::DatabaseError;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::result::Result;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct DatabaseLogger {
-    pub block_hashes_accessed: Arc<Mutex<HashMap<u64, CoreH256>>>,
-    pub state_accessed: Arc<Mutex<HashMap<CoreAddress, Vec<CoreH256>>>>,
+    pub block_hashes_accessed: Arc<Mutex<BTreeMap<u64, CoreH256>>>,
+    pub state_accessed: Arc<Mutex<BTreeMap<CoreAddress, Vec<CoreH256>>>>,
     pub code_accessed: Arc<Mutex<Vec<CoreH256>>>,
     // TODO: Refactor this
     pub store: Arc<Mutex<Box<dyn LevmDatabase>>>,
@@ -23,8 +23,8 @@ pub struct DatabaseLogger {
 impl DatabaseLogger {
     pub fn new(store: Arc<Mutex<Box<dyn LevmDatabase>>>) -> Self {
         Self {
-            block_hashes_accessed: Arc::new(Mutex::new(HashMap::new())),
-            state_accessed: Arc::new(Mutex::new(HashMap::new())),
+            block_hashes_accessed: Arc::new(Mutex::new(BTreeMap::new())),
+            state_accessed: Arc::new(Mutex::new(BTreeMap::new())),
             code_accessed: Arc::new(Mutex::new(vec![])),
             store,
         }

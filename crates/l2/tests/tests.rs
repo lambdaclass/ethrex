@@ -2517,7 +2517,7 @@ fn get_account_diff_size_for_deploy(
     bytecode: &Bytes,
     storage_after_deploy: BTreeMap<H256, U256>,
 ) -> u64 {
-    let mut account_diffs = HashMap::new();
+    let mut account_diffs = BTreeMap::new();
     // tx sender
     account_diffs.insert(Address::random(), sender_account_diff());
     // Deployed contract account
@@ -2534,7 +2534,7 @@ fn get_account_diff_size_for_deploy(
 }
 
 fn get_account_diff_size_for_withdraw() -> u64 {
-    let mut account_diffs = HashMap::new();
+    let mut account_diffs = BTreeMap::new();
     // tx sender
     account_diffs.insert(Address::random(), sender_account_diff());
     // L2_TO_L1_MESSENGER
@@ -2557,7 +2557,7 @@ fn get_account_diff_size_for_withdraw() -> u64 {
 }
 
 fn get_account_diff_size_for_erc20withdraw() -> u64 {
-    let mut account_diffs = HashMap::new();
+    let mut account_diffs = BTreeMap::new();
     // tx sender
     account_diffs.insert(Address::random(), sender_account_diff());
     // L2_TO_L1_MESSENGER
@@ -2580,7 +2580,7 @@ fn get_account_diff_size_for_erc20withdraw() -> u64 {
 }
 
 fn get_account_diff_size_for_erc20approve() -> u64 {
-    let mut account_diffs = HashMap::new();
+    let mut account_diffs = BTreeMap::new();
     // tx sender
     account_diffs.insert(Address::random(), sender_account_diff());
 
