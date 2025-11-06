@@ -138,7 +138,6 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting Proof Coordinator: {err}");
     });
-    //
     let l1_proof_sender = L1ProofSender::spawn(
         cfg.clone(),
         shared_state.clone(),
@@ -233,11 +232,8 @@ pub async fn start_l2(
     })
     .ok();
 
-    let driver_verifier = verifier_handle;
-    let driver_admin = admin_server;
-
     let driver = Box::pin(async move {
-        match (driver_verifier, driver_admin) {
+        match (verifier_handle, admin_server) {
             (Some(handle), Some(admin_server)) => {
                 let (server_res, verifier_res) = tokio::join!(admin_server.into_future(), handle);
                 if let Err(e) = server_res {

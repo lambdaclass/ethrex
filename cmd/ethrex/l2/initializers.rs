@@ -151,20 +151,18 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
+    raise_fd_limit()?;
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
-
-    let network = get_network(&opts.node_opts);
-
-    let genesis = network.get_genesis()?;
-
-    raise_fd_limit()?;
 
     let rollup_store_dir = datadir.join("rollup_store");
 
     // Checkpoints are stored in the main datadir
     let checkpoints_dir = datadir.clone();
 
+    let network = get_network(&opts.node_opts);
+
+    let genesis = network.get_genesis()?;
     let store = init_store(&datadir, genesis.clone()).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
@@ -204,9 +202,9 @@ pub async fn init_l2(
 
     let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
 
-    let mut join_set = JoinSet::new();
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
+    let mut join_set = JoinSet::new();
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
@@ -272,7 +270,7 @@ pub async fn init_l2(
         info!("P2P is disabled");
     }
 
-    let (committer_handle, block_producer_handle, admin_handler) = ethrex_l2::start_l2(
+    let (committer_handle, block_producer_handle, l2_sequencer) = ethrex_l2::start_l2(
         store,
         rollup_store,
         blockchain,
@@ -288,32 +286,43 @@ pub async fn init_l2(
         checkpoints_dir,
     )
     .await?;
-    join_set.spawn(admin_handler);
-    let committer = committer_handle.clone();
+    join_set.spawn(l2_sequencer);
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             cancel_token.cancel();
-            if let Some(mut handle) = committer {
-                if let Err(err) = handle.cast(l1_committer::InMessage::Abort).await {
-                    tracing::warn!("Failed to send committer abort: {err:?}");
-                }
+            if let Some(mut handle) = committer_handle.clone() {
+                handle
+                    .cast(l1_committer::InMessage::Abort)
+                    .await
+                    .inspect_err(|err| warn!("Failed to send committer abort: {err:?}"))
+                    .ok();
             }
-            if let Some(mut handle) = block_producer_handle {
-                if let Err(err) = handle.cast(block_producer::InMessage::Abort).await {
-                    tracing::warn!("Failed to send block producer abort: {err:?}");
-                }
+            if let Some(mut handle) = block_producer_handle.clone() {
+                handle
+                    .cast(block_producer::InMessage::Abort)
+                    .await
+                    .inspect_err(|err| warn!("Failed to send block producer abort: {err:?}"))
+                    .ok();
             }
-            join_set.abort_all();        }
+            join_set.abort_all();
+        }
 
         _ = cancel_token.cancelled() => {
-            if let Some(mut handle) = committer {
-                let _ = handle.cast(l1_committer::InMessage::Abort).await;
+            if let Some(mut handle) = committer_handle.clone() {
+                handle
+                    .cast(l1_committer::InMessage::Abort)
+                    .await
+                    .inspect_err(|err| warn!("Failed to send committer abort: {err:?}"))
+                    .ok();
             }
-            if let Some(mut handle) = block_producer_handle {
-                let _ = handle.cast(block_producer::InMessage::Abort).await;
+            if let Some(mut handle) = block_producer_handle.clone() {
+                handle
+                    .cast(block_producer::InMessage::Abort)
+                    .await
+                    .inspect_err(|err| warn!("Failed to send block producer abort: {err:?}"))
+                    .ok();
             }
-
         }
     }
     info!("Server shut down started...");

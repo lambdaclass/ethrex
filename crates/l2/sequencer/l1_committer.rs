@@ -254,21 +254,6 @@ impl L1Committer {
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
         info!("Running committer main loop");
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
-        dbg!(&self.cancellation_token);
         // Get the batch to commit
         let last_committed_batch_number =
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
