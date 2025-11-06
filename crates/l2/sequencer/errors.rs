@@ -234,7 +234,7 @@ pub enum CommitterError {
     EthClientError(#[from] EthClientError),
     #[error("Committer failed to  {0}")]
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
-    #[error("Committer failed retrieve block from storage: {0}")]
+    #[error("Committer Store Error: {0}")]
     StoreError(#[from] StoreError),
     #[error("Committer failed retrieve block from rollup storage: {0}")]
     RollupStoreError(#[from] RollupStoreError),

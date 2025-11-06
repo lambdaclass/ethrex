@@ -153,6 +153,7 @@ pub async fn fill_transactions(
 
         // Check if we have enough blob space to add this transaction
         let tx: Transaction = head_tx.clone().into();
+        let tx_size = tx.encode_to_vec().len();
         if acc_encoded_size + fee_config_len + tx.encode_to_vec().len() > SAFE_BYTES_PER_BLOB {
             debug!("No more blob space to run transactions");
             break;
@@ -211,25 +212,25 @@ pub async fn fill_transactions(
             }
         };
 
-        context.payload.body.transactions.pop();
-
         // Update last privileged nonce and count
-        last_privileged_nonce.replace(head_tx.nonce());
-        privileged_tx_count += 1;
+        if head_tx.is_privileged() {
+            last_privileged_nonce.replace(head_tx.nonce());
+            privileged_tx_count += 1;
+        }
 
         // Update acc_encoded_size
-        acc_encoded_size += head_tx.tx.encode_to_vec().len();
+        acc_encoded_size += tx_size;
 
         txs.shift()?;
         // Pull transaction from the mempool
         blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
 
         // Add transaction to block
-        debug!("Adding transaction: {} to payload", tx_hash);
         context.payload.body.transactions.push(head_tx.into());
+
         // Save receipt for hash calculation
         context.receipts.push(receipt);
-    }
+    } // end loop
 
     metrics!(
         context
