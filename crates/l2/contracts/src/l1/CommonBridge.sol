@@ -471,7 +471,7 @@ contract CommonBridge is
 			print(string("bbbb"));
 			SendValues memory sendValues = SendValues({
 					to: L2_FEE_TOKEN_REGISTRY,
-					gasLimit: 21000 * 100,
+					gasLimit: 21000 * 20,
 					value: 0,
 					data: callData
 			});
