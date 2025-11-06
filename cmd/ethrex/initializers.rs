@@ -64,16 +64,16 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let fmt_layer = layer.with_filter(filter);
     let subscriber = Registry::default();
-    #[cfg(feature = "debug")]
-    let subscriber = {
-        console_subscriber::init();
-        let console_layer = console_subscriber::spawn();
-        subscriber.with(console_layer)
-    };
+    // #[cfg(feature = "debug")]
+    // let subscriber = {
+    //     let console_layer = console_subscriber::spawn();
+    //     subscriber.with(console_layer)
+    // };
 
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
+        let console_layer = console_subscriber::spawn();
         let profiling_layer = FunctionProfilingLayer;
-        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
+        Box::new(subscriber.with(fmt_layer).with(profiling_layer).with(console_layer))
     } else {
         Box::new(subscriber)
     };
