@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod blockchain_integration_test {
+    use std::{fs::File, io::BufReader};
+
     use crate::{
         Blockchain,
         error::{ChainError, InvalidForkChoice},
@@ -7,7 +9,6 @@ mod blockchain_integration_test {
         is_canonical, latest_canonical_block_hash,
         payload::{BuildPayloadArgs, create_payload},
     };
-    use std::{fs::File, io::BufReader};
 
     use bytes::Bytes;
     use ethrex_common::{
