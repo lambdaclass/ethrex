@@ -287,6 +287,14 @@ pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError
                     "Failed to hex::decode when getting message from revert data".to_owned(),
                 )
             })?;
+        dbg!(hex::encode(&abi_decoded_error_data));
+        dbg!(hex::encode(&abi_decoded_error_data));
+        dbg!(hex::encode(&abi_decoded_error_data));
+        dbg!(hex::encode(&abi_decoded_error_data));
+        dbg!(hex::encode(&abi_decoded_error_data));
+        dbg!(hex::encode(&abi_decoded_error_data));
+        dbg!(hex::encode(&abi_decoded_error_data));
+        dbg!(hex::encode(&abi_decoded_error_data));
         let string_length = U256::from_big_endian(abi_decoded_error_data.get(36..68).ok_or(
             EthClientError::Custom(
                 "Failed to slice index abi_decoded_error_data when getting message from revert data".to_owned(),

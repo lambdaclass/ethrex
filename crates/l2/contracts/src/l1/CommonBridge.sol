@@ -11,9 +11,12 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
+import "./Print.sol";
+
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
+import "../l2/interfaces/IFeeTokenRegistry.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -58,6 +61,10 @@ contract CommonBridge is
     /// @notice Address of the bridge on the L2
     /// @dev It's used to validate withdrawals
     address public constant L2_BRIDGE_ADDRESS = address(0xffff);
+
+		/// @notice Address of the fee token registry on the L2
+		/// @dev It's used to allow new tokens to pay fees
+		address public constant L2_FEE_TOKEN_REGISTRY = address(0xfffc);
 
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
@@ -451,6 +458,26 @@ contract CommonBridge is
             data: callData
         });
         _sendToL2(L2_PROXY_ADMIN, sendValues);
+    }
+
+		/// @notice Allow a new fee token on L2
+    /// @param newFeeToken address of the token to authorize for fees
+    function allowNewFeeToken(address newFeeToken) public onlyOwner {
+			print(string("aaaa"));
+			bytes memory callData = abi.encodeCall(
+				IFeeTokenRegistry.registerFeeToken,
+				(newFeeToken)
+			);
+			print(string("bbbb"));
+			SendValues memory sendValues = SendValues({
+					to: L2_FEE_TOKEN_REGISTRY,
+					gasLimit: 21000 * 100,
+					value: 0,
+					data: callData
+			});
+			print(string("ccccc"));
+			_sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+			print(string("ddddd"));
     }
 
     /// @notice Allow owner to upgrade the contract.
