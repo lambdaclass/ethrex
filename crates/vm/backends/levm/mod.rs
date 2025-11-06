@@ -96,15 +96,14 @@ impl LEVM {
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
+        txws: Vec<(&Transaction, Address)>
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
-            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })? {
+        for (tx, tx_sender) in txws {
             if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",

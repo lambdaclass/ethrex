@@ -210,11 +210,13 @@ impl Blockchain {
 
         let mut vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
 
+        let txws = block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })?;
+
         let start = std::time::Instant::now();
-        let txws = block.body.get_transactions_with_sender().unwrap();
-        let txws_end = start.elapsed().as_micros();
         vm_db.warm(&txws)?;
-        println!("warm: {txws_end}us txws, {}us total", start.elapsed().as_micros());
+        println!("warm: {}us", start.elapsed().as_micros());
 
         let mut vm = self.new_evm(vm_db)?;
 
@@ -226,7 +228,7 @@ impl Blockchain {
             let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
             let execution_handle = s.spawn(move || -> Result<_, ChainError> {
-                let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref, txws)?;
 
                 // Validate execution went alright
                 validate_gas_used(&execution_result.receipts, &block.header)?;
