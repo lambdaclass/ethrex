@@ -708,7 +708,7 @@ impl Blockchain {
         let first_needed_block_hash = first_blockhash_opcode_number
             .and_then(|n| {
                 (*n < first_block_header.number.saturating_sub(1))
-                    .then(|| blockhash_opcode_references.get(&n))?
+                    .then(|| blockhash_opcode_references.get(n))?
                     .copied()
             })
             .unwrap_or(first_block_header.parent_hash);
