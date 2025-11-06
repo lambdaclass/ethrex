@@ -33,6 +33,11 @@ pub fn download_script() {
     );
     let contracts_path = Path::new("../../crates/l2/contracts/src");
 
+    if env::var_os("SKIP_COMPILE_CONTRACTS").is_some() {
+        write_empty_bytecode_files(&output_contracts_path);
+        return;
+    }
+
     download_contract_deps(&output_contracts_path);
 
     // ERC1967Proxy contract.
@@ -153,6 +158,29 @@ pub fn download_script() {
     let file_path = output_contracts_path.join("solc_out/OnChainProposer.bin");
     let output_file_path = output_contracts_path.join("solc_out/OnChainProposerBased.bytecode");
     decode_to_bytecode(&file_path, &output_file_path);
+}
+
+fn write_empty_bytecode_files(output_contracts_path: &Path) {
+    let bytecode_dir = output_contracts_path.join("solc_out");
+    fs::create_dir_all(&bytecode_dir).expect("Failed to create solc_out directory");
+
+    let contract_names = [
+        "ERC1967Proxy",
+        "SP1Verifier",
+        "OnChainProposer",
+        "CommonBridge",
+        "CommonBridgeL2",
+        "L2ToL1Messenger",
+        "UpgradeableSystemContract",
+        "SequencerRegistry",
+        "OnChainProposerBased",
+    ];
+
+    for name in &contract_names {
+        let filename = format!("{name}.bytecode");
+        let path = bytecode_dir.join(filename);
+        fs::write(&path, []).expect("Failed to write empty bytecode.");
+    }
 }
 
 /// Clones OpenZeppelin, SP1 contracts and create2deployer into the specified path.
