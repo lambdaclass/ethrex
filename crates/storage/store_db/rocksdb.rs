@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use bytes::Bytes;
+use canopydb::EnvOptions;
 use ethrex_common::{
     H256,
     types::{
@@ -145,7 +146,10 @@ pub struct Store {
 impl Store {
     pub fn new(path: &Path) -> Result<Self, StoreError> {
         std::fs::create_dir_all(path).unwrap();
-        let environment = canopydb::Environment::new(path).unwrap();
+        let mut env_opts = EnvOptions::new(path);
+        env_opts.disable_fsync = true;
+        env_opts.page_cache_size = 4 * 1024 * 1024 * 1024; // 4 GiB
+        let environment = canopydb::Environment::with_options(env_opts).unwrap();
 
         // Current column families that the code expects
         let expected_column_families = vec![
