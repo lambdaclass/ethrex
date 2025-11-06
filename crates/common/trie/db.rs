@@ -59,6 +59,7 @@ impl InMemoryTrieDB {
         }
     }
 
+    // Do not remove or make private as we use this outside of ethrex
     pub fn from_nodes(
         root_hash: H256,
         state_nodes: &BTreeMap<H256, NodeRLP>,
@@ -83,6 +84,7 @@ impl InMemoryTrieDB {
         }
     }
 
+    // Do not remove or make private as we use this outside of ethrex
     pub fn inner(&self) -> NodeMap {
         Arc::clone(&self.inner)
     }
