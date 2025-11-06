@@ -2,7 +2,7 @@ use bytes::Bytes;
 use ethrex_common::{
     serde_utils,
     types::{
-        ChainConfig,
+        ChainConfig, Code,
         block_execution_witness::{ExecutionWitness, GuestProgramStateError},
     },
 };
@@ -41,7 +41,7 @@ impl From<ExecutionWitness> for RpcExecutionWitness {
         Self {
             state: value.nodes.into_iter().map(Bytes::from).collect(),
             keys: value.keys.into_iter().map(Bytes::from).collect(),
-            codes: value.codes.into_iter().map(Bytes::from).collect(),
+            codes: value.codes.into_iter().map(|c| c.bytecode).collect(),
             headers: value
                 .block_headers_bytes
                 .into_iter()
@@ -58,7 +58,11 @@ pub fn execution_witness_from_rpc_chain_config(
     first_block_number: u64,
 ) -> Result<ExecutionWitness, GuestProgramStateError> {
     let witness = ExecutionWitness {
-        codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
+        codes: rpc_witness
+            .codes
+            .into_iter()
+            .map(Code::from_bytecode)
+            .collect(),
         chain_config,
         first_block_number,
         block_headers_bytes: rpc_witness

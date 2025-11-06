@@ -71,8 +71,8 @@ pub struct GuestProgramState {
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitness {
     // Contract bytecodes needed for stateless execution.
-    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
-    pub codes: Vec<Vec<u8>>,
+    #[rkyv(with = crate::rkyv_utils::VecCodeWrapper)]
+    pub codes: Vec<Code>,
     /// RLP-encoded block headers needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub block_headers_bytes: Vec<Vec<u8>>,
@@ -147,15 +147,11 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             })
             .collect();
 
-        // hash codes
-        // TODO: codes here probably needs to be Vec<Code>, rather than recomputing here. This requires rkyv implementation.
+        // codes are hashed in the rkyv deserialization in Code::from_bytecode
         let codes_hashed = value
             .codes
             .into_iter()
-            .map(|code| {
-                let code = Code::from_bytecode(code.into());
-                (code.hash, code)
-            })
+            .map(|code| (code.hash, code))
             .collect();
 
         let mut guest_program_state = GuestProgramState {

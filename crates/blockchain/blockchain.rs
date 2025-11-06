@@ -666,7 +666,7 @@ impl Blockchain {
                     .ok_or(ChainError::WitnessGeneration(
                         "Failed to get account code".to_string(),
                     ))?;
-                codes.push(code.bytecode.to_vec());
+                codes.push(code);
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so

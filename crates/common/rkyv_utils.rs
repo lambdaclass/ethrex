@@ -12,6 +12,47 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use crate::types::Code;
+
+#[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Vec<Code>)]
+pub struct VecCodeWrapper {
+    #[rkyv(getter = vec_code_to_bytes)]
+    code_bytes: Vec<Vec<u8>>,
+}
+
+fn vec_code_to_bytes(code: &[Code]) -> Vec<Vec<u8>> {
+    code.iter().map(|c| c.bytecode.to_vec()).collect()
+}
+
+impl From<VecCodeWrapper> for Vec<Code> {
+    fn from(value: VecCodeWrapper) -> Self {
+        value
+            .code_bytes
+            .into_iter()
+            .map(Into::<Bytes>::into)
+            .map(Code::from_bytecode)
+            .collect()
+    }
+}
+
+#[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Code)]
+pub struct CodeWrapper {
+    #[rkyv(getter = code_to_bytes)]
+    code_bytes: Vec<u8>,
+}
+
+fn code_to_bytes(code: &Code) -> Vec<u8> {
+    code.bytecode.to_vec()
+}
+
+impl From<CodeWrapper> for Code {
+    fn from(value: CodeWrapper) -> Self {
+        Self::from_bytecode(value.code_bytes.into())
+    }
+}
+
 #[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = Vec<Vec<u8>>)]
 pub struct VecVecWrapper {
