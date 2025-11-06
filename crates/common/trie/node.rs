@@ -196,6 +196,12 @@ pub enum Node {
     Leaf(LeafNode),
 }
 
+impl Default for Node {
+    fn default() -> Self {
+        Self::Leaf(LeafNode { partial: Nibbles::from_bytes(&[]), value: Vec::new() })
+    }
+}
+
 impl From<Box<BranchNode>> for Node {
     fn from(val: Box<BranchNode>) -> Self {
         Node::Branch(val)

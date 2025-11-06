@@ -12,23 +12,27 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIM
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramStateError};
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
-    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
+    AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
+    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -479,9 +483,35 @@ impl Blockchain {
             block_headers_bytes.push(header.encode_to_vec());
         }
 
+        let parent_block_header = {
+            let hash = block_hashes_map.get(&(first_block_header.number - 1)).ok_or(
+                ChainError::WitnessGeneration(format!("Failed to get block hash")),
+            )?;
+            self.storage
+                .get_block_header_by_hash(*hash)?
+                .ok_or(ChainError::WitnessGeneration(format!(
+                    "Failed to get block header"
+                )))?
+        };
+
         let chain_config = self.storage.get_chain_config();
 
-        let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
+        let initial_state_root = parent_block_header.state_root;
+
+        let nodes: BTreeMap<H256, Node> = used_trie_nodes
+            .into_iter()
+            .map(|node| Ok((node.compute_hash().finalize(), node)))
+            .collect::<Result<_, RLPDecodeError>>()
+            .unwrap();
+        let state_trie_root = (*Trie::get_embedded_root(&nodes, initial_state_root)
+            .unwrap()
+            .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
+            .unwrap()
+            .unwrap())
+        .clone();
+
+        let mut state_trie = Trie::default();
+        state_trie.root = state_trie_root.clone().into();
 
         let mut keys = Vec::new();
 
@@ -492,12 +522,35 @@ impl Blockchain {
             }
         }
 
+        let storage_roots: Vec<_> = keys
+            .iter()
+            .filter(|k| k.len() == 20)
+            .map(|k| Address::from_slice(&k))
+            .map(|a| {
+                let encoded_account = state_trie.get(&hash_address(&a)).unwrap().unwrap();
+                AccountState::decode(&encoded_account).unwrap().storage_root
+            })
+            .collect();
+
+        let storage_trie_roots = storage_roots
+            .into_iter()
+            .map(|_| {
+                (*Trie::get_embedded_root(&nodes, initial_state_root)
+                    .unwrap()
+                    .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
+                    .unwrap()
+                    .unwrap())
+                .clone()
+            })
+            .collect();
+
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: first_block_header.number,
             chain_config,
-            nodes,
+            state_trie_root,
+            storage_trie_roots,
             keys,
         })
     }

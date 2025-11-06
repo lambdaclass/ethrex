@@ -19,7 +19,7 @@ use ethrex_common::{
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
 #[cfg(feature = "l2")]
-use ethrex_trie::Node;
+use ethrex_trie::{Node, Trie};
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 
@@ -177,7 +177,7 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
-        nodes_hashed,
+        state_trie,
         codes_hashed,
         parent_block_header,
     } = execute_stateless(
@@ -212,17 +212,12 @@ pub fn stateless_validation_l2(
             parent_block_header,
             first_block_number: initial_db.first_block_number,
             chain_config: initial_db.chain_config,
-            nodes_hashed,
-            state_trie: None,
+            state_trie,
             // The following fields are not needed for blob validation.
             storage_tries: BTreeMap::new(),
             block_headers: BTreeMap::new(),
             account_hashes_by_address: BTreeMap::new(),
         };
-
-        guest_program_state
-            .rebuild_state_trie()
-            .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
         let wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
@@ -264,7 +259,7 @@ struct StatelessResult {
     // We return them to avoid recomputing when comparing the initial state
     // with the final state after block execution.
     #[cfg(feature = "l2")]
-    pub nodes_hashed: BTreeMap<H256, Node>,
+    pub state_trie: Trie,
     #[cfg(feature = "l2")]
     pub codes_hashed: BTreeMap<H256, Vec<u8>>,
     #[cfg(feature = "l2")]
@@ -285,7 +280,8 @@ fn execute_stateless(
     // to avoid expensive recomputation after the guest_program_state is moved
     // to the wrapper
     #[cfg(feature = "l2")]
-    let nodes_hashed = guest_program_state.nodes_hashed.clone();
+    let mut original_state_trie = Trie::default();
+    original_state_trie.root = guest_program_state.state_trie.root.clone();
     #[cfg(feature = "l2")]
     let codes_hashed = guest_program_state
         .codes_hashed
@@ -418,7 +414,7 @@ fn execute_stateless(
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
         #[cfg(feature = "l2")]
-        nodes_hashed,
+        state_trie: original_state_trie,
         #[cfg(feature = "l2")]
         codes_hashed,
         #[cfg(feature = "l2")]

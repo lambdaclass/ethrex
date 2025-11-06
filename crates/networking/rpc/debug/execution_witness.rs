@@ -2,14 +2,15 @@ use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    H256, serde_utils,
+    Address, H256, serde_utils,
     types::{
-        ChainConfig,
+        AccountState, ChainConfig,
         block_execution_witness::{ExecutionWitness, GuestProgramStateError},
     },
     utils::keccak,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use ethrex_storage::hash_address;
 use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, Trie};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,11 +45,13 @@ pub struct RpcExecutionWitness {
 impl From<ExecutionWitness> for RpcExecutionWitness {
     fn from(value: ExecutionWitness) -> Self {
         Self {
-            state: value
-                .nodes
-                .into_iter()
-                .map(|n| Bytes::from(n.encode_to_vec()))
-                .collect(),
+            // TODO: fix
+            state: Default::default(),
+            // state: value
+            //     .nodes
+            //     .into_iter()
+            //     .map(|n| Bytes::from(n.encode_to_vec()))
+            //     .collect(),
             keys: value.keys.into_iter().map(Bytes::from).collect(),
             codes: value.codes.into_iter().map(Bytes::from).collect(),
             headers: value
@@ -73,13 +76,38 @@ pub fn execution_witness_from_rpc_chain_config(
         .map(|b| Ok((keccak(&b), Node::decode(&b.to_vec())?)))
         .collect::<Result<_, RLPDecodeError>>()
         .map_err(|e| GuestProgramStateError::Custom(format!("failed to rlp decode nodes: {e}")))?;
-    let embedded_root = (*Trie::get_embedded_root(&nodes, initial_state_root)
+    let state_trie_root = (*Trie::get_embedded_root(&nodes, initial_state_root)
         .unwrap()
         .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
         .unwrap()
         .unwrap())
     .clone();
-    nodes.insert(initial_state_root, embedded_root);
+
+    let mut state_trie = Trie::default();
+    state_trie.root = state_trie_root.clone().into();
+
+    let keys: Vec<_> = rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect();
+    let storage_roots: Vec<_> = keys
+        .iter()
+        .filter(|k| k.len() == 20)
+        .map(|k| Address::from_slice(k))
+        .map(|a| {
+            let encoded_account = state_trie.get(&hash_address(&a)).unwrap().unwrap();
+            AccountState::decode(&encoded_account).unwrap().storage_root
+        })
+        .collect();
+
+    let storage_trie_roots = storage_roots
+        .into_iter()
+        .map(|storage_root| {
+            (*Trie::get_embedded_root(&nodes, initial_state_root)
+                .unwrap()
+                .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
+                .unwrap()
+                .unwrap())
+            .clone()
+        })
+        .collect();
 
     let witness = ExecutionWitness {
         codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
@@ -90,8 +118,9 @@ pub fn execution_witness_from_rpc_chain_config(
             .into_iter()
             .map(|b| b.to_vec())
             .collect(),
-        nodes: nodes.into_values().collect(),
-        keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
+        state_trie_root,
+        storage_trie_roots,
+        keys,
     };
 
     Ok(witness)
