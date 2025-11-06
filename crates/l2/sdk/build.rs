@@ -16,7 +16,7 @@ fn main() {
 
     println!("{}", cfg!(not(feature = "l2")));
     println!("{:?}", env::var_os("SKIP_COMPILE_CONTRACTS"));
-    if env::var_os("SKIP_COMPILE_CONTRACTS").is_some() {
+    if cfg!(not(feature = "l2")) || env::var_os("SKIP_COMPILE_CONTRACTS").is_some() {
         // Write an empty bytecode file to indicate that contracts are not compiled.
         std::fs::create_dir_all(contracts_path.join("solc_out"))
             .expect("failed to create contracts output directory");
