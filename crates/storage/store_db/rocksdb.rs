@@ -17,8 +17,7 @@ use ethrex_common::{
 use ethrex_trie::{Nibbles, Node, Trie};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
-    Options, WriteBatch, checkpoint::Checkpoint,
+    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options, ReadOptions, WriteBatch, checkpoint::Checkpoint
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -1978,9 +1977,9 @@ impl StoreEngine for Store {
             .lock()
             .map_err(|_| StoreError::LockError)?
             .clone();
-        let (values_tlc, fkvs_to_fetch): (Vec<_>, Vec<_>) = to_fetch
+        let fetched: Vec<_> = to_fetch
             .into_par_iter()
-            .flat_map(|(address, keys)| {
+            .map(|(address, keys)| {
                 let mut fkvs = Vec::new();
                 let mut values = Vec::new();
                 let hashed_address = hash_address(&address);
@@ -1994,7 +1993,7 @@ impl StoreEngine for Store {
                     let hashed_key = Nibbles::from_bytes(&hash_key(&key));
                     let prefixed_key = apply_prefix(Some(hashed_address), hashed_key);
                     if let Some(value) = tlc_get
-                        .is_none()
+                        .is_some()
                         .then(|| tlc.get(state_root, prefixed_key.clone()))
                         .flatten()
                     {
@@ -2010,15 +2009,27 @@ impl StoreEngine for Store {
                 }
                 (values, fkvs)
             })
-            .unzip();
+            .collect();
+        let (mut values_tlc, mut fkvs_to_fetch): (
+            Vec<(_, Vec<_>)>, Vec<(_, Vec<_>)>) = Default::default();
+        for (val, fkv) in fetched {
+            values_tlc.extend(val);
+            fkvs_to_fetch.extend(fkv);
+        }
+        fkvs_to_fetch.sort_unstable_by(|a, b| a.1.cmp(&b.1));
 
         let fkv_bytes = fkvs_to_fetch.iter().map(|x| &x.1);
         let cf_fkv: Arc<BoundColumnFamily<'_>> =
             self.db.cf_handle(CF_FLATKEYVALUE).ok_or_else(|| {
                 StoreError::Custom("Column family not found: CF_FLATKEYVALUE".to_string())
             })?;
-        let fkv_results = self.db.batched_multi_get_cf(&cf_fkv, fkv_bytes, false);
-
+        let start = std::time::Instant::now();
+        let mut opts = ReadOptions::default();
+        opts.fill_cache(false);
+        opts.set_background_purge_on_iterator_cleanup(true);
+        opts.set_tailing(true);
+        let fkv_results = self.db.batched_multi_get_cf_opt(&cf_fkv, fkv_bytes, true, &opts);
+            
         let mut address_map: HashMap<_, _> = Default::default();
         let mut storage_map: HashMap<_, _> = Default::default();
         for (bytes, (item, _)) in fkv_results.into_iter().zip(fkvs_to_fetch) {
