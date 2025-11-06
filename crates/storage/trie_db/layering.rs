@@ -1,8 +1,8 @@
 use ethrex_common::H256;
 use fastbloom_rs::{Deletable, FilterBuilder, Membership};
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
 use tracing::info;
+use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -138,13 +138,12 @@ impl TrieLayerCache {
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
 
+
+        let count: usize = self.layers.iter().map(|x| x.1.nodes.len()).sum();
+        info!("bloom: There are {count} keys");
+
         // older layers are useless
         let layers_removed = self.layers.extract_if(|_, item| item.id <= layer.id);
-
-        if let Some(bloom) = self.bloom.as_mut() {
-            let count = bloom.get_u64_array().len();
-            info!("Bloom filter u64 count: {} ({})", count, count * 4);
-        }
 
         // note: layers_removed needs to be fully consumed to remove the layers, so we can't early break the outer for.
         for (_, item) in layers_removed {
