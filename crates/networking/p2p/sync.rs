@@ -1074,7 +1074,7 @@ pub async fn update_pivot(
             // Because we're waiting for a timeout, we sleep so the rest of the code
             // can get to them
             debug!("We tried to get peers during update_pivot, but we found no free peers");
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            spawned_rt::tasks::sleep(Duration::from_secs(1)).await;
             continue;
         };
 

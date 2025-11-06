@@ -108,7 +108,6 @@ impl GenServer for RLPxInitiator {
     type Error = std::convert::Infallible;
 
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
         Ok(InitResult::Success(self))
     }
 

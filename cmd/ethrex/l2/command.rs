@@ -296,7 +296,7 @@ impl Command {
                 let mut current_block = U256::zero();
                 while current_block < U256::from(64) {
                     current_block = eth_client.get_block_number().await?;
-                    tokio::time::sleep(Duration::from_secs(12)).await;
+                    spawned_rt::tasks::sleep(Duration::from_secs(12)).await;
                 }
                 current_block = current_block
                     .checked_sub(U256::from(64))

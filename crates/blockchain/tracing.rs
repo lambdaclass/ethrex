@@ -155,7 +155,9 @@ where
     O: FnOnce() -> Result<T, EvmError> + Send + 'static,
     T: Send + 'static,
 {
-    Ok(tokio::time::timeout(timeout, smol::unblock(operation))
-        .await
-        .map_err(|_| ChainError::Custom("Tracing Timeout".to_string()))??)
+    Ok(
+        spawned_rt::tasks::timeout(timeout, smol::unblock(operation))
+            .await
+            .map_err(|_| ChainError::Custom("Tracing Timeout".to_string()))??,
+    )
 }

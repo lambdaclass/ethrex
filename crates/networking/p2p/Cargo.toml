@@ -36,6 +36,7 @@ indexmap.workspace = true
 rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 smol.workspace = true
+async-net.workspace = true
 
 tokio-stream = "0.1.17"
 sha3 = "0.10.8"

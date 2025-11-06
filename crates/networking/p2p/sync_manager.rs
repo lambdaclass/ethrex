@@ -9,10 +9,8 @@ use std::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
-use tokio::{
-    sync::Mutex,
-    time::{Duration, sleep},
-};
+use spawned_rt::tasks::sleep;
+use tokio::{sync::Mutex, time::Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 

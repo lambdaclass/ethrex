@@ -45,7 +45,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
@@ -1068,7 +1068,7 @@ impl Blockchain {
 
             // Conversion is safe because EXECUTE_BATCH_SIZE=1024
             log_batch_progress(blocks_len as u32, i as u32);
-            tokio::task::yield_now().await;
+            spawned_rt::tasks::sleep(Duration::from_millis(0)).await;
         }
 
         let account_updates = vm

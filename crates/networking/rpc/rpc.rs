@@ -259,7 +259,7 @@ pub async fn start_api(
     };
 
     // Periodically clean up the active filters for the filters endpoints.
-    tokio::task::spawn(async move {
+    smol::spawn(async move {
         let mut interval = tokio::time::interval(FILTER_DURATION);
         let filters = active_filters.clone();
         loop {
@@ -268,7 +268,8 @@ pub async fn start_api(
             filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
             tracing::debug!("Filter clean task complete");
         }
-    });
+    })
+    .detach();
 
     // All request headers allowed.
     // All methods allowed.

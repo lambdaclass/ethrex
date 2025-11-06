@@ -32,6 +32,7 @@ ethereum-types.workspace = true
 hex.workspace = true
 rustc-hex.workspace = true
 url.workspace = true
+smol.workspace = true
 
 [lib]
 path = "./lib.rs"

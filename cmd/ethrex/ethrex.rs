@@ -6,7 +6,6 @@ use ethrex::{
 };
 use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
 use std::{path::Path, time::Duration};
-use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -41,7 +40,7 @@ async fn server_shutdown(
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
     store_node_config_file(node_config, node_config_path).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    spawned_rt::tasks::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
 }
 
@@ -59,18 +58,7 @@ async fn ethrex() -> eyre::Result<()> {
     let (datadir, cancel_token, peer_table, local_node_record) =
         init_l1(opts, Some(log_filter_handler)).await?;
 
-    let mut signal_terminate = signal(SignalKind::terminate())?;
-
     log_global_allocator();
-
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
-        }
-        _ = signal_terminate.recv() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
-        }
-    }
 
     Ok(())
 }

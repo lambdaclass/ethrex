@@ -214,7 +214,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let metrics_enabled = *METRICS.enabled.lock().await;
             // Show the metrics only when these are enabled
             if !metrics_enabled {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                spawned_rt::tasks::sleep(Duration::from_secs(1)).await;
                 continue;
             }
 
@@ -400,7 +400,7 @@ P2P Snap Sync | elapsed {elapsed} | peers {peer_number} | step {current_step} | 
   bytecodes: downloaded {bytecodes_downloaded} in {bytecodes_download_time}"#
             );
         }
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        spawned_rt::tasks::sleep(Duration::from_secs(10)).await;
     }
 }
 
@@ -425,7 +425,7 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable)
             })
             .count();
         info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
-        interval.tick().await;
+        spawned_rt::tasks::sleep(INTERVAL_DURATION).await;
     }
 }
 

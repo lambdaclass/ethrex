@@ -47,7 +47,7 @@ use tracing::{debug, error, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
-    task: tokio::task::JoinHandle<Result<PayloadBuildResult, ChainError>>,
+    task: spawned_rt::tasks::JoinHandle<Result<PayloadBuildResult, ChainError>>,
     cancel: CancellationToken,
 }
 
@@ -61,9 +61,7 @@ impl PayloadBuildTask {
     /// Finishes the current payload build process and returns its result
     pub async fn finish(self) -> Result<PayloadBuildResult, ChainError> {
         self.cancel.cancel();
-        self.task
-            .await
-            .map_err(|_| ChainError::Custom("Failed to join task".to_string()))?
+        self.task.await
     }
 }
 
@@ -341,7 +339,7 @@ impl Blockchain {
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
-        let payload_build_task = tokio::task::spawn(async move {
+        let payload_build_task = spawned_rt::tasks::spawn(async move {
             self_clone
                 .build_payload_loop(payload, cancel_token_clone)
                 .await

@@ -13,6 +13,7 @@ tracing = { workspace = true, optional = true }
 thiserror.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+async-net.workspace = true
 
 ethrex-common.workspace = true
 

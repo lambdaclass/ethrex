@@ -849,11 +849,6 @@ impl GenServer for PeerTableServer {
     type Error = PeerTableError;
 
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        send_message_on(
-            handle.clone(),
-            tokio::signal::ctrl_c(),
-            CastMessage::Shutdown,
-        );
         Ok(InitResult::Success(self))
     }
 

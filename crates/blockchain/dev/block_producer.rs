@@ -114,7 +114,7 @@ pub async fn start_block_producer(
 
         head_block_hash = produced_block_hash;
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(
+        spawned_rt::tasks::sleep(tokio::time::Duration::from_millis(
             block_production_interval_ms,
         ))
         .await;

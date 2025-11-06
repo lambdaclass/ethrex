@@ -626,6 +626,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-compat"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1ba85bc55464dcbf728b56d97e119d673f4cf9062be330a9a26f3acf504a590"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "once_cell",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "async-executor"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3420,7 +3433,9 @@ name = "ethrex"
 version = "5.0.0"
 dependencies = [
  "anyhow",
+ "async-compat",
  "async-executor",
+ "async-net",
  "bytes",
  "clap",
  "clap_complete",
@@ -3501,6 +3516,7 @@ dependencies = [
  "serde_json",
  "sha3",
  "smol",
+ "spawned-rt",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -3571,6 +3587,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spawned-rt",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3676,6 +3693,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "smol",
  "thiserror 2.0.17",
  "tokio",
  "tower-http 0.6.6",
@@ -3724,6 +3742,7 @@ dependencies = [
 name = "ethrex-metrics"
 version = "5.0.0"
 dependencies = [
+ "async-net",
  "axum 0.8.6",
  "ethrex-common",
  "prometheus 0.13.4",
@@ -3740,6 +3759,7 @@ name = "ethrex-p2p"
 version = "5.0.0"
 dependencies = [
  "aes",
+ "async-net",
  "async-trait",
  "bytes",
  "concat-kdf",
@@ -9887,6 +9907,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "smol-cancellation-token"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fa8dbcb0e139642c3b761803f88f3463928fc23c84bfbd1e2aae76f606085c2"
+dependencies = [
+ "event-listener",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "snap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10408,8 +10438,7 @@ dependencies = [
 [[package]]
 name = "spawned-concurrency"
 version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d99b97ba5429336b6fa8b6e8ecbe09a1c7324f8b9fa63a11262dbd3a44e577b"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=smol#09f9d9e68dc7ef8a14df29ae7092802bb8bda66c"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -10421,10 +10450,12 @@ dependencies = [
 [[package]]
 name = "spawned-rt"
 version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d58e8d7224fbcd3dbc39f7bacf958ae0882c95b5431353445be5a86b80cedcaf"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=smol#09f9d9e68dc7ef8a14df29ae7092802bb8bda66c"
 dependencies = [
  "crossbeam 0.7.3",
+ "futures-lite",
+ "smol",
+ "smol-cancellation-token",
  "tokio",
  "tokio-stream",
  "tokio-util",

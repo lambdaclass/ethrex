@@ -82,6 +82,12 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_addr,
         opts.metrics_port
     );
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
     let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
@@ -89,7 +95,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 
     initialize_block_processing_profile();
 
-    tracker.spawn(metrics_api);
+    rt.spawn(metrics_api);
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
@@ -184,7 +190,7 @@ pub async fn init_rpc_api(
         opts.extra_data.clone(),
     );
 
-    tracker.spawn(rpc_api);
+    smol::spawn(rpc_api).detach();
 }
 
 #[allow(clippy::too_many_arguments)]

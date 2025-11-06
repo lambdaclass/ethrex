@@ -73,6 +73,7 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
 
 async-trait = "0.1.88"
+async-net = "2.0.0"
 ethereum-types = { version = "0.15.1", features = ["serialize"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
@@ -109,8 +110,8 @@ kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23" }
-spawned-concurrency = "0.4.2"
-spawned-rt = "0.4.2"
+spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", branch = "smol"}
+spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", branch = "smol"}
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
