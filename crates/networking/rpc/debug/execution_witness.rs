@@ -70,7 +70,7 @@ pub fn execution_witness_from_rpc_chain_config(
     first_block_number: u64,
     initial_state_root: H256,
 ) -> Result<ExecutionWitness, GuestProgramStateError> {
-    let mut nodes: BTreeMap<H256, Node> = rpc_witness
+    let nodes: BTreeMap<H256, Node> = rpc_witness
         .state
         .into_iter()
         .map(|b| Ok((keccak(&b), Node::decode(&b.to_vec())?)))
