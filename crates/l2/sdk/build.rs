@@ -14,6 +14,8 @@ fn main() {
     let contracts_path = Path::new(&out_dir).join("contracts");
     std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
 
+    println!("{}", cfg!(not(feature = "l2")));
+    println!("{:?}", env::var_os("SKIP_COMPILE_CONTRACTS"));
     if env::var_os("SKIP_COMPILE_CONTRACTS").is_some() {
         // Write an empty bytecode file to indicate that contracts are not compiled.
         std::fs::create_dir_all(contracts_path.join("solc_out"))
