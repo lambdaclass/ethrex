@@ -91,9 +91,11 @@ pub fn execution_witness_from_rpc_chain_config(
         .iter()
         .filter(|k| k.len() == 20)
         .map(|k| Address::from_slice(k))
-        .map(|a| {
-            let encoded_account = state_trie.get(&hash_address(&a)).unwrap().unwrap();
-            AccountState::decode(&encoded_account).unwrap().storage_root
+        .filter_map(|a| {
+            let Some(encoded_account) = state_trie.get(&hash_address(&a)).unwrap() else {
+                return None
+            };
+            Some(AccountState::decode(&encoded_account).unwrap().storage_root)
         })
         .collect();
 
