@@ -2,7 +2,7 @@
 
 > [!WARNING]  
 > Data availability through `state diffs` has been deprecated in #5135.  
-> See [Transition to RLP encoded blocks](../architecture/overview.md/#transition-to-rlp-encoded-blocks) for more details.
+> See the `Transition to RLP encoded blocks` section [here](../architecture/overview.md) for more details.
 
 This architecture was inspired by [MatterLabs' ZKsync pubdata architecture](https://github.com/matter-labs/zksync-era/blob/main/docs/src/specs/contracts/settlement_contracts/data_availability/pubdata.md).
 

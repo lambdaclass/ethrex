@@ -111,7 +111,7 @@ The `L1Watcher` periodically fetches the `BlobBaseFee` from L1 (at a configured 
 blob_base_fee_per_byte = (l1_fee_per_blob_gas * GAS_PER_BLOB) / SAFE_BYTES_PER_BLOB
 ```
 
-See [Data availability](../architecture/overview.md/#reconstructing-statedata-availability) for more information about how data availability works.
+See the `Data availability` section [here](../architecture/overview.md) for more information about how data availability works.
 
 
 L1 fee is deactivated by default. To activate it, configure the **L1 fee vault address**:
