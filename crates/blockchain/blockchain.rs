@@ -512,7 +512,7 @@ impl Blockchain {
             ChainError::WitnessGeneration("Failed to get root state node".to_string())
         })?;
 
-        let mut block_hashes = HashMap::new();
+        let mut blockhash_opcode_references = HashMap::new();
         let mut codes = Vec::new();
 
         for (i, block) in blocks.iter().enumerate() {
@@ -576,7 +576,7 @@ impl Blockchain {
                 })?
                 .clone();
 
-            block_hashes.extend(logger_block_hashes);
+            blockhash_opcode_references.extend(logger_block_hashes);
 
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
@@ -701,38 +701,34 @@ impl Blockchain {
             used_trie_nodes.push(root.encode_to_vec());
         }
 
-        // First number in block hashes is going to be the
-        let first_blockhash_number = block_hashes.keys().min();
-
-        let first_needed_block_hash = if let Some(number) = first_blockhash_number
-            && *number < first_block_header.number.saturating_sub(1)
-        {
-            // First block hash is going to be from BLOBHASH opcode
-            *block_hashes
-                .get(number)
-                .ok_or(ChainError::WitnessGeneration(
-                    "Block hash not found".to_string(),
-                ))?
-        } else {
-            // First block hash is going to be from the parent block of the first block to execute.
-            first_block_header.hash()
-        };
-
+        // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
         let mut block_headers_bytes = Vec::new();
 
+        let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
+        let first_needed_block_hash = first_blockhash_opcode_number
+            .and_then(|n| {
+                (*n < first_block_header.number.saturating_sub(1))
+                    .then(|| blockhash_opcode_references.get(&n))?
+                    .copied()
+            })
+            .unwrap_or(first_block_header.parent_hash);
+
+        // At the beginning this is the header of the last block to execute.
         let mut current_header = blocks
             .last()
             .ok_or_else(|| ChainError::WitnessGeneration("Empty batch".to_string()))?
             .header
             .clone();
 
-        // Headers from latest - 1 until we reach first block header.
-        loop {
-            let current_hash = current_header.parent_hash;
+        // Headers from latest - 1 until we reach first block header we need.
+        // We do it this way because we want to fetch headers by hash, not by number
+        while current_header.hash() != first_needed_block_hash {
+            let parent_hash = current_header.parent_hash;
             let current_number = current_header.number - 1;
+
             current_header = self
                 .storage
-                .get_block_header_by_hash(current_hash)?
+                .get_block_header_by_hash(parent_hash)?
                 .ok_or_else(|| {
                     ChainError::WitnessGeneration(format!(
                         "Failed to get block {current_number} header"
@@ -740,10 +736,6 @@ impl Blockchain {
                 })?;
 
             block_headers_bytes.push(current_header.encode_to_vec());
-
-            if current_header.hash() == first_needed_block_hash {
-                break;
-            }
         }
 
         let chain_config = self.storage.get_chain_config();
