@@ -33,7 +33,7 @@ pub fn download_script() {
     );
     let contracts_path = Path::new("../../crates/l2/contracts/src");
 
-    if cfg!(not(feature = "l2")) {
+    if cfg!(not(feature = "l2")) || env::var_os("SKIP_COMPILE_CONTRACTS").is_some() {
         write_empty_bytecode_files(&output_contracts_path);
         return;
     }
