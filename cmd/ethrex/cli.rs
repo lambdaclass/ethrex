@@ -514,7 +514,9 @@ pub async fn import_blocks(
     blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
     const IMPORT_BATCH_SIZE: usize = 1024;
-    const MIN_FULL_BLOCKS: usize = 128;
+    // This value is higher than the spec (128) as the latter block's state nodes will be kept in memory and not committed when using rocksdb
+    // This means we need to run some extra-blocks to ensure we commit their state and don't need to regenerate the full block range upon node restart
+    const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
