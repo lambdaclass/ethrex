@@ -84,7 +84,9 @@ impl StoreVmDatabase {
             to_fetch.entry(*sender).or_default();
             match tx.to() {
                 TxKind::Call(to) => {
-                    to_fetch.entry(to).or_default();
+                    to_fetch
+                        .entry(to)
+                        .or_insert_with(|| HashSet::from_iter(common_slot.clone()));
                 }
                 TxKind::Create => {}
             }
