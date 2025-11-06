@@ -55,6 +55,14 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                    block.header.gas_limit,
+                    tx.gas_limit()
+                )));
+            }
+
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
@@ -100,6 +108,14 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                    block.header.gas_limit,
+                    tx.gas_limit()
+                )));
+            }
+
             let report = Self::execute_tx_in_block(
                 tx,
                 tx_sender,
