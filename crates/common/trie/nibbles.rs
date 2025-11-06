@@ -110,10 +110,6 @@ impl Nibbles {
         self.len() == 0
     }
 
-    pub fn as_ref(&self) -> &[u8] {
-        self.slice()
-    }
-
     pub fn next(&mut self) -> Option<u8> {
         if self.consumed < self.len {
             let b = self.data[self.consumed as usize];
@@ -367,7 +363,7 @@ impl Nibbles {
 
 impl AsRef<[u8]> for Nibbles {
     fn as_ref(&self) -> &[u8] {
-        &self.data
+        self.slice()
     }
 }
 
