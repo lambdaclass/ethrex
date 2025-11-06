@@ -352,7 +352,7 @@ impl GuestProgramState {
         key: H256,
     ) -> Result<Option<U256>, GuestProgramStateError> {
         let storage_root = self.get_account_state(address).unwrap().unwrap().storage_root;
-        let storage_trie = self.storage_tries.get(&storage_root).unwrap();
+        let storage_trie = self.storage_tries.entry(storage_root).or_insert(Trie::default());
         let hashed_key = hash_key(&key);
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)

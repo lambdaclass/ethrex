@@ -86,11 +86,14 @@ pub fn execution_witness_from_rpc_chain_config(
     let mut state_trie = Trie::default();
     state_trie.root = state_trie_root.clone().into();
 
+    // keys podria estar incompleto (quiza un empty trie?)
     let keys: Vec<_> = rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect();
     let storage_roots: Vec<_> = keys
         .iter()
         .filter(|k| {
-            dbg!(k.len());
+            if !(k.len() == 20 || k.len() == 32) {
+                panic!("unexpected size");
+            }
             k.len() == 20
         })
         .map(|k| Address::from_slice(k))
