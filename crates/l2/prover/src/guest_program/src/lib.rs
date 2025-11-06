@@ -17,6 +17,10 @@ pub static ZKVM_RISC0_PROGRAM_VK: &str = include_str!(concat!("./risc0/out/riscv
 #[cfg(any(clippy, not(feature = "risc0")))]
 pub const ZKVM_RISC0_PROGRAM_VK: &str = "";
 
+/// Macro to report cycles used in a code block when running inside SP1 zkVM.
+///
+/// When the feature "sp1-cycles" is enabled, it will print start and end cycle
+/// tracking messages that are compatible with SP1's cycle tracking system.
 #[macro_export]
 macro_rules! report_cycles {
     ($label:expr, $($code:tt)*) => {
