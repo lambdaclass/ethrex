@@ -3,7 +3,10 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
-use ethrex_common::types::{SAFE_BYTES_PER_BLOB, TxType};
+use ethrex_common::types::{
+    EIP1559_DEFAULT_SERIALIZED_LENGTH, EIP1559Transaction, SAFE_BYTES_PER_BLOB, Transaction,
+    TxKind, TxType,
+};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
@@ -11,7 +14,6 @@ use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1M
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::L1MessageProof;
-use ethrex_l2_common::state_diff::SIMPLE_TX_STATE_DIFF_SIZE;
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_l2_rpc::clients::get_l1_blob_base_fee_per_gas;
 use ethrex_l2_rpc::clients::get_operator_fee;
@@ -23,8 +25,10 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
+    L2_WITHDRAW_SIGNATURE, build_generic_tx, get_last_verified_batch, send_generic_transaction,
+    wait_for_message_proof,
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::{
@@ -36,7 +40,6 @@ use hex::FromHexError;
 use reqwest::Url;
 use secp256k1::SecretKey;
 use std::cmp::min;
-use std::collections::{BTreeMap, HashMap};
 use std::ops::{Add, AddAssign};
 use std::{
     fs::{File, read_to_string},
@@ -339,7 +342,6 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         &bridge_code,
         &bridge_owner_private_key,
         "test_upgrade",
-        dummy_modified_storage_slots(0),
     )
     .await?;
 
@@ -412,7 +414,6 @@ async fn test_privileged_tx_with_contract_call(
         &init_code,
         &rich_wallet_private_key,
         "ptx_with_contract_call",
-        dummy_modified_storage_slots(0),
     )
     .await?;
 
@@ -510,7 +511,6 @@ async fn test_privileged_tx_with_contract_call_revert(
         &init_code,
         &rich_wallet_private_key,
         "ptx_with_contract_call_revert",
-        dummy_modified_storage_slots(0),
     )
     .await?;
 
@@ -601,7 +601,6 @@ async fn test_erc20_roundtrip(
         &init_code_l2,
         &rich_wallet_private_key,
         "test_erc20_roundtrip",
-        dummy_modified_storage_slots(3),
     )
     .await?;
 
@@ -660,47 +659,58 @@ async fn test_erc20_roundtrip(
 
     println!("test_erc20_roundtrip: Withdrawing ERC20 token from L2 to L1");
 
+    let signature = "approve(address,uint256)";
+    let data = [
+        Value::Address(COMMON_BRIDGE_L2_ADDRESS),
+        Value::Uint(token_amount),
+    ];
+
     let approve_receipt = test_send(
         &l2_client,
         &rich_wallet_private_key,
         token_l2,
-        "approve(address,uint256)",
-        &[
-            Value::Address(COMMON_BRIDGE_L2_ADDRESS),
-            Value::Uint(token_amount),
-        ],
+        signature,
+        &data,
         "test_erc20_roundtrip",
     )
     .await?;
 
-    let approve_fees = get_fees_details_l2(
-        &approve_receipt,
-        &l2_client,
-        get_account_diff_size_for_erc20approve(),
-    )
-    .await?;
+    // Calculate transaction size
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data: Bytes::from(encode_calldata(signature, &data)?),
+        ..Default::default()
+    });
+    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
+
+    let approve_fees = get_fees_details_l2(&approve_receipt, &l2_client, transaction_size).await?;
+
+    let signature = "withdrawERC20(address,address,address,uint256)";
+    let data = [
+        Value::Address(token_l1),
+        Value::Address(token_l2),
+        Value::Address(rich_address),
+        Value::Uint(token_amount),
+    ];
 
     let withdraw_receipt = test_send(
         &l2_client,
         &rich_wallet_private_key,
         COMMON_BRIDGE_L2_ADDRESS,
-        "withdrawERC20(address,address,address,uint256)",
-        &[
-            Value::Address(token_l1),
-            Value::Address(token_l2),
-            Value::Address(rich_address),
-            Value::Uint(token_amount),
-        ],
+        signature,
+        &data,
         "test_erc20_roundtrip",
     )
     .await?;
 
-    let withdraw_fees = get_fees_details_l2(
-        &withdraw_receipt,
-        &l2_client,
-        get_account_diff_size_for_erc20withdraw(),
-    )
-    .await?;
+    // Calculate transaction size
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data: Bytes::from(encode_calldata(signature, &data)?),
+        ..Default::default()
+    });
+    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
+
+    let withdraw_fees =
+        get_fees_details_l2(&withdraw_receipt, &l2_client, transaction_size).await?;
 
     let withdrawal_tx_hash = withdraw_receipt.tx_info.transaction_hash;
     assert_eq!(
@@ -1580,8 +1590,12 @@ async fn perform_transfer(
         "Transfer transaction failed"
     );
 
-    let transfer_fees =
-        get_fees_details_l2(&transfer_tx_receipt, l2_client, SIMPLE_TX_STATE_DIFF_SIZE).await?;
+    let transfer_fees = get_fees_details_l2(
+        &transfer_tx_receipt,
+        l2_client,
+        u64::try_from(EIP1559_DEFAULT_SERIALIZED_LENGTH).unwrap(),
+    )
+    .await?;
     let total_fees = transfer_fees.total();
 
     println!("{test}: Checking balances on L2 after transfer");
@@ -1716,10 +1730,19 @@ async fn test_n_withdraws(
 
     // Compute actual total L2 gas paid by the withdrawer from receipts
     let mut total_withdraw_fees_l2 = FeesDetails::default();
-    let account_diff_size = get_account_diff_size_for_withdraw();
+
+    // Calculate transaction size for withdrawals
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data: Bytes::from(encode_calldata(
+            L2_WITHDRAW_SIGNATURE,
+            &[Value::Address(Address::random())],
+        )?),
+        ..Default::default()
+    });
+    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
+
     for receipt in &receipts {
-        total_withdraw_fees_l2 +=
-            get_fees_details_l2(receipt, l2_client, account_diff_size).await?;
+        total_withdraw_fees_l2 += get_fees_details_l2(receipt, l2_client, transaction_size).await?;
     }
 
     // Now assert exact balance movement on L2: value + gas
@@ -1970,7 +1993,6 @@ async fn test_deploy(
     init_code: &[u8],
     deployer_private_key: &SecretKey,
     test_name: &str,
-    storage_after_deploy: BTreeMap<H256, U256>,
 ) -> Result<(Address, FeesDetails)> {
     println!("{test_name}: Deploying contract on L2");
 
@@ -1996,14 +2018,16 @@ async fn test_deploy(
         "{test_name}: Deploy transaction failed"
     );
 
-    let contract_bytecode = l2_client
-        .get_code(contract_address, BlockIdentifier::Tag(BlockTag::Latest))
-        .await?;
+    // Calculate transaction size
+    let deploy_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Create,
+        data: init_code.to_vec().into(),
+        ..Default::default()
+    });
 
-    let account_diff_size =
-        get_account_diff_size_for_deploy(&contract_bytecode, storage_after_deploy);
+    let transaction_size: u64 = deploy_tx.encode_to_vec().len().try_into().unwrap();
 
-    let deploy_fees = get_fees_details_l2(&deploy_tx_receipt, l2_client, account_diff_size).await?;
+    let deploy_fees = get_fees_details_l2(&deploy_tx_receipt, l2_client, transaction_size).await?;
 
     let deployer_balance_after_deploy = l2_client
         .get_balance(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
