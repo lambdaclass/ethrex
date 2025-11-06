@@ -427,8 +427,15 @@ impl Store {
         control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
         {
-            let cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_read().unwrap();
             trace!("Removing initial FlatKeyValue entries...");
+
+            let last_written = self
+                .read_sync(CF_MISC_VALUES, b"last_written")?
+                .unwrap_or_else(|| vec![0u8; 64]);
+            if last_written == vec![0xff] {
+                trace!("Finished removing initial FlatKeyValue entries...");
+                return Ok(());
+            }
             // We use sequential write here, so it should be deadlock-free
             let cf_flatkeyvalue = self
                 .dbs
@@ -436,20 +443,7 @@ impl Store {
                 .unwrap()
                 .begin_write()
                 .unwrap();
-            let misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
             let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
-            let last_written = {
-                misc_tree
-                    .get(b"last_written")
-                    .unwrap()
-                    .map(|b| b.to_vec())
-                    .unwrap_or_else(|| vec![0u8; 64])
-            };
-            if last_written == vec![0xff] {
-                trace!("Finished removing initial FlatKeyValue entries...");
-                return Ok(());
-            }
-
             flatkeyvalue.delete_range(last_written..vec![0xff])?;
             trace!("Finished removing initial FlatKeyValue entries...");
         }
@@ -674,22 +668,13 @@ impl Store {
 
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
         let mut trie_mut = (*trie).clone();
-        let [cf_misc] = open_cfs(&self.dbs, [CF_MISC_VALUES])?;
 
         let mut batch_ops = Vec::new();
         {
-            let last_written = {
-                cf_misc
-                    .begin_read()
-                    .unwrap()
-                    .get_tree(b"")
-                    .unwrap()
-                    .unwrap()
-                    .get(b"last_written")
-                    .unwrap()
-                    .map(|b| b.to_vec())
-                    .unwrap_or_default()
-            };
+            let last_written = self
+                .read_sync(CF_MISC_VALUES, b"last_written")
+                .unwrap()
+                .unwrap_or_default();
             // Commit removes the bottom layer and returns it, this is the mutation step.
             let nodes = trie_mut.commit(root).unwrap_or_default();
             for (key, value) in nodes {
