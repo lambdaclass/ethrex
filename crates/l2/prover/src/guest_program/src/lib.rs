@@ -23,11 +23,12 @@ pub const ZKVM_RISC0_PROGRAM_VK: &str = "";
 /// tracking messages that are compatible with SP1's cycle tracking system.
 #[macro_export]
 macro_rules! report_cycles {
-    ($label:expr, $($code:tt)*) => {
+    ($label:expr, $($code:tt)*) => {{
         #[cfg(feature = "sp1-cycles")]
         println!("cycle-tracker-report-start: {}", $label);
-        $($code)*
+        let result = { $($code)* };
         #[cfg(feature = "sp1-cycles")]
         println!("cycle-tracker-report-end: {}", $label);
-    };
+        result
+    }};
 }

@@ -134,12 +134,12 @@ pub fn stateless_validation_l1(
     elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    let guest_program_state: GuestProgramState;
-    report_cycles!("guest_program_state_initialization", {
-        guest_program_state = execution_witness
-            .try_into()
-            .map_err(StatelessExecutionError::GuestProgramState)?;
-    });
+    let guest_program_state: GuestProgramState =
+        report_cycles!("guest_program_state_initialization", {
+            execution_witness
+                .try_into()
+                .map_err(StatelessExecutionError::GuestProgramState)?
+        });
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
@@ -171,11 +171,10 @@ pub fn stateless_validation_l1(
         )
         .map_err(StatelessExecutionError::GuestProgramState)?;
 
-    let initial_state_hash;
-    report_cycles!("state_trie_root", {
-        initial_state_hash = wrapped_db
+    let initial_state_hash = report_cycles!("state_trie_root", {
+        wrapped_db
             .state_trie_root()
-            .map_err(StatelessExecutionError::GuestProgramState)?;
+            .map_err(StatelessExecutionError::GuestProgramState)?
     });
 
     if initial_state_hash != parent_block_header.state_root {
@@ -200,23 +199,16 @@ pub fn stateless_validation_l1(
             .map_err(StatelessExecutionError::BlockValidationError)?;
         });
 
-        let mut vm;
-        report_cycles!("setup_evm", {
-            vm = Evm::new_for_l1(wrapped_db.clone());
+        let mut vm = report_cycles!("setup_evm", Evm::new_for_l1(wrapped_db.clone()));
+
+        let result = report_cycles!("execute_block", {
+            vm.execute_block(block)
+                .map_err(StatelessExecutionError::EvmError)?
         });
 
-        let result;
-        report_cycles!("execute_block", {
-            result = vm
-                .execute_block(block)
-                .map_err(StatelessExecutionError::EvmError)?;
-        });
-
-        let account_updates;
-        report_cycles!("get_state_transitions", {
-            account_updates = vm
-                .get_state_transitions()
-                .map_err(StatelessExecutionError::EvmError)?;
+        let account_updates = report_cycles!("get_state_transitions", {
+            vm.get_state_transitions()
+                .map_err(StatelessExecutionError::EvmError)?
         });
 
         // Update db for the next block
@@ -257,11 +249,10 @@ pub fn stateless_validation_l1(
         parent_block_header = &block.header;
     }
 
-    let final_state_root;
-    report_cycles!("get_final_state_root", {
-        final_state_root = wrapped_db
+    let final_state_root = report_cycles!("get_final_state_root", {
+        wrapped_db
             .state_trie_root()
-            .map_err(StatelessExecutionError::GuestProgramState)?;
+            .map_err(StatelessExecutionError::GuestProgramState)?
     });
 
     let last_block = blocks
