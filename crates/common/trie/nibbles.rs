@@ -211,7 +211,7 @@ impl Nibbles {
     /// Extends the nibbles with another list of nibbles
     pub fn extend(&mut self, other: &Nibbles) {
         let this_len = self.len as usize;
-        let other_len = other.len() as usize;
+        let other_len = other.len();
 
         // enforce capacity
         assert!(this_len + other_len <= MAX_NIBBLES);
@@ -233,7 +233,7 @@ impl Nibbles {
         // Trim the leaf flag (value = 16) if present
         let hex = if is_leaf { &s[..s.len() - 1] } else { s };
 
-        let mut compact = Vec::with_capacity((hex.len() + 1) / 2 + 1);
+        let mut compact = Vec::with_capacity(hex.len().div_ceil(2) + 1);
 
         // Determine prefix nibble according to path length parity
         let mut first: u8;
@@ -318,7 +318,7 @@ impl Nibbles {
         let mut out = [0u8; MAX_NIBBLES];
 
         let n = s.len();
-        assert!(n + 1 <= MAX_NIBBLES);
+        assert!(n < MAX_NIBBLES);
 
         out[..n].copy_from_slice(s);
         out[n] = nibble;

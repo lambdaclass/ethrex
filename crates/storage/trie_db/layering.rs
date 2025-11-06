@@ -7,7 +7,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
+    nodes: Arc<FxHashMap<Nibbles, Vec<u8>>>,
     parent: H256,
     id: usize,
 }
@@ -49,8 +49,6 @@ impl TrieLayerCache {
     }
 
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
-        let key = key.as_ref();
-
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
         if let Some(filter) = &self.bloom
@@ -63,7 +61,7 @@ impl TrieLayerCache {
         let mut current_state_root = state_root;
 
         while let Some(layer) = self.layers.get(&current_state_root) {
-            if let Some(value) = layer.nodes.get(key) {
+            if let Some(value) = layer.nodes.get(&key) {
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
@@ -121,10 +119,7 @@ impl TrieLayerCache {
             }
         }
 
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
-            .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
-            .collect();
+        let nodes: FxHashMap<Nibbles, Vec<u8>> = key_values.into_iter().collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
@@ -176,7 +171,7 @@ impl TrieLayerCache {
         self.bloom = Some(ret);
     }
 
-    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Nibbles, Vec<u8>)>> {
         let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
             Ok(layer) => layer,
             Err(layer) => TrieLayer::clone(&layer),

@@ -35,7 +35,7 @@ impl ExtensionNode {
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self.child.compute_hash().finalize(),
                         extension_node_hash: self.compute_hash().finalize(),
-                        extension_node_prefix: self.prefix.clone(),
+                        extension_node_prefix: self.prefix,
                         node_path: path.current(),
                     }),
                 ))
@@ -74,7 +74,7 @@ impl ExtensionNode {
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self.child.compute_hash().finalize(),
                         extension_node_hash: self.compute_hash().finalize(),
-                        extension_node_prefix: self.prefix.clone(),
+                        extension_node_prefix: self.prefix,
                         node_path: path.current(),
                     }),
                 )));
@@ -104,7 +104,7 @@ impl ExtensionNode {
                                 ExtensionNodeErrorData {
                                     node_hash: new_node.compute_hash().finalize(),
                                     extension_node_hash: self.compute_hash().finalize(),
-                                    extension_node_prefix: self.prefix.clone(),
+                                    extension_node_prefix: self.prefix,
                                     node_path: path.current(),
                                 },
                             ),
@@ -116,7 +116,7 @@ impl ExtensionNode {
                                 ExtensionNodeErrorData {
                                     node_hash: new_node.compute_hash().finalize(),
                                     extension_node_hash: self.compute_hash().finalize(),
-                                    extension_node_prefix: self.prefix.clone(),
+                                    extension_node_prefix: self.prefix,
                                     node_path: path.current(),
                                 },
                             ),
@@ -161,7 +161,7 @@ impl ExtensionNode {
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self.child.compute_hash().finalize(),
                         extension_node_hash: self.compute_hash().finalize(),
-                        extension_node_prefix: self.prefix.clone(),
+                        extension_node_prefix: self.prefix,
                         node_path: path.current(),
                     }),
                 )));
@@ -230,7 +230,7 @@ impl ExtensionNode {
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self.child.clone().compute_hash().finalize(),
                         extension_node_hash: self.compute_hash().finalize(),
-                        extension_node_prefix: self.prefix.clone(),
+                        extension_node_prefix: self.prefix,
                         node_path: path.current(),
                     }),
                 ))

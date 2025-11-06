@@ -241,7 +241,7 @@ fn process_proof_nodes(
                     &proof,
                     &bounds,
                     first_key.as_ref(),
-                    current_path.clone(),
+                    current_path,
                     node.child,
                 )?;
                 Vec::new()
@@ -314,7 +314,7 @@ fn visit_child_node(
                     partial_path.extend(&node.partial);
                 }
                 if right_bound.compare_prefix(&partial_path).is_lt() {
-                    external_refs.push((partial_path.clone(), hash));
+                    external_refs.push((partial_path, hash));
                 }
 
                 stack.push_back((partial_path, node));

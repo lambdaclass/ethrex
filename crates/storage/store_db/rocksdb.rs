@@ -751,7 +751,7 @@ impl Store {
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
 
-            if is_leaf && key > last_written {
+            if is_leaf && key.as_ref() > last_written.as_slice() {
                 continue;
             }
             let cf = if is_leaf {

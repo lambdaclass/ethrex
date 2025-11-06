@@ -158,7 +158,7 @@ impl BranchNode {
                 [+1 children]
                 Branch { [childA, childB, ... ], None } ->   Branch { [childA, childB, ... ], None }
         */
-        let base_path = path.clone();
+        let base_path = path;
 
         // Step 1: Remove value
         // Check if the value is located in a child subtrie
@@ -177,7 +177,7 @@ impl BranchNode {
                 };
 
                 // Remove value from child node
-                let (empty_trie, old_value) = child_node.remove(db, path.clone())?;
+                let (empty_trie, old_value) = child_node.remove(db, path)?;
                 if empty_trie {
                     // Remove child hash if the child subtrie was removed in the process
                     self.choices[choice_index] = NodeHash::default().into();

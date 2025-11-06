@@ -677,7 +677,7 @@ impl StoreEngine for Store {
         for (hashed_address, nodes) in storage_trie_nodes {
             for (node_path, node_data) in nodes {
                 let full_path = apply_prefix(Some(hashed_address), node_path);
-                trie.insert(full_path.into_vec(), node_data);
+                trie.insert(full_path, node_data);
             }
         }
 

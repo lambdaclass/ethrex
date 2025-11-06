@@ -8,7 +8,7 @@ use std::{
 };
 
 // Nibbles -> encoded node
-pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<BTreeMap<Nibbles, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
@@ -18,7 +18,7 @@ pub trait TrieDB: Send + Sync {
         self.put_batch(
             key_values
                 .iter()
-                .map(|node| (node.0.clone(), node.1.encode_to_vec()))
+                .map(|node| (node.0, node.1.encode_to_vec()))
                 .collect(),
         )
     }
@@ -67,10 +67,7 @@ impl InMemoryTrieDB {
         let mut hashed_nodes = vec![];
         embedded_root.commit(Nibbles::default(), &mut hashed_nodes);
 
-        let hashed_nodes = hashed_nodes
-            .into_iter()
-            .map(|(k, v)| (k.into_vec(), v))
-            .collect();
+        let hashed_nodes = hashed_nodes.into_iter().collect();
 
         let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
         Ok(Self::new(in_memory_trie))
@@ -90,7 +87,7 @@ impl TrieDB for InMemoryTrieDB {
             .inner
             .lock()
             .map_err(|_| TrieError::LockError)?
-            .get(self.apply_prefix(key).as_ref())
+            .get(&self.apply_prefix(key))
             .cloned())
     }
 
@@ -99,7 +96,7 @@ impl TrieDB for InMemoryTrieDB {
 
         for (key, value) in key_values {
             let prefixed_key = self.apply_prefix(key);
-            db.insert(prefixed_key.into_vec(), value);
+            db.insert(prefixed_key, value);
         }
 
         Ok(())

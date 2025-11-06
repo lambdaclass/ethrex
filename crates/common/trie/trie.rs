@@ -99,7 +99,7 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32 && !self.dirty && self.db().flatkeyvalue_computed(path.clone()) {
+        if pathrlp.len() == 32 && !self.dirty && self.db().flatkeyvalue_computed(path) {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
@@ -436,14 +436,13 @@ impl Trie {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
                             let child_path = current_path.append_new(idx as u8);
-                            let child_node = child_ref
-                                .get_node_checked(db, child_path.clone())?
-                                .ok_or_else(|| {
+                            let child_node =
+                                child_ref.get_node_checked(db, child_path)?.ok_or_else(|| {
                                     TrieError::InconsistentTree(Box::new(
                                         InconsistentTreeError::NodeNotFoundOnBranchNode(
                                             child_ref.compute_hash().finalize(),
                                             branch_node.compute_hash().finalize(),
-                                            child_path.clone(),
+                                            child_path,
                                         ),
                                     ))
                                 })?;
@@ -461,7 +460,7 @@ impl Trie {
                         let child_path = partial_path.concat(&extension_node.prefix);
                         let child_node = extension_node
                             .child
-                            .get_node_checked(db, child_path.clone())?
+                            .get_node_checked(db, child_path)?
                             .ok_or_else(|| {
                                 TrieError::InconsistentTree(Box::new(
                                     InconsistentTreeError::ExtensionNodeChildNotFound(
@@ -473,8 +472,8 @@ impl Trie {
                                             extension_node_hash: extension_node
                                                 .compute_hash()
                                                 .finalize(),
-                                            extension_node_prefix: extension_node.prefix.clone(),
-                                            node_path: child_path.clone(),
+                                            extension_node_prefix: extension_node.prefix,
+                                            node_path: child_path,
                                         },
                                     ),
                                 ))

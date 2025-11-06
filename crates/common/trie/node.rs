@@ -83,7 +83,7 @@ impl NodeRef {
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
                 let Some(node) = db
-                    .get(path.clone())?
+                    .get(path)?
                     .filter(|rlp| !rlp.is_empty())
                     .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                     .transpose()?

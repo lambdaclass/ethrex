@@ -32,9 +32,9 @@ struct CenterSide {
 #[derive(Debug, thiserror::Error)]
 pub enum TrieGenerationError {
     #[error("When creating a child node, the nibbles diff was empty. Child Node {0:x?}")]
-    IndexNotFound(Nibbles),
+    IndexNotFound(Box<Nibbles>),
     #[error("When popping from the trie stack it was empty. Current position: {0:x?}")]
-    TrieStackEmpty(Nibbles),
+    TrieStackEmpty(Box<Nibbles>),
     #[error(transparent)]
     FlushToDbError(TrieError),
     #[error("When joining the write threads, error")]
@@ -85,11 +85,13 @@ fn add_center_to_parent_and_write_queue(
 ) -> Result<(), TrieGenerationError> {
     debug!("{:x?}", center_side.path);
     debug!("{:x?}", parent_element.path);
-    let mut path = center_side.path.clone();
+    let mut path = center_side.path;
     path.skip_prefix(&parent_element.path);
     let index = path
         .next()
-        .ok_or(TrieGenerationError::IndexNotFound(center_side.path.clone()))?;
+        .ok_or(TrieGenerationError::IndexNotFound(Box::new(
+            center_side.path,
+        )))?;
     let top_path = parent_element.path.append_new(index);
     let (target_path, node): (Nibbles, Node) = match &center_side.element {
         CenterSideElement::Branch { node } => {
@@ -97,7 +99,7 @@ fn add_center_to_parent_and_write_queue(
                 (top_path, node.clone().into())
             } else {
                 let hash = node.compute_hash();
-                nodes_to_write.push((center_side.path.clone(), node.clone().into()));
+                nodes_to_write.push((center_side.path, node.clone().into()));
                 (
                     top_path,
                     ExtensionNode {
@@ -187,9 +189,11 @@ where
                 &mut left_side,
             )?;
             let temp = CenterSide::from_stack_element(left_side);
-            left_side = trie_stack.pop().ok_or(TrieGenerationError::TrieStackEmpty(
-                center_side.path.clone(),
-            ))?;
+            left_side = trie_stack
+                .pop()
+                .ok_or(TrieGenerationError::TrieStackEmpty(Box::new(
+                    center_side.path,
+                )))?;
             center_side = temp;
         }
 
@@ -213,9 +217,11 @@ where
 
     while !is_child(&center_side.path, &left_side) {
         let temp = CenterSide::from_stack_element(left_side);
-        left_side = trie_stack.pop().ok_or(TrieGenerationError::TrieStackEmpty(
-            center_side.path.clone(),
-        ))?;
+        left_side = trie_stack
+            .pop()
+            .ok_or(TrieGenerationError::TrieStackEmpty(Box::new(
+                center_side.path,
+            )))?;
         add_center_to_parent_and_write_queue(&mut nodes_to_write, &temp, &mut left_side)?;
     }
 
@@ -430,7 +436,7 @@ mod test {
         let expected_data = expected_data.lock().unwrap();
         for (k, v) in expected_data.iter() {
             // skip flatkeyvalues, we don't want them
-            if k.last().cloned() == Some(16) {
+            if k.as_ref().last().cloned() == Some(16) {
                 continue;
             }
             assert!(computed_data.contains_key(k));

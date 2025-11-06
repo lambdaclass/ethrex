@@ -42,10 +42,7 @@ impl TrieIterator {
             node: NodeRef,
             new_stack: &mut Vec<(Nibbles, NodeRef)>,
         ) -> Result<(), TrieError> {
-            let Some(mut next_node) = node
-                .get_node_checked(db, prefix_nibbles.clone())
-                .ok()
-                .flatten()
+            let Some(mut next_node) = node.get_node_checked(db, prefix_nibbles).ok().flatten()
             else {
                 return Ok(());
             };
@@ -97,7 +94,7 @@ impl TrieIterator {
                             first_ge(
                                 db,
                                 new_stacked,
-                                target_nibbles.clone(),
+                                target_nibbles,
                                 extension_node.child.clone(),
                                 new_stack,
                             )
@@ -144,7 +141,7 @@ impl Iterator for TrieIterator {
         // Fetch the last node in the stack
         let (mut path, next_node_ref) = self.stack.pop()?;
         let next_node = next_node_ref
-            .get_node_checked(self.db.as_ref(), path.clone())
+            .get_node_checked(self.db.as_ref(), path)
             .ok()
             .flatten()?;
         match &(*next_node) {
@@ -152,7 +149,7 @@ impl Iterator for TrieIterator {
                 // Add all children to the stack (in reverse order so we process first child frist)
                 for (choice, child) in branch_node.choices.iter().enumerate().rev() {
                     if child.is_valid() {
-                        let mut child_path = path.clone();
+                        let mut child_path = path;
                         child_path.append(choice as u8);
                         self.stack.push((child_path, child.clone()))
                     }
@@ -162,8 +159,7 @@ impl Iterator for TrieIterator {
                 // Update path
                 path.extend(&extension_node.prefix);
                 // Add child to the stack
-                self.stack
-                    .push((path.clone(), extension_node.child.clone()));
+                self.stack.push((path, extension_node.child.clone()));
             }
             Node::Leaf(leaf) => {
                 path.extend(&leaf.partial);
