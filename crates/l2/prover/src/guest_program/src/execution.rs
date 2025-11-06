@@ -4,6 +4,7 @@ use crate::output::ProgramOutput;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
+    validate_state_root,
 };
 use ethrex_common::types::AccountUpdate;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
@@ -123,35 +124,134 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         );
     }
 
-    stateless_validation_l1(&blocks, execution_witness, elasticity_multiplier, chain_id)
+    stateless_validation_l1(blocks, execution_witness, elasticity_multiplier, chain_id)
 }
 
 pub fn stateless_validation_l1(
-    blocks: &[Block],
+    blocks: Vec<Block>,
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    let StatelessResult {
-        initial_state_hash,
-        final_state_hash,
-        last_block_hash,
-        non_privileged_count,
-        ..
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, None)?;
+    let guest_program_state: GuestProgramState = execution_witness
+        .try_into()
+        .map_err(StatelessExecutionError::GuestProgramState)?;
+
+    let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
+
+    let chain_config = wrapped_db.get_chain_config().map_err(|_| {
+        StatelessExecutionError::Internal("No chain config in execution witness".to_string())
+    })?;
+
+    // Hashing is an expensive operation in zkVMs, this way we avoid hashing twice
+    // (once in get_first_invalid_block_hash(), later in validate_block()).
+    wrapped_db.initialize_block_header_hashes(&blocks)?;
+
+    // Validate execution witness' block hashes, except parent block hash (latest block hash).
+    if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
+        return Err(StatelessExecutionError::InvalidBlockHash(
+            invalid_block_header,
+        ));
+    }
+
+    // Validate the initial state
+    let parent_block_header = wrapped_db
+        .get_block_parent_header(
+            blocks
+                .first()
+                .ok_or(StatelessExecutionError::EmptyBatchError)?
+                .header
+                .number,
+        )
+        .map_err(StatelessExecutionError::GuestProgramState)?;
+
+    let initial_state_hash = wrapped_db
+        .state_trie_root()
+        .map_err(StatelessExecutionError::GuestProgramState)?;
+
+    if initial_state_hash != parent_block_header.state_root {
+        return Err(StatelessExecutionError::InvalidInitialStateTrie);
+    }
+
+    // Execute blocks
+    let mut parent_block_header = &parent_block_header;
+    let mut acc_account_updates: BTreeMap<Address, AccountUpdate> = BTreeMap::new();
+    let mut acc_receipts = Vec::new();
+    let mut non_privileged_count = 0;
+
+    for block in blocks.iter() {
+        // Validate the block
+        validate_block(
+            block,
+            parent_block_header,
+            &chain_config,
+            elasticity_multiplier,
+        )
+        .map_err(StatelessExecutionError::BlockValidationError)?;
+
+        let mut vm = Evm::new_for_l1(wrapped_db.clone());
+
+        let result = vm
+            .execute_block(block)
+            .map_err(StatelessExecutionError::EvmError)?;
+
+        let account_updates = vm
+            .get_state_transitions()
+            .map_err(StatelessExecutionError::EvmError)?;
+
+        // Update db for the next block
+        wrapped_db
+            .apply_account_updates(&account_updates)
+            .map_err(StatelessExecutionError::GuestProgramState)?;
+
+        // Update acc_account_updates
+        for account in account_updates {
+            let address = account.address;
+            if let Some(existing) = acc_account_updates.get_mut(&address) {
+                existing.merge(account);
+            } else {
+                acc_account_updates.insert(address, account);
+            }
+        }
+
+        validate_gas_used(&result.receipts, &block.header)
+            .map_err(StatelessExecutionError::GasValidationError)?;
+
+        validate_receipts_root(&block.header, &result.receipts)
+            .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
+
+        // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
+        validate_requests_hash(&block.header, &chain_config, &result.requests)
+            .map_err(StatelessExecutionError::RequestsRootValidationError)?;
+
+        non_privileged_count += block.body.transactions.len();
+        acc_receipts.push(result.receipts);
+        parent_block_header = &block.header;
+    }
+
+    let final_state_root = wrapped_db
+        .state_trie_root()
+        .map_err(StatelessExecutionError::GuestProgramState)?;
+
+    let last_block = blocks
+        .last()
+        .ok_or(StatelessExecutionError::EmptyBatchError)?;
+
+    validate_state_root(&last_block.header, final_state_root)
+        .map_err(|_chain_err| StatelessExecutionError::InvalidFinalStateTrie)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
-        final_state_hash,
+        final_state_hash: final_state_root,
         #[cfg(feature = "l2")]
         l1messages_merkle_root: H256::zero(),
         #[cfg(feature = "l2")]
         privileged_transactions_hash: H256::zero(),
         #[cfg(feature = "l2")]
         blob_versioned_hash: H256::zero(),
-        last_block_hash,
+        last_block_hash: last_block.hash(),
         chain_id: chain_id.into(),
-        non_privileged_count,
+        non_privileged_count: U256::from(non_privileged_count),
     })
 }
 
