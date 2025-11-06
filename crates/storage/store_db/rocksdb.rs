@@ -135,8 +135,9 @@ enum FKVGeneratorControlMessage {
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    db: canopydb::Environment,
-    dbs: Arc<BTreeMap<String, canopydb::Database>>,
+    // We only need this to exist
+    _env: canopydb::Environment,
+    db: Arc<canopydb::Database>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
@@ -175,28 +176,24 @@ impl Store {
             CF_MISC_VALUES,
         ];
 
-        let mut dbs = BTreeMap::new();
+        let db = Arc::new(environment.get_or_create_database("").unwrap());
+        // Write outside Writer, because we still didn't start that
+        let tx = db.begin_write().unwrap();
 
         // Add all existing CFs (we must open them to be able to drop obsolete ones later)
         for cf in expected_column_families {
-            // default is handled automatically
-            let db_handle = environment.get_or_create_database(cf).unwrap();
-            // Write outside Writer, because we still didn't start that
-            let tx = db_handle.begin_write().unwrap();
-            tx.get_or_create_tree(b"").unwrap();
-            tx.commit().unwrap();
-            dbs.insert(cf.to_string(), db_handle);
+            tx.get_or_create_tree(cf.as_bytes()).unwrap();
         }
+        tx.commit().unwrap();
 
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
         let (writer_tx, writer_rx) = std::sync::mpsc::sync_channel(0);
 
         let last_written = {
-            let db = dbs.get(CF_MISC_VALUES).unwrap();
             let transaction = db.begin_read().unwrap();
             let mut last_written = transaction
-                .get_tree(b"")
+                .get_tree(CF_MISC_VALUES.as_bytes())
                 .unwrap()
                 .unwrap()
                 .get(b"last_written")
@@ -210,8 +207,8 @@ impl Store {
         };
 
         let store = Self {
-            db: environment,
-            dbs: Arc::new(dbs),
+            _env: environment,
+            db,
             trie_cache: Default::default(),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
@@ -288,7 +285,6 @@ impl Store {
 
         let writer = Writer {
             db: store.db.clone(),
-            dbs: store.dbs.clone(),
         };
 
         std::thread::spawn(move || {
@@ -326,16 +322,19 @@ impl Store {
     }
 
     // Helper method for async reads
-    async fn read_async<K>(&self, cf_name: &str, key: K) -> Result<Option<Vec<u8>>, StoreError>
+    async fn read_async<K>(
+        &self,
+        cf_name: &'static str,
+        key: K,
+    ) -> Result<Option<Vec<u8>>, StoreError>
     where
         K: AsRef<[u8]> + Send + 'static,
     {
-        let dbs = self.dbs.clone();
-        let cf_name = cf_name.to_string();
+        let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            let transaction = dbs.get(&cf_name).unwrap().begin_read().unwrap();
-            let tree = transaction.get_tree(b"").unwrap().unwrap();
+            let transaction = db.begin_read().unwrap();
+            let tree = transaction.get_tree(cf_name.as_bytes()).unwrap().unwrap();
             tree.get(key.as_ref())
                 .map(|b| b.map(|b| b.to_vec()))
                 .map_err(|e| StoreError::Custom(format!("CanopyDB read error: {}", e)))
@@ -345,12 +344,12 @@ impl Store {
     }
 
     // Helper method for sync reads
-    fn read_sync<K>(&self, cf_name: &str, key: K) -> Result<Option<Vec<u8>>, StoreError>
+    fn read_sync<K>(&self, cf_name: &'static str, key: K) -> Result<Option<Vec<u8>>, StoreError>
     where
         K: AsRef<[u8]>,
     {
-        let transaction = self.dbs.get(cf_name).unwrap().begin_read().unwrap();
-        let tree = transaction.get_tree(b"").unwrap().unwrap();
+        let transaction = self.db.begin_read().unwrap();
+        let tree = transaction.get_tree(cf_name.as_bytes()).unwrap().unwrap();
         tree.get(key.as_ref())
             .map(|b| b.map(|b| b.to_vec()))
             .map_err(|e| StoreError::Custom(format!("CanopyDB read error: {}", e)))
@@ -386,7 +385,7 @@ impl Store {
     // Helper method for bulk reads
     async fn read_bulk_async<K, V, F>(
         &self,
-        cf_name: &str,
+        cf_name: &'static str,
         keys: Vec<K>,
         deserialize_fn: F,
     ) -> Result<Vec<V>, StoreError>
@@ -395,13 +394,11 @@ impl Store {
         V: Send + 'static,
         F: Fn(Vec<u8>) -> Result<V, StoreError> + Send + 'static,
     {
-        let dbs = self.dbs.clone();
-        let cf_name = cf_name.to_string();
+        let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = dbs.get(&cf_name).unwrap();
-            let transaction = cf.begin_read().unwrap();
-            let tree = transaction.get_tree(b"").unwrap().unwrap();
+            let transaction = db.begin_read().unwrap();
+            let tree = transaction.get_tree(cf_name.as_bytes()).unwrap().unwrap();
             let mut results = Vec::with_capacity(keys.len());
 
             for key in keys {
@@ -437,13 +434,11 @@ impl Store {
                 return Ok(());
             }
             // We use sequential write here, so it should be deadlock-free
-            let cf_flatkeyvalue = self
-                .dbs
-                .get(CF_FLATKEYVALUE)
+            let write_tx = self.db.begin_write().unwrap();
+            let mut flatkeyvalue = write_tx
+                .get_tree(CF_FLATKEYVALUE.as_bytes())
                 .unwrap()
-                .begin_write()
                 .unwrap();
-            let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
             flatkeyvalue.delete_range(last_written..vec![0xff])?;
             trace!("Finished removing initial FlatKeyValue entries...");
         }
@@ -479,11 +474,11 @@ impl Store {
             let mut ctr = 0;
             let mut batch = Vec::new();
 
+            // TODO: let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
             let mut iter = {
                 let db = Box::new(
                     RocksDBTrieDB::new(
                         self.db.clone(),
-                        self.dbs.clone(),
                         self.writer_tx.clone(),
                         CF_TRIE_NODES,
                         None,
@@ -523,11 +518,11 @@ impl Store {
                     ctr = 0;
                 }
 
+                // TODO: open_direct_storage_trie(account_hash, account_state.storage_root)
                 let mut iter_inner = {
                     let db = Box::new(
                         RocksDBTrieDB::new(
                             self.db.clone(),
-                            self.dbs.clone(),
                             self.writer_tx.clone(),
                             CF_TRIE_NODES,
                             Some(account_hash),
@@ -1091,17 +1086,14 @@ impl StoreEngine for Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        let dbs = self.dbs.clone();
+        let tx = self.db.begin_read().unwrap();
         let tx_hash_key = transaction_hash.as_bytes().to_vec();
 
         tokio::task::spawn_blocking(move || {
-            let [cf_transaction_locations, cf_canonical] =
-                open_cfs(&dbs, [CF_TRANSACTION_LOCATIONS, CF_CANONICAL_BLOCK_HASHES])?;
-
-            let tl_tx = cf_transaction_locations.begin_read().unwrap();
-            let canonical_tx = cf_canonical.begin_read().unwrap();
-
-            let tl_tree = tl_tx.get_tree(b"").unwrap().unwrap();
+            let tl_tree = tx
+                .get_tree(CF_TRANSACTION_LOCATIONS.as_bytes())
+                .unwrap()
+                .unwrap();
 
             let mut iter = tl_tree.prefix(&tx_hash_key).unwrap();
             let mut transaction_locations = Vec::new();
@@ -1118,7 +1110,10 @@ impl StoreEngine for Store {
                 return Ok(None);
             }
 
-            let canonical_tree = canonical_tx.get_tree(b"").unwrap().unwrap();
+            let canonical_tree = tx
+                .get_tree(CF_CANONICAL_BLOCK_HASHES.as_bytes())
+                .unwrap()
+                .unwrap();
 
             // If there are multiple locations, filter by the canonical chain
             for (block_number, block_hash, index) in transaction_locations {
@@ -1388,7 +1383,6 @@ impl StoreEngine for Store {
         // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            self.dbs.clone(),
             self.writer_tx.clone(),
             CF_TRIE_NODES,
             None,
@@ -1411,7 +1405,6 @@ impl StoreEngine for Store {
         // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            self.dbs.clone(),
             self.writer_tx.clone(),
             CF_TRIE_NODES,
             None,
@@ -1437,7 +1430,6 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            self.dbs.clone(),
             self.writer_tx.clone(),
             CF_TRIE_NODES,
             Some(hashed_address),
@@ -1449,7 +1441,6 @@ impl StoreEngine for Store {
     fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            self.dbs.clone(),
             self.writer_tx.clone(),
             CF_TRIE_NODES,
             None,
@@ -1460,8 +1451,7 @@ impl StoreEngine for Store {
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
-            self.dbs.clone(),
-            CF_TRIE_NODES,
+            self.db.clone(),
             None,
             self.last_written()?,
         )?);
@@ -1485,8 +1475,7 @@ impl StoreEngine for Store {
         state_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
-            self.dbs.clone(),
-            CF_TRIE_NODES,
+            self.db.clone(),
             None,
             self.last_written()?,
         )?);
@@ -1865,28 +1854,8 @@ impl StoreEngine for Store {
     }
 }
 
-/// Open column families
-fn open_cfs<'a, const N: usize>(
-    dbs: &'a BTreeMap<String, canopydb::Database>,
-    names: [&str; N],
-) -> Result<[&'a canopydb::Database; N], StoreError> {
-    let mut handles = Vec::with_capacity(N);
-
-    for name in names {
-        handles
-            .push(dbs.get(name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family '{}' not found", name))
-            })?);
-    }
-
-    handles
-        .try_into()
-        .map_err(|_| StoreError::Custom("Unexpected number of column families".to_string()))
-}
-
 struct Writer {
-    db: canopydb::Environment,
-    dbs: Arc<BTreeMap<String, canopydb::Database>>,
+    db: Arc<canopydb::Database>,
 }
 
 pub(crate) enum WriterMessage {
@@ -1942,12 +1911,10 @@ impl Writer {
         V: AsRef<[u8]> + Send + 'static,
     {
         trace!(%cf_name, "Write async called");
-        let dbs = self.dbs.clone();
-        let cf_name = cf_name.to_string();
 
-        let transaction = dbs.get(&cf_name).unwrap().begin_write().unwrap();
+        let transaction = self.db.begin_write().unwrap();
         {
-            let mut tree = transaction.get_tree(b"").unwrap().unwrap();
+            let mut tree = transaction.get_tree(cf_name.as_bytes()).unwrap().unwrap();
             tree.insert(key.as_ref(), value.as_ref())
                 .map_err(|e| StoreError::Custom(format!("CanopyDB write error: {}", e)))?;
         }
@@ -1964,24 +1931,24 @@ impl Writer {
         batch_ops: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         trace!("Write batch async called");
-        let db = self.db.clone();
-        let dbs = self.dbs.clone();
-        let mut transactions = BTreeMap::new();
+        let transaction = self.db.begin_write().unwrap();
+        let cfs_len = {
+            let mut trees = BTreeMap::new();
 
-        for (db_name, key, value) in batch_ops {
-            let transaction = transactions
-                .entry(db_name)
-                .or_insert_with_key(|name| dbs.get(*name).unwrap().begin_write().unwrap());
+            for (cf_name, key, value) in batch_ops {
+                let tree = trees
+                    .entry(cf_name)
+                    .or_insert_with(|| transaction.get_tree(cf_name.as_bytes()).unwrap().unwrap());
 
-            let mut tree = transaction.get_tree(b"").unwrap().unwrap();
-            if value.is_empty() {
-                tree.delete(key.as_ref()).unwrap();
-            } else {
-                tree.insert(key.as_ref(), value.as_ref()).unwrap();
+                if value.is_empty() {
+                    tree.delete(key.as_ref()).unwrap();
+                } else {
+                    tree.insert(key.as_ref(), value.as_ref()).unwrap();
+                }
             }
-        }
-        let cfs_len = transactions.len();
-        db.group_commit(transactions.into_values(), false).unwrap();
+            trees.len()
+        };
+        transaction.commit().unwrap();
         trace!(%cfs_len, "Write batch async finished");
         Ok(())
     }
@@ -1992,16 +1959,17 @@ impl Writer {
         batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         trace!("Write FKV batch called");
-        let cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
-        let cf_flatkeyvalue = self
-            .dbs
-            .get(CF_FLATKEYVALUE)
-            .unwrap()
-            .begin_write()
-            .unwrap();
+        let transaction = self.db.begin_write().unwrap();
+
         {
-            let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-            let mut flatkeyvalue_tree = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+            let mut misc_tree = transaction
+                .get_tree(CF_MISC_VALUES.as_bytes())
+                .unwrap()
+                .unwrap();
+            let mut flatkeyvalue_tree = transaction
+                .get_tree(CF_FLATKEYVALUE.as_bytes())
+                .unwrap()
+                .unwrap();
             for (key, value) in batch {
                 flatkeyvalue_tree
                     .insert(key.as_ref(), value.as_ref())
@@ -2009,9 +1977,7 @@ impl Writer {
             }
             misc_tree.insert(b"last_written", &last_written).unwrap();
         }
-        self.db
-            .group_commit([cf_flatkeyvalue, cf_misc], false)
-            .unwrap();
+        transaction.commit().unwrap();
 
         trace!("Write FKV batch finished");
         Ok(())
@@ -2019,14 +1985,12 @@ impl Writer {
 
     fn clear_snap_state(&self) -> Result<(), StoreError> {
         trace!("Clear snap state called");
-        let dbs = self.dbs.clone();
-
-        let cf = dbs
-            .get(CF_SNAP_STATE)
-            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-
-        let tx = cf.begin_write().unwrap();
-        tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
+        let tx = self.db.begin_write().unwrap();
+        tx.get_tree(CF_SNAP_STATE.as_bytes())
+            .unwrap()
+            .unwrap()
+            .clear()
+            .unwrap();
         tx.commit().unwrap();
         trace!("Clear snap state finished");
         Ok(())
@@ -2034,14 +1998,12 @@ impl Writer {
 
     fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
         trace!("Clear fullsync headers called");
-        let dbs = self.dbs.clone();
-
-        let cf = dbs
-            .get(CF_FULLSYNC_HEADERS)
-            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-
-        let tx = cf.begin_write().unwrap();
-        tx.get_tree(b"").unwrap().unwrap().clear().unwrap();
+        let tx = self.db.begin_write().unwrap();
+        tx.get_tree(CF_FULLSYNC_HEADERS.as_bytes())
+            .unwrap()
+            .unwrap()
+            .clear()
+            .unwrap();
         tx.commit().unwrap();
         trace!("Clear fullsync headers finished");
         Ok(())

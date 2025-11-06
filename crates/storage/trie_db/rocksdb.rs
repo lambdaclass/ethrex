@@ -1,8 +1,8 @@
-use canopydb::{Database, Environment};
+use canopydb::Database;
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     error::StoreError,
@@ -13,7 +13,7 @@ use crate::{
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    dbs: Arc<BTreeMap<String, Database>>,
+    db: Arc<Database>,
     writer_tx: std::sync::mpsc::SyncSender<(
         WriterMessage,
         std::sync::mpsc::SyncSender<Result<(), StoreError>>,
@@ -28,8 +28,7 @@ pub struct RocksDBTrieDB {
 
 impl RocksDBTrieDB {
     pub fn new(
-        _db: Environment,
-        dbs: Arc<BTreeMap<String, Database>>,
+        db: Arc<Database>,
         writer_tx: std::sync::mpsc::SyncSender<(
             WriterMessage,
             std::sync::mpsc::SyncSender<Result<(), StoreError>>,
@@ -38,34 +37,15 @@ impl RocksDBTrieDB {
         address_prefix: Option<H256>,
         last_written: Vec<u8>,
     ) -> Result<Self, TrieError> {
-        // Verify column family exists
-        if dbs.get(cf_name).is_none() {
-            return Err(TrieError::DbError(anyhow::anyhow!(
-                "Column family not found: {}",
-                cf_name
-            )));
-        }
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
 
         Ok(Self {
-            dbs,
+            db,
             writer_tx,
             cf_name: cf_name.to_string(),
             address_prefix,
             last_computed_flatkeyvalue,
         })
-    }
-
-    fn cf_handle(&self) -> Result<&Database, TrieError> {
-        self.dbs
-            .get(&self.cf_name)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
-    }
-
-    fn cf_handle_flatkeyvalue(&self) -> Result<&Database, TrieError> {
-        self.dbs
-            .get(CF_FLATKEYVALUE)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
     fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
@@ -80,19 +60,15 @@ impl TrieDB for RocksDBTrieDB {
         self.last_computed_flatkeyvalue >= key
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let tx = self.db.begin_read().unwrap();
         let cf = if key.is_leaf() {
-            self.cf_handle_flatkeyvalue()?
+            tx.get_tree(CF_FLATKEYVALUE.as_bytes()).unwrap().unwrap()
         } else {
-            self.cf_handle()?
+            tx.get_tree(self.cf_name.as_bytes()).unwrap().unwrap()
         };
         let db_key = self.make_key(key);
 
         let res = cf
-            .begin_read()
-            .unwrap()
-            .get_tree(b"")
-            .unwrap()
-            .unwrap()
             .get(&db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?
             .map(|b| b.to_vec());
