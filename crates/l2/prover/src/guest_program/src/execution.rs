@@ -135,7 +135,7 @@ pub fn stateless_validation_l1(
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let guest_program_state: GuestProgramState;
-    report_cycles!("GuestProgramState::from(execution_witness)", {
+    report_cycles!("guest_program_state_initialization", {
         guest_program_state = execution_witness
             .try_into()
             .map_err(StatelessExecutionError::GuestProgramState)?;
