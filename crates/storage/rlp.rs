@@ -46,7 +46,7 @@ impl<T> Rlp<T> {
         &self.0
     }
 
-    pub fn into_bytes(&self) -> Vec<u8> {
+    pub fn into_bytes(self) -> Vec<u8> {
         self.0
     }
 }
