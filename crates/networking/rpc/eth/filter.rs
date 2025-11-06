@@ -533,6 +533,7 @@ mod tests {
         // Start a test server to start the cleanup
         // task in the background
         let server_handle = start_test_api().await;
+        server_handle.detach();
 
         // Give the server some time to start
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -600,7 +601,5 @@ mod tests {
             ),
             "Filter was expected to be deleted by background job, but it still exists"
         );
-
-        server_handle.abort();
     }
 }

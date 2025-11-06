@@ -31,7 +31,7 @@ Target crate: `crates/storage`
 - [crates/storage/trie_db/rocksdb_locked.rs:19](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/trie_db/rocksdb_locked.rs#L19) — `RocksDBLockedTrieDB::new` leaks an `Arc` to force `'static` lifetimes and reclaims it in `Drop`; the unsafe `Box::from_raw` dance is fragile if constructors fail mid-way or clone counts drift.
 
 ## 3. Concurrency Observations
-- Heavy reliance on `tokio::task::spawn_blocking` (18 call sites) to wrap synchronous RocksDB/libmdbx transactions; frequent per-operation thread handoffs can saturate Tokio’s blocking pool under load.
+- Heavy reliance on `smol::unblock` (18 call sites) to wrap synchronous RocksDB/libmdbx transactions; frequent per-operation thread handoffs can saturate Tokio’s blocking pool under load.
 - The public `Store` facade exposes async APIs backed by synchronous locks (`Arc<RwLock<_>>`) and snapshot tries; no actor-based isolation yet, so concurrent callers share DB handles directly.
 - Locked trie variants obtain `'static` snapshots by leaking database Arcs; while Drop repairs the leak, panics before Drop or future refactors could strand snapshots and exhaust file handles.
 

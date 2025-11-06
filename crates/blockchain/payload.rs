@@ -375,14 +375,13 @@ impl Blockchain {
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
             let self_clone = self.clone();
-            let building_task =
-                tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
+            let building_task = smol::unblock(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
             // TODO(#5011): this doesn't stop the building task, but only keeps it running in the background,
             //   which wastes CPU resources.
             match cancel_token.run_until_cancelled(building_task).await {
                 Some(Ok(current_res)) => {
-                    res = current_res?;
+                    res = current_res;
                 }
                 Some(Err(err)) => {
                     warn!(%err, "Payload-building task panicked");

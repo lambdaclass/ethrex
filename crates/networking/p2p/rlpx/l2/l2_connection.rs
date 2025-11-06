@@ -302,7 +302,7 @@ async fn should_process_new_block(
 
     let msg_signature = msg.signature;
     let recovered_lead_sequencer =
-        tokio::task::spawn_blocking(move || recover_address(msg_signature, block_hash))
+        smol::unblock(move || recover_address(msg_signature, block_hash))
             .await
             .map_err(|_| {
                 PeerConnectionError::InternalError("Recover Address task failed".to_string())

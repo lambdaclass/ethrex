@@ -23,6 +23,7 @@ hex.workspace = true
 rustc-hash.workspace = true
 tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
+smol.workspace = true
 
 ethrex-metrics = { path = "./metrics", default-features = false }
 

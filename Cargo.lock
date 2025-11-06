@@ -3500,6 +3500,7 @@ dependencies = [
  "secp256k1",
  "serde_json",
  "sha3",
+ "smol",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",

@@ -1239,7 +1239,7 @@ impl<T> From<SendError<T>> for SyncError {
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_state_root");
-    let computed_state_root = tokio::task::spawn_blocking(move || {
+    let computed_state_root = smol::unblock(move || {
         Trie::compute_hash_from_unsorted_iter(
             store
                 .iter_accounts(state_root)
@@ -1247,8 +1247,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
                 .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
         )
     })
-    .await
-    .expect("We should be able to create threads");
+    .await;
 
     let tree_validated = state_root == computed_state_root;
     if tree_validated {
@@ -1366,7 +1365,7 @@ async fn insert_accounts(
 
         let store_clone = store.clone();
         let current_state_root: Result<H256, SyncError> =
-            tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
+            smol::unblock(move || -> Result<H256, SyncError> {
                 let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
 
                 for (account_hash, account) in account_states_snapshot {
@@ -1423,7 +1422,7 @@ async fn insert_storages(
 
         let store_clone = store.clone();
         info!("Starting compute of account_storages_snapshot");
-        let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
+        let storage_trie_node_changes = smol::unblock(move || {
             let store: Store = store_clone;
 
             account_storages_snapshot

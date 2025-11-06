@@ -16,7 +16,7 @@ pub async fn process_account_range_request(
     request: GetAccountRange,
     store: Store,
 ) -> Result<AccountRange, StoreError> {
-    tokio::task::spawn_blocking(move || {
+    smol::unblock(move || {
         let mut accounts = vec![];
         let mut bytes_used = 0;
         for (hash, account) in store.iter_accounts_from(request.root_hash, request.starting_hash)? {
@@ -40,14 +40,13 @@ pub async fn process_account_range_request(
         })
     })
     .await
-    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
 }
 
 pub async fn process_storage_ranges_request(
     request: GetStorageRanges,
     store: Store,
 ) -> Result<StorageRanges, StoreError> {
-    tokio::task::spawn_blocking(move || {
+    smol::unblock(move || {
         let mut slots = vec![];
         let mut proof = vec![];
         let mut bytes_used = 0;
@@ -102,7 +101,6 @@ pub async fn process_storage_ranges_request(
         })
     })
     .await
-    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
 }
 
 pub fn process_byte_codes_request(
@@ -130,7 +128,7 @@ pub async fn process_trie_nodes_request(
     request: GetTrieNodes,
     store: Store,
 ) -> Result<TrieNodes, PeerConnectionError> {
-    tokio::task::spawn_blocking(move || {
+    smol::unblock(move || {
         let mut nodes = vec![];
         let mut remaining_bytes = request.bytes;
         for paths in request.paths {
@@ -158,7 +156,6 @@ pub async fn process_trie_nodes_request(
         })
     })
     .await
-    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
 }
 
 // Helper method to convert proof to RLP-encodable format

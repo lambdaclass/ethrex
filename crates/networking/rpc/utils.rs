@@ -370,7 +370,7 @@ pub mod test_utils {
     // ...
     // server_handle.abort();
     // ```
-    pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
+    pub async fn start_test_api() -> smol::Task<()> {
         let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
         let ws_addr: SocketAddr = "127.0.0.1:8546".parse().unwrap();
         let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
