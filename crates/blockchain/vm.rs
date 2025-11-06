@@ -6,7 +6,7 @@ use ethrex_common::{
     },
 };
 use ethrex_storage::Store;
-use ethrex_vm::{EvmError, VmDatabase};
+use ethrex_vm::{EvmError, VmDatabase, system_contracts::SYSTEM_CONTRACTS};
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -78,8 +78,11 @@ impl StoreVmDatabase {
                 COMMON_SLOTS.get_or_init(|| slots)
             }
         };
-
         let mut to_fetch: HashMap<Address, HashSet<H256>> = Default::default();
+        for contract in SYSTEM_CONTRACTS {
+            to_fetch.insert(contract.address, HashSet::new());
+        }
+
         for (tx, sender) in txns {
             to_fetch.entry(*sender).or_default();
             match tx.to() {
