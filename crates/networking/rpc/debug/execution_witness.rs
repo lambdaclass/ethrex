@@ -89,7 +89,10 @@ pub fn execution_witness_from_rpc_chain_config(
     let keys: Vec<_> = rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect();
     let storage_roots: Vec<_> = keys
         .iter()
-        .filter(|k| k.len() == 20)
+        .filter(|k| {
+            dbg!(k);
+            k.len() == 20
+        })
         .map(|k| Address::from_slice(k))
         .filter_map(|a| {
             let Some(encoded_account) = state_trie.get(&hash_address(&a)).unwrap() else {
