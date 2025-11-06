@@ -201,14 +201,12 @@ impl LEVM {
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             gas_price,
             block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
             tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
-            difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
@@ -476,7 +474,6 @@ pub fn generic_system_contract_levm(
         base_fee_per_gas: U256::zero(),
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
         block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
@@ -699,14 +696,12 @@ fn env_from_generic(
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
         gas_price,
         block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: header.blob_gas_used.map(U256::from),
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
         tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
         tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,
-        difficulty: header.difficulty,
         is_privileged: false,
     })
 }
