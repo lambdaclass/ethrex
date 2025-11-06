@@ -39,7 +39,7 @@ impl RocksDBLockedTrieDB {
             TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
         })?;
 
-        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
+        let last_computed_flatkeyvalue = Nibbles::from_hex(&last_written);
 
         // Create snapshot for consistent reads
         let snapshot = db.snapshot();

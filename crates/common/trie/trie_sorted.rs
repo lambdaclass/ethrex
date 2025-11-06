@@ -68,7 +68,7 @@ fn is_child(this: &Nibbles, other: &StackElement) -> bool {
 fn create_parent(center_side: &CenterSide, closest_nibbles: &Nibbles) -> StackElement {
     let new_parent_nibbles = center_side
         .path
-        .slice(0, center_side.path.count_prefix(closest_nibbles));
+        .slice_range(0, center_side.path.count_prefix(closest_nibbles));
     StackElement {
         path: new_parent_nibbles,
         element: BranchNode {
@@ -250,7 +250,7 @@ where
         match node_hash_ref {
             Node::Branch(_) => {
                 let node: Node = ExtensionNode {
-                    prefix: Nibbles::from_hex(vec![index as u8]),
+                    prefix: Nibbles::from_hex(&[index as u8]),
                     child,
                 }
                 .into();

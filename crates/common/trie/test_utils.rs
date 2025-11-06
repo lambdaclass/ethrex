@@ -48,7 +48,7 @@ macro_rules! pmt_node {
         $( offset $offset:expr )?
     ) => {{
         #[allow(unused_variables)]
-        let prefix = $crate::nibbles::Nibbles::from_hex($prefix.to_vec());
+        let prefix = $crate::nibbles::Nibbles::from_hex(&$prefix.to_vec());
 
         $crate::node::ExtensionNode::new(
             prefix.clone(),

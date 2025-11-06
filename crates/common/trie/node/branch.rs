@@ -207,7 +207,7 @@ impl BranchNode {
         let new_node = match (children.len(), !self.value.is_empty()) {
             // If this node still has a value but no longer has children, convert it into a leaf node
             (0, true) => NodeRemoveResult::New(
-                LeafNode::new(Nibbles::from_hex(vec![16]), mem::take(&mut self.value)).into(),
+                LeafNode::new(Nibbles::from_hex(&[16]), mem::take(&mut self.value)).into(),
             ),
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
@@ -227,7 +227,7 @@ impl BranchNode {
                 let node = match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
-                        Nibbles::from_hex(vec![*choice_index as u8]),
+                        Nibbles::from_hex(&[*choice_index as u8]),
                         child_ref.clone(),
                     )
                     .into(),
@@ -339,8 +339,8 @@ mod test {
         let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0,16] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0,16] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { &[0,16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { &[0,16] => vec![0x34, 0x56, 0x78, 0x9A] },
             }
         };
 
@@ -361,8 +361,8 @@ mod test {
         let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0,16] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0,16] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { &[0,16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { &[0,16] => vec![0x34, 0x56, 0x78, 0x9A] },
             }
         };
 
@@ -378,8 +378,8 @@ mod test {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0, 16] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { &[0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { &[0, 16] => vec![0x34, 0x56, 0x78, 0x9A] },
             }
         };
         let path = Nibbles::from_bytes(&[2]);
@@ -396,8 +396,8 @@ mod test {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0, 16] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { &[0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { &[0, 16] => vec![0x34, 0x56, 0x78, 0x9A] },
             }
         };
 
@@ -415,8 +415,8 @@ mod test {
         let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0, 16] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { &[0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { &[0, 16] => vec![0x34, 0x56, 0x78, 0x9A] },
             }
         };
 
@@ -438,8 +438,8 @@ mod test {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0, 16] => vec![0x00] },
-                1 => leaf { vec![0, 16] => vec![0x10] },
+                0 => leaf { &[0, 16] => vec![0x00] },
+                1 => leaf { &[0, 16] => vec![0x10] },
             }
         };
 
@@ -456,9 +456,9 @@ mod test {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0, 16] => vec![0x00] },
-                1 => leaf { vec![0, 16] => vec![0x10] },
-                2 => leaf { vec![0, 16] => vec![0x10] },
+                0 => leaf { &[0, 16] => vec![0x00] },
+                1 => leaf { &[0, 16] => vec![0x10] },
+                2 => leaf { &[0, 16] => vec![0x10] },
             }
         };
 
@@ -475,7 +475,7 @@ mod test {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0, 16] => vec![0x00] },
+                0 => leaf { &[0, 16] => vec![0x00] },
             } with_leaf { &[0x01] => vec![0xFF] }
         };
 
@@ -492,7 +492,7 @@ mod test {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0, 16] => vec![0x00] },
+                0 => leaf { &[0, 16] => vec![0x00] },
             } with_leaf { &[0x1] => vec![0xFF] }
         };
 
@@ -509,8 +509,8 @@ mod test {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0, 16] => vec![0x00] },
-                1 => leaf { vec![0, 16] => vec![0x10] },
+                0 => leaf { &[0, 16] => vec![0x00] },
+                1 => leaf { &[0, 16] => vec![0x10] },
             } with_leaf { &[0x1] => vec![0xFF] }
         };
 
@@ -526,8 +526,8 @@ mod test {
     fn compute_hash_two_choices() {
         let node = pmt_node! { @(trie)
             branch {
-                2 => leaf { vec![0, 16] => vec![0x20] },
-                4 => leaf { vec![0, 16] => vec![0x40] },
+                2 => leaf { &[0, 16] => vec![0x20] },
+                4 => leaf { &[0, 16] => vec![0x40] },
             }
         };
 
@@ -544,22 +544,22 @@ mod test {
     fn compute_hash_all_choices() {
         let node = pmt_node! { @(trie)
             branch {
-                0x0 => leaf { vec![0, 16] => vec![0x00] },
-                0x1 => leaf { vec![0, 16] => vec![0x10] },
-                0x2 => leaf { vec![0, 16] => vec![0x20] },
-                0x3 => leaf { vec![0, 16] => vec![0x30] },
-                0x4 => leaf { vec![0, 16] => vec![0x40] },
-                0x5 => leaf { vec![0, 16] => vec![0x50] },
-                0x6 => leaf { vec![0, 16] => vec![0x60] },
-                0x7 => leaf { vec![0, 16] => vec![0x70] },
-                0x8 => leaf { vec![0, 16] => vec![0x80] },
-                0x9 => leaf { vec![0, 16] => vec![0x90] },
-                0xA => leaf { vec![0, 16] => vec![0xA0] },
-                0xB => leaf { vec![0, 16] => vec![0xB0] },
-                0xC => leaf { vec![0, 16] => vec![0xC0] },
-                0xD => leaf { vec![0, 16] => vec![0xD0] },
-                0xE => leaf { vec![0, 16] => vec![0xE0] },
-                0xF => leaf { vec![0, 16] => vec![0xF0] },
+                0x0 => leaf { &[0, 16] => vec![0x00] },
+                0x1 => leaf { &[0, 16] => vec![0x10] },
+                0x2 => leaf { &[0, 16] => vec![0x20] },
+                0x3 => leaf { &[0, 16] => vec![0x30] },
+                0x4 => leaf { &[0, 16] => vec![0x40] },
+                0x5 => leaf { &[0, 16] => vec![0x50] },
+                0x6 => leaf { &[0, 16] => vec![0x60] },
+                0x7 => leaf { &[0, 16] => vec![0x70] },
+                0x8 => leaf { &[0, 16] => vec![0x80] },
+                0x9 => leaf { &[0, 16] => vec![0x90] },
+                0xA => leaf { &[0, 16] => vec![0xA0] },
+                0xB => leaf { &[0, 16] => vec![0xB0] },
+                0xC => leaf { &[0, 16] => vec![0xC0] },
+                0xD => leaf { &[0, 16] => vec![0xD0] },
+                0xE => leaf { &[0, 16] => vec![0xE0] },
+                0xF => leaf { &[0, 16] => vec![0xF0] },
             }
         };
 
@@ -577,8 +577,8 @@ mod test {
     fn compute_hash_one_choice_with_value() {
         let node = pmt_node! { @(trie)
             branch {
-                2 => leaf { vec![0, 16] => vec![0x20] },
-                4 => leaf { vec![0, 16] => vec![0x40] },
+                2 => leaf { &[0, 16] => vec![0x20] },
+                4 => leaf { &[0, 16] => vec![0x40] },
             } with_leaf { &[0x1] => vec![0x1] }
         };
 
@@ -595,22 +595,22 @@ mod test {
     fn compute_hash_all_choices_with_value() {
         let node = pmt_node! { @(trie)
             branch {
-                0x0 => leaf { vec![0, 16] => vec![0x00] },
-                0x1 => leaf { vec![0, 16] => vec![0x10] },
-                0x2 => leaf { vec![0, 16] => vec![0x20] },
-                0x3 => leaf { vec![0, 16] => vec![0x30] },
-                0x4 => leaf { vec![0, 16] => vec![0x40] },
-                0x5 => leaf { vec![0, 16] => vec![0x50] },
-                0x6 => leaf { vec![0, 16] => vec![0x60] },
-                0x7 => leaf { vec![0, 16] => vec![0x70] },
-                0x8 => leaf { vec![0, 16] => vec![0x80] },
-                0x9 => leaf { vec![0, 16] => vec![0x90] },
-                0xA => leaf { vec![0, 16] => vec![0xA0] },
-                0xB => leaf { vec![0, 16] => vec![0xB0] },
-                0xC => leaf { vec![0, 16] => vec![0xC0] },
-                0xD => leaf { vec![0, 16] => vec![0xD0] },
-                0xE => leaf { vec![0, 16] => vec![0xE0] },
-                0xF => leaf { vec![0, 16] => vec![0xF0] },
+                0x0 => leaf { &[0, 16] => vec![0x00] },
+                0x1 => leaf { &[0, 16] => vec![0x10] },
+                0x2 => leaf { &[0, 16] => vec![0x20] },
+                0x3 => leaf { &[0, 16] => vec![0x30] },
+                0x4 => leaf { &[0, 16] => vec![0x40] },
+                0x5 => leaf { &[0, 16] => vec![0x50] },
+                0x6 => leaf { &[0, 16] => vec![0x60] },
+                0x7 => leaf { &[0, 16] => vec![0x70] },
+                0x8 => leaf { &[0, 16] => vec![0x80] },
+                0x9 => leaf { &[0, 16] => vec![0x90] },
+                0xA => leaf { &[0, 16] => vec![0xA0] },
+                0xB => leaf { &[0, 16] => vec![0xB0] },
+                0xC => leaf { &[0, 16] => vec![0xC0] },
+                0xD => leaf { &[0, 16] => vec![0xD0] },
+                0xE => leaf { &[0, 16] => vec![0xE0] },
+                0xF => leaf { &[0, 16] => vec![0xF0] },
             } with_leaf { &[0x1] => vec![0x1] }
         };
 
@@ -628,8 +628,8 @@ mod test {
     fn symmetric_encoding_a() {
         let node: Node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0,16] => vec![0x12, 0x34, 0x56, 0x78] },
-                1 => leaf { vec![0,16] => vec![0x34, 0x56, 0x78, 0x9A] },
+                0 => leaf { &[0,16] => vec![0x12, 0x34, 0x56, 0x78] },
+                1 => leaf { &[0,16] => vec![0x34, 0x56, 0x78, 0x9A] },
             }
         }
         .into();
@@ -640,11 +640,11 @@ mod test {
     fn symmetric_encoding_b() {
         let node: Node = pmt_node! { @(trie)
             branch {
-                0 => leaf { vec![0, 16] => vec![0x00] },
-                1 => leaf { vec![0, 16] => vec![0x10] },
+                0 => leaf { &[0, 16] => vec![0x00] },
+                1 => leaf { &[0, 16] => vec![0x10] },
                 3 => extension { [0], branch {
-                    0 => leaf { vec![16] => vec![0x01, 0x00] },
-                    1 => leaf { vec![16] => vec![0x01, 0x01] },
+                    0 => leaf { &[16] => vec![0x01, 0x00] },
+                    1 => leaf { &[16] => vec![0x01, 0x01] },
                 } },
             }
         }
@@ -656,22 +656,22 @@ mod test {
     fn symmetric_encoding_c() {
         let node: Node = pmt_node! { @(trie)
             branch {
-                0x0 => leaf { vec![0, 16] => vec![0x00] },
-                0x1 => leaf { vec![0, 16] => vec![0x10] },
-                0x2 => leaf { vec![0, 16] => vec![0x20] },
-                0x3 => leaf { vec![0, 16] => vec![0x30] },
-                0x4 => leaf { vec![0, 16] => vec![0x40] },
-                0x5 => leaf { vec![0, 16] => vec![0x50] },
-                0x6 => leaf { vec![0, 16] => vec![0x60] },
-                0x7 => leaf { vec![0, 16] => vec![0x70] },
-                0x8 => leaf { vec![0, 16] => vec![0x80] },
-                0x9 => leaf { vec![0, 16] => vec![0x90] },
-                0xA => leaf { vec![0, 16] => vec![0xA0] },
-                0xB => leaf { vec![0, 16] => vec![0xB0] },
-                0xC => leaf { vec![0, 16] => vec![0xC0] },
-                0xD => leaf { vec![0, 16] => vec![0xD0] },
-                0xE => leaf { vec![0, 16] => vec![0xE0] },
-                0xF => leaf { vec![0, 16] => vec![0xF0] },
+                0x0 => leaf { &[0, 16] => vec![0x00] },
+                0x1 => leaf { &[0, 16] => vec![0x10] },
+                0x2 => leaf { &[0, 16] => vec![0x20] },
+                0x3 => leaf { &[0, 16] => vec![0x30] },
+                0x4 => leaf { &[0, 16] => vec![0x40] },
+                0x5 => leaf { &[0, 16] => vec![0x50] },
+                0x6 => leaf { &[0, 16] => vec![0x60] },
+                0x7 => leaf { &[0, 16] => vec![0x70] },
+                0x8 => leaf { &[0, 16] => vec![0x80] },
+                0x9 => leaf { &[0, 16] => vec![0x90] },
+                0xA => leaf { &[0, 16] => vec![0xA0] },
+                0xB => leaf { &[0, 16] => vec![0xB0] },
+                0xC => leaf { &[0, 16] => vec![0xC0] },
+                0xD => leaf { &[0, 16] => vec![0xD0] },
+                0xE => leaf { &[0, 16] => vec![0xE0] },
+                0xF => leaf { &[0, 16] => vec![0xF0] },
             } with_leaf { &[0x1] => vec![0x1] }
         }
         .into();

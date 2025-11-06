@@ -291,7 +291,7 @@ async fn heal_state_trie(
                 let mut encoded_to_write = BTreeMap::new();
                 for (path, node) in to_write {
                     for i in 0..path.len() {
-                        encoded_to_write.insert(path.slice(0, i), vec![]);
+                        encoded_to_write.insert(path.slice_range(0, i), vec![]);
                     }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }

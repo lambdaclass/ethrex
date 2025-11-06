@@ -32,7 +32,7 @@ impl RocksDBTrieDB {
                 cf_name
             )));
         }
-        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
+        let last_computed_flatkeyvalue = Nibbles::from_hex(&last_written);
 
         Ok(Self {
             db,
@@ -158,7 +158,7 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", None, vec![]).unwrap();
 
         // Test data
-        let node_hash = Nibbles::from_hex(vec![1]);
+        let node_hash = Nibbles::from_hex(&[1]);
         let node_data = vec![1, 2, 3, 4, 5];
 
         // Test put_batch
@@ -171,7 +171,7 @@ mod tests {
         assert_eq!(retrieved_data, node_data);
 
         // Test get nonexistent
-        let nonexistent_hash = Nibbles::from_hex(vec![2]);
+        let nonexistent_hash = Nibbles::from_hex(&[2]);
         assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
     }
 
@@ -200,7 +200,7 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", Some(address), vec![]).unwrap();
 
         // Test data
-        let node_hash = Nibbles::from_hex(vec![1]);
+        let node_hash = Nibbles::from_hex(&[1]);
         let node_data = vec![1, 2, 3, 4, 5];
 
         // Test put_batch
@@ -239,9 +239,9 @@ mod tests {
         // Test data
         // NOTE: we don't use the same paths to avoid overwriting in the batch
         let batch_data = vec![
-            (Nibbles::from_hex(vec![1]), vec![1, 2, 3]),
-            (Nibbles::from_hex(vec![1, 2]), vec![4, 5, 6]),
-            (Nibbles::from_hex(vec![1, 2, 3]), vec![7, 8, 9]),
+            (Nibbles::from_hex(&[1]), vec![1, 2, 3]),
+            (Nibbles::from_hex(&[1, 2]), vec![4, 5, 6]),
+            (Nibbles::from_hex(&[1, 2, 3]), vec![7, 8, 9]),
         ];
 
         // Test batch put

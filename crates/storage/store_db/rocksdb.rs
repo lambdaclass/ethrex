@@ -595,11 +595,11 @@ impl Store {
                 .unwrap_or_default();
             let last_written_account = last_written
                 .get(0..64)
-                .map(|v| Nibbles::from_hex(v.to_vec()))
+                .map(|v| Nibbles::from_hex(v))
                 .unwrap_or_default();
             let mut last_written_storage = last_written
                 .get(66..130)
-                .map(|v| Nibbles::from_hex(v.to_vec()))
+                .map(|v| Nibbles::from_hex(v))
                 .unwrap_or_default();
 
             debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");

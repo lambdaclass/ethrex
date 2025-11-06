@@ -106,8 +106,11 @@ impl LeafNode {
             } else {
                 // Create an extension node with the branch node as child
                 // Extension { BranchNode }
-                ExtensionNode::new(path.slice(0, match_index), Node::from(branch_node).into())
-                    .into()
+                ExtensionNode::new(
+                    path.slice_range(0, match_index),
+                    Node::from(branch_node).into(),
+                )
+                .into()
             };
 
             Ok(Some(final_node))
@@ -167,7 +170,7 @@ mod test {
     #[test]
     fn get_some() {
         let node = pmt_node! { @(trie)
-            leaf { vec![1, 2, 16] => vec![0x12, 0x34, 0x56, 0x78] }
+            leaf { &[1, 2, 16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
         assert_eq!(
@@ -179,7 +182,7 @@ mod test {
     #[test]
     fn get_none() {
         let node = pmt_node! { @(trie)
-            leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
+            leaf { &[1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
         assert!(node.get(Nibbles::from_bytes(&[0x34])).unwrap().is_none());
@@ -188,7 +191,7 @@ mod test {
     #[test]
     fn insert_replace() {
         let mut node = pmt_node! { @(trie)
-            leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
+            leaf { &[1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
         assert!(
@@ -204,7 +207,7 @@ mod test {
     fn insert_branch() {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
-            leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
+            leaf { &[1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
         let path = Nibbles::from_bytes(&[0x22]);
         let value = vec![0x23];
@@ -220,7 +223,7 @@ mod test {
     fn insert_extension_branch() {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
-            leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
+            leaf { &[1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
         let path = Nibbles::from_bytes(&[0x13]);
@@ -239,7 +242,7 @@ mod test {
     fn insert_extension_branch_value_self() {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
-            leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
+            leaf { &[1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
         let path = Nibbles::from_bytes(&[0x12, 0x34]);
@@ -258,7 +261,7 @@ mod test {
     fn insert_extension_branch_value_other() {
         let trie = Trie::new_temp();
         let mut node = pmt_node! { @(trie)
-            leaf { vec![1, 2, 3, 4, 16] => vec![0x12, 0x34, 0x56, 0x78] }
+            leaf { &[1, 2, 3, 4, 16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
         let path = Nibbles::from_bytes(&[0x12]);
