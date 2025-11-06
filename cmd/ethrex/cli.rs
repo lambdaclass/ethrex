@@ -728,6 +728,8 @@ pub async fn import_blocks_bench(
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                     _ => warn!("Failed to add block {number} with hash {hash:#x}"),
                 })?;
+
+            tokio::time::sleep(Duration::from_millis(400)).await;
         }
 
         // Make head canonical and label all special blocks correctly.
