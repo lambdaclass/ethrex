@@ -1,9 +1,11 @@
 import numpy as np
+import sys
 
 bench = {}
 bench_around = {}
 
-for i in range(1,4):
+start, end = sys.argv[-2:]
+for i in range(int(start), int(end)):
     bench_around[i] = {}
 
     with open(f"../../bench-{i}.log", "r+") as file:
