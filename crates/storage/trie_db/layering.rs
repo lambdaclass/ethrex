@@ -45,7 +45,8 @@ impl Default for TrieLayerCache {
 impl TrieLayerCache {
     // TODO: tune this
     fn create_filter() -> fastbloom_rs::CountingBloomFilter {
-        fastbloom_rs::CountingBloomFilter::new(FilterBuilder::new(10_000_000, 0.02))
+        // In mainnet there are usually  823120~ keys, using 1.2M to have some leeway
+        fastbloom_rs::CountingBloomFilter::new(FilterBuilder::new(1_200_000, 0.02))
     }
 
     pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
@@ -137,10 +138,6 @@ impl TrieLayerCache {
 
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
-
-
-        let count: usize = self.layers.iter().map(|x| x.1.nodes.len()).sum();
-        info!("bloom: There are {count} keys");
 
         // older layers are useless
         let layers_removed = self.layers.extract_if(|_, item| item.id <= layer.id);
