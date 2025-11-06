@@ -2,6 +2,7 @@ use std::{
     fmt::Display,
     fs::{File, metadata, read_dir},
     io::{self, Write},
+    mem,
     path::{Path, PathBuf},
     str::FromStr,
     time::{Duration, Instant},
@@ -16,6 +17,7 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
+use tokio_util::sync::CancellationToken;
 use tracing::{Level, info, warn};
 
 use crate::{
@@ -511,6 +513,10 @@ pub async fn import_blocks(
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
+    const IMPORT_BATCH_SIZE: usize = 1024;
+    // This value is higher than the spec (128) as the latter block's state nodes will be kept in memory and not committed when using rocksdb
+    // This means we need to run some extra-blocks to ensure we commit their state and don't need to regenerate the full block range upon node restart
+    const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
@@ -543,6 +549,7 @@ pub async fn import_blocks(
 
     let mut total_blocks_imported = 0;
     for blocks in chains {
+        let mut block_batch = vec![];
         let size = blocks.len();
         let mut numbers_and_hashes = blocks
             .iter()
@@ -574,13 +581,24 @@ pub async fn import_blocks(
                 continue;
             }
 
-            blockchain
+            if index + MIN_FULL_BLOCKS < size {
+                block_batch.push(block);
+                if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
+                    blockchain
+                        .add_blocks_in_batch(mem::take(&mut block_batch), CancellationToken::new())
+                        .await
+                        .map_err(|(err, _)| err)?;
+                }
+            } else {
+                // We need to have the state of the latest 128 blocks
+                blockchain
                 .add_block_pipeline(block)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                     _ => warn!("Failed to add block {number} with hash {hash:#x}"),
                 })?;
+            }
         }
 
         // Make head canonical and label all special blocks correctly.
