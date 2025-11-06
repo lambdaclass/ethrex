@@ -493,10 +493,9 @@ impl Store {
             if last_written_account > Nibbles::default() {
                 iter.advance(last_written_account.to_bytes())?;
             }
-            let mut res = Ok(());
-            'outer: for (path, node) in iter {
+            let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
                 let Node::Leaf(node) = node else {
-                    continue;
+                    return Ok(());
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
@@ -537,9 +536,9 @@ impl Store {
                     iter_inner.advance(last_written_storage.to_bytes())?;
                     last_written_storage = Nibbles::default();
                 }
-                for (path, node) in iter_inner {
+                iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
                     let Node::Leaf(node) = node else {
-                        continue;
+                        return Ok(());
                     };
                     let key = apply_prefix(Some(account_hash), path);
                     last_written = key.clone().into_vec();
@@ -562,29 +561,27 @@ impl Store {
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
                             FKVGeneratorControlMessage::Stop => {
-                                res = Err(StoreError::PivotChanged);
-                                break 'outer;
+                                return Err(StoreError::PivotChanged);
                             }
                             _ => {
-                                res = Err(StoreError::Custom("Unexpected message".to_string()));
-                                break 'outer;
+                                return Err(StoreError::Custom("Unexpected message".to_string()));
                             }
                         }
                     }
-                }
+                    Ok(())
+                })?;
                 if let Ok(value) = control_rx.try_recv() {
                     match value {
                         FKVGeneratorControlMessage::Stop => {
-                            res = Err(StoreError::PivotChanged);
-                            break 'outer;
+                            return Err(StoreError::PivotChanged);
                         }
                         _ => {
-                            res = Err(StoreError::Custom("Unexpected message".to_string()));
-                            break 'outer;
+                            return Err(StoreError::Custom("Unexpected message".to_string()));
                         }
                     }
                 }
-            }
+                Ok(())
+            });
             match res {
                 Err(StoreError::PivotChanged) => {
                     if let Ok(value) = control_rx.recv() {
