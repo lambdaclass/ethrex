@@ -1156,7 +1156,9 @@ impl GenServer for L1Committer {
                 CastResponse::NoReply
             }
             InMessage::Abort => {
-                self.cancellation_token.take().map(|ct| ct.cancel());
+                if let Some(ct) = self.cancellation_token.take() {
+                    ct.cancel()
+                };
                 CastResponse::Stop
             }
         }
