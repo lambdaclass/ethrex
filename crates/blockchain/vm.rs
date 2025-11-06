@@ -10,6 +10,8 @@ use ethrex_vm::{EvmError, VmDatabase};
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    str::FromStr,
+    sync::OnceLock,
 };
 use tracing::instrument;
 
@@ -25,6 +27,12 @@ pub struct StoreVmDatabase {
 
     pub account_cache: HashMap<Address, Option<AccountState>>,
     pub storage_cache: HashMap<(Address, H256), Option<U256>>,
+}
+
+static COMMON_SLOTS: OnceLock<Vec<H256>> = OnceLock::new();
+
+fn h256_str(str: &str) -> Result<H256, EvmError> {
+    H256::from_str(str).map_err(|e| EvmError::Custom(format!("decode error: {e}")))
 }
 
 impl StoreVmDatabase {
@@ -55,6 +63,19 @@ impl StoreVmDatabase {
     }
 
     pub fn warm(&mut self, txns: &Vec<(&Transaction, Address)>) -> Result<(), EvmError> {
+        let common_slot = match COMMON_SLOTS.get() {
+            Some(val) => val,
+            None => {
+                let mut slots = vec![h256_str(
+                    "75b20eef8615de99c108b05f0dbda081c91897128caa336d75dffb97c4132b4d",
+                )?];
+                for i in 0..20 {
+                    slots.push(H256::from_slice(&U256::from(i).to_big_endian()));
+                }
+                COMMON_SLOTS.get_or_init(|| slots)
+            }
+        };
+
         let mut to_fetch: HashMap<Address, HashSet<H256>> = Default::default();
         for (tx, sender) in txns {
             to_fetch.entry(*sender).or_default();
@@ -65,7 +86,10 @@ impl StoreVmDatabase {
                 TxKind::Create => {}
             }
             for (addr, keys) in tx.access_list() {
-                to_fetch.entry(*addr).or_default().extend(keys);
+                to_fetch
+                    .entry(*addr)
+                    .or_insert_with(|| HashSet::from_iter(common_slot.clone()))
+                    .extend(keys);
             }
         }
         let (account_cache, storage_cache) = self
