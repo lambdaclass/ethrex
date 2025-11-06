@@ -212,14 +212,14 @@ pub async fn start_l2(
         .await?;
     }
 
-    let l1_commiter_handle = l1_committer.ok();
+    let l1_committer_handle = l1_committer.ok();
     let block_producer_handle = block_producer.ok();
     let admin_server = start_api(
         format!(
             "{}:{}",
             cfg.admin_server.listen_ip, cfg.admin_server.listen_port
         ),
-        l1_commiter_handle.clone(),
+        l1_committer_handle.clone(),
         l1_watcher.ok(),
         l1_proof_sender.ok(),
         block_producer_handle.clone(),
@@ -252,7 +252,7 @@ pub async fn start_l2(
 
         Ok(())
     });
-    Ok((l1_commiter_handle, block_producer_handle, driver))
+    Ok((l1_committer_handle, block_producer_handle, driver))
 }
 
 async fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {
