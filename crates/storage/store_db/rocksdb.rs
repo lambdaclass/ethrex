@@ -515,6 +515,7 @@ impl Store {
                         .last_computed_flatkeyvalue
                         .lock()
                         .map_err(|_| StoreError::LockError)? = last_written.clone();
+                    ctr = 0;
                 }
 
                 let mut iter_inner = {
@@ -557,6 +558,7 @@ impl Store {
                             .last_computed_flatkeyvalue
                             .lock()
                             .map_err(|_| StoreError::LockError)? = last_written.clone();
+                        ctr = 0;
                     }
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
