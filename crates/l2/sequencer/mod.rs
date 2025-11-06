@@ -22,6 +22,7 @@ use proof_coordinator::ProofCoordinator;
 #[cfg(feature = "metrics")]
 use reqwest::Url;
 use spawned_concurrency::tasks::GenServerHandle;
+use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -51,7 +52,13 @@ pub async fn start_l2(
     #[cfg(feature = "metrics")] l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
-) -> Result<Option<GenServerHandle<L1Committer>>, errors::SequencerError> {
+) -> Result<
+    (
+        Option<GenServerHandle<L1Committer>>,
+        Pin<Box<dyn Future<Output = Result<(), errors::SequencerError>> + Send>>,
+    ),
+    errors::SequencerError,
+> {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
     } else {
@@ -78,7 +85,10 @@ pub async fn start_l2(
     )
     .await
     .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
-        return Ok(None);
+        return Ok((
+            None,
+            Box::pin(async { Ok::<(), errors::SequencerError>(()) }),
+        ));
     };
 
     if needed_proof_types.contains(&ProverType::TDX)
@@ -87,7 +97,10 @@ pub async fn start_l2(
         error!(
             "A private key for TDX is required. Please set the flag `--proof-coordinator.tdx-private-key <KEY>` or use the `ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY` environment variable to set the private key"
         );
-        return Ok(None);
+        return Ok((
+            None,
+            Box::pin(async { Ok::<(), errors::SequencerError>(()) }),
+        ));
     }
 
     let l1_watcher = L1Watcher::spawn(
@@ -216,48 +229,49 @@ pub async fn start_l2(
     })
     .ok();
 
-    match (verifier_handle, admin_server) {
-        (Some(handle), Some(admin_server)) => {
-            let (server_res, verifier_res) = tokio::join!(admin_server.into_future(), handle);
-            if let Err(e) = server_res {
-                error!("Admin server task error: {e}");
-            }
-            handle_verifier_result(verifier_res).await;
-        }
-        (Some(handle), None) => {
-            handle_verifier_result(tokio::join!(handle).0).await;
-        }
-        (None, Some(admin_server)) => {
-            if let Err(e) = admin_server.into_future().await {
-                error!("Admin server task error: {e}");
-            }
-        }
-        (None, None) => {}
-    }
+    let driver_verifier = verifier_handle;
+    let driver_admin = admin_server;
 
-    // let shutdown_token = cancellation_token.clone();
-    // let committer_for_shutdown = a.clone().unwrap();
-    // let c = committer_for_shutdown.cancellation_token();
-    // dbg!(&c);
-    // c.cancel();
-    // dbg!(&c);
-    // tokio::select! {
-    //     _ = cancellation_token.cancelled() => {
-    //         committer_for_shutdown.call(l1_committer::CallMessage::Stop).await;
+    // match (verifier_handle, admin_server) {
+    //     (Some(handle), Some(admin_server)) => {
+    //         let (server_res, verifier_res) = tokio::join!(admin_server.into_future(), handle);
+    //         if let Err(e) = server_res {
+    //             error!("Admin server task error: {e}");
+    //         }
+    //         handle_verifier_result(verifier_res).await;
     //     }
-    // // }
-    // let mut producer_for_shutdown = block_producer.cloned();
-    // tokio::spawn(async move {
-    //
-    //     shutdown_token.cancelled().await;
-    //     dbg!(&c);
-    //     dbg!(&c);
-    //     let _ = committer_for_shutdown
-    //         .call(l1_committer::CallMessage::Stop)
-    //         .await;
-    // });
+    //     (Some(handle), None) => {
+    //         handle_verifier_result(tokio::join!(handle).0).await;
+    //     }
+    //     (None, Some(admin_server)) => {
+    //         if let Err(e) = admin_server.into_future().await {
+    //             error!("Admin server task error: {e}");
+    //         }
+    //     }
+    //     (None, None) => {}
+    // }
 
-    Ok(a)
+    let driver = Box::pin(async move {
+        match (driver_verifier, driver_admin) {
+            (Some(handle), Some(admin_server)) => {
+                let (server_res, verifier_res) = tokio::join!(admin_server.into_future(), handle);
+                if let Err(e) = server_res {
+                    error!("Admin server task error: {e}");
+                }
+                handle_verifier_result(verifier_res).await;
+            }
+            (Some(handle), None) => handle_verifier_result(tokio::join!(handle).0).await,
+            (None, Some(admin_server)) => {
+                if let Err(e) = admin_server.into_future().await {
+                    error!("Admin server task error: {e}");
+                }
+            }
+            (None, None) => {}
+        }
+
+        Ok(())
+    });
+    Ok((a, driver))
 }
 
 async fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {

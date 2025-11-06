@@ -1143,7 +1143,10 @@ impl GenServer for L1Committer {
                 self.schedule_commit(self.committer_wake_up_ms, handle.clone());
                 CastResponse::NoReply
             }
-            InMessage::Abort => CastResponse::Stop,
+            InMessage::Abort => {
+                self.cancellation_token.take().map(|ct| ct.cancel());
+                CastResponse::Stop
+            }
         }
     }
 

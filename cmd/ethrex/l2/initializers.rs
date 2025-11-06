@@ -203,6 +203,7 @@ pub async fn init_l2(
 
     let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
 
+    let mut join_set = JoinSet::new();
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
 
@@ -271,7 +272,7 @@ pub async fn init_l2(
         info!("P2P is disabled");
     }
 
-    let committer_handler = ethrex_l2::start_l2(
+    let (committer_handle, admin_handler) = ethrex_l2::start_l2(
         store,
         rollup_store,
         blockchain,
@@ -287,80 +288,28 @@ pub async fn init_l2(
         checkpoints_dir,
     )
     .await?;
-    dbg!(committer_handler.is_some());
-    dbg!(committer_handler.is_some());
-    dbg!(committer_handler.is_some());
-    dbg!(committer_handler.is_some());
-    dbg!(committer_handler.is_some());
-    dbg!(committer_handler.is_some());
-    dbg!(committer_handler.is_some());
-    dbg!(committer_handler.is_some());
-    dbg!(committer_handler.is_some());
-    dbg!(committer_handler.is_some());
-    if let Some(mut handler) = committer_handler.clone() {
-        let _ = handler.call(l1_committer::CallMessage::Stop).await;
-    }
+    join_set.spawn(admin_handler);
+    // if let Some(mut handler) = committer_handler.clone() {
+    //     let _ = handler.cast(l1_committer::InMessage::Abort).await;
+    // }
+
+    let committer = committer_handle.clone();
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            if let Some(handler) = committer_handler {
-                let ct = handler.cancellation_token();
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-            }
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
             cancel_token.cancel();
+            if let Some(mut handle) = committer {
+                // Fire and forget the shutdown cast; log the error if you care.
+                if let Err(err) = handle.cast(l1_committer::InMessage::Abort).await {
+                    tracing::warn!("Failed to send committer abort: {err:?}");
+                }
+            }
+            join_set.abort_all(); // or whatever you use to stop the other tasks
         }
         _ = cancel_token.cancelled() => {
-            if let Some(handler) = committer_handler {
-                let ct = handler.cancellation_token();
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
-                dbg!(&ct);
+            if let Some(mut handle) = committer {
+                let _ = handle.cast(l1_committer::InMessage::Abort).await;
             }
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
-            dbg!("kaefkabsdfkjnasdkjf");
         }
     }
     info!("Server shut down started...");
