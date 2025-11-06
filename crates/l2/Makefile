@@ -48,7 +48,7 @@ PROOF_COORDINATOR_ADDRESS?=127.0.0.1
 ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS?=1000000000
 # Timestamp for Osaka activation in the hoodi. Sufficient to start network with Prague for tests.
 # Future: initialize network with Osaka activated once supported.
-ETHREX_OSAKA_ACTIVATION_TIME?=1761677592 
+ETHREX_OSAKA_ACTIVATION_TIME?=1761677592
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702

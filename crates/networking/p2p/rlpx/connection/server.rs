@@ -589,6 +589,7 @@ async fn send_all_pooled_tx_hashes(
         .get_all_txs_by_sender()?
         .into_values()
         .flatten()
+        .filter(|tx| !tx.is_privileged())
         .collect();
     if !txs.is_empty() {
         state
@@ -933,8 +934,11 @@ async fn handle_incoming_message(
                 for tx in &txs.transactions {
                     // Reject blob transactions in L2 mode
                     #[cfg(feature = "l2")]
-                    if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
-                        debug!(peer=%state.node, "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2");
+                    if (is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)))
+                        || tx.is_privileged()
+                    {
+                        let tx_type = tx.tx_type();
+                        debug!(peer=%state.node, "Rejecting transaction in L2 mode - {tx_type} transactions are not broadcasted in L2");
                         continue;
                     }
 
@@ -1057,14 +1061,11 @@ async fn handle_incoming_message(
         }
         Message::GetByteCodes(req) => {
             let storage_clone = state.storage.clone();
-            let response =
-                tokio::task::spawn_blocking(move || process_byte_codes_request(req, storage_clone))
-                    .await
-                    .map_err(|_| {
-                        PeerConnectionError::InternalError(
-                            "Failed to execute bytecode retrieval task".to_string(),
-                        )
-                    })??;
+            let response = process_byte_codes_request(req, storage_clone).map_err(|_| {
+                PeerConnectionError::InternalError(
+                    "Failed to execute bytecode retrieval task".to_string(),
+                )
+            })?;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {

@@ -1,5 +1,3 @@
-use std::iter::repeat_n;
-
 // TODO: Currently, we cannot include the types crate independently of common because the crates are not yet split.
 // After issue #4596 ("Split types crate from common") is resolved, update this to import the types crate directly,
 // so that crypto/kzg.rs does not depend on common for type definitions.
@@ -24,11 +22,15 @@ type Blob = [u8; BYTES_PER_BLOB];
 type Commitment = Bytes48;
 type Proof = Bytes48;
 
-/// Ensures the Ethereum trusted setup is loaded so later KZG operations avoid the first-call cost.
+/// Schedules the Ethereum trusted setup to load on a background thread so later KZG operations avoid the first-call cost.
 pub fn warm_up_trusted_setup() {
     #[cfg(feature = "c-kzg")]
     {
-        std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
+        let _ = std::thread::Builder::new()
+            .name("kzg-warmup".into())
+            .spawn(|| {
+                std::hint::black_box(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE));
+            });
     }
 }
 
@@ -52,6 +54,7 @@ impl From<kzg_rs::KzgError> for KzgError {
 
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
 /// as defined by EIP-7594.
+#[allow(unused_variables)]
 pub fn verify_cell_kzg_proof_batch(
     blobs: &[Blob],
     commitments: &[Commitment],
@@ -76,9 +79,11 @@ pub fn verify_cell_kzg_proof_batch(
             c_kzg_settings,
             &commitments
                 .iter()
-                .flat_map(|commitment| repeat_n((*commitment).into(), CELLS_PER_EXT_BLOB))
+                .flat_map(|commitment| {
+                    std::iter::repeat_n((*commitment).into(), CELLS_PER_EXT_BLOB)
+                })
                 .collect::<Vec<_>>(),
-            &repeat_n(0..CELLS_PER_EXT_BLOB as u64, blobs.len())
+            &std::iter::repeat_n(0..CELLS_PER_EXT_BLOB as u64, blobs.len())
                 .flatten()
                 .collect::<Vec<_>>(),
             &cells,

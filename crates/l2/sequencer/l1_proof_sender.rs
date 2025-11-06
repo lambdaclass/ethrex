@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::remove_dir_all,
+    path::PathBuf,
+};
 
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::{
@@ -15,6 +19,7 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::EstimateGasError},
 };
 use ethrex_storage_rollup::StoreRollup;
+use guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
@@ -29,7 +34,7 @@ use super::{
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::errors::ProofSenderError,
+    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
 };
 use aligned_sdk::{
     common::{
@@ -70,6 +75,8 @@ pub struct L1ProofSender {
     l1_chain_id: u64,
     network: Network,
     fee_estimate: FeeEstimationType,
+    /// Directory where checkpoints are stored.
+    checkpoints_dir: PathBuf,
     aligned_mode: bool,
 }
 
@@ -88,6 +95,7 @@ pub struct L1ProofSenderHealth {
 }
 
 impl L1ProofSender {
+    #[expect(clippy::too_many_arguments)]
     async fn new(
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
@@ -96,6 +104,7 @@ impl L1ProofSender {
         aligned_cfg: &AlignedConfig,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
+        checkpoints_dir: PathBuf,
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_config(
             eth_cfg.rpc_url.clone(),
@@ -122,6 +131,7 @@ impl L1ProofSender {
             l1_chain_id,
             network: aligned_cfg.network.clone(),
             fee_estimate,
+            checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
         })
     }
@@ -131,6 +141,7 @@ impl L1ProofSender {
         sequencer_state: SequencerState,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
+        checkpoints_dir: PathBuf,
     ) -> Result<GenServerHandle<L1ProofSender>, ProofSenderError> {
         let state = Self::new(
             &cfg.proof_coordinator,
@@ -140,6 +151,7 @@ impl L1ProofSender {
             &cfg.aligned,
             rollup_store,
             needed_proof_types,
+            checkpoints_dir,
         )
         .await?;
         let mut l1_proof_sender = L1ProofSender::start(state);
@@ -153,10 +165,17 @@ impl L1ProofSender {
     async fn verify_and_send_proof(&self) -> Result<(), ProofSenderError> {
         let last_verified_batch =
             get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+        let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
         let batch_to_send = if self.aligned_mode {
-            let last_sent_batch = self.rollup_store.get_latest_sent_batch_proof().await?;
-            std::cmp::max(last_sent_batch, last_verified_batch) + 1
+            std::cmp::max(latest_sent_batch_db, last_verified_batch) + 1
         } else {
+            if latest_sent_batch_db < last_verified_batch {
+                // hotfix: in case the latest sent batch in DB is less than the last verified on-chain,
+                // we update the db to avoid stalling the proof_coordinator.
+                self.rollup_store
+                    .set_latest_sent_batch_proof(last_verified_batch)
+                    .await?;
+            }
             last_verified_batch + 1
         };
 
@@ -192,6 +211,20 @@ impl L1ProofSender {
             self.rollup_store
                 .set_latest_sent_batch_proof(batch_to_send)
                 .await?;
+
+            // Remove checkpoint from batch sent - 1.
+            // That checkpoint was needed to generate the proof for the batch we just sent.
+            // The checkpoint for the batch we have just sent is needed for the next batch.
+            let checkpoint_path = self
+                .checkpoints_dir
+                .join(batch_checkpoint_name(batch_to_send - 1));
+            if checkpoint_path.exists() {
+                let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
+                    error!(
+                        "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {e}"
+                    )
+                });
+            }
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
                 .iter()
@@ -246,10 +279,33 @@ impl L1ProofSender {
                 return Err(ProofSenderError::AlignedWrongProofFormat);
             };
 
-            let Some(vm_program_code) = prover_type.aligned_vm_program_code()? else {
-                return Err(ProofSenderError::UnexpectedError(format!(
-                    "no vm_program_code for {prover_type}"
-                )));
+            let vm_program_code = match prover_type {
+                ProverType::RISC0 => {
+                    if !cfg!(feature = "risc0") {
+                        return Err(ProofSenderError::UnexpectedError(
+                            "Trying to send RISC0 proof but RISC0 feature is disabled".to_string(),
+                        ));
+                    }
+
+                    let trimmed = ZKVM_RISC0_PROGRAM_VK.trim_start_matches("0x").trim();
+                    hex::decode(trimmed).map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
+                    })?
+                }
+                ProverType::SP1 => {
+                    if !cfg!(feature = "sp1") {
+                        return Err(ProofSenderError::UnexpectedError(
+                            "Trying to send SP1 proof but SP1 feature is disabled".to_string(),
+                        ));
+                    }
+
+                    ZKVM_SP1_PROGRAM_ELF.to_vec()
+                }
+                _other => {
+                    return Err(ProofSenderError::UnexpectedError(format!(
+                        "no vm_program_code for {prover_type}"
+                    )));
+                }
             };
 
             let pub_input = Some(batch_proof.public_values());

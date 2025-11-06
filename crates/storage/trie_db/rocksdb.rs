@@ -4,7 +4,7 @@ use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
-use crate::{store_db::rocksdb::CF_MISC_VALUES, trie_db::layering::apply_prefix};
+use crate::trie_db::layering::apply_prefix;
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
@@ -26,6 +26,7 @@ impl RocksDBTrieDB {
         trie_cf_name: &str,
         flatkeyvalue_cf_name: &str,
         address_prefix: Option<H256>,
+        last_written: Vec<u8>,
     ) -> Result<Self, TrieError> {
         // Verify column family exists
         if db.cf_handle(trie_cf_name).is_none() {
@@ -41,16 +42,7 @@ impl RocksDBTrieDB {
                 flatkeyvalue_cf_name
             )));
         }
-
-        let cf_misc = db
-            .cf_handle(CF_MISC_VALUES)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
-        let last_computed_flatkeyvalue = db
-            .get_cf(&cf_misc, "last_written")
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Error reading last_written: {e}")))?
-            .map(|v| Nibbles::from_hex(v.to_vec()))
-            .unwrap_or_default();
-        drop(cf_misc);
+        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
 
         Ok(Self {
             db,
@@ -154,7 +146,6 @@ impl TrieDB for RocksDBTrieDB {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store_db::rocksdb::CF_MISC_VALUES;
     use ethrex_trie::Nibbles;
     use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
     use tempfile::TempDir;
@@ -171,17 +162,16 @@ mod tests {
 
         let cf_trie = ColumnFamilyDescriptor::new("test_trie_cf", Options::default());
         let cf_fkv = ColumnFamilyDescriptor::new("test_flatkey_cf", Options::default());
-        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_trie, cf_misc, cf_fkv],
+            vec![cf_trie, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
 
         // Create TrieDB
-        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None).unwrap();
+        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None, vec![]).unwrap();
 
         // Test data
         let node_hash = Nibbles::from_hex(vec![1]);
@@ -211,13 +201,12 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_trie = ColumnFamilyDescriptor::new("test_trie_cf", Options::default());
         let cf_fkv = ColumnFamilyDescriptor::new("test_flatkey_cf", Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_trie, cf_misc, cf_fkv],
+            vec![cf_trie, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
@@ -225,7 +214,7 @@ mod tests {
         // Create TrieDB with address prefix
         let address = H256::from([0xaa; 32]);
         let trie_db =
-            RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", Some(address)).unwrap();
+            RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", Some(address), vec![]).unwrap();
 
         // Test data
         let node_hash = Nibbles::from_hex(vec![1]);
@@ -251,19 +240,18 @@ mod tests {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        let cf_misc = ColumnFamilyDescriptor::new(CF_MISC_VALUES, Options::default());
         let cf_trie = ColumnFamilyDescriptor::new("test_trie_cf", Options::default());
         let cf_fkv = ColumnFamilyDescriptor::new("test_flatkey_cf", Options::default());
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
-            vec![cf_trie, cf_misc, cf_fkv],
+            vec![cf_trie, cf_fkv],
         )
         .unwrap();
         let db = Arc::new(db);
 
         // Create TrieDB
-        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None).unwrap();
+        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None, vec![]).unwrap();
 
         // Test data
         // NOTE: we don't use the same paths to avoid overwriting in the batch

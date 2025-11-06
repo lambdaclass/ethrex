@@ -47,48 +47,46 @@ jobs:
               simulation: ethereum/sync,
               limit: "",
             }
-          # Migratation to EELS currently ongoing, see https://github.com/ethereum/execution-spec-tests/pull/2308#issuecomment-3421843487
-          # When migration is complete, adapt these tests and reenable
-          # - {
-          #     name: "Consume Engine tests (Rest)",
-          #     file_name: consume-engine-rest,
-          #     simulation: ethereum/eest/consume-engine,
-          #     limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
-          #   }
-          # - {
-          #     name: "Consume Engine tests (Prague)",
-          #     file_name: consume-engine-prague,
-          #     simulation: ethereum/eest/consume-engine,
-          #     limit: ".*fork_Prague.*",
-          #   }
-          # - {
-          #     name: "Consume Engine tests (Osaka)",
-          #     file_name: consume-engine-osaka,
-          #     simulation: ethereum/eest/consume-engine,
-          #     limit: ".*fork_Osaka.*",
-          #   }
-          # - {
-          #     name: "Consume RLP tests (Rest)",
-          #     file_name: consume-rlp-rest,
-          #     simulation: ethereum/eest/consume-rlp,
-          #     limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
-          #   }
-          # - {
-          #     name: "Consume RLP tests (Prague)",
-          #     file_name: consume-rlp-prague,
-          #     simulation: ethereum/eest/consume-rlp,
-          #     limit: ".*fork_Prague.*",
-          #   }
-          # - {
-          #     name: "Consume RLP tests (Osaka)",
-          #     file_name: consume-rlp-osaka,
-          #     simulation: ethereum/eest/consume-rlp,
-          #     limit: ".*fork_Osaka.*",
-          #   }
+          - {
+              name: "Consume Engine tests (Rest)",
+              file_name: consume-engine-rest,
+              simulation: ethereum/eels/consume-engine,
+              limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
+            }
+          - {
+              name: "Consume Engine tests (Prague)",
+              file_name: consume-engine-prague,
+              simulation: ethereum/eels/consume-engine,
+              limit: ".*fork_Prague.*",
+            }
+          - {
+              name: "Consume Engine tests (Osaka)",
+              file_name: consume-engine-osaka,
+              simulation: ethereum/eels/consume-engine,
+              limit: ".*fork_Osaka.*",
+            }
+          - {
+              name: "Consume RLP tests (Rest)",
+              file_name: consume-rlp-rest,
+              simulation: ethereum/eels/consume-rlp,
+              limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
+            }
+          - {
+              name: "Consume RLP tests (Prague)",
+              file_name: consume-rlp-prague,
+              simulation: ethereum/eels/consume-rlp,
+              limit: ".*fork_Prague.*",
+            }
+          - {
+              name: "Consume RLP tests (Osaka)",
+              file_name: consume-rlp-osaka,
+              simulation: ethereum/eels/consume-rlp,
+              limit: ".*fork_Osaka.*",
+            }
           - {
               name: "Execute Blobs tests",
               file_name: execute-blobs,
-              simulation: ethereum/eest/execute-blobs,
+              simulation: ethereum/eels/execute-blobs,
               limit: "",
             }
 
@@ -112,9 +110,9 @@ jobs:
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 1'
-          if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
+          if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
             FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
-            FLAGS+=" --sim.buildarg branch=main"
+            FLAGS+=" --sim.buildarg branch=forks/osaka"
             FLAGS+=" --client.checktimelimit=180s"
           fi
           if [[ -n "$SIM_LIMIT" ]]; then
@@ -188,7 +186,7 @@ jobs:
           fi
 
       - name: Generate the hive report
-        run: cargo run -p hive_report > results.md
+        run: cargo run --manifest-path tooling/Cargo.toml -p hive_report > results.md
 
       - name: Upload daily result
         uses: actions/upload-artifact@v4

@@ -67,12 +67,13 @@ impl SyncManager {
         sync_manager
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     /// Creates a dummy SyncManager for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
+    pub async fn dummy() -> Self {
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
-            syncer: Arc::new(Mutex::new(Syncer::dummy())),
+            syncer: Arc::new(Mutex::new(Syncer::dummy().await)),
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
                 .expect("Failed to start Storage Engine"),
@@ -94,6 +95,11 @@ impl SyncManager {
         } else {
             SyncMode::Full
         }
+    }
+
+    /// Disables snapsync mode
+    pub fn disable_snap(&self) {
+        self.snap_enabled.store(false, Ordering::Relaxed);
     }
 
     /// Updates the last fcu head. This may be used on the next sync cycle if needed
