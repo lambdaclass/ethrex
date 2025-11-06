@@ -264,6 +264,7 @@ pub async fn init_l2(
     let l2_sequencer_cfg = SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
         error!("{err}");
     })?;
+    let cancellation_token = CancellationToken::new();
 
     // TODO: This should be handled differently, the current problem
     // with using opts.node_opts.p2p_enabled is that with the removal
@@ -293,7 +294,7 @@ pub async fn init_l2(
         rollup_store,
         blockchain,
         l2_sequencer_cfg,
-        cancel_token.clone(),
+        cancellation_token.clone(),
         l2_url,
         genesis,
         checkpoints_dir,
@@ -303,7 +304,6 @@ pub async fn init_l2(
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            cancel_token.cancel();
             if let Some(mut handle) = committer_handle.clone() {
                 handle
                     .cast(l1_committer::InMessage::Abort)
@@ -321,7 +321,7 @@ pub async fn init_l2(
             join_set.abort_all();
         }
 
-        _ = cancel_token.cancelled() => {
+        _ = cancellation_token.cancelled() => {
             if let Some(mut handle) = committer_handle.clone() {
                 handle
                     .cast(l1_committer::InMessage::Abort)
