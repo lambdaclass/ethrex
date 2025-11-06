@@ -17,7 +17,7 @@ use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
-    rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
+    rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -233,8 +233,8 @@ pub async fn init_l2(
     .await
     .expect("P2P context could not be created");
 
-    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
-    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers), initiator);
+    // We don't need the peer_handler in L2.
+    let peer_handler = PeerHandler::dummy().await;
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
