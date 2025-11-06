@@ -1,11 +1,16 @@
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code},
+    types::{
+        AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Transaction, TxKind,
+    },
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -17,6 +22,9 @@ pub struct StoreVmDatabase {
     // And may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: HashMap<BlockNumber, BlockHash>,
     pub state_root: H256,
+
+    pub account_cache: HashMap<Address, Option<AccountState>>,
+    pub storage_cache: HashMap<(Address, H256), Option<U256>>,
 }
 
 impl StoreVmDatabase {
@@ -26,6 +34,8 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache: HashMap::new(),
             state_root: block_header.state_root,
+            account_cache: Default::default(),
+            storage_cache: Default::default(),
         }
     }
 
@@ -39,13 +49,41 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache,
             state_root: block_header.state_root,
+            account_cache: Default::default(),
+            storage_cache: Default::default(),
         }
+    }
+
+    pub fn warm(&mut self, txns: &Vec<(&Transaction, Address)>) -> Result<(), EvmError> {
+        let mut to_fetch: HashMap<Address, HashSet<H256>> = Default::default();
+        for (tx, sender) in txns {
+            to_fetch.entry(*sender).or_default();
+            match tx.to() {
+                TxKind::Call(to) => {
+                    to_fetch.entry(to).or_default();
+                }
+                TxKind::Create => {}
+            }
+            for (addr, keys) in tx.access_list() {
+                to_fetch.entry(*addr).or_default().extend(keys);
+            }
+        }
+        let (account_cache, storage_cache) = self
+            .store
+            .fetch_bulk(self.state_root, to_fetch)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+        self.account_cache = account_cache;
+        self.storage_cache = storage_cache;
+        Ok(())
     }
 }
 
 impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
+        if let Some(state) = self.account_cache.get(&address) {
+            return Ok(state.clone());
+        }
         self.store
             .get_account_state_by_root(self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -53,6 +91,9 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+        if let Some(value) = self.storage_cache.get(&(address, key)) {
+            return Ok(value.clone());
+        }
         self.store
             .get_storage_at_root(self.state_root, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))

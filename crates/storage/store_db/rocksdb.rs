@@ -1,4 +1,5 @@
 use crate::{
+    hash_address, hash_key,
     rlp::AccountCodeHashRLP,
     trie_db::{
         layering::{TrieLayerCache, TrieWrapper, apply_prefix},
@@ -7,19 +8,20 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    H256,
+    Address, H256, U256,
     types::{
         AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
         Index, Receipt, Transaction,
     },
 };
 use ethrex_trie::{Nibbles, Node, Trie};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch, checkpoint::Checkpoint,
 };
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::Path,
     sync::{
         Arc, Mutex,
@@ -1958,6 +1960,98 @@ impl StoreEngine for Store {
         let last_computed_flatkeyvalue = self.last_written()?;
         Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
     }
+
+    fn fetch_bulk(
+        &self,
+        state_root: H256,
+        to_fetch: HashMap<Address, HashSet<H256>>,
+    ) -> Result<
+        (
+            HashMap<Address, Option<AccountState>>,
+            HashMap<(Address, H256), Option<U256>>,
+        ),
+        StoreError,
+    > {
+        let last_computed_flatkeyvalue = self.last_written()?;
+        let tlc = self
+            .trie_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let (values_tlc, fkvs_to_fetch): (Vec<_>, Vec<_>) = to_fetch
+            .into_par_iter()
+            .flat_map(|(address, keys)| {
+                let mut fkvs = Vec::new();
+                let mut values = Vec::new();
+                let hashed_address = hash_address(&address);
+                let account_nibbles = Nibbles::from_bytes(&hashed_address);
+                if account_nibbles.as_ref() < &last_computed_flatkeyvalue[0..64] {
+                    return (values, fkvs);
+                }
+                let tlc_get = tlc.get(state_root, account_nibbles.clone());
+                let hashed_address = H256::from_slice(&hashed_address);
+                for key in keys {
+                    let hashed_key = Nibbles::from_bytes(&hash_key(&key));
+                    let prefixed_key = apply_prefix(Some(hashed_address), hashed_key);
+                    if let Some(value) = tlc_get
+                        .is_none()
+                        .then(|| tlc.get(state_root, prefixed_key.clone()))
+                        .flatten()
+                    {
+                        values.push((ValueType::Slot(address, key), value));
+                    } else {
+                        fkvs.push((ValueType::Slot(address, key), prefixed_key.into_vec()));
+                    }
+                }
+                if let Some(value) = tlc_get {
+                    values.push((ValueType::Account(address), value));
+                } else {
+                    fkvs.push((ValueType::Account(address), account_nibbles.into_vec()));
+                }
+                (values, fkvs)
+            })
+            .unzip();
+
+        let fkv_bytes = fkvs_to_fetch.iter().map(|x| &x.1);
+        let cf_fkv: Arc<BoundColumnFamily<'_>> =
+            self.db.cf_handle(CF_FLATKEYVALUE).ok_or_else(|| {
+                StoreError::Custom("Column family not found: CF_FLATKEYVALUE".to_string())
+            })?;
+        let fkv_results = self.db.batched_multi_get_cf(&cf_fkv, fkv_bytes, false);
+
+        let mut address_map: HashMap<_, _> = Default::default();
+        let mut storage_map: HashMap<_, _> = Default::default();
+        for (bytes, (item, _)) in fkv_results.into_iter().zip(fkvs_to_fetch) {
+            match item {
+                ValueType::Account(account) => {
+                    let account_state = bytes?.map(|v| AccountState::decode(&v).ok()).flatten();
+                    address_map.insert(account, account_state);
+                }
+                ValueType::Slot(account, key) => {
+                    let slot = bytes?.map(|v| U256::decode(&v).ok()).flatten();
+                    storage_map.insert((account, key), slot);
+                }
+            }
+        }
+        for (item, bytes) in values_tlc {
+            match item {
+                ValueType::Account(account) => {
+                    let account_state = AccountState::decode(&bytes).ok();
+                    address_map.insert(account, account_state);
+                }
+                ValueType::Slot(account, key) => {
+                    let slot = U256::decode(&bytes).ok();
+                    storage_map.insert((account, key), slot);
+                }
+            }
+        }
+        Ok((address_map, storage_map))
+    }
+}
+
+enum ValueType {
+    Account(Address),
+    Slot(Address, H256),
 }
 
 /// Open column families

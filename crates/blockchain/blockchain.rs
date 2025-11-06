@@ -208,7 +208,14 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
+        let mut vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
+
+        let start = std::time::Instant::now();
+        let txws = block.body.get_transactions_with_sender().unwrap();
+        let txws_end = start.elapsed().as_micros();
+        vm_db.warm(&txws)?;
+        println!("warm: {txws_end}us txws, {}us total", start.elapsed().as_micros());
+
         let mut vm = self.new_evm(vm_db)?;
 
         let exec_merkle_start = Instant::now();

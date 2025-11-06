@@ -1,8 +1,10 @@
 use ethereum_types::H256;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
-    Transaction,
+    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index,
+    Receipt, Transaction,
 };
+use ethrex_common::{Address, U256};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -383,5 +385,19 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn flatkeyvalue_computed(&self, _account: H256) -> Result<bool, StoreError> {
         Ok(false)
+    }
+
+    fn fetch_bulk(
+        &self,
+        _state_root: H256,
+        _to_fetch: HashMap<Address, HashSet<H256>>,
+    ) -> Result<
+        (
+            HashMap<Address, Option<AccountState>>,
+            HashMap<(Address, H256), Option<U256>>,
+        ),
+        StoreError,
+    > {
+        Ok(Default::default())
     }
 }

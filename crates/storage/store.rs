@@ -17,10 +17,13 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::{collections::hash_map::Entry, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Mutex,
+};
+use std::{
+    collections::{HashSet, hash_map::Entry},
+    sync::Arc,
 };
 use std::{fmt::Debug, path::Path};
 use tracing::{debug, error, info, instrument};
@@ -1371,6 +1374,20 @@ impl Store {
 
     pub async fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
         self.engine.create_checkpoint(path.as_ref()).await
+    }
+
+    pub fn fetch_bulk(
+        &self,
+        state_root: H256,
+        to_fetch: HashMap<Address, HashSet<H256>>,
+    ) -> Result<
+        (
+            HashMap<Address, Option<AccountState>>,
+            HashMap<(Address, H256), Option<U256>>,
+        ),
+        StoreError,
+    > {
+        self.engine.fetch_bulk(state_root, to_fetch)
     }
 }
 
