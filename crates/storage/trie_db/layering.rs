@@ -1,7 +1,7 @@
-use ethrex_common::{H256, utils::keccak};
+use ethrex_common::H256;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -197,9 +197,8 @@ impl TrieLayerCache {
 }
 
 pub struct TrieWrapper {
-    // RwLock because we should update state root if we put_batch
-    pub state_root: RwLock<H256>,
-    pub inner: Arc<RwLock<TrieLayerCache>>,
+    pub state_root: H256,
+    pub inner: Arc<TrieLayerCache>,
     pub db: Box<dyn TrieDB>,
     pub prefix: Option<H256>,
 }
@@ -222,50 +221,14 @@ impl TrieDB for TrieWrapper {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        let state_root = *self.state_root.read().map_err(|_| TrieError::LockError)?;
-        if let Some(value) = self
-            .inner
-            .read()
-            .map_err(|_| TrieError::LockError)?
-            .get(state_root, key.clone())
-        {
+        if let Some(value) = self.inner.get(self.state_root, key.clone()) {
             return Ok(Some(value));
         }
         self.db.get(key)
     }
 
-    // Warning, use this carefully as it's not battle tested. It's useful for manipulating the trie though.
-    fn put_batch(&self, mut key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        // No-op for empty batches. This occurs when committing without logical changes.
-        if key_values.is_empty() {
-            return Ok(());
-        }
-
-        // State root is the hash of the node that doesn't have nibbles in path.
-        // If state root is not in the batch I believe it should be invalid.
-        let new_state_root = key_values
-            .iter()
-            .find(|(key, _)| *key == Nibbles::default())
-            .map(|(_, value)| keccak(value))
-            .ok_or(TrieError::InvalidInput)?;
-
-        // Apply prefix to every key
-        for (key, _value) in &mut key_values {
-            *key = apply_prefix(self.prefix, key.clone());
-        }
-
-        let parent = {
-            let guard = self.state_root.read().map_err(|_| TrieError::LockError)?;
-            *guard
-        };
-
-        self.inner
-            .write()
-            .map_err(|_| TrieError::LockError)?
-            .put_batch(parent, new_state_root, key_values);
-
-        *self.state_root.write().map_err(|_| TrieError::LockError)? = new_state_root;
-
-        Ok(())
+    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        // TODO: Get rid of this.
+        unimplemented!("This function should not be called");
     }
 }
