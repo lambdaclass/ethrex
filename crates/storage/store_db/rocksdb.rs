@@ -1479,7 +1479,7 @@ impl StoreEngine for Store {
             self.last_written()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
-            state_root,
+            state_root: RwLock::new(state_root),
             inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
@@ -1496,7 +1496,7 @@ impl StoreEngine for Store {
             self.last_written()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
-            state_root,
+            state_root: RwLock::new(state_root),
             inner: self.trie_cache.clone(),
             db,
             prefix: None,
@@ -1536,7 +1536,7 @@ impl StoreEngine for Store {
             self.last_written()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
-            state_root,
+            state_root: RwLock::new(state_root),
             inner: self.trie_cache.clone(),
             db,
             prefix: None,
@@ -1557,7 +1557,7 @@ impl StoreEngine for Store {
             self.last_written()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
-            state_root,
+            state_root: RwLock::new(state_root),
             inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),

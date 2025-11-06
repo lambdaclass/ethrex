@@ -450,7 +450,7 @@ impl StoreEngine for Store {
         let trie_backend = store.state_trie_nodes.clone();
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
         let wrap_db = Box::new(TrieWrapper {
-            state_root,
+            state_root: RwLock::new(state_root),
             inner: store.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
@@ -463,7 +463,7 @@ impl StoreEngine for Store {
         let trie_backend = store.state_trie_nodes.clone();
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
         let wrap_db = Box::new(TrieWrapper {
-            state_root,
+            state_root: RwLock::new(state_root),
             inner: store.trie_cache.clone(),
             db,
             prefix: None,
