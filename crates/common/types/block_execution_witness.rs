@@ -139,20 +139,14 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         )?;
 
         // hash state trie nodes
-        let hash = value.state_trie_root.compute_hash().finalize();
-        if hash != parent_header.state_root {
-            // TODO: error
-            panic!("invalid state trie");
-        }
-        let mut state_trie = Trie::default();
-        state_trie.root = value.state_trie_root.into();
+        let state_trie = Trie::new_temp_with_root(value.state_trie_root.into());
+        state_trie.hash_no_commit();
 
         let mut storage_tries = BTreeMap::new();
         for storage_trie_root in value.storage_trie_roots {
             // hash storage trie nodes
-            let hash = storage_trie_root.compute_hash().finalize();
-            let mut storage_trie = Trie::default();
-            storage_trie.root = storage_trie_root.into();
+            let storage_trie = Trie::new_temp_with_root(storage_trie_root.into());
+            let hash = storage_trie.hash_no_commit();
             storage_tries.insert(hash, storage_trie);
         }
 
@@ -167,7 +161,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             })
             .collect();
 
-        let mut guest_program_state = GuestProgramState {
+        let guest_program_state = GuestProgramState {
             codes_hashed,
             state_trie,
             storage_tries,
