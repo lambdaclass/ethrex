@@ -476,6 +476,32 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image_l2.tar
 
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
+      - name: Start L1 & Deploy contracts
+        run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
+          touch cmd/.env
+          cd crates/l2
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          COMPILE_CONTRACTS=true \
+          docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
+
       - name: Run tests
         run: |
           cd crates/l2
