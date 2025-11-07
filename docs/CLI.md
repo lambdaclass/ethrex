@@ -98,10 +98,15 @@ P2P options:
 
           [default: 100]
 
-    --p2p.initial-lookup-interval <INITIAL_INTERVAL_MS>
+      --p2p.initial-lookup-interval <INITIAL_INTERVAL_MS>
           The initial interval between peer lookups, until the number of peers reaches the target number of peers.
 
           [default: 100]
+
+      --p2p.initial-lookup-interval <INTERVAL_MS>
+          The initial interval between peer lookups, until the number of peers reaches the target number of peers.
+
+          [default: 600]
 
 
 RPC options:

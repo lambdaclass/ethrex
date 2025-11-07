@@ -1,8 +1,6 @@
 use crate::types::Node;
 use crate::{
-    discv4::{peer_table::PeerTableError, server::LOOKUP_INTERVAL},
-    metrics::METRICS,
-    network::P2PContext,
+    discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext,
     rlpx::connection::server::PeerConnection,
 };
 use spawned_concurrency::{
@@ -21,9 +19,6 @@ pub enum RLPxInitiatorError {
 #[derive(Debug, Clone)]
 pub struct RLPxInitiator {
     context: P2PContext,
-
-    lookup_interval: Duration,
-
     /// The target number of RLPx connections to reach.
     target_peers: u64,
 }
@@ -32,8 +27,6 @@ impl RLPxInitiator {
     pub fn new(context: P2PContext) -> Self {
         Self {
             context,
-            // We use the same lookup intervals as Discovery to try to get both process to check at the same rate
-            lookup_interval: LOOKUP_INTERVAL,
             target_peers: 50,
         }
     }
@@ -65,7 +58,7 @@ impl RLPxInitiator {
             self.context.p2p_initial_lookup_interval
         } else {
             debug!("Reached target number of peers. Using longer lookup interval.");
-            self.lookup_interval
+            self.context.p2p_lookup_interval
         }
     }
 }

@@ -15,7 +15,7 @@ use ethrex_common::{
 use ethrex_p2p::{
     discv4::{
         peer_table::{PeerTable, TARGET_PEERS},
-        server::INITIAL_LOOKUP_INTERVAL,
+        server::{INITIAL_LOOKUP_INTERVAL, LOOKUP_INTERVAL},
     },
     network::P2PContext,
     peer_handler::PeerHandler,
@@ -336,6 +336,7 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
         None,
         1000,
         INITIAL_LOOKUP_INTERVAL,
+        LOOKUP_INTERVAL,
     )
     .await
     .unwrap()

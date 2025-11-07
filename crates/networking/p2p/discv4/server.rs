@@ -41,7 +41,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
 pub const INITIAL_LOOKUP_INTERVAL: u64 = 100; // 10 per second
 //pub const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
-pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
+pub const LOOKUP_INTERVAL: u64 = 600; // 100 per minute
+//pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -87,6 +88,7 @@ pub struct DiscoveryServer {
     /// signatures being expensive.
     find_node_message: BytesMut,
     initial_lookup_interval: Duration,
+    lookup_interval: Duration,
 }
 
 impl DiscoveryServer {
@@ -97,6 +99,7 @@ impl DiscoveryServer {
         mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
         initial_lookup_interval: Duration,
+        lookup_interval: Duration,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
@@ -110,6 +113,7 @@ impl DiscoveryServer {
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
+            lookup_interval,
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -263,7 +267,7 @@ impl DiscoveryServer {
             self.initial_lookup_interval
         } else {
             trace!("Reached target number of peers or contacts. Using longer lookup interval.");
-            LOOKUP_INTERVAL
+            self.lookup_interval
         }
     }
 
