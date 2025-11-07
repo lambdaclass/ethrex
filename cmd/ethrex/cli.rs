@@ -12,7 +12,9 @@ use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis};
 use ethrex_p2p::{
-    discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
+    discv4::{peer_table::TARGET_PEERS, server::INITIAL_LOOKUP_INTERVAL},
+    sync::SyncMode,
+    tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -227,6 +229,14 @@ pub struct Options {
     )]
     pub tx_broadcasting_time_interval: u64,
     #[arg(
+        long = "p2p.initial-lookup-interval",
+        default_value_t = INITIAL_LOOKUP_INTERVAL,
+        value_name = "INITIAL_INTERVAL_MS",
+        help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.",
+        help_heading = "P2P options"
+    )]
+    pub p2p_initial_lookup_interval: u64,
+    #[arg(
         long = "target.peers",
         default_value_t = TARGET_PEERS,
         value_name = "MAX_PEERS",
@@ -321,6 +331,7 @@ impl Default for Options {
             force: false,
             mempool_max_size: Default::default(),
             tx_broadcasting_time_interval: Default::default(),
+            p2p_initial_lookup_interval: Default::default(),
             target_peers: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,

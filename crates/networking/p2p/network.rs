@@ -46,6 +46,9 @@ pub struct P2PContext {
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
+    /// The initial interval between peer lookups, until the number of peers
+    /// reaches [target_peers](RLPxInitiatorState::target_peers).
+    pub p2p_initial_lookup_interval: Duration,
 }
 
 impl P2PContext {
@@ -60,6 +63,7 @@ impl P2PContext {
         client_version: String,
         based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
+        p2p_initial_lookup_interval: u64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -91,6 +95,7 @@ impl P2PContext {
             #[cfg(feature = "l2")]
             based_context,
             tx_broadcaster,
+            p2p_initial_lookup_interval: Duration::from_millis(p2p_initial_lookup_interval),
         })
     }
 
@@ -98,8 +103,8 @@ impl P2PContext {
     /// Creates a dummy P2PContext for tests
     /// This should only be used in tests as it won't be able to connect to the p2p network
     pub async fn dummy(peer_table: PeerTable) -> P2PContext {
+        use crate::discv4::server::INITIAL_LOOKUP_INTERVAL;
         use ethrex_storage::EngineType;
-
         let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
         let blockchain: Arc<Blockchain> = Arc::new(Blockchain::default_with_store(storage.clone()));
         let local_node = Node::from_enode_url(
@@ -121,6 +126,7 @@ impl P2PContext {
             tx_broadcaster: TxBroadcaster::spawn(peer_table.clone(), blockchain, 1000)
                 .await
                 .expect("Failed to spawn tx broadcaster"),
+            p2p_initial_lookup_interval: Duration::from_millis(INITIAL_LOOKUP_INTERVAL),
         }
     }
 }
@@ -146,6 +152,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         udp_socket.clone(),
         context.table.clone(),
         bootnodes,
+        context.p2p_initial_lookup_interval,
     )
     .await
     .inspect_err(|e| {
