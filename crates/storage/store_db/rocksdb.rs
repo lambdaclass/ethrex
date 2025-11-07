@@ -16,7 +16,7 @@ use ethrex_common::{
 use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
-    Options, SliceTransform, WriteBatch, checkpoint::Checkpoint,
+    Options, WriteBatch, checkpoint::Checkpoint,
 };
 use std::{
     collections::HashSet,
@@ -282,12 +282,9 @@ impl Store {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
-                    cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(65));
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    block_opts.set_index_type(rocksdb::BlockBasedIndexType::HashSearch);
-                    block_opts.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_RECEIPTS | CF_ACCOUNT_CODES => {
