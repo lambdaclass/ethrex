@@ -1275,7 +1275,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "This panel show the difference between the Execution vs merkelization in the `execute_block_pipeline` function. It's show as a percentage of the whole function. If its negative, execution took more time than merkleization.",
+          "description": "This panel shows the difference between the Execution vs merkleization in the `execute_block_pipeline` function. It's shown as a percentage of the whole function. If it's negative, execution took more time than merkleization.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1376,7 +1376,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "label_replace(\n    1 - ( sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Trie update\"}[$__range]) )\n    / sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Execute Block\"}[$__range]) )),\n  \"function_name\",\"Merkelization vs Total diff\",\"__name__\",\".*\"\n)",
+              "expr": "label_replace(\n    1 - ( sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Trie update\"}[$__range]) )\n    / sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Execute Block\"}[$__range]) )),\n  \"function_name\",\"Merkleization vs Total diff\",\"__name__\",\".*\"\n)",
               "hide": true,
               "instant": false,
               "legendFormat": "__auto",
@@ -1392,7 +1392,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "This Panel shows the deaggregated measures of the current instrumentation we have for block proccesing tied by block.",
+          "description": "This Panel shows the deaggregated measures of the current instrumentation we have for block processing tied by block.",
           "fieldConfig": {
             "defaults": {
               "color": {
