@@ -308,11 +308,9 @@ impl Trie {
             TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(root_hash)))
         })?;
 
-        let mut len = 0;
         fn get_embedded_node(
             all_nodes: &BTreeMap<H256, Node>,
             cur_node: &Node,
-            len: &mut usize,
         ) -> Result<Node, TrieError> {
             Ok(match cur_node.clone() {
                 Node::Branch(mut node) => {
@@ -322,9 +320,8 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *len += 1;
                             *choice = match all_nodes.get(&hash.finalize()) {
-                                Some(node) => get_embedded_node(all_nodes, node, len)?.into(),
+                                Some(node) => get_embedded_node(all_nodes, node)?.into(),
                                 None => hash.into(),
                             };
                         }
@@ -338,22 +335,17 @@ impl Trie {
                     };
 
                     node.child = match all_nodes.get(&hash.finalize()) {
-                        Some(node) => get_embedded_node(all_nodes, node, len)?.into(),
+                        Some(node) => get_embedded_node(all_nodes, node)?.into(),
                         None => hash.into(),
                     };
 
-                    *len += 1;
                     node.into()
                 }
-                Node::Leaf(node) => {
-                    *len += 1;
-                    node.clone().into()
-                }
+                Node::Leaf(node) => node.clone().into(),
             })
         }
 
-        let root = get_embedded_node(all_nodes, root_rlp, &mut len)?;
-        dbg!(len);
+        let root = get_embedded_node(all_nodes, root_rlp)?;
         Ok(root.into())
     }
 
