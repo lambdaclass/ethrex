@@ -36,6 +36,7 @@ interface IL2ToL1Messenger {
     /// @param to the recipient address on the destination chain
     /// @param gasLimit the gas limit for the message execution on the destination chain
     /// @param txId the unique transaction id for the message
+    /// @param value the amount of ETH to send to the recipient on the destination chain
     /// @param data the calldata to be sent to the recipient on the destination chain
     function sendMessageToL2(
         uint256 chainId,
@@ -43,6 +44,7 @@ interface IL2ToL1Messenger {
         address to,
         uint256 gasLimit,
         uint256 txId,
+        uint256 value,
         bytes calldata data
-    ) external payable;
+    ) external;
 }

@@ -114,15 +114,30 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         bytes calldata data
     ) external payable override {
         _burnGas(destGasLimit);
-        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2{value: msg.value}(
+        if (msg.value > 0) {
+            IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2(
+                chainId,
+                address(this),
+                address(this),
+                destGasLimit,
+                transactionIds[chainId],
+                msg.value,
+                abi.encodeCall(ICommonBridgeL2.mintETH,(to))
+            );
+            transactionIds[chainId] += 1;
+        }
+        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2(
             chainId,
             msg.sender,
             to,
             destGasLimit,
             transactionIds[chainId],
+            msg.value,
             data
         );
         transactionIds[chainId] += 1;
+        (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
+        require(success, "Failed to burn Ether");
     }
 
     /// Burns at least {amount} gas

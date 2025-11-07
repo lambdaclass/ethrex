@@ -485,6 +485,7 @@ pub async fn filter_verified_messages(
     logs: Vec<RpcLog>,
 ) -> Result<Vec<(L2Message, u64, u64)>, L1WatcherError> {
     let mut verified_logs = Vec::new();
+    info!("Filtering L2 messages");
 
     for rpc_log in logs {
         info!(
@@ -498,10 +499,13 @@ pub async fn filter_verified_messages(
             // Given that logs are fetched in block order, we can stop here.
             break;
         };
-        info!("Got message proof");
+        info!("Got message proofs {}", message_proof.len());
+        info!("log_index index {}", rpc_log.log_index);
 
-        // Why is it a vec?
-        let proof = message_proof.first().ok_or(L1WatcherError::Custom(
+        let index: usize = usize::try_from(rpc_log.log_index).map_err(|_| {
+            L1WatcherError::Custom("L2 Message proof index out of bounds".to_owned())
+        })?;
+        let proof = message_proof.get(index).ok_or(L1WatcherError::Custom(
             "L2 Message proof is empty".to_owned(),
         ))?;
 

@@ -9,6 +9,12 @@ contract L2ToL1Messenger is IL2ToL1Messenger {
     /// @notice Id of the last emitted message.
     /// @dev Message Id that should be incremented before a message is sent
     uint256 public lastMessageId;
+    address public constant BRIDGE =  0x000000000000000000000000000000000000FFff;
+
+    modifier onlyBridge() {
+        require(msg.sender == BRIDGE, "Only bridge can call this function");
+        _;
+    }
 
     /// @inheritdoc IL2ToL1Messenger
     function sendMessageToL1(bytes32 data) external {
@@ -25,8 +31,9 @@ contract L2ToL1Messenger is IL2ToL1Messenger {
         address to,
         uint256 gasLimit,
         uint256 txId,
+        uint256 value,
         bytes calldata data
-    ) external payable {
-        emit L2Message(chainId, from, to, msg.value, gasLimit, txId, data);
+    ) external onlyBridge {
+        emit L2Message(chainId, from, to, value, gasLimit, txId, data);
     }
 }
