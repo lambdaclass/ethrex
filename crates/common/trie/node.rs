@@ -26,7 +26,29 @@ pub enum NodeRef {
 
 impl NodeRef {
     /// Gets a shared reference to the inner node.
+    /// Requires that the trie is in a consistent state, ie that all leaves being pointed are in the database.
+    /// Outside of snapsync this should always be the case.
     pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+        match self {
+            NodeRef::Node(node, _) => Ok(Some(node.clone())),
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
+            }
+            NodeRef::Hash(_) => db
+                .get(path)?
+                .filter(|rlp| !rlp.is_empty())
+                .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
+                .transpose(),
+        }
+    }
+
+    /// Gets a shared reference to the inner node, checking it's hash.
+    /// Returns `Ok(None)` if the hash is invalid.
+    pub fn get_node_checked(
+        &self,
+        db: &dyn TrieDB,
+        path: Nibbles,
+    ) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
@@ -65,10 +87,7 @@ impl NodeRef {
                 let Some(node) = db
                     .get(path.clone())?
                     .filter(|rlp| !rlp.is_empty())
-                    .and_then(|rlp| match Node::decode(&rlp) {
-                        Ok(node) => (node.compute_hash() == *hash).then_some(Ok(node)),
-                        Err(err) => Some(Err(TrieError::RLPDecode(err))),
-                    })
+                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                     .transpose()?
                 else {
                     return Ok(None);
@@ -89,6 +108,9 @@ impl NodeRef {
     pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
+                if let Some(hash) = hash.get() {
+                    return *hash;
+                }
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for (choice, node) in &mut node.choices.iter_mut().enumerate() {
@@ -107,8 +129,6 @@ impl NodeRef {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }
                 acc.push((path, buf));
-
-                *self = hash.into();
 
                 hash
             }

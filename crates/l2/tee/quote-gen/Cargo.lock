@@ -2079,7 +2079,10 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-trie",
  "ethrex-vm",
+ "hex",
+ "rustc-hash",
  "secp256k1",
  "sha3",
  "thiserror 2.0.16",
@@ -2105,6 +2108,7 @@ dependencies = [
  "once_cell",
  "rayon",
  "rkyv",
+ "rustc-hash",
  "secp256k1",
  "serde 1.0.228",
  "serde_json",
@@ -2283,6 +2287,7 @@ dependencies = [
  "malachite",
  "p256",
  "ripemd",
+ "rustc-hash",
  "secp256k1",
  "serde 1.0.228",
  "serde_json",
@@ -2375,6 +2380,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "hex-literal",
  "jsonwebtoken 9.3.1",
  "rand 0.8.5",
  "reqwest 0.12.23",
@@ -2383,6 +2389,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.16",
  "tokio",
  "tokio-util",
@@ -2438,6 +2446,8 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "qfilter",
+ "rayon",
  "rustc-hash",
  "serde 1.0.228",
  "serde_json",
@@ -3015,6 +3025,12 @@ checksum = "5313b072ce3c597065a808dbf612c4c8e8590bdbf8b579508bf7a762c5eae6cd"
 dependencies = [
  "arrayvec",
 ]
+
+[[package]]
+name = "hex-literal"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
 
 [[package]]
 name = "hmac"
@@ -4741,6 +4757,15 @@ dependencies = [
  "proc-macro2",
  "quote 1.0.40",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "qfilter"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "746341cd2357c9a4df2d951522b4a8dd1ef553e543119899ad7bf87e938c8fbe"
+dependencies = [
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -7464,6 +7489,12 @@ checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yansi"
