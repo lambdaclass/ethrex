@@ -4,16 +4,12 @@ use super::{
 };
 #[cfg(feature = "l2")]
 use crate::rlpx::l2::l2_connection::L2ConnState;
-use crate::{
-    rlpx::{
-        connection::server::{ConnectionState, Established},
-        error::PeerConnectionError,
-        message::EthCapVersion,
-        utils::{compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, sha256, sha256_hmac},
-    },
-    types::Node,
+use crate::rlpx::{
+    error::PeerConnectionError,
+    utils::{compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, sha256, sha256_hmac},
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
+use async_net::TcpStream;
 use ethrex_common::{H128, H256, H512, Signature};
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -33,11 +29,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, RwLock},
 };
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::{TcpSocket, TcpStream},
-};
-use tokio_util::codec::Framed;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, trace};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
@@ -58,102 +50,8 @@ pub(crate) struct LocalState {
     pub(crate) init_message: Vec<u8>,
 }
 
-pub(crate) async fn perform(
-    state: ConnectionState,
-    eth_version: Arc<RwLock<EthCapVersion>>,
-) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), PeerConnectionError> {
-    let (context, node, framed) = match state {
-        ConnectionState::Initiator(Initiator { context, node }) => {
-            let addr = SocketAddr::new(node.ip, node.tcp_port);
-            let mut stream = match tcp_stream(addr).await {
-                Ok(result) => result,
-                Err(error) => {
-                    // If we can't find a TCP connection it's an issue we should track in debug
-                    debug!(peer=%node, %error, "Error creating tcp connection");
-                    return Err(error)?;
-                }
-            };
-            let local_state = send_auth(&context.signer, node.public_key, &mut stream).await?;
-            let remote_state = receive_ack(&context.signer, node.public_key, &mut stream).await?;
-            // Local node is initator
-            // keccak256(nonce || initiator-nonce)
-            let hashed_nonces: [u8; 32] =
-                Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
-            trace!(peer=%node, "Completed handshake as initiator");
-            (context, node, Framed::new(stream, codec))
-        }
-        ConnectionState::Receiver(Receiver {
-            context,
-            peer_addr,
-            stream,
-        }) => {
-            let Some(mut stream) = Arc::into_inner(stream) else {
-                return Err(PeerConnectionError::StateError(
-                    "Cannot use the stream".to_string(),
-                ));
-            };
-            let remote_state = receive_auth(&context.signer, &mut stream).await?;
-            let local_state = send_ack(remote_state.public_key, &mut stream).await?;
-            // Remote node is initiator
-            // keccak256(nonce || initiator-nonce)
-            let hashed_nonces: [u8; 32] =
-                Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
-            let node = Node::new(
-                peer_addr.ip(),
-                peer_addr.port(),
-                peer_addr.port(),
-                remote_state.public_key,
-            );
-            trace!(peer=%node, "Completed handshake as receiver");
-            (context, node, Framed::new(stream, codec))
-        }
-        ConnectionState::Established(_) => {
-            return Err(PeerConnectionError::StateError(
-                "Already established".to_string(),
-            ));
-        }
-        // Shouldn't perform a Handshake on an already failed connection.
-        // Put it here to complete the match arms
-        ConnectionState::HandshakeFailed => {
-            return Err(PeerConnectionError::StateError(
-                "Handshake Failed".to_string(),
-            ));
-        }
-    };
-    let (sink, stream) = framed.split();
-    Ok((
-        Established {
-            signer: context.signer,
-            sink,
-            node,
-            storage: context.storage.clone(),
-            blockchain: context.blockchain.clone(),
-            capabilities: vec![],
-            negotiated_eth_capability: None,
-            negotiated_snap_capability: None,
-            last_block_range_update_block: 0,
-            requested_pooled_txs: HashMap::new(),
-            client_version: context.client_version.clone(),
-            connection_broadcast_send: context.broadcast.clone(),
-            peer_table: context.table.clone(),
-            #[cfg(feature = "l2")]
-            l2_state: context
-                .based_context
-                .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
-            tx_broadcaster: context.tx_broadcaster,
-            current_requests: HashMap::new(),
-        },
-        stream,
-    ))
-}
-
 async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
-    match addr {
-        SocketAddr::V4(_) => TcpSocket::new_v4()?.connect(addr).await,
-        SocketAddr::V6(_) => TcpSocket::new_v6()?.connect(addr).await,
-    }
+    TcpStream::connect(addr).await
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(

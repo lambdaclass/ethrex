@@ -38,6 +38,7 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = ["flamegraph",
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 smol.workspace = true
+async-net.workspace = true
 
 # Clients
 envy = "0.4.2"

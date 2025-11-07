@@ -17,6 +17,7 @@ use crate::{
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
     types::Node,
 };
+use async_net::{TcpListener, UdpSocket};
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
@@ -27,7 +28,6 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
-use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 
@@ -152,7 +152,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery server: {e}");
     })?;
 
-    context.tracker.spawn(serve_p2p_requests(context.clone()));
+    spawned_rt::tasks::spawn(serve_p2p_requests(context.clone()));
 
     Ok(())
 }
@@ -185,15 +185,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
 }
 
 fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
-    let tcp_socket = match tcp_addr {
-        SocketAddr::V4(_) => TcpSocket::new_v4(),
-        SocketAddr::V6(_) => TcpSocket::new_v6(),
-    }?;
-    tcp_socket.set_reuseport(true).ok();
-    tcp_socket.set_reuseaddr(true).ok();
-    tcp_socket.bind(tcp_addr)?;
-
-    tcp_socket.listen(50)
+    smol::block_on(TcpListener::bind(tcp_addr))
 }
 
 pub async fn periodically_show_peer_stats(blockchain: Arc<Blockchain>, mut peer_table: PeerTable) {

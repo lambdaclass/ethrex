@@ -9,7 +9,7 @@ use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use spawned_concurrency::{
     error::GenServerError,
-    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, send_message_on},
+    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, InitResult},
 };
 use std::{
     collections::HashSet,
@@ -848,7 +848,7 @@ impl GenServer for PeerTableServer {
     type OutMsg = OutMessage;
     type Error = PeerTableError;
 
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
+    async fn init(self, _handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         Ok(InitResult::Success(self))
     }
 

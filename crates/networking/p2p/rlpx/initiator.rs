@@ -10,7 +10,7 @@ use crate::{
 };
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, InitResult, send_after, send_message_on},
+    tasks::{CastResponse, GenServer, GenServerHandle, InitResult, send_after},
 };
 use std::time::Duration;
 use tracing::{debug, error, info};

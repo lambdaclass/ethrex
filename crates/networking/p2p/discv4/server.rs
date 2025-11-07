@@ -13,6 +13,7 @@ use crate::{
         get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
     },
 };
+use async_net::UdpSocket;
 use bytes::BytesMut;
 use ethrex_common::{H256, H512};
 use futures::StreamExt;
@@ -26,7 +27,6 @@ use spawned_concurrency::{
     },
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
@@ -492,7 +492,8 @@ impl GenServer for DiscoveryServer {
         self,
         handle: &GenServerHandle<Self>,
     ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
-        let stream = UdpFramed::new(self.udp_socket.clone(), Discv4Codec::new(self.signer));
+        /* TODO, reintroduce packet decoding ☠️☠️☠️☠️
+         let stream = UdpFramed::new(self.udp_socket.clone(), Discv4Codec::new(self.signer));
 
         spawn_listener(
             handle.clone(),
@@ -508,7 +509,7 @@ impl GenServer for DiscoveryServer {
                     }
                 }
             }),
-        );
+        ); */
         send_interval(
             REVALIDATION_CHECK_INTERVAL,
             handle.clone(),
@@ -521,7 +522,6 @@ impl GenServer for DiscoveryServer {
             InMessage::ChangeFindNodeMessage,
         );
         let _ = handle.clone().cast(InMessage::Lookup).await;
-        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
 
         Ok(Success(self))
     }

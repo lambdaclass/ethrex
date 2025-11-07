@@ -35,6 +35,7 @@ use crate::{
     tx_broadcaster::{InMessage, TxBroadcaster, send_tx_hashes},
     types::Node,
 };
+use async_net::TcpStream;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::MempoolTransaction;
 #[cfg(feature = "l2")]
@@ -60,7 +61,6 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::TcpStream,
     sync::{Mutex, broadcast, oneshot},
     task::{self, Id},
 };
@@ -195,11 +195,12 @@ impl Established {
     async fn teardown(&mut self) {
         // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
         // Just logging a debug line if that's the case.
-        let _ = self
-            .sink
-            .close()
-            .await
-            .inspect_err(|err| debug!("Could not close the socket: {err}"));
+        // TODO: reintroduce packet decoding ☠️☠️☠️☠️
+        /*         let _ = self
+        .sink
+        .close()
+        .await
+        .inspect_err(|err| debug!("Could not close the socket: {err}")); */
     }
 }
 
@@ -259,7 +260,8 @@ impl GenServer for PeerConnectionServer {
     ) -> Result<InitResult<Self>, Self::Error> {
         // Set a default eth version that we can update after we negotiate peer capabilities
         // This eth version will only be used to encode & decode the initial `Hello` messages.
-        let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
+        //        let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
+        /*         TODO , reintroduce packet decoding ☠️☠️☠️☠️
         match handshake::perform(self.state, eth_version.clone()).await {
             Ok((mut established_state, stream)) => {
                 trace!(peer=%established_state.node, "Starting RLPx connection");
@@ -309,7 +311,8 @@ impl GenServer for PeerConnectionServer {
                 self.state = ConnectionState::HandshakeFailed;
                 Ok(NoSuccess(self))
             }
-        }
+        } */
+        Ok(NoSuccess(self))
     }
 
     async fn handle_cast(
@@ -856,7 +859,8 @@ pub(crate) async fn send(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
-    state.sink.send(message).await
+    //state.sink.send(message).await
+    Ok(())
 }
 
 /// Reads from the frame until a frame is available.

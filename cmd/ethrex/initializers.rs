@@ -190,7 +190,12 @@ pub async fn init_rpc_api(
         opts.extra_data.clone(),
     );
 
-    smol::spawn(rpc_api).detach();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    rt.spawn(rpc_api);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -216,10 +221,11 @@ pub async fn init_network(
         .await
         .expect("Network starts");
 
-    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
+    smol::spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
         peer_handler.peer_table,
-    ));
+    ))
+    .detach();
 }
 
 #[cfg(feature = "dev")]
