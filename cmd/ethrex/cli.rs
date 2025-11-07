@@ -587,7 +587,12 @@ pub async fn import_blocks(
                     blockchain
                         .add_blocks_in_batch(mem::take(&mut block_batch), CancellationToken::new())
                         .await
-                        .map_err(|(err, _)| err)?;
+                        .inspect_err(|err| match err {
+                            // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
+                           (ChainError::ParentNotFound, None) => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                            (_, Some(batch_failure)) => warn!("Failed to add block with hash {:#x}", batch_failure.failed_block_hash),
+                            _ => warn!("Failed to add block")
+                        }).map_err(|(err, _)| err)?;
                 }
             } else {
                 // We need to have the state of the latest 128 blocks
