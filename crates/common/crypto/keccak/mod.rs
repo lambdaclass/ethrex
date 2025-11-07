@@ -313,4 +313,20 @@ mod test {
 
         assert_eq!(h1, h2);
     }
+
+    #[test]
+    fn keccac_compare_small_than_block() {
+        let mut one = Keccak256Asm::new();
+        let mut two = Keccak256Asm::new();
+
+        let a = vec![1u8; 30];
+        let b = vec![1u8; 40];
+
+        one.update(&a);
+        one.update(&b);
+
+        two.update(&[1u8; 70]);
+
+        assert_eq!(one.finalize(), two.finalize());
+    }
 }
