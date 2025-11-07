@@ -1197,6 +1197,9 @@ impl Blockchain {
             return Ok(hash);
         }
         let sender = transaction.sender()?;
+        // Give the scheduler a little space both sender computation and transaction
+        // validation are CPU bound operations.
+        tokio::task::yield_now().await;
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
