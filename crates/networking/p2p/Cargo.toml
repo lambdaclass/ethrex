@@ -25,6 +25,7 @@ bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 lazy_static.workspace = true
+rustc-hash.workspace = true
 snap.workspace = true
 serde.workspace = true
 secp256k1.workspace = true

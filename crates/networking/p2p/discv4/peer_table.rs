@@ -7,6 +7,7 @@ use crate::{
 use ethrex_common::{H256, U256};
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
+use rustc_hash::FxHashSet;
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, send_message_on},
@@ -500,8 +501,8 @@ impl PeerTable {
 struct PeerTableServer {
     contacts: IndexMap<H256, Contact>,
     peers: IndexMap<H256, PeerData>,
-    already_tried_peers: HashSet<H256>,
-    discarded_contacts: HashSet<H256>,
+    already_tried_peers: FxHashSet<H256>,
+    discarded_contacts: FxHashSet<H256>,
     target_peers: usize,
 }
 
@@ -571,10 +572,10 @@ impl PeerTableServer {
     fn get_contact_to_initiate(&mut self) -> Option<Contact> {
         for contact in self.contacts.values() {
             let node_id = contact.node.node_id();
-            if !self.peers.contains_key(&node_id)
-                && !self.already_tried_peers.contains(&node_id)
-                && contact.knows_us
+            if contact.knows_us
                 && !contact.unwanted
+                && !self.already_tried_peers.contains(&node_id)
+                && !self.peers.contains_key(&node_id)
             {
                 self.already_tried_peers.insert(node_id);
 
