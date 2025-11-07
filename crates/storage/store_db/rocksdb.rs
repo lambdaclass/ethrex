@@ -142,7 +142,7 @@ pub struct Store {
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
 
-    cached_state_trie: Arc<Mutex<Option<(H256, Arc<RocksDBLockedTrieDB>)>>>,
+    cached_state_trie: Arc<Mutex<Arc<RocksDBLockedTrieDB>>>,
 }
 
 impl Debug for Store {
@@ -210,14 +210,18 @@ impl Store {
             last_written
         };
 
+        let dbs = Arc::new(dbs);
+
         let store = Self {
             db: environment,
-            dbs: Arc::new(dbs),
+            dbs: dbs.clone(),
             trie_cache: Default::default(),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
-            last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
-            cached_state_trie: Default::default(),
+            last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written.clone())),
+            cached_state_trie: Arc::new(Mutex::new(Arc::new(
+                RocksDBLockedTrieDB::new(dbs.clone(), CF_TRIE_NODES, None, last_written).unwrap(),
+            ))),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -564,10 +568,22 @@ impl Store {
                     }
 
                     self.db.group_commit([fkv_tx, misc_tx], false).unwrap();
-                    *self
-                        .last_computed_flatkeyvalue
-                        .lock()
-                        .map_err(|_| StoreError::LockError)? = last_written.clone();
+                    {
+                        let mut guard = self
+                            .last_computed_flatkeyvalue
+                            .lock()
+                            .map_err(|_| StoreError::LockError)?;
+                        *guard = last_written.clone();
+                        *self.cached_state_trie.lock().unwrap() = Arc::new(
+                            RocksDBLockedTrieDB::new(
+                                self.dbs.clone(),
+                                CF_TRIE_NODES,
+                                None,
+                                self.last_written()?,
+                            )
+                            .unwrap(),
+                        );
+                    }
                     ctr = 0;
                 }
 
@@ -618,10 +634,22 @@ impl Store {
 
                         self.db.group_commit([fkv_tx, misc_tx], false).unwrap();
 
-                        *self
-                            .last_computed_flatkeyvalue
-                            .lock()
-                            .map_err(|_| StoreError::LockError)? = last_written.clone();
+                        {
+                            let mut guard = self
+                                .last_computed_flatkeyvalue
+                                .lock()
+                                .map_err(|_| StoreError::LockError)?;
+                            *guard = last_written.clone();
+                            *self.cached_state_trie.lock().unwrap() = Arc::new(
+                                RocksDBLockedTrieDB::new(
+                                    self.dbs.clone(),
+                                    CF_TRIE_NODES,
+                                    None,
+                                    self.last_written()?,
+                                )
+                                .unwrap(),
+                            );
+                        }
                         ctr = 0;
                     }
                     if let Ok(value) = control_rx.try_recv() {
@@ -685,6 +713,15 @@ impl Store {
                         .last_computed_flatkeyvalue
                         .lock()
                         .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
+                    *self.cached_state_trie.lock().unwrap() = Arc::new(
+                        RocksDBLockedTrieDB::new(
+                            self.dbs.clone(),
+                            CF_TRIE_NODES,
+                            None,
+                            self.last_written()?,
+                        )
+                        .unwrap(),
+                    );
                     return Ok(());
                 }
             };
@@ -778,6 +815,11 @@ impl Store {
         let result = self
             .db
             .group_commit([flatkeyvalue_transaction, nodes_transaction], false);
+
+        *self.cached_state_trie.lock().unwrap() = Arc::new(
+            RocksDBLockedTrieDB::new(self.dbs.clone(), CF_TRIE_NODES, None, self.last_written()?)
+                .unwrap(),
+        );
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
@@ -1577,19 +1619,7 @@ impl StoreEngine for Store {
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let state_trie = {
-            let mut guard = self.cached_state_trie.lock().unwrap();
-            if guard.is_none() || guard.as_ref().unwrap().0 != state_root {
-                let trie = RocksDBLockedTrieDB::new(
-                    self.dbs.clone(),
-                    CF_TRIE_NODES,
-                    None,
-                    self.last_written()?,
-                )?;
-                *guard = Some((state_root, Arc::new(trie)));
-            }
-            guard.as_ref().unwrap().1.clone()
-        };
+        let state_trie = self.cached_state_trie.lock().unwrap().clone();
         let db = state_trie;
         let wrap_db = Box::new(TrieWrapper {
             state_root,
