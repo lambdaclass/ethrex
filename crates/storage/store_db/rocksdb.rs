@@ -1640,12 +1640,8 @@ impl StoreEngine for Store {
         storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Arc::new(RocksDBLockedTrieDB::new(
-            self.dbs.clone(),
-            CF_TRIE_NODES,
-            None,
-            self.last_written()?,
-        )?);
+        let state_trie = self.cached_state_trie.lock().unwrap().clone();
+        let db = state_trie;
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: self
