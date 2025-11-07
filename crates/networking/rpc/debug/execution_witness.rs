@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, serde_utils,
+    Address, H256,
+    constants::EMPTY_KECCACK_HASH,
+    serde_utils,
     types::{
         AccountState, ChainConfig,
         block_execution_witness::{ExecutionWitness, GuestProgramStateError},
@@ -104,14 +106,17 @@ pub fn execution_witness_from_rpc_chain_config(
             continue; // empty account, doesn't have a storage trie
         };
         let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
-
+        if storage_root_hash == *EMPTY_KECCACK_HASH {
+            continue; // empty storage trie
+        }
         if !nodes.contains_key(&storage_root_hash) {
-            dbg!(&storage_root_hash);
             continue; // storage trie isn't relevant to this execution
         }
         let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
         let NodeRef::Node(node, _) = node else {
-            continue; // empty storage trie
+            return Err(GuestProgramStateError::Custom(
+                "execution witness does not contain non-empty storage trie".to_string(),
+            ));
         };
         storage_trie_roots.push((*node).clone());
     }
