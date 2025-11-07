@@ -60,6 +60,8 @@ async fn ethrex() -> eyre::Result<()> {
 
     log_global_allocator();
 
+    spawned_rt::tasks::sleep(Duration::from_secs(500)).await;
+
     Ok(())
 }
 
