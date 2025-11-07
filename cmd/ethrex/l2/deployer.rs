@@ -542,14 +542,19 @@ pub async fn deploy_l1_contracts(
 
     initialize_contracts(contract_addresses.clone(), &eth_client, &opts, &signer).await?;
 
-    if opts.deposit_rich {
-        let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
+    let last_hash = if opts.deposit_rich {
+        make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
             .await
             .inspect_err(|err| {
                 warn!("Failed to make deposits: {err}");
-            });
-    }
+            })?
+    } else {
+        None
+    };
     if let Some(fee_token) = opts.initial_fee_token {
+        if let Some(hash) = last_hash {
+            wait_for_transaction_receipt(hash, &eth_client, 100).await?;
+        }
         let signer_owner: Signer = LocalSigner::new(opts.bridge_owner.clone()).into();
         register_fee_token(
             &eth_client,
@@ -1032,7 +1037,7 @@ async fn make_deposits(
     bridge: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
-) -> Result<(), DeployerError> {
+) -> Result<Option<H256>, DeployerError> {
     trace!("Making deposits");
 
     let genesis: Genesis = if opts.use_compiled_genesis {
@@ -1060,6 +1065,8 @@ async fn make_deposits(
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.trim().to_string())
         .collect();
+
+    let mut last_hash = None;
 
     for pk in private_keys.iter() {
         let secret_key = parse_private_key(pk).map_err(|_| {
@@ -1100,6 +1107,7 @@ async fn make_deposits(
 
         match send_generic_transaction(eth_client, build, &signer).await {
             Ok(hash) => {
+                last_hash = Some(hash);
                 info!(
                     address =? signer.address(),
                     ?value_to_deposit,
@@ -1114,7 +1122,7 @@ async fn make_deposits(
         }
     }
     trace!("Deposits finished");
-    Ok(())
+    Ok(last_hash)
 }
 
 fn write_contract_addresses_to_env(
