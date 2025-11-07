@@ -106,6 +106,7 @@ pub fn execution_witness_from_rpc_chain_config(
         let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
 
         if !nodes.contains_key(&storage_root_hash) {
+            dbg!(&storage_root_hash);
             continue; // storage trie isn't relevant to this execution
         }
         let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
