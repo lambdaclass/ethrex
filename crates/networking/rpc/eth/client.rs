@@ -108,9 +108,9 @@ impl RpcHandler for Config {
         let latest_block_timestamp = latest_block.header.timestamp;
         let current_fork = chain_config.get_fork(latest_block_timestamp);
 
-        if current_fork < Fork::Paris {
+        if current_fork < Fork::Cancun {
             return Err(RpcErr::UnsuportedFork(
-                "eth-config is not supported for forks prior to Paris".to_string(),
+                "eth-config is not supported for forks prior to Cancun".to_string(),
             ));
         }
 
