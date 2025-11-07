@@ -11,7 +11,6 @@ pub async fn start_prometheus_metrics_api(
     address: String,
     port: String,
 ) -> Result<(), MetricsApiError> {
-    return Ok(());
     let app = Router::new()
         .route("/metrics", get(get_metrics))
         .route("/health", get("Service Up"));
@@ -25,7 +24,6 @@ pub async fn start_prometheus_metrics_api(
 
 #[allow(unused_mut)]
 pub(crate) async fn get_metrics() -> String {
-    return String::new();
     let mut ret_string = match METRICS_TX.gather_metrics() {
         Ok(string) => string,
         Err(_) => {
