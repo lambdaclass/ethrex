@@ -523,6 +523,11 @@ impl Command {
                     // Seal batch
                     rollup_store.seal_batch(batch).await?;
 
+                    // Create checkpoint
+                    let checkpoint_path =
+                        store_path.join(format!("checkpoint_batch_{batch_number}"));
+                    store.create_checkpoint(&checkpoint_path).await?;
+
                     info!("Sealed batch {batch_number}.");
                 }
             }
