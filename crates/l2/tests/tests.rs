@@ -40,14 +40,14 @@ use secp256k1::SecretKey;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::{Add, AddAssign};
-use std::thread::sleep;
+use std::time::Duration;
 use std::{
     fs::{File, read_to_string},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    time::Duration,
 };
 use tokio::task::JoinSet;
+use tokio::time::sleep;
 
 /// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
 /// from L1 to L2 and back.
