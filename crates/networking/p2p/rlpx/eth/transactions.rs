@@ -242,6 +242,9 @@ impl PooledTransactions {
         fork: Fork,
     ) -> Result<(), MempoolError> {
         for tx in &self.pooled_transactions {
+            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
+                itx.blobs_bundle.validate(&itx.tx, fork)?;
+            }
             let tx_hash = tx.compute_hash();
             let Some(pos) = requested
                 .transaction_hashes
