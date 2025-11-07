@@ -108,8 +108,6 @@ P2P options:
 
           [default: 100]
 
-
-
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the http rpc server.
