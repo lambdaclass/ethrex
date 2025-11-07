@@ -13,7 +13,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::hash_address;
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, NodeRef, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, InMemoryTrieDB, Nibbles, Node, NodeRef, Trie};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -106,7 +106,7 @@ pub fn execution_witness_from_rpc_chain_config(
             continue; // empty account, doesn't have a storage trie
         };
         let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
-        if storage_root_hash == *EMPTY_KECCACK_HASH {
+        if storage_root_hash == *EMPTY_TRIE_HASH {
             continue; // empty storage trie
         }
         if !nodes.contains_key(&storage_root_hash) {

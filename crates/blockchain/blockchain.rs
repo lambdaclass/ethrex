@@ -32,7 +32,7 @@ use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, NodeRef, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, InMemoryTrieDB, Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -526,7 +526,7 @@ impl Blockchain {
                 continue; // empty account, doesn't have a storage trie
             };
             let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
-            if storage_root_hash == *EMPTY_KECCACK_HASH {
+            if storage_root_hash == *EMPTY_TRIE_HASH {
                 continue; // empty storage trie
             }
             if !nodes.contains_key(&storage_root_hash) {

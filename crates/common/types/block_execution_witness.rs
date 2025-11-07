@@ -363,7 +363,7 @@ impl GuestProgramState {
             .get_account_state(address)?
             .map(|account| account.storage_root)
             .unwrap_or(*EMPTY_TRIE_HASH);
-        if storage_root == *EMPTY_KECCACK_HASH {
+        if storage_root == *EMPTY_TRIE_HASH {
             return Ok(None);
         }
         let Some(storage_trie) = self.storage_tries.get(&storage_root) else {
