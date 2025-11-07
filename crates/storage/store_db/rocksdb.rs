@@ -467,50 +467,33 @@ impl Store {
         control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
         {
+            let last_written = self
+                .read_sync(CF_MISC_VALUES, b"last_written")?
+                .unwrap_or_else(|| vec![0u8; 64]);
+            if last_written == vec![0xff] {
+                return Ok(());
+            }
+            // We use sequential write here, so it should be deadlock-free
             let cf_flatkeyvalue = self
                 .dbs
                 .get(CF_FLATKEYVALUE)
                 .unwrap()
                 .begin_write()
                 .unwrap();
-            let cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_read().unwrap();
-            let misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
             let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
-            let last_written = {
-                misc_tree
-                    .get(b"last_written")
-                    .unwrap()
-                    .map(|b| b.to_vec())
-                    .unwrap_or_else(|| vec![0u8; 64])
-            };
-            if last_written == vec![0xff] {
-                return Ok(());
-            }
-
             flatkeyvalue.delete_range(last_written..vec![0xff])?;
         }
 
         loop {
-            let mut cf_flatkeyvalue = self
-                .dbs
-                .get(CF_FLATKEYVALUE)
-                .unwrap()
-                .begin_write()
-                .unwrap();
-            let mut cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
-            let mut misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-            let mut flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
-
             let root = self
                 .read_sync(CF_TRIE_NODES, [])?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
 
-            let last_written = misc_tree
-                .get(b"last_written")
+            let mut last_written = self
+                .read_sync(CF_MISC_VALUES, b"last_written")
                 .unwrap()
-                .map(|b| b.to_vec())
                 .unwrap_or_default();
             let last_written_account = last_written
                 .get(0..64)
@@ -524,6 +507,8 @@ impl Store {
             debug!("Starting FlatKeyValue loop pivot={last_written:?} SR={state_root:x}");
 
             let mut ctr = 0;
+            let mut batch = Vec::with_capacity(10001);
+
             let mut iter = {
                 let db = Box::new(
                     RocksDBTrieDB::new(
@@ -541,41 +526,39 @@ impl Store {
             if last_written_account > Nibbles::default() {
                 iter.advance(last_written_account.to_bytes())?;
             }
-            let mut res = Ok(());
-            'outer: for (path, node) in iter {
+            let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
                 let Node::Leaf(node) = node else {
-                    continue;
+                    return Ok(());
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
-                misc_tree.insert(b"last_written", path.as_ref()).unwrap();
-                flatkeyvalue
-                    .insert(path.as_ref(), node.value.as_ref())
-                    .unwrap();
+                last_written = path.clone().into_vec();
+                batch.push((path.into_vec(), node.value));
                 ctr += 1;
                 if ctr > 10_000 {
-                    drop(misc_tree);
-                    drop(flatkeyvalue);
-
-                    self.db
-                        .group_commit([cf_flatkeyvalue, cf_misc], false)
-                        .unwrap();
-
-                    cf_flatkeyvalue = self
+                    let fkv_tx = self
                         .dbs
                         .get(CF_FLATKEYVALUE)
                         .unwrap()
                         .begin_write()
                         .unwrap();
-                    cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+                    let misc_tx = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
 
-                    misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-                    flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+                    {
+                        let mut fkv_tree = fkv_tx.get_tree(b"").unwrap().unwrap();
 
+                        for (key, value) in batch.drain(..) {
+                            fkv_tree.insert(key.as_ref(), value.as_ref()).unwrap();
+                        }
+                        let mut misc_tree = misc_tx.get_tree(b"").unwrap().unwrap();
+                        misc_tree.insert(b"last_written", &last_written).unwrap();
+                    }
+
+                    self.db.group_commit([fkv_tx, misc_tx], false).unwrap();
                     *self
                         .last_computed_flatkeyvalue
                         .lock()
-                        .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
+                        .map_err(|_| StoreError::LockError)? = last_written.clone();
                     ctr = 0;
                 }
 
@@ -597,86 +580,98 @@ impl Store {
                     iter_inner.advance(last_written_storage.to_bytes())?;
                     last_written_storage = Nibbles::default();
                 }
-                for (path, node) in iter_inner {
+                iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
                     let Node::Leaf(node) = node else {
-                        continue;
+                        return Ok(());
                     };
                     let key = apply_prefix(Some(account_hash), path);
-                    misc_tree.insert(b"last_written", key.as_ref()).unwrap();
-                    flatkeyvalue
-                        .insert(key.as_ref(), node.value.as_ref())
-                        .unwrap();
+                    last_written = key.clone().into_vec();
+                    batch.push((key.into_vec(), node.value));
                     ctr += 1;
                     if ctr > 10_000 {
-                        drop(misc_tree);
-                        drop(flatkeyvalue);
-
-                        self.db
-                            .group_commit([cf_flatkeyvalue, cf_misc], false)
-                            .unwrap();
-
-                        cf_flatkeyvalue = self
+                        let fkv_tx = self
                             .dbs
                             .get(CF_FLATKEYVALUE)
                             .unwrap()
                             .begin_write()
                             .unwrap();
-                        cf_misc = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+                        let misc_tx = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
 
-                        misc_tree = cf_misc.get_tree(b"").unwrap().unwrap();
-                        flatkeyvalue = cf_flatkeyvalue.get_tree(b"").unwrap().unwrap();
+                        {
+                            let mut fkv_tree = fkv_tx.get_tree(b"").unwrap().unwrap();
+
+                            for (key, value) in batch.drain(..) {
+                                fkv_tree.insert(key.as_ref(), value.as_ref()).unwrap();
+                            }
+                            let mut misc_tree = misc_tx.get_tree(b"").unwrap().unwrap();
+                            misc_tree.insert(b"last_written", &last_written).unwrap();
+                        }
+
+                        self.db.group_commit([fkv_tx, misc_tx], false).unwrap();
 
                         *self
                             .last_computed_flatkeyvalue
                             .lock()
-                            .map_err(|_| StoreError::LockError)? = key.as_ref().to_vec();
+                            .map_err(|_| StoreError::LockError)? = last_written.clone();
                         ctr = 0;
                     }
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
                             FKVGeneratorControlMessage::Stop => {
-                                res = Err(StoreError::PivotChanged);
-                                break 'outer;
+                                return Err(StoreError::PivotChanged);
                             }
                             _ => {
-                                res = Err(StoreError::Custom("Unexpected message".to_string()));
-                                break 'outer;
+                                return Err(StoreError::Custom("Unexpected message".to_string()));
                             }
                         }
                     }
-                }
+                    Ok(())
+                })?;
                 if let Ok(value) = control_rx.try_recv() {
                     match value {
                         FKVGeneratorControlMessage::Stop => {
-                            res = Err(StoreError::PivotChanged);
-                            break 'outer;
+                            return Err(StoreError::PivotChanged);
                         }
                         _ => {
-                            res = Err(StoreError::Custom("Unexpected message".to_string()));
-                            break 'outer;
+                            return Err(StoreError::Custom("Unexpected message".to_string()));
                         }
                     }
                 }
-            }
+                Ok(())
+            });
             match res {
                 Err(StoreError::PivotChanged) => {
                     if let Ok(value) = control_rx.recv() {
                         match value {
                             FKVGeneratorControlMessage::Continue => {}
                             _ => {
-                                return Err(StoreError::Custom("Unexpected messafe".to_string()));
+                                return Err(StoreError::Custom("Unexpected message".to_string()));
                             }
                         }
                     }
                 }
                 Err(err) => return Err(err),
                 Ok(()) => {
-                    misc_tree.insert(b"last_written", [0xff].as_ref()).unwrap();
-                    drop(misc_tree);
-                    drop(flatkeyvalue);
-                    self.db
-                        .group_commit([cf_flatkeyvalue, cf_misc], false)
+                    let fkv_tx = self
+                        .dbs
+                        .get(CF_FLATKEYVALUE)
+                        .unwrap()
+                        .begin_write()
                         .unwrap();
+                    let misc_tx = self.dbs.get(CF_MISC_VALUES).unwrap().begin_write().unwrap();
+
+                    {
+                        let mut fkv_tree = fkv_tx.get_tree(b"").unwrap().unwrap();
+
+                        for (key, value) in batch {
+                            fkv_tree.insert(key.as_ref(), value.as_ref()).unwrap();
+                        }
+                        let mut misc_tree = misc_tx.get_tree(b"").unwrap().unwrap();
+                        misc_tree.insert(b"last_written", &[0xff]).unwrap();
+                    }
+
+                    self.db.group_commit([fkv_tx, misc_tx], false).unwrap();
+
                     *self
                         .last_computed_flatkeyvalue
                         .lock()
