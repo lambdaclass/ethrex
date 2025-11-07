@@ -522,15 +522,15 @@ impl Blockchain {
                 continue; // not an address
             }
             let hashed_address = hash_address(&Address::from_slice(key));
-            let Some(encoded_account) = state_trie.get(&hashed_address).unwrap() else {
+            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 continue; // empty account, doesn't have a storage trie
             };
-            let storage_root_hash = AccountState::decode(&encoded_account).unwrap().storage_root;
+            let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
 
             if !nodes.contains_key(&storage_root_hash) {
                 continue; // storage trie isn't relevant to this execution
             }
-            let node = Trie::get_embedded_root(&nodes, storage_root_hash).unwrap();
+            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
             let NodeRef::Node(node, _) = node else {
                 continue; // empty storage trie
             };
