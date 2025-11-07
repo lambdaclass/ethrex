@@ -1,5 +1,5 @@
-use std::mem;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
+use std::mem;
 
 use ethrex_rlp::encode::RLPEncode;
 

@@ -483,16 +483,17 @@ impl Blockchain {
             block_headers_bytes.push(header.encode_to_vec());
         }
 
-        let parent_block_header = {
-            let hash = block_hashes_map.get(&(first_block_header.number - 1)).ok_or(
-                ChainError::WitnessGeneration(format!("Failed to get block hash")),
-            )?;
-            self.storage
-                .get_block_header_by_hash(*hash)?
-                .ok_or(ChainError::WitnessGeneration(format!(
-                    "Failed to get block header"
-                )))?
-        };
+        let parent_block_header =
+            {
+                let hash = block_hashes_map
+                    .get(&(first_block_header.number - 1))
+                    .ok_or(ChainError::WitnessGeneration(format!(
+                        "Failed to get block hash"
+                    )))?;
+                self.storage.get_block_header_by_hash(*hash)?.ok_or(
+                    ChainError::WitnessGeneration(format!("Failed to get block header")),
+                )?
+            };
 
         let chain_config = self.storage.get_chain_config();
 
