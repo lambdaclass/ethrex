@@ -122,7 +122,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
                 destGasLimit,
                 transactionIds[chainId],
                 msg.value,
-                abi.encodeCall(ICommonBridgeL2.mintETH,(to))
+                abi.encodeCall(ICommonBridgeL2.mintETH,(msg.sender))
             );
             transactionIds[chainId] += 1;
         }

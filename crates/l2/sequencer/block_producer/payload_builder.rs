@@ -31,7 +31,7 @@ pub async fn build_payload(
     payload: Block,
     store: &Store,
     last_privileged_nonce: &mut Option<u64>,
-    l2_privileged_nonces: &mut HashMap<u64, u64>,
+    l2_privileged_nonces: &mut HashMap<u64, Option<u64>>,
     block_gas_limit: u64,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
@@ -96,7 +96,7 @@ pub async fn fill_transactions(
     context: &mut PayloadBuildContext,
     store: &Store,
     last_privileged_nonce: &mut Option<u64>,
-    l2_privileged_nonces: &mut HashMap<u64, u64>,
+    l2_privileged_nonces: &mut HashMap<u64, Option<u64>>,
     configured_block_gas_limit: u64,
 ) -> Result<(), BlockProducerError> {
     let mut privileged_tx_count = 0;
@@ -234,14 +234,14 @@ pub async fn fill_transactions(
                     last_privileged_nonce.replace(id);
                 }
                 ethrex_common::types::SourceChainId::L2(chain_id) => {
-                    let entry = l2_privileged_nonces.entry(chain_id).or_insert(0);
-                    if id != *entry {
+                    let entry = l2_privileged_nonces.entry(chain_id).or_insert(None);
+                    if (*entry).is_some_and(|last_nonce| id != last_nonce + 1) {
                         debug!("Ignoring out-of-order l2 privileged transaction");
                         txs.pop();
                         undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
                         continue;
                     }
-                    l2_privileged_nonces.insert(chain_id, id + 1);
+                    l2_privileged_nonces.insert(chain_id, Some(id));
                 }
             }
 

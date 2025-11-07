@@ -62,7 +62,7 @@ pub struct BlockProducer {
     // Needed to ensure privileged tx nonces are sequential
     last_privileged_nonce: Option<u64>,
     // Needed to ensure L2 privileged tx nonces are sequential per source chain
-    l2_privileged_nonces: std::collections::HashMap<u64, u64>,
+    l2_privileged_nonces: std::collections::HashMap<u64, Option<u64>>,
     block_gas_limit: u64,
 }
 

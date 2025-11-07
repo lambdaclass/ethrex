@@ -22,14 +22,13 @@ use ethrex_rpc::{
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
-use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
 };
 use std::collections::BTreeMap;
-use std::str::FromStr;
 use std::time::Duration;
+use std::u64;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
@@ -56,7 +55,6 @@ pub struct L1Watcher {
     pub store: Store,
     pub blockchain: Arc<Blockchain>,
     pub eth_client: EthClient,
-    pub local_client: EthClient,
     pub l2_clients: Vec<L2Client>,
     pub bridge_address: Address,
     pub router_address: Address,
@@ -79,7 +77,6 @@ pub struct L2Client {
 #[derive(Clone, Serialize)]
 pub struct L1WatcherHealth {
     pub l1_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
-    pub l2_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
     pub max_block_step: String,
     pub last_block_fetched: String,
     pub check_interval: u64,
@@ -97,25 +94,18 @@ impl L1Watcher {
         sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
-        // TODO: De-hardcode the rollup client URL
-        #[allow(clippy::expect_used)]
-        let local_client = EthClient::new(
-            Url::parse("http://localhost:1729").expect("Unreachable error. URL is hardcoded"),
-        )?;
-        #[allow(clippy::expect_used)]
-        let l2_clients = vec![EthClient::new(
-            Url::parse("http://localhost:1730").expect("Unreachable error. URL is hardcoded"),
-        )?];
-        // TODO: This should be fetched from the Router logs.
-        let l2_clients = l2_clients
-            .into_iter()
-            .map(|client| L2Client {
-                eth_client: client,
+        let mut l2_clients: Vec<L2Client> = vec![];
+        info!("Configuring L1 Watcher L2 clients {:?} {:?}", watcher_config.l2s_rpc_urls, watcher_config.l2s_chain_ids);
+        for (url, chain_id) in watcher_config.l2s_rpc_urls.iter().zip(watcher_config.l2s_chain_ids.clone()) {
+            info!("Adding L2 client with URL: {} and chain ID: {}", url, chain_id);
+            let l2_client = EthClient::new(url.clone())?;
+            l2_clients.push(L2Client {
+                eth_client: l2_client,
                 last_block_fetched_l2: U256::zero(),
                 messenger_address: MESSENGER_ADDRESS,
-                chain_id: 1730,
-            })
-            .collect();
+                chain_id,
+            });
+        }
         let last_block_fetched = U256::zero();
         let chain_id_topic = {
             let u256 = U256::from(store.get_chain_config().chain_id);
@@ -123,15 +113,12 @@ impl L1Watcher {
             H256(bytes)
         };
 
-        // TODO: fetch from config
-        let router_address = Address::from_str("0x2bc74c22739625e06609ac16eea025f31fd350e3")
-            .expect("Invalid router address");
+        let router_address = watcher_config.router_address;
 
         Ok(Self {
             store,
             blockchain,
             eth_client,
-            local_client,
             l2_clients,
             bridge_address: watcher_config.bridge_address,
             router_address,
@@ -265,16 +252,11 @@ impl L1Watcher {
         for log in logs {
             let privileged_transaction_data = PrivilegedTransactionData::from_log(log.log)?;
 
-            let gas_price = self.local_client.get_gas_price().await?;
-            // Avoid panicking when using as_u64()
-            let gas_price: u64 = gas_price
-                .try_into()
-                .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
-
             let chain_id = self.store.get_chain_config().chain_id;
 
+            // We should actually delete the gas price field from privileged transactions.
             let mint_transaction = privileged_transaction_data
-                .into_tx(&self.eth_client, chain_id, gas_price)
+                .into_tx(&self.eth_client, chain_id, u64::MAX)
                 .await?;
 
             let tx = Transaction::PrivilegedL2Transaction(mint_transaction);
@@ -323,19 +305,14 @@ impl L1Watcher {
         let mut privileged_txs = Vec::new();
 
         for (tx, source_chain_id) in l2_txs {
-            let gas_price = self.local_client.get_gas_price().await?;
-            // Avoid panicking when using as_u64()
-            let gas_price: u64 = gas_price
-                .try_into()
-                .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
 
             info!("Add mint tx with nonce: {}", tx.tx_id.as_u64());
 
             let mint_transaction = PrivilegedL2Transaction {
                 chain_id: tx.chain_id.as_u64(),
                 nonce: tx.tx_id.as_u64(),
-                max_priority_fee_per_gas: gas_price,
-                max_fee_per_gas: gas_price,
+                max_priority_fee_per_gas: u64::MAX,
+                max_fee_per_gas: u64::MAX,
                 gas_limit: tx.gas_limit.as_u64(),
                 to: TxKind::Call(tx.to),
                 value: tx.value,
@@ -401,11 +378,9 @@ impl L1Watcher {
 
     async fn health(&mut self) -> CallResponse<Self> {
         let l1_rpc_healthcheck = self.eth_client.test_urls().await;
-        let l2_rpc_healthcheck = self.local_client.test_urls().await;
 
         CallResponse::Reply(OutMessage::Health(L1WatcherHealth {
             l1_rpc_healthcheck,
-            l2_rpc_healthcheck,
             max_block_step: self.max_block_step.to_string(),
             last_block_fetched: self.last_block_fetched_l1.to_string(),
             check_interval: self.check_interval,
