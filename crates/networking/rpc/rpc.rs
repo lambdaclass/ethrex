@@ -611,7 +611,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::default_context_with_storage;
+    use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
         H160,
         types::{ChainConfig, Genesis},
