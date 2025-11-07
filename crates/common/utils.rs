@@ -68,8 +68,8 @@ pub fn keccak(data: impl AsRef<[u8]>) -> H256 {
     H256(keccak_hash(data))
 }
 
-/// Allocation-free operations on arrays.
-
+// Allocation-free operations on arrays.
+///
 /// Truncates an array of size N to size M.
 /// Fails compilation if N < M.
 pub fn truncate_array<const N: usize, const M: usize>(data: [u8; N]) -> [u8; M] {

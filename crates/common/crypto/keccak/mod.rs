@@ -236,7 +236,7 @@ mod test {
         let mut keccak = Keccak256::new();
         let buf: [u8; BLOCK_SIZE >> 1] =
             array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
-        keccak.update(&buf);
+        keccak.update(buf);
 
         assert_eq!(
             keccak
@@ -253,7 +253,7 @@ mod test {
         let mut keccak = Keccak256::new();
         let buf: [u8; BLOCK_SIZE] =
             array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
-        keccak.update(&buf);
+        keccak.update(buf);
 
         assert_eq!(
             keccak
@@ -270,7 +270,7 @@ mod test {
         let mut keccak = Keccak256::new();
         let buf: [u8; BLOCK_SIZE - 1] =
             array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
-        keccak.update(&buf);
+        keccak.update(buf);
 
         assert_eq!(
             keccak
@@ -338,7 +338,7 @@ mod test {
         one.update(&a);
         one.update(&b);
 
-        two.update(&[1u8; 70]);
+        two.update([1u8; 70]);
 
         assert_eq!(one.finalize(), two.finalize());
     }

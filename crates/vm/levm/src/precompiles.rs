@@ -422,7 +422,6 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
         ethrex_crypto::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
 
     // Address is the last 20 bytes of the hash.
-    #[expect(clippy::indexing_slicing)]
     let recovered_address_bytes = &public_key_hash[12..];
 
     let mut out = [0u8; 32];
