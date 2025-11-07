@@ -228,7 +228,7 @@ impl LEVM {
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
-        // The transactions recovered address
+        // The transaction's recovered address
         tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
@@ -241,10 +241,11 @@ impl LEVM {
         vm.execute().map_err(VMError::into)
     }
 
-    pub fn execute_tx_in_block(
+    // Like execute_tx but allows reusing the stack pool
+    fn execute_tx_in_block(
         // The transaction to execute.
         tx: &Transaction,
-        // The transactions recovered address
+        // The transaction's recovered address
         tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
