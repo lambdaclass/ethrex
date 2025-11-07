@@ -856,7 +856,7 @@ impl Blockchain {
         use std::io::Write;
 
         let guard = pprof::ProfilerGuardBuilder::default()
-            .frequency(9997)
+            .frequency(99997)
             .build()
             .unwrap();
         let (res, account_updates_list, merkle_queue_length, instants) =
