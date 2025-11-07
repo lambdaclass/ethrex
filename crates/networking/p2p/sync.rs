@@ -1596,6 +1596,10 @@ async fn insert_storages(
             let sender = sender.clone();
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
+            if counter >= thread_count - 1 {
+                let _ = receiver.recv();
+                counter -= 1;
+            }
             counter += 1;
             let pool_clone = pool_write.clone();
             let mut iter = snapshot.raw_iterator();
