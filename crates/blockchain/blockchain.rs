@@ -517,7 +517,7 @@ impl Blockchain {
 
         // get all storage trie roots and embed the rest of the trie into it
         let mut storage_trie_roots = Vec::new();
-        for key in &keys {
+        for key in &rpc_witness.keys {
             if key.len() != 20 {
                 continue; // not an address
             }
@@ -526,13 +526,17 @@ impl Blockchain {
                 continue; // empty account, doesn't have a storage trie
             };
             let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
-
+            if storage_root_hash == *EMPTY_KECCACK_HASH {
+                continue; // empty storage trie
+            }
             if !nodes.contains_key(&storage_root_hash) {
                 continue; // storage trie isn't relevant to this execution
             }
             let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
             let NodeRef::Node(node, _) = node else {
-                continue; // empty storage trie
+                return Err(GuestProgramStateError::Custom(
+                    "execution witness does not contain non-empty storage trie".to_string(),
+                ));
             };
             storage_trie_roots.push((*node).clone());
         }
