@@ -37,6 +37,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
+use pprof::protos::Message;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
@@ -852,6 +853,12 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+        use std::io::Write;
+
+        let guard = pprof::ProfilerGuardBuilder::default()
+            .frequency(10)
+            .build()
+            .unwrap();
         let (res, account_updates_list, merkle_queue_length, instants) =
             self.execute_block_pipeline(&block)?;
 
@@ -882,9 +889,16 @@ impl Blockchain {
                 instants,
             );
         }
+        if let Ok(report) = guard.report().build() {
+            let mut file = std::fs::File::create("profile.pb").unwrap();
+            let profile = report.pprof().unwrap();
+
+            let mut content = Vec::new();
+            profile.write_to_vec(&mut content).unwrap();
+            file.write_all(&content).unwrap();
+        }
         result
     }
-
     #[allow(clippy::too_many_arguments)]
     fn print_add_block_logs(
         gas_used: u64,
