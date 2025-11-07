@@ -55,13 +55,13 @@ pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32] {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Keccak256Asm {
+pub struct Keccak256 {
     state: State,
     tail_buf: [u8; BLOCK_SIZE],
     tail_len: usize,
 }
 
-impl Default for Keccak256Asm {
+impl Default for Keccak256 {
     fn default() -> Self {
         Self {
             state: State::default(),
@@ -71,7 +71,7 @@ impl Default for Keccak256Asm {
     }
 }
 
-impl Keccak256Asm {
+impl Keccak256 {
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -220,7 +220,7 @@ mod test {
 
     #[test]
     fn keccak_asm_empty() {
-        let keccak = Keccak256Asm::new();
+        let keccak = Keccak256::new();
         assert_eq!(
             keccak
                 .finalize()
@@ -233,7 +233,7 @@ mod test {
 
     #[test]
     fn keccak_asm_half_block() {
-        let mut keccak = Keccak256Asm::new();
+        let mut keccak = Keccak256::new();
         let buf: [u8; BLOCK_SIZE >> 1] =
             array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
         keccak.update(&buf);
@@ -250,7 +250,7 @@ mod test {
 
     #[test]
     fn keccak_asm_full_block() {
-        let mut keccak = Keccak256Asm::new();
+        let mut keccak = Keccak256::new();
         let buf: [u8; BLOCK_SIZE] =
             array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
         keccak.update(&buf);
@@ -267,7 +267,7 @@ mod test {
 
     #[test]
     fn keccak_asm_almost_full_block() {
-        let mut keccak = Keccak256Asm::new();
+        let mut keccak = Keccak256::new();
         let buf: [u8; BLOCK_SIZE - 1] =
             array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
         keccak.update(&buf);
@@ -284,7 +284,7 @@ mod test {
 
     #[test]
     fn keccak_asm_two_half_updates() {
-        let mut keccak = Keccak256Asm::new();
+        let mut keccak = Keccak256::new();
 
         let full: [u8; BLOCK_SIZE] =
             array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
@@ -312,8 +312,8 @@ mod test {
             .map(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8)
             .collect();
 
-        let mut k1 = Keccak256Asm::new();
-        let mut k2 = Keccak256Asm::new();
+        let mut k1 = Keccak256::new();
+        let mut k2 = Keccak256::new();
 
         k1.update(&full);
 
@@ -329,8 +329,8 @@ mod test {
 
     #[test]
     fn keccac_compare_small_than_block() {
-        let mut one = Keccak256Asm::new();
-        let mut two = Keccak256Asm::new();
+        let mut one = Keccak256::new();
+        let mut two = Keccak256::new();
 
         let a = vec![1u8; 30];
         let b = vec![1u8; 40];

@@ -16,7 +16,7 @@ use ethrex_common::{
     H128, H256,
     utils::{keccak, truncate_array},
 };
-use ethrex_crypto::keccak::{Keccak256Asm, keccak_hash};
+use ethrex_crypto::keccak::{Keccak256, keccak_hash};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode as _};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder, Framed};
@@ -29,8 +29,8 @@ type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
 pub struct RLPxCodec {
     pub(crate) mac_key: H256,
-    pub(crate) ingress_mac: Keccak256Asm,
-    pub(crate) egress_mac: Keccak256Asm,
+    pub(crate) ingress_mac: Keccak256,
+    pub(crate) egress_mac: Keccak256,
     pub(crate) ingress_aes: Aes256Ctr64BE,
     pub(crate) egress_aes: Aes256Ctr64BE,
     pub(crate) eth_version: Arc<RwLock<EthCapVersion>>,
@@ -60,12 +60,12 @@ impl RLPxCodec {
         let mac_key = keccak([ephemeral_key_secret, aes_key.0].concat());
 
         // egress-mac = keccak256.init((mac-secret ^ remote-nonce) || auth)
-        let egress_mac = Keccak256Asm::default()
+        let egress_mac = Keccak256::default()
             .update(mac_key ^ remote_state.nonce)
             .update(&local_state.init_message);
 
         // ingress-mac = keccak256.init((mac-secret ^ initiator-nonce) || ack)
-        let ingress_mac = Keccak256Asm::default()
+        let ingress_mac = Keccak256::default()
             .update(mac_key ^ local_state.nonce)
             .update(&remote_state.init_message);
 
