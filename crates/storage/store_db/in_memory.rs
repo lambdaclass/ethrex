@@ -437,7 +437,7 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let store = self.inner()?;
         let trie_backend = store.state_trie_nodes.clone();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        let db = Arc::new(InMemoryTrieDB::new(trie_backend));
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: store.trie_cache.clone(),
@@ -450,7 +450,7 @@ impl StoreEngine for Store {
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let store = self.inner()?;
         let trie_backend = store.state_trie_nodes.clone();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        let db = Arc::new(InMemoryTrieDB::new(trie_backend));
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: store.trie_cache.clone(),

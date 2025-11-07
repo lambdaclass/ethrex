@@ -199,7 +199,7 @@ impl TrieLayerCache {
 pub struct TrieWrapper {
     pub state_root: H256,
     pub inner: Arc<TrieLayerCache>,
-    pub db: Box<dyn TrieDB>,
+    pub db: Arc<dyn TrieDB>,
     pub prefix: Option<H256>,
 }
 

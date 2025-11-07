@@ -133,7 +133,7 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Store {
     db: canopydb::Environment,
     dbs: Arc<BTreeMap<String, canopydb::Database>>,
@@ -141,6 +141,14 @@ pub struct Store {
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+
+    cached_state_trie: Arc<Mutex<Option<(H256, Arc<RocksDBLockedTrieDB>)>>>,
+}
+
+impl Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store").finish_non_exhaustive()
+    }
 }
 
 impl Store {
@@ -209,6 +217,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            cached_state_trie: Default::default(),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -1499,7 +1508,7 @@ impl StoreEngine for Store {
         state_root: H256,
     ) -> Result<Trie, StoreError> {
         // FIXME: use a DB snapshot here
-        let db = Box::new(RocksDBTrieDB::new(
+        let db = Arc::new(RocksDBTrieDB::new(
             self.db.clone(),
             self.dbs.clone(),
             CF_TRIE_NODES,
@@ -1521,7 +1530,7 @@ impl StoreEngine for Store {
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         // FIXME: use a DB snapshot here
-        let db = Box::new(RocksDBTrieDB::new(
+        let db = Arc::new(RocksDBTrieDB::new(
             self.db.clone(),
             self.dbs.clone(),
             CF_TRIE_NODES,
@@ -1568,12 +1577,20 @@ impl StoreEngine for Store {
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBLockedTrieDB::new(
-            self.dbs.clone(),
-            CF_TRIE_NODES,
-            None,
-            self.last_written()?,
-        )?);
+        let state_trie = {
+            let mut guard = self.cached_state_trie.lock().unwrap();
+            if guard.is_none() || guard.as_ref().unwrap().0 != state_root {
+                let trie = RocksDBLockedTrieDB::new(
+                    self.dbs.clone(),
+                    CF_TRIE_NODES,
+                    None,
+                    self.last_written()?,
+                )?;
+                *guard = Some((state_root, Arc::new(trie)));
+            }
+            guard.as_ref().unwrap().1.clone()
+        };
+        let db = state_trie;
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: self
@@ -1593,7 +1610,7 @@ impl StoreEngine for Store {
         storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBLockedTrieDB::new(
+        let db = Arc::new(RocksDBLockedTrieDB::new(
             self.dbs.clone(),
             CF_TRIE_NODES,
             None,

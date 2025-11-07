@@ -736,14 +736,14 @@ impl Store {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
-            let state_trie = self.open_state_trie(state_root)?;
+            let state_trie = self.open_locked_state_trie(state_root)?;
             let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 return Ok(None);
             };
             let account = AccountState::decode(&encoded_account)?;
             account.storage_root
         };
-        let storage_trie = self.open_storage_trie(account_hash, storage_root, state_root)?;
+        let storage_trie = self.open_locked_storage_trie(account_hash, storage_root, state_root)?;
 
         let hashed_key = hash_key(&storage_key);
         storage_trie
@@ -900,7 +900,7 @@ impl Store {
         state_root: H256,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let state_trie = self.open_state_trie(state_root)?;
+        let state_trie = self.open_locked_state_trie(state_root)?;
         self.get_account_state_from_trie(&state_trie, address)
     }
 
