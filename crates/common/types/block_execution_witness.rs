@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::fmt;
 use std::str::FromStr;
 
@@ -362,10 +363,15 @@ impl GuestProgramState {
             .get_account_state(address)?
             .map(|account| account.storage_root)
             .unwrap_or(*EMPTY_TRIE_HASH);
-        let storage_trie = self
-            .storage_tries
-            .entry(storage_root)
-            .or_insert(Trie::default());
+        if storage_root == *EMPTY_KECCACK_HASH {
+            return Ok(None);
+        }
+        let Some(storage_trie) = self.storage_tries.get(&storage_root) else {
+            return Err(GuestProgramStateError::Database(format!(
+                "non empty storage trie not found for root {storage_root}"
+            )));
+        };
+
         let hashed_key = hash_key(&key);
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)
