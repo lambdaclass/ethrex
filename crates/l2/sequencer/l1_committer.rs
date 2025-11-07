@@ -188,10 +188,6 @@ impl L1Committer {
             )
             .await?;
 
-        let result = rollup_store.get_fee_config_by_block(2).await;
-
-        dbg!(&result);
-
         Ok(Self {
             eth_client,
             blockchain,
