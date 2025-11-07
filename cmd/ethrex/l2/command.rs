@@ -401,7 +401,7 @@ impl Command {
                 info!("Initialized blockchain store at {:?}", &store_path);
 
                 let rollup_store =
-                    StoreRollup::new(&store_path.join("./rollup_store"), rollup_store_type)?;
+                    StoreRollup::new(&store_path.join("rollup_store"), rollup_store_type)?;
                 rollup_store
                     .init()
                     .await
