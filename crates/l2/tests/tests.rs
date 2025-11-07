@@ -149,13 +149,22 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         .get_balance(l1_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
+    let mut acc_priority_fees = 0;
+    let mut acc_base_fees = 0;
+    let mut acc_operator_fee = 0;
+    let mut acc_l1_fees = 0;
+
     // Non thread-safe uses owner address
-    test_fee_token(
+    let fee_token_fees = test_fee_token(
         l2_client.clone(),
         private_keys.pop().unwrap(),
         private_keys.pop().unwrap(),
     )
     .await?;
+    acc_priority_fees += fee_token_fees.priority_fees;
+    acc_base_fees += fee_token_fees.base_fees;
+    acc_operator_fee += fee_token_fees.operator_fees;
+    acc_l1_fees += fee_token_fees.l1_fees;
 
     let mut set = JoinSet::new();
 
@@ -229,10 +238,6 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
-    let mut acc_priority_fees = 0;
-    let mut acc_base_fees = 0;
-    let mut acc_operator_fee = 0;
-    let mut acc_l1_fees = 0;
     while let Some(res) = set.join_next().await {
         let fees_details = res??;
         acc_priority_fees += fees_details.priority_fees;
