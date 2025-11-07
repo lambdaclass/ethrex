@@ -152,6 +152,12 @@ impl From<NodeHash> for NodeRef {
     }
 }
 
+impl From<Arc<Node>> for NodeRef {
+    fn from(value: Arc<Node>) -> Self {
+        Self::Node(value, OnceLock::new())
+    }
+}
+
 impl PartialEq for NodeRef {
     fn eq(&self, other: &Self) -> bool {
         self.compute_hash() == other.compute_hash()

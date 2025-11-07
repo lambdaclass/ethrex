@@ -3,6 +3,7 @@ use ethrex_common::{
     types::{BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError},
 };
 use ethrex_storage::error::StoreError;
+use ethrex_trie::TrieError;
 use ethrex_vm::EvmError;
 
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +18,8 @@ pub enum ChainError {
     ParentStateNotFound,
     #[error("DB error: {0}")]
     StoreError(#[from] StoreError),
+    #[error("Trie error: {0}")]
+    TrieError(#[from] TrieError),
     #[error("EVM error: {0}")]
     EvmError(EvmError),
     #[error("Invalid Transaction: {0}")]
@@ -51,6 +54,7 @@ impl ChainError {
             ChainError::ParentNotFound => "parent_not_found",
             ChainError::ParentStateNotFound => "parent_state_not_found",
             ChainError::StoreError(_) => "store_error",
+            ChainError::TrieError(_) => "trie_error",
             ChainError::EvmError(_) => "evm_error",
             ChainError::InvalidTransaction(_) => "invalid_transaction",
             ChainError::WitnessGeneration(_) => "witness_generation",

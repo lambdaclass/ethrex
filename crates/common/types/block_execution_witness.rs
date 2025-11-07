@@ -11,8 +11,9 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeHash, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeHash, Trie, TrieError};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -98,6 +99,10 @@ pub enum GuestProgramStateError {
     MissingParentHeaderOf(u64),
     #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
     NoncontiguousBlockHeaders,
+    #[error("Trie error: {0}")]
+    Trie(#[from] TrieError),
+    #[error("RLP Decode: {0}")]
+    RLPDecode(#[from] RLPDecodeError),
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
     #[error("Custom error: {0}")]

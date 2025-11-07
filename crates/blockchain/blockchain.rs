@@ -32,7 +32,7 @@ use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -470,7 +470,6 @@ impl Blockchain {
         }
 
         let mut block_headers_bytes = Vec::new();
-
         for block_number in first_needed_block_number..=last_needed_block_number {
             let hash = block_hashes_map
                 .get(&block_number)
@@ -482,39 +481,21 @@ impl Blockchain {
             )?;
             block_headers_bytes.push(header.encode_to_vec());
         }
-
-        let parent_block_header =
-            {
-                let hash = block_hashes_map
-                    .get(&(first_block_header.number - 1))
-                    .ok_or(ChainError::WitnessGeneration(format!(
-                        "Failed to get block hash"
-                    )))?;
-                self.storage.get_block_header_by_hash(*hash)?.ok_or(
-                    ChainError::WitnessGeneration(format!("Failed to get block header")),
-                )?
-            };
-
-        let chain_config = self.storage.get_chain_config();
-
-        let initial_state_root = parent_block_header.state_root;
-
-        let nodes: BTreeMap<H256, Node> = used_trie_nodes
-            .into_iter()
-            .map(|node| Ok((node.compute_hash().finalize(), node)))
-            .collect::<Result<_, RLPDecodeError>>()
-            .unwrap();
-        let state_trie_root = (*Trie::get_embedded_root(&nodes, initial_state_root)
-            .unwrap()
-            .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
-            .unwrap()
-            .unwrap())
-        .clone();
-
-        let state_trie = Trie::new_temp_with_root(state_trie_root.clone());
+        let initial_state_root = {
+            let hash = block_hashes_map
+                .get(&(first_block_header.number - 1))
+                .ok_or(ChainError::WitnessGeneration(format!(
+                    "Failed to get parent block hash"
+                )))?;
+            self.storage
+                .get_block_header_by_hash(*hash)?
+                .ok_or(ChainError::WitnessGeneration(format!(
+                    "Failed to get parent block header"
+                )))?
+                .state_root
+        };
 
         let mut keys = Vec::new();
-
         for (address, touched_storage_slots) in touched_account_storage_slots {
             keys.push(address.as_bytes().to_vec());
             for slot in touched_storage_slots.iter() {
@@ -522,34 +503,46 @@ impl Blockchain {
             }
         }
 
-        let storage_roots: Vec<_> = keys
-            .iter()
-            .filter(|k| k.len() == 20)
-            .map(|k| Address::from_slice(&k))
-            .map(|a| {
-                let encoded_account = state_trie.get(&hash_address(&a)).unwrap().unwrap();
-                AccountState::decode(&encoded_account).unwrap().storage_root
-            })
-            .collect();
-
-        let storage_trie_roots = storage_roots
+        // get state trie root and embed the rest of the trie into it
+        let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
-            .map(|_| {
-                (*Trie::get_embedded_root(&nodes, initial_state_root)
-                    .unwrap()
-                    .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
-                    .unwrap()
-                    .unwrap())
-                .clone()
-            })
+            .map(|node| (node.compute_hash().finalize(), node))
             .collect();
+        let state_trie_root = Trie::get_embedded_root(&nodes, initial_state_root)?
+            .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))?
+            .ok_or(ChainError::Custom(
+                "used trie nodes don't contain the initial state root".to_string(),
+            ))?;
+        let state_trie = Trie::new_temp_with_root(state_trie_root.clone().into());
+
+        // get all storage trie roots and embed the rest of the trie into it
+        let mut storage_trie_roots = Vec::new();
+        for key in &keys {
+            if key.len() != 20 {
+                continue; // not an address
+            }
+            let hashed_address = hash_address(&Address::from_slice(key));
+            let Some(encoded_account) = state_trie.get(&hashed_address).unwrap() else {
+                continue; // empty account, doesn't have a storage trie
+            };
+            let storage_root_hash = AccountState::decode(&encoded_account).unwrap().storage_root;
+
+            if !nodes.contains_key(&storage_root_hash) {
+                continue; // storage trie isn't relevant to this execution
+            }
+            let node = Trie::get_embedded_root(&nodes, storage_root_hash).unwrap();
+            let NodeRef::Node(node, _) = node else {
+                continue; // empty storage trie
+            };
+            storage_trie_roots.push((*node).clone());
+        }
 
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: first_block_header.number,
-            chain_config,
-            state_trie_root,
+            chain_config: self.storage.get_chain_config(),
+            state_trie_root: (*state_trie_root).clone(),
             storage_trie_roots,
             keys,
         })

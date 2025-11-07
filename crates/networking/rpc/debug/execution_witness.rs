@@ -74,17 +74,15 @@ pub fn execution_witness_from_rpc_chain_config(
         .state
         .into_iter()
         .map(|b| Ok((keccak(&b), Node::decode(&b.to_vec())?)))
-        .collect::<Result<_, RLPDecodeError>>()
-        .map_err(|e| GuestProgramStateError::Custom(format!("failed to rlp decode nodes: {e}")))?;
+        .collect::<Result<_, RLPDecodeError>>()?;
 
     // get state trie root and embed the rest of the trie into it
-    let state_trie_root = (*Trie::get_embedded_root(&nodes, initial_state_root)
-        .unwrap()
-        .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))
-        .unwrap()
-        .unwrap())
-    .clone();
-    let state_trie = Trie::new_temp_with_root(state_trie_root.clone());
+    let state_trie_root = Trie::get_embedded_root(&nodes, initial_state_root)?
+        .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))?
+        .ok_or(GuestProgramStateError::Custom(
+            "execution witness does not contain the initial state".to_string(),
+        ))?;
+    let state_trie = Trie::new_temp_with_root(state_trie_root.clone().into());
 
     // get all storage trie roots and embed the rest of the trie into it
     let mut storage_trie_roots = Vec::new();
@@ -117,7 +115,7 @@ pub fn execution_witness_from_rpc_chain_config(
             .into_iter()
             .map(|b| b.to_vec())
             .collect(),
-        state_trie_root,
+        state_trie_root: (*state_trie_root).clone(),
         storage_trie_roots,
         keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
