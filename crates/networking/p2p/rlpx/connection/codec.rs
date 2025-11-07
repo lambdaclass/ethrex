@@ -87,8 +87,8 @@ impl std::fmt::Debug for RLPxCodec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RLPxCodec")
             .field("mac_key", &self.mac_key)
-            .field("ingress_mac", &self.ingress_mac)
-            .field("egress_mac", &self.egress_mac)
+            .field("ingress_mac", &"ingress_mac")
+            .field("egress_mac", &"egress_mac")
             .field("ingress_aes", &"Aes256Ctr64BE")
             .field("egress_aes", &"Aes256Ctr64BE")
             .field("eth_version", &self.eth_version)
@@ -121,7 +121,7 @@ impl Decoder for RLPxCodec {
         // Validate MAC header
         // header-mac-seed = aes(mac-secret, keccak256.digest(egress-mac)[:16]) ^ header-ciphertext
         let header_mac_seed = {
-            let mac_digest: [u8; 16] = truncate_array(self.ingress_mac.finalize());
+            let mac_digest: [u8; 16] = truncate_array(self.ingress_mac.clone().finalize());
             let mut seed = mac_digest.into();
             mac_aes_cipher.encrypt_block(&mut seed);
             (H128(seed.into())
@@ -135,11 +135,11 @@ impl Decoder for RLPxCodec {
 
         // ingress-mac = keccak256.update(ingress-mac, header-mac-seed)
         // Use temporary value as it can be discarded if the buffer does not contain yet the full message
-        let mut temp_ingress_mac = self.ingress_mac;
+        let mut temp_ingress_mac = self.ingress_mac.clone();
         temp_ingress_mac.update(header_mac_seed);
 
         // header-mac = keccak256.digest(egress-mac)[:16]
-        let expected_header_mac = H128(truncate_array(temp_ingress_mac.finalize()));
+        let expected_header_mac = H128(truncate_array(temp_ingress_mac.clone().finalize()));
 
         if header_mac != expected_header_mac.0 {
             return Err(PeerConnectionError::InvalidMessageFrame(
@@ -193,7 +193,7 @@ impl Decoder for RLPxCodec {
         src.advance(total_message_size);
 
         // The buffer contains the full message and will be consumed; update the ingress_mac and aes values
-        self.ingress_mac = temp_ingress_mac;
+        self.ingress_mac = temp_ingress_mac.clone();
         self.ingress_aes = temp_ingress_aes;
 
         let (frame_ciphertext, frame_mac) = frame_data
@@ -205,13 +205,13 @@ impl Decoder for RLPxCodec {
         // check MAC
         self.ingress_mac.update(&frame_ciphertext);
         let frame_mac_seed = {
-            let mac_digest: [u8; 16] = truncate_array(self.ingress_mac.finalize());
+            let mac_digest: [u8; 16] = truncate_array(self.ingress_mac.clone().finalize());
             let mut seed = mac_digest.into();
             mac_aes_cipher.encrypt_block(&mut seed);
             (H128(seed.into()) ^ H128(mac_digest)).0
         };
         self.ingress_mac.update(frame_mac_seed);
-        let expected_frame_mac: [u8; 16] = truncate_array(self.ingress_mac.finalize());
+        let expected_frame_mac: [u8; 16] = truncate_array(self.ingress_mac.clone().finalize());
 
         if frame_mac != expected_frame_mac {
             return Err(PeerConnectionError::InvalidMessageFrame(
@@ -293,7 +293,7 @@ impl Encoder<rlpx::Message> for RLPxCodec {
             })?)?;
 
         let header_mac_seed = {
-            let mac_digest: [u8; 16] = truncate_array(self.egress_mac.finalize());
+            let mac_digest: [u8; 16] = truncate_array(self.egress_mac.clone().finalize());
             let mut seed = mac_digest.into();
             mac_aes_cipher.encrypt_block(&mut seed);
             let header_data = header
@@ -308,7 +308,7 @@ impl Encoder<rlpx::Message> for RLPxCodec {
             H128(seed.into()) ^ H128(header_data)
         };
         self.egress_mac.update(header_mac_seed);
-        let header_mac = self.egress_mac.finalize();
+        let header_mac = self.egress_mac.clone().finalize();
         let header_mac_data: [u8; 16] = truncate_array(header_mac);
         header.extend_from_slice(&header_mac_data);
 
@@ -328,13 +328,13 @@ impl Encoder<rlpx::Message> for RLPxCodec {
 
         // frame-mac-seed = aes(mac-secret, keccak256.digest(egress-mac)[:16]) ^ keccak256.digest(egress-mac)[:16]
         let frame_mac_seed = {
-            let mac_digest: [u8; 16] = truncate_array(self.egress_mac.finalize());
+            let mac_digest: [u8; 16] = truncate_array(self.egress_mac.clone().finalize());
             let mut seed = mac_digest.into();
             mac_aes_cipher.encrypt_block(&mut seed);
             (H128(seed.into()) ^ H128(mac_digest)).0
         };
         self.egress_mac.update(frame_mac_seed);
-        let frame_mac = self.egress_mac.finalize();
+        let frame_mac = self.egress_mac.clone().finalize();
 
         // Write frame-mac
         buffer.extend_from_slice(&frame_mac[..16]);

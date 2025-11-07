@@ -15,8 +15,10 @@ c-kzg = { version = "2.1.1", default-features = false, optional = true, features
     "std",
 ] }
 kzg-rs.workspace = true
-
 thiserror.workspace = true
+
+#[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
 default = []

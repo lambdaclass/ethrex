@@ -3410,6 +3410,7 @@ dependencies = [
  "c-kzg",
  "kzg-rs",
  "thiserror 2.0.17",
+ "tiny-keccak",
 ]
 
 [[package]]
