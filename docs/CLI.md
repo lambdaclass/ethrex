@@ -93,20 +93,21 @@ P2P options:
 
           [default: 1000]
 
-      --target.peers <MAX_PEERS>
-          Max amount of connected peers.
-
-          [default: 100]
-
       --p2p.initial-lookup-interval <INITIAL_INTERVAL_MS>
           The initial interval between peer lookups, until the number of peers reaches the target number of peers.
 
           [default: 100]
 
-      --p2p.initial-lookup-interval <INTERVAL_MS>
-          The initial interval between peer lookups, until the number of peers reaches the target number of peers.
+      --p2p.lookup-interval <INTERVAL_MS>
+          The interval between peer lookups once the number of peers reaches the target number of peers.
 
           [default: 600]
+
+      --target.peers <MAX_PEERS>
+          Max amount of connected peers.
+
+          [default: 100]
+
 
 
 RPC options:
