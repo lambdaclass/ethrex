@@ -19,7 +19,7 @@ use ethrex_common::{
 };
 use ethrex_levm::EVMConfig;
 use ethrex_levm::call_frame::Stack;
-use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
+use ethrex_levm::constants::{STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -100,7 +100,7 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
-        let mut shared_stack_pool = Vec::with_capacity(1024);
+        let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
