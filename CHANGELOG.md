@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-05
+
+- Make bloom qfilter counting to avoid rebuilding entire filter [#5194](https://github.com/lambdaclass/ethrex/pull/5194)
+
 ### 2025-11-03
 
 - Avoid unnecessary hash validations [#5167](https://github.com/lambdaclass/ethrex/pull/5167)

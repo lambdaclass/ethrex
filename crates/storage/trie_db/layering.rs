@@ -110,11 +110,15 @@ impl TrieLayerCache {
             return;
         }
 
-        // add this new bloom to the global one.
-        if let Some(filter) = &mut self.bloom {
+        // insert_counting requires a max_count argument, we need this to be minimum 129, but the count may be bigger due to forks
+        const MAX_COUNT_FILTER: u64 = 10000;
+        if let Some(filter) = self.bloom.as_mut() {
             for (p, _) in &key_values {
-                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
-                    tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
+                // assuming p is unique among key_values
+                if let Err(qfilter::Error::CapacityExceeded) =
+                    filter.insert_counting(MAX_COUNT_FILTER, p.as_ref())
+                {
+                    tracing::warn!("TrieLayerCache: put_batch per layer capacity exceeded");
                     self.bloom = None;
                     break;
                 }
@@ -135,8 +139,50 @@ impl TrieLayerCache {
         self.layers.insert(state_root, Arc::new(entry));
     }
 
-    /// Rebuilds the global bloom filter accruing all current existing layers.
+    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+        let layer = Arc::try_unwrap(self.layers.remove(&state_root)?)
+            .unwrap_or_else(|layer| TrieLayer::clone(&layer));
+
+        // ensure parents are commited
+        let parent_nodes = self.commit(layer.parent);
+
+        // older layers are useless
+        let layers_removed = self.layers.extract_if(|_, item| item.id <= layer.id);
+
+        let mut bloom_needs_full_rebuild = false;
+
+        // note: layers_removed needs to be fully consumed to remove the layers, so we can't early break the outer for.
+        for (_, item) in layers_removed {
+            if let Some(bloom) = self.bloom.as_mut() {
+                for node in item.nodes.keys() {
+                    if !bloom.remove(node) {
+                        // This should never happen.
+                        tracing::warn!(
+                            "TrieLayerCache: bloom.remove failed. Removing bloom entirely to avoid false negatives"
+                        );
+                        bloom_needs_full_rebuild = true;
+                        self.bloom = None;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if bloom_needs_full_rebuild {
+            self.rebuild_bloom();
+        }
+
+        Some(
+            parent_nodes
+                .unwrap_or_default()
+                .into_iter()
+                .chain(layer.nodes.as_ref().clone())
+                .collect(),
+        )
+    }
+
     pub fn rebuild_bloom(&mut self) {
+        tracing::warn!("TrieLayerCache: triggered full bloom rebuild");
         let mut blooms: Vec<_> = self
             .layers
             .values()
@@ -174,25 +220,6 @@ impl TrieLayerCache {
             }
         }
         self.bloom = Some(ret);
-    }
-
-    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
-            Ok(layer) => layer,
-            Err(layer) => TrieLayer::clone(&layer),
-        };
-        // ensure parents are commited
-        let parent_nodes = self.commit(layer.parent);
-        // older layers are useless
-        self.layers.retain(|_, item| item.id > layer.id);
-        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
-        Some(
-            parent_nodes
-                .unwrap_or_default()
-                .into_iter()
-                .chain(layer.nodes.as_ref().clone())
-                .collect(),
-        )
     }
 }
 
