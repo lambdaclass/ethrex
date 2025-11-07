@@ -11,8 +11,6 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
-import "./Print.sol";
-
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
@@ -463,21 +461,17 @@ contract CommonBridge is
 		/// @notice Allow a new fee token on L2
     /// @param newFeeToken address of the token to authorize for fees
     function allowNewFeeToken(address newFeeToken) public onlyOwner {
-			print(string("aaaa"));
 			bytes memory callData = abi.encodeCall(
 				IFeeTokenRegistry.registerFeeToken,
 				(newFeeToken)
 			);
-			print(string("bbbb"));
 			SendValues memory sendValues = SendValues({
 					to: L2_FEE_TOKEN_REGISTRY,
-					gasLimit: 21000 * 20,
+					gasLimit: 21000 * 10,
 					value: 0,
 					data: callData
 			});
-			print(string("ccccc"));
 			_sendToL2(L2_BRIDGE_ADDRESS, sendValues);
-			print(string("ddddd"));
     }
 
     /// @notice Allow owner to upgrade the contract.
