@@ -198,7 +198,8 @@ impl GuestProgramState {
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
-                let mut account_state = match self.state_trie
+                let mut account_state = match self
+                    .state_trie
                     .get(hashed_address)
                     .expect("failed to get account state from trie")
                 {
@@ -220,7 +221,8 @@ impl GuestProgramState {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let storage_trie = self.storage_tries
+                    let storage_trie = self
+                        .storage_tries
                         .entry(account_state.storage_root)
                         .or_insert_with(Trie::empty_in_memory);
 
@@ -351,8 +353,14 @@ impl GuestProgramState {
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, GuestProgramStateError> {
-        let storage_root = self.get_account_state(address).unwrap().unwrap().storage_root;
-        let storage_trie = self.storage_tries.entry(storage_root).or_insert(Trie::default());
+        let storage_root = self
+            .get_account_state(address)?
+            .map(|account| account.storage_root)
+            .unwrap_or(*EMPTY_TRIE_HASH);
+        let storage_trie = self
+            .storage_tries
+            .entry(storage_root)
+            .or_insert(Trie::default());
         let hashed_key = hash_key(&key);
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)

@@ -84,8 +84,7 @@ pub fn execution_witness_from_rpc_chain_config(
         .unwrap()
         .unwrap())
     .clone();
-    let mut state_trie = Trie::default();
-    state_trie.root = state_trie_root.clone().into();
+    let state_trie = Trie::new_temp_with_root(state_trie_root.clone());
 
     // get all storage trie roots and embed the rest of the trie into it
     let mut storage_trie_roots = Vec::new();

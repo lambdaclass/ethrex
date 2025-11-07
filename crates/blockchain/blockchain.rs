@@ -510,8 +510,7 @@ impl Blockchain {
             .unwrap())
         .clone();
 
-        let mut state_trie = Trie::default();
-        state_trie.root = state_trie_root.clone().into();
+        let state_trie = Trie::new_temp_with_root(state_trie_root.clone());
 
         let mut keys = Vec::new();
 

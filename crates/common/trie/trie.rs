@@ -509,9 +509,19 @@ impl Trie {
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
-    fn new_temp() -> Self {
+    pub fn new_temp() -> Self {
         let db = InMemoryTrieDB::new(Default::default());
         Trie::new(Box::new(db))
+    }
+
+    /// Creates a new Trie based on a temporary InMemory DB, with a specified root
+    ///
+    /// This is usually used to create a Trie from a root that was embedded with the rest of the nodes.
+    pub fn new_temp_with_root(root: Node) -> Self {
+        let db = InMemoryTrieDB::new(Default::default());
+        let mut trie = Trie::new(Box::new(db));
+        trie.root = root.into();
+        trie
     }
 }
 
