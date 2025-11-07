@@ -75,7 +75,7 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
 
       --p2p.port <PORT>
@@ -238,7 +238,7 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
 
       --p2p.port <PORT>
