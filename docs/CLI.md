@@ -94,12 +94,12 @@ P2P options:
           [default: 1000]
 
       --p2p.initial-lookup-interval <INITIAL_INTERVAL_MS>
-          The initial interval between peer lookups, until the number of peers reaches the target number of peers.
+          The initial interval between peer lookups, until the number of peers reaches the target number of peers or the number of contacts reaches the target number of contacts.
 
           [default: 100]
 
       --p2p.lookup-interval <INTERVAL_MS>
-          The interval between peer lookups once the number of peers reaches the target number of peers.
+          The interval between peer lookups once the number of peers reaches the target number of peers or the number of contacts reaches the target number of contacts.
 
           [default: 600]
 

@@ -235,7 +235,7 @@ pub struct Options {
         long = "p2p.initial-lookup-interval",
         default_value_t = INITIAL_LOOKUP_INTERVAL,
         value_name = "INITIAL_INTERVAL_MS",
-        help = "The initial interval between peer lookups, until the number of peers reaches the target number of peers.",
+        help = "The initial interval between peer lookups, until the number of peers reaches the target number of peers or the number of contacts reaches the target number of contacts.",
         help_heading = "P2P options"
     )]
     pub p2p_initial_lookup_interval: u64,
@@ -243,7 +243,7 @@ pub struct Options {
         long = "p2p.lookup-interval",
         default_value_t = LOOKUP_INTERVAL,
         value_name = "INTERVAL_MS",
-        help = "The interval between peer lookups once the number of peers reaches the target number of peers.",
+        help = "The interval between peer lookups once the number of peers reaches the target number of peers or the number of contacts reaches the target number of contacts.",
         help_heading = "P2P options"
     )]
     pub p2p_lookup_interval: u64,

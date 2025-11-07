@@ -22,6 +22,7 @@ use ethrex_p2p::{
     rlpx::initiator::RLPxInitiator,
     sync::SyncMode,
     sync_manager::SyncManager,
+    tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
@@ -334,7 +335,7 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
         Arc::new(Blockchain::default_with_store(storage)),
         "".to_string(),
         None,
-        1000,
+        BROADCAST_INTERVAL_MS,
         INITIAL_LOOKUP_INTERVAL,
         LOOKUP_INTERVAL,
     )
