@@ -70,10 +70,19 @@ pub fn execution_witness_from_rpc_chain_config(
     first_block_number: u64,
     initial_state_root: H256,
 ) -> Result<ExecutionWitness, GuestProgramStateError> {
+    // filtrar nodo null
     let nodes: BTreeMap<H256, Node> = rpc_witness
         .state
         .into_iter()
-        .map(|b| Ok((keccak(&b), Node::decode(&b.to_vec())?)))
+        .filter_map(|b| {
+            if b == Bytes::from_static(&[0x80]) {
+                // other implementations of debug_executionWitness allow for a `Null` node,
+                // which would fail to decode in ours
+                return None;
+            }
+            let hash = keccak(&b);
+            Some(Node::decode(&b).map(|node| (hash, node)))
+        })
         .collect::<Result<_, RLPDecodeError>>()?;
 
     // get state trie root and embed the rest of the trie into it
