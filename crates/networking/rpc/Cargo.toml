@@ -46,6 +46,7 @@ envy = "0.4.2"
 thiserror.workspace = true
 secp256k1.workspace = true
 uuid.workspace = true
+hex-literal = "0.4.1"
 
 [dev-dependencies]
 hex-literal = "0.4.1"

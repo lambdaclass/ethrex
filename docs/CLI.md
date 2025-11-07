@@ -75,7 +75,7 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
 
       --p2p.port <PORT>
@@ -97,6 +97,12 @@ P2P options:
           Max amount of connected peers.
 
           [default: 100]
+
+    --p2p.initial-lookup-interval <INITIAL_INTERVAL_MS>
+          The initial interval between peer lookups, until the number of peers reaches the target number of peers.
+
+          [default: 100]
+
 
 RPC options:
       --http.addr <ADDRESS>
@@ -238,7 +244,7 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
 
       --p2p.port <PORT>

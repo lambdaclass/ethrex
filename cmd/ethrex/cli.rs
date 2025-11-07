@@ -202,8 +202,8 @@ pub struct Options {
         help_heading = "RPC options"
     )]
     pub authrpc_jwtsecret: String,
-    #[arg(long = "p2p.enabled", default_value = "true", value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
-    pub p2p_enabled: bool,
+    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetFalse, help_heading = "P2P options")]
+    pub p2p_disabled: bool,
     #[arg(
         long = "p2p.port",
         default_value = "30303",
@@ -232,7 +232,7 @@ pub struct Options {
         long = "p2p.initial-lookup-interval",
         default_value_t = INITIAL_LOOKUP_INTERVAL,
         value_name = "INITIAL_INTERVAL_MS",
-        help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.",
+        help = "The initial interval between peer lookups, until the number of peers reaches the target number of peers.",
         help_heading = "P2P options"
     )]
     pub p2p_initial_lookup_interval: u64,
@@ -274,7 +274,6 @@ impl Options {
             metrics_port: "9090".to_string(),
             authrpc_addr: "localhost".to_string(),
             authrpc_jwtsecret: "jwt.hex".to_string(),
-            p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
             mempool_max_size: 10_000,
@@ -295,7 +294,6 @@ impl Options {
             authrpc_addr: "localhost".into(),
             authrpc_port: "8551".into(),
             authrpc_jwtsecret: "jwt.hex".into(),
-            p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
             mempool_max_size: 10_000,
@@ -317,7 +315,7 @@ impl Default for Options {
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
-            p2p_enabled: Default::default(),
+            p2p_disabled: Default::default(),
             p2p_port: Default::default(),
             discovery_port: Default::default(),
             network: Default::default(),

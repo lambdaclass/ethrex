@@ -235,7 +235,7 @@ pub async fn init_l2(
     .expect("P2P context could not be created");
 
     let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
-    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers), initiator);
+    let peer_handler = PeerHandler::new(peer_table, initiator);
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
@@ -266,8 +266,8 @@ pub async fn init_l2(
     let cancellation_token = CancellationToken::new();
 
     // TODO: This should be handled differently, the current problem
-    // with using opts.node_opts.p2p_enabled is that with the removal
-    // of the l2 feature flag, p2p_enabled is set to true by default
+    // with using opts.node_opts.p2p_diabled is that with the removal
+    // of the l2 feature flag, p2p_diabled is set to false by default
     // prioritizing the L1 UX.
     if l2_sequencer_cfg.based.enabled {
         init_network(
