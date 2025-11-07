@@ -676,7 +676,6 @@ pub async fn _ensure_post_state_revm(
 pub fn fork_to_spec_id(fork: Fork) -> SpecId {
     match fork {
         Fork::Frontier => SpecId::FRONTIER,
-        Fork::FrontierThawing => SpecId::FRONTIER_THAWING,
         Fork::Homestead => SpecId::HOMESTEAD,
         Fork::DaoFork => SpecId::DAO_FORK,
         Fork::EIP150 => SpecId::TANGERINE,
