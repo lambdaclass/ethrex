@@ -72,7 +72,6 @@ pub fn execution_witness_from_rpc_chain_config(
     first_block_number: u64,
     initial_state_root: H256,
 ) -> Result<ExecutionWitness, GuestProgramStateError> {
-    // filtrar nodo null
     let nodes: BTreeMap<H256, Node> = rpc_witness
         .state
         .into_iter()
