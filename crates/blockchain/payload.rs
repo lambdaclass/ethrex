@@ -134,7 +134,7 @@ pub fn create_payload(
     let fork = chain_config.get_fork(args.timestamp);
     let gas_limit = calc_gas_limit(parent_block.gas_limit, args.gas_ceil);
     let excess_blob_gas = chain_config
-        .get_current_blob_schedule(args.timestamp)
+        .get_blob_schedule_for_time(args.timestamp)
         .map(|schedule| calc_excess_blob_gas(&parent_block, schedule, fork));
 
     let header = BlockHeader {
@@ -232,7 +232,7 @@ impl PayloadBuildContext {
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
-                .get_current_blob_schedule(payload.header.timestamp)
+                .get_blob_schedule_for_time(payload.header.timestamp)
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
@@ -496,7 +496,7 @@ impl Blockchain {
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
         let max_blob_number_per_block = chain_config
-            .get_current_blob_schedule(context.payload.header.timestamp)
+            .get_blob_schedule_for_time(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
             .unwrap_or_default() as usize;
 
@@ -602,7 +602,7 @@ impl Blockchain {
         let tx_hash = head.tx.hash();
         let chain_config = context.chain_config();
         let max_blob_number_per_block = chain_config
-            .get_current_blob_schedule(context.payload.header.timestamp)
+            .get_blob_schedule_for_time(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
             .unwrap_or_default() as usize;
         let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {

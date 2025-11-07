@@ -1590,7 +1590,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     let mut blob_gas_used = 0_u32;
     let mut blobs_in_block = 0_u32;
     let max_blob_number_per_block = config
-        .get_current_blob_schedule(block.header.timestamp)
+        .get_blob_schedule_for_time(block.header.timestamp)
         .map(|schedule| schedule.max)
         .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
     let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;

@@ -283,34 +283,36 @@ lazy_static::lazy_static! {
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Default, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum Fork {
-    Homestead = 0,
-    DaoFork = 1,
-    EIP150 = 2,
-    EIP155 = 3,
-    EIP158 = 4,
-    Byzantium = 5,
-    Constantinople = 6,
-    Petersburg = 7,
-    Istanbul = 8,
-    MuirGlacier = 9,
-    Berlin = 10,
-    London = 11,
-    ArrowGlacier = 12,
-    GrayGlacier = 13,
-    Paris = 14,
-    Shanghai = 15,
+    Frontier = 0,
+    Homestead = 1,
+    DaoFork = 2,
+    EIP150 = 3,
+    EIP155 = 4,
+    EIP158 = 5,
+    Byzantium = 6,
+    Constantinople = 7,
+    Petersburg = 8,
+    Istanbul = 9,
+    MuirGlacier = 10,
+    Berlin = 11,
+    London = 12,
+    ArrowGlacier = 13,
+    GrayGlacier = 14,
+    Paris = 15,
+    Shanghai = 16,
     #[default]
-    Cancun = 16,
-    Prague = 17,
-    Osaka = 18,
-    BPO1 = 19,
-    BPO2 = 20,
-    BPO3 = 21,
-    BPO4 = 22,
-    BPO5 = 23,
+    Cancun = 17,
+    Prague = 18,
+    Osaka = 19,
+    BPO1 = 20,
+    BPO2 = 21,
+    BPO3 = 22,
+    BPO4 = 23,
+    BPO5 = 24,
 }
 
-pub const FORKS: [Fork; 24] = [
+pub const FORKS: [Fork; 25] = [
+    Frontier,
     Homestead,
     DaoFork,
     EIP150,
@@ -340,6 +342,7 @@ pub const FORKS: [Fork; 24] = [
 impl From<Fork> for &str {
     fn from(fork: Fork) -> Self {
         match fork {
+            Fork::Frontier => "Frontier",
             Fork::Homestead => "Homestead",
             Fork::DaoFork => "DaoFork",
             Fork::EIP150 => "EIP150",
@@ -371,6 +374,7 @@ impl From<Fork> for &str {
 impl ChainConfig {
     pub fn fork_activation_time_or_block(&self, fork: Fork) -> Option<u64> {
         match fork {
+            Fork::Frontier => Some(0),
             Fork::Homestead => self.homestead_block,
             Fork::DaoFork => self.dao_fork_block,
             Fork::EIP150 => self.eip150_block,
@@ -451,7 +455,7 @@ impl ChainConfig {
             .unwrap_or(Paris)
     }
 
-    pub fn get_current_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
+    pub fn get_blob_schedule_for_time(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
         if let Some(fork_with_current_blob_schedule) = FORKS.into_iter().rfind(|fork| {
             self.get_blob_schedule_for_fork(*fork).is_some()
                 && self.is_fork_activated(*fork, block_timestamp)
@@ -566,7 +570,11 @@ impl Genesis {
             blob_gas_used = Some(self.blob_gas_used.unwrap_or(0));
             excess_blob_gas = Some(self.excess_blob_gas.unwrap_or(0));
         }
-        let base_fee_per_gas = self.base_fee_per_gas.or(Some(INITIAL_BASE_FEE));
+        let base_fee_per_gas = self.base_fee_per_gas.or_else(|| {
+            self.config
+                .is_fork_activated(London, 0)
+                .then_some(INITIAL_BASE_FEE)
+        });
 
         let withdrawals_root = self
             .config

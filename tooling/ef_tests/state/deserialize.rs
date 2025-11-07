@@ -3,7 +3,7 @@ use crate::types::{
     TransactionExpectedException,
 };
 use bytes::Bytes;
-use ethrex_common::{H256, U256, types::Fork};
+use ethrex_common::{types::Fork, H256, U256};
 use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
 
@@ -314,8 +314,10 @@ where
             "Prague" => Fork::Prague,
             "Osaka" => Fork::Osaka,
             "Byzantium" => Fork::Byzantium,
-            "EIP158" => Fork::SpuriousDragon,
-            "EIP150" => Fork::Tangerine,
+            "EIP158" => Fork::EIP158,
+            "EIP150" => Fork::EIP150,
+            "EIP155" => Fork::EIP155,
+
             other => {
                 return Err(serde::de::Error::custom(format!(
                     "Unknown fork name: {other}",
