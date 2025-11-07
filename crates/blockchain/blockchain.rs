@@ -792,6 +792,7 @@ impl Blockchain {
         })
     }
 
+    #[instrument(level = "trace", name = "Block DB update", skip_all)]
     pub fn store_block(
         &self,
         block: Block,
