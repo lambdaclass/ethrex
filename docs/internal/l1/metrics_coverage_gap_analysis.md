@@ -9,7 +9,7 @@ This note tracks the current state of metrics and dashboard observability for th
 - **Near-term focus**: Ship sync & peer gauges, surface txpool counters we already emit, and extend instrumentation around Engine API and storage before adding alert rules.
 
 ## Baseline We Compare Against
-The gap analysis below uses a cross-client checklist we gathered after looking at Geth, Nethermind, and Reth metrics and dashboard setups; this works as a baseline of "must-have" coverage for execution clients. The key categories are:
+The gap analysis below uses a cross-client checklist we gathered after looking at Geth and Nethermind metrics and dashboard setups; this works as a baseline of "must-have" coverage for execution clients. The key categories are:
 - **Chain sync & finality**: head vs peer lag, stage progress, finalized/safe head distance, sync ETA.
 - **Peer health**: active peers, connected peer roles, snap-capable availability, ingress/egress traffic.
 - **Block & payload pipeline**: gas throughput, execution breakdown timings, block import failures, payload build latency.
@@ -26,26 +26,24 @@ Snapshot: October 2025.
 | --- | --- |
 | Geth | ![Geth dashboard](img/geth-dashboard.png) |
 | Nethermind | ![Nethermind dashboard](img/nethermind-dashboard.png) |
-| Reth | ![Reth overview dashboard](img/reth-overview-dashboard.png) |
 
 Some good resources for reference:
 - [Understanding Geth's dashboard](https://geth.ethereum.org/docs/monitoring/understanding-dashboards)
 - [Nethermind's metrics](https://docs.nethermind.io/monitoring/metrics/)
-- [Reth's observability](https://reth.rs/run/monitoring/#observability-with-prometheus--grafana)
 
 ## Current Instrumentation
 Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabled, and Prometheus/Grafana wiring is part of the provisioning stack. The table below stacks our current coverage against the reference clients for each essential bucket.
 
-| Bucket | Geth | Nethermind | Reth | Ethrex |
-| --- | --- | --- | --- | --- |
-| Chain sync & finality | Yes | Yes | Yes | Partial (head height only) |
-| Peer health | Yes | Yes | Yes | No |
-| Block & payload pipeline | Yes | Yes | Yes | Yes (latency + throughput) |
-| Transaction pool | Yes (basic) | Yes | Yes | Partial (counters, no panels) |
-| Engine API & RPC | Partial (metrics exist, limited panels) | Yes | Yes | No |
-| State & storage | Yes | Yes | Yes | Partial (datadir size; no pruning) |
-| Process & host health | Yes | Yes | Yes | Yes (node exporter + process) |
-| Error & anomaly counters | Yes | Yes | Partial (basic reorgs) | No |
+| Bucket | Geth | Nethermind | Ethrex |
+| --- | --- | --- | --- |
+| Chain sync & finality | Yes | Yes | Partial (head height only) |
+| Peer health | Yes | Yes | No |
+| Block & payload pipeline | Yes | Yes | Yes (latency + throughput) |
+| Transaction pool | Yes (basic) | Yes | Partial (counters, no panels) |
+| Engine API & RPC | Partial (metrics exist, limited panels) | Yes | No |
+| State & storage | Yes | Yes | Partial (datadir size; no pruning) |
+| Process & host health | Yes | Yes | Yes (node exporter + process) |
+| Error & anomaly counters | Yes | Yes | No |
 
 - **Block execution pipeline**
   - Gauges exposed in `ethrex_metrics::metrics_blocks`: `gas_limit`, `gas_used`, `gigagas`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`, plus block-building focused gauges that need to be reviewed first (`gigagas_block_building`, `block_building_ms`, `block_building_base_fee`).
