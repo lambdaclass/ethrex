@@ -234,7 +234,7 @@ pub async fn init_l2(
     .expect("P2P context could not be created");
 
     let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
-    let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers), initiator);
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
