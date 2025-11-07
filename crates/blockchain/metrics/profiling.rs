@@ -11,8 +11,8 @@ pub static METRICS_BLOCK_PROCESSING_PROFILE: LazyLock<HistogramVec> =
 fn initialize_histogram_vec() -> HistogramVec {
     register_histogram_vec!(
         "function_duration_seconds",
-        "Histogram of the run time of the functions in block processing",
-        &["function_name"]
+        "Histogram of the run time of the functions in block processing and RPC handling",
+        &["namespace", "function_name"]
     )
     .unwrap()
 }
@@ -34,9 +34,26 @@ where
             && span.metadata().target().starts_with("ethrex")
         {
             let name = span.metadata().name();
+            let target = span.metadata().target();
+            
+            // Determine namespace based on the module target
+            // ethrex_networking::rpc -> "rpc"
+            // ethrex_blockchain -> "block_processing"
+            // ethrex_storage -> "storage"
+            let namespace = if target.contains("::rpc") {
+                "rpc"
+            } else if target.contains("blockchain") {
+                "block_processing"
+            } else if target.contains("storage") {
+                "storage"
+            } else if target.contains("networking") {
+                "networking"
+            } else {
+                "other"
+            };
 
             let timer = METRICS_BLOCK_PROCESSING_PROFILE
-                .with_label_values(&[name])
+                .with_label_values(&[namespace, name])
                 .start_timer();
             // PERF: `extensions_mut` uses a Mutex internally (per span)
             span.extensions_mut().insert(ProfileTimer(timer));
