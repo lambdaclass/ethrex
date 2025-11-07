@@ -39,7 +39,6 @@ prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
 # Used for incremental hashing due to MAC, intentionally not from workspace.
-sha3 = { version = "0.10.8", features = [ "asm" ] }
 
 serde_json = "1.0.117"
 
