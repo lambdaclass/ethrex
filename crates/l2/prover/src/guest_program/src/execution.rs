@@ -204,7 +204,7 @@ pub fn stateless_validation_l2(
         use bytes::Bytes;
         use ethrex_common::types::Code;
 
-        let mut guest_program_state = GuestProgramState {
+        let guest_program_state = GuestProgramState {
             codes_hashed: codes_hashed
                 .into_iter()
                 .map(|(h, c)| (h, Code::from_bytecode(Bytes::from_owner(c))))

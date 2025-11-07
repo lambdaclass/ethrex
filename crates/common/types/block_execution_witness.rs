@@ -1,11 +1,9 @@
 use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 use std::fmt;
 use std::str::FromStr;
 
 use crate::types::{Block, Code};
 use crate::{
-    H160,
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
@@ -14,7 +12,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeHash, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -221,10 +219,10 @@ impl GuestProgramState {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let storage_trie = self
+                    let mut storage_trie = self
                         .storage_tries
-                        .entry(account_state.storage_root)
-                        .or_insert_with(Trie::empty_in_memory);
+                        .remove(&account_state.storage_root)
+                        .unwrap_or_default();
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -248,7 +246,9 @@ impl GuestProgramState {
                             .expect("failed to remove key");
                     }
 
-                    account_state.storage_root = storage_trie.hash_no_commit();
+                    let storage_root = storage_trie.hash_no_commit();
+                    self.storage_tries.insert(storage_root, storage_trie);
+                    account_state.storage_root = storage_root;
                 }
 
                 self.state_trie
