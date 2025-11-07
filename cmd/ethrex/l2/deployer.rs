@@ -555,7 +555,7 @@ pub async fn deploy_l1_contracts(
         if let Some(hash) = last_hash {
             wait_for_transaction_receipt(hash, &eth_client, 100).await?;
         }
-        let signer_owner: Signer = LocalSigner::new(opts.bridge_owner.clone()).into();
+        let signer_owner: Signer = LocalSigner::new(opts.bridge_owner).into();
         register_fee_token(
             &eth_client,
             contract_addresses.bridge_address,
