@@ -3,7 +3,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{U256, U512};
+use ethrex_common::U256;
 
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
@@ -151,24 +151,9 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let new_augend: U512 = augend.into();
-        let new_addend: U512 = addend.into();
-
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "both values come from a u256, so the product can fit in a U512"
-        )]
-        let sum = new_augend + new_addend;
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "can't trap because non-zero modulus"
-        )]
-        let sum_mod = sum % modulus;
-
-        #[allow(clippy::expect_used, reason = "can't overflow")]
-        let sum_mod: U256 = sum_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
+        let augend_mod = augend.checked_rem(modulus).unwrap_or_default();
+        let addend_mod = addend.checked_rem(modulus).unwrap_or_default();
+        let sum_mod = add_mod(augend_mod, addend_mod, modulus);
 
         current_call_frame.stack.push1(sum_mod)?;
 
@@ -187,21 +172,22 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let multiplicand: U512 = multiplicand.into();
-        let multiplier: U512 = multiplier.into();
+        let mut multiplicand_mod = multiplicand.checked_rem(modulus).unwrap_or_default();
+        let mut multiplier = multiplier;
+        let mut product_mod = U256::zero();
 
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "both values come from a u256, so the product can fit in a U512"
-        )]
-        let product = multiplicand * multiplier;
-        #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
-        let product_mod = product % modulus;
+        while !multiplier.is_zero() {
+            if multiplier.bit(0) {
+                product_mod = add_mod(product_mod, multiplicand_mod, modulus);
+            }
 
-        #[allow(clippy::expect_used, reason = "can't overflow")]
-        let product_mod: U256 = product_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
+            multiplier >>= 1u32;
+            if multiplier.is_zero() {
+                break;
+            }
+
+            multiplicand_mod = add_mod(multiplicand_mod, multiplicand_mod, modulus);
+        }
 
         current_call_frame.stack.push1(product_mod)?;
 
@@ -272,6 +258,34 @@ impl<'a> VM<'a> {
             .push1(U256::from(value.leading_zeros()))?;
 
         Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Adds two values that are each `< modulus` and returns their sum reduced modulo `modulus`.
+fn add_mod(lhs: U256, rhs: U256, modulus: U256) -> U256 {
+    debug_assert!(!modulus.is_zero(), "modulus must be non-zero");
+    debug_assert!(
+        lhs < modulus && rhs < modulus,
+        "arguments must already be reduced"
+    );
+
+    // `threshold` marks the smallest lhs that would make the sum wrap past
+    // the modulus (since lhs + rhs ≥ modulus ⇔ lhs ≥ modulus - rhs).
+    let threshold = modulus
+        .checked_sub(rhs)
+        .expect("rhs < modulus ensures subtraction succeeds");
+
+    if lhs >= threshold {
+        let (value, borrow) = lhs.overflowing_sub(threshold);
+        debug_assert!(!borrow, "lhs >= threshold prevents borrow");
+        value
+    } else {
+        let (value, overflow) = lhs.overflowing_add(rhs);
+        debug_assert!(
+            !overflow,
+            "lhs < modulus - rhs prevents overflow"
+        );
+        value
     }
 }
 
