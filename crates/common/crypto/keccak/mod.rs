@@ -5,7 +5,7 @@ std::arch::global_asm!(include_str!("keccak1600-x86_64.s"), options(att_syntax))
 
 const BLOCK_SIZE: usize = 136;
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy, Debug)]
 #[repr(transparent)]
 struct State([u64; 25]);
 
@@ -54,10 +54,21 @@ pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32] {
     hash_buf
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Keccak256Asm {
     state: State,
     tail_buf: [u8; BLOCK_SIZE],
     tail_len: usize,
+}
+
+impl Default for Keccak256Asm {
+    fn default() -> Self {
+        Self {
+            state: State::default(),
+            tail_buf: [0; BLOCK_SIZE],
+            tail_len: 0,
+        }
+    }
 }
 
 impl Keccak256Asm {
@@ -71,7 +82,8 @@ impl Keccak256Asm {
     }
 
     #[inline]
-    pub fn update(&mut self, mut data: &[u8]) {
+    pub fn update(&mut self, data: impl AsRef<[u8]>) -> Self {
+        let mut data = data.as_ref();
         unsafe {
             // partial block
             if self.tail_len > 0 {
@@ -80,7 +92,7 @@ impl Keccak256Asm {
                     // still partial block
                     self.tail_buf[self.tail_len..self.tail_len + data.len()].copy_from_slice(data);
                     self.tail_len += data.len();
-                    return;
+                    return *self;
                 }
 
                 // complete block
@@ -118,6 +130,7 @@ impl Keccak256Asm {
                 }
             },
         }
+        *self
     }
 
     #[inline]
