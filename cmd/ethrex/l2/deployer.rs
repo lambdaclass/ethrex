@@ -16,6 +16,7 @@ use ethrex_common::{
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::{calldata::Value, prover::ProverType, utils::get_address_from_secret_key};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
+use ethrex_l2_sdk::register_fee_token;
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode,
     deploy_with_proxy_from_bytecode, initialize_contract, send_generic_transaction,
@@ -336,6 +337,14 @@ pub struct DeployerOptions {
         help = "Genesis data is extracted at compile time, used for development"
     )]
     pub use_compiled_genesis: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_INITIAL_FEE_TOKEN",
+        help_heading = "Deployer options",
+        help = "This address wil be registered as an initial fee token"
+    )]
+    pub initial_fee_token: Option<Address>,
 }
 
 impl Default for DeployerOptions {
@@ -403,6 +412,7 @@ impl Default for DeployerOptions {
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
+            initial_fee_token: None,
         }
     }
 }
@@ -530,6 +540,9 @@ pub async fn deploy_l1_contracts(
             .inspect_err(|err| {
                 warn!("Failed to make deposits: {err}");
             });
+    }
+    if let Some(fee_token) = opts.initial_fee_token {
+        register_fee_token(&eth_client, fee_token, &signer).await?;
     }
 
     write_contract_addresses_to_env(contract_addresses.clone(), opts.env_file_path)?;

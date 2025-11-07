@@ -458,9 +458,9 @@ contract CommonBridge is
         _sendToL2(L2_PROXY_ADMIN, sendValues);
     }
 
-		/// @notice Allow a new fee token on the L2
+		/// @notice Register a new fee token on the L2
     /// @param newFeeToken address of the token to authorize for fees
-    function allowNewFeeToken(address newFeeToken) public onlyOwner {
+    function registerNewFeeToken(address newFeeToken) public onlyOwner {
 			bytes memory callData = abi.encodeCall(
 				IFeeTokenRegistry.registerFeeToken,
 				(newFeeToken)
@@ -474,9 +474,9 @@ contract CommonBridge is
 			_sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
-		/// @notice Remove a fee token on the L2
+		/// @notice Unregister a fee token on the L2
     /// @param existingFeeToken address of the token to be removed
-    function removeFeeToken(address existingFeeToken) public onlyOwner {
+    function unregisterFeeToken(address existingFeeToken) public onlyOwner {
 			bytes memory callData = abi.encodeCall(
 				IFeeTokenRegistry.unregisterFeeToken,
 				(existingFeeToken)
@@ -506,3 +506,4 @@ contract CommonBridge is
         _unpause();
     }
 }
+
