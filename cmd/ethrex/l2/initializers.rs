@@ -161,7 +161,12 @@ pub async fn init_l2(
 
     let genesis = network.get_genesis()?;
     let store = init_store(&datadir, genesis.clone()).await;
+    info!("Initialized store at {:?}", &datadir);
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
+    info!(
+        "Initialized rollup store directory at {:?}",
+        &rollup_store_dir
+    );
 
     let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
     let l1_fee_config = get_l1_fee_config(&opts.sequencer_opts);
@@ -188,6 +193,8 @@ pub async fn init_l2(
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
+
+    info!("Regenerating head state for the first time");
 
     regenerate_head_state(&store, &rollup_store, &blockchain).await?;
 

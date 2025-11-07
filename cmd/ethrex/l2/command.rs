@@ -398,6 +398,8 @@ impl Command {
                 )
                 .await?;
 
+                info!("Initialized blockchain store at {:?}", &store_path);
+
                 let rollup_store =
                     StoreRollup::new(&store_path.join("./rollup_store"), rollup_store_type)?;
                 rollup_store
@@ -405,6 +407,11 @@ impl Command {
                     .await
                     .map_err(|e| format!("Failed to init rollup store: {e}"))
                     .unwrap();
+
+                info!(
+                    "Initialized rollup store at {:?}",
+                    &store_path.join("./rollup_store")
+                );
 
                 // Iterate over each blob
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
