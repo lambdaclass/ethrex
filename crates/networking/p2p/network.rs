@@ -152,7 +152,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery server: {e}");
     })?;
 
-    spawned_rt::tasks::spawn(serve_p2p_requests(context.clone()));
+    spawned_rt::tasks::spawn(serve_p2p_requests(context.clone())).detach();
 
     Ok(())
 }

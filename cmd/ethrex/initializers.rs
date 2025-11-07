@@ -41,6 +41,10 @@ use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
 
+lazy_static::lazy_static! {
+    static ref rt: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+}
+
 // Compile-time check to ensure that at least one of the database features is enabled.
 #[cfg(not(feature = "rocksdb"))]
 const _: () = {
@@ -82,11 +86,6 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_addr,
         opts.metrics_port
     );
-
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
 
     let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(
         opts.metrics_addr.clone(),
@@ -190,10 +189,9 @@ pub async fn init_rpc_api(
         opts.extra_data.clone(),
     );
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    info!("Created start_api future");
+
+    info!("Created tokio runtime future");
 
     rt.spawn(rpc_api);
 }
