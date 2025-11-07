@@ -3817,7 +3817,6 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
- "qfilter",
  "rayon",
  "rustc-hash 2.1.1",
  "serde",
@@ -7843,15 +7842,6 @@ dependencies = [
  "itertools 0.10.5",
  "once_cell",
  "parking_lot",
-]
-
-[[package]]
-name = "qfilter"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "746341cd2357c9a4df2d951522b4a8dd1ef553e543119899ad7bf87e938c8fbe"
-dependencies = [
- "xxhash-rust",
 ]
 
 [[package]]
