@@ -458,12 +458,28 @@ contract CommonBridge is
         _sendToL2(L2_PROXY_ADMIN, sendValues);
     }
 
-		/// @notice Allow a new fee token on L2
+		/// @notice Allow a new fee token on the L2
     /// @param newFeeToken address of the token to authorize for fees
     function allowNewFeeToken(address newFeeToken) public onlyOwner {
 			bytes memory callData = abi.encodeCall(
 				IFeeTokenRegistry.registerFeeToken,
 				(newFeeToken)
+			);
+			SendValues memory sendValues = SendValues({
+					to: L2_FEE_TOKEN_REGISTRY,
+					gasLimit: 21000 * 10,
+					value: 0,
+					data: callData
+			});
+			_sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+		/// @notice Remove a fee token on the L2
+    /// @param existingFeeToken address of the token to be removed
+    function removeFeeToken(address existingFeeToken) public onlyOwner {
+			bytes memory callData = abi.encodeCall(
+				IFeeTokenRegistry.unregisterFeeToken,
+				(existingFeeToken)
 			);
 			SendValues memory sendValues = SendValues({
 					to: L2_FEE_TOKEN_REGISTRY,
