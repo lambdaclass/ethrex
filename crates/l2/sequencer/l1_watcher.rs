@@ -95,9 +95,19 @@ impl L1Watcher {
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
         let mut l2_clients: Vec<L2Client> = vec![];
-        info!("Configuring L1 Watcher L2 clients {:?} {:?}", watcher_config.l2s_rpc_urls, watcher_config.l2s_chain_ids);
-        for (url, chain_id) in watcher_config.l2s_rpc_urls.iter().zip(watcher_config.l2s_chain_ids.clone()) {
-            info!("Adding L2 client with URL: {} and chain ID: {}", url, chain_id);
+        info!(
+            "Configuring L1 Watcher L2 clients {:?} {:?}",
+            watcher_config.l2s_rpc_urls, watcher_config.l2s_chain_ids
+        );
+        for (url, chain_id) in watcher_config
+            .l2s_rpc_urls
+            .iter()
+            .zip(watcher_config.l2s_chain_ids.clone())
+        {
+            info!(
+                "Adding L2 client with URL: {} and chain ID: {}",
+                url, chain_id
+            );
             let l2_client = EthClient::new(url.clone())?;
             l2_clients.push(L2Client {
                 eth_client: l2_client,
@@ -305,7 +315,6 @@ impl L1Watcher {
         let mut privileged_txs = Vec::new();
 
         for (tx, source_chain_id) in l2_txs {
-
             info!("Add mint tx with nonce: {}", tx.tx_id.as_u64());
 
             let mint_transaction = PrivilegedL2Transaction {
