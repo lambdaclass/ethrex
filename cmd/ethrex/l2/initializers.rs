@@ -26,6 +26,7 @@ use ethrex_p2p::{
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::SecretKey;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -143,6 +144,26 @@ pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Regist
         None
     } else {
         Some(initializers::init_tracing(&opts.node_opts))
+    }
+}
+
+async fn shutdown_sequencer_handles(
+    committer_handle: Option<GenServerHandle<l1_committer::L1Committer>>,
+    block_producer_handle: Option<GenServerHandle<block_producer::BlockProducer>>,
+) {
+    if let Some(mut handle) = committer_handle {
+        handle
+            .cast(l1_committer::InMessage::Abort)
+            .await
+            .inspect_err(|err| warn!("Failed to send committer abort: {err:?}"))
+            .ok();
+    }
+    if let Some(mut handle) = block_producer_handle {
+        handle
+            .cast(block_producer::InMessage::Abort)
+            .await
+            .inspect_err(|err| warn!("Failed to send block producer abort: {err:?}"))
+            .ok();
     }
 }
 
@@ -304,38 +325,15 @@ pub async fn init_l2(
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            if let Some(mut handle) = committer_handle.clone() {
-                handle
-                    .cast(l1_committer::InMessage::Abort)
-                    .await
-                    .inspect_err(|err| warn!("Failed to send committer abort: {err:?}"))
-                    .ok();
-            }
-            if let Some(mut handle) = block_producer_handle.clone() {
-                handle
-                    .cast(block_producer::InMessage::Abort)
-                    .await
-                    .inspect_err(|err| warn!("Failed to send block producer abort: {err:?}"))
-                    .ok();
-            }
+            shutdown_sequencer_handles(
+                committer_handle.clone(),
+                block_producer_handle.clone()
+            ).await;
             join_set.abort_all();
         }
 
         _ = cancellation_token.cancelled() => {
-            if let Some(mut handle) = committer_handle.clone() {
-                handle
-                    .cast(l1_committer::InMessage::Abort)
-                    .await
-                    .inspect_err(|err| warn!("Failed to send committer abort: {err:?}"))
-                    .ok();
-            }
-            if let Some(mut handle) = block_producer_handle.clone() {
-                handle
-                    .cast(block_producer::InMessage::Abort)
-                    .await
-                    .inspect_err(|err| warn!("Failed to send block producer abort: {err:?}"))
-                    .ok();
-            }
+            shutdown_sequencer_handles(committer_handle.clone(), block_producer_handle.clone()).await;
         }
     }
     info!("Server shut down started...");
