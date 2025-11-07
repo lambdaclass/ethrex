@@ -24,7 +24,8 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
+    REGISTER_FEE_TOKEN_SIGNATURE, build_generic_tx, get_last_verified_batch,
+    send_generic_transaction, wait_for_message_proof,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -39,6 +40,7 @@ use secp256k1::SecretKey;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::{Add, AddAssign};
+use std::thread::sleep;
 use std::{
     fs::{File, read_to_string},
     io::{BufRead, BufReader},
@@ -147,6 +149,14 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         .get_balance(l1_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
+    // Non thread-safe uses owner address
+    test_fee_token(
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+        private_keys.pop().unwrap(),
+    )
+    .await?;
+
     let mut set = JoinSet::new();
 
     set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
@@ -185,12 +195,6 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     set.spawn(test_gas_burning(
         l1_client.clone(),
-        private_keys.pop().unwrap(),
-    ));
-
-    set.spawn(test_fee_token(
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
         private_keys.pop().unwrap(),
     ));
 
@@ -1987,6 +1991,7 @@ async fn test_fee_token(
 ) -> Result<FeesDetails> {
     let test = "test_fee_token";
     let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
+    let l1_client = l1_client();
     println!("{test}: Rich wallet address: {rich_wallet_address:#x}");
 
     let contracts_path = Path::new("contracts");
@@ -2020,6 +2025,36 @@ async fn test_fee_token(
         dummy_modified_storage_slots(0),
     )
     .await?;
+
+    let owner_pk =
+        parse_private_key("941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e")
+            .unwrap();
+    let owner_signer: Signer = LocalSigner::new(owner_pk).into();
+    let calldata = encode_calldata(
+        REGISTER_FEE_TOKEN_SIGNATURE,
+        &[Value::Address(fee_token_address)],
+    )
+    .unwrap();
+    let register_tx = build_generic_tx(
+        &l1_client,
+        TxType::EIP1559,
+        bridge_address().unwrap(),
+        owner_signer.address(),
+        calldata.into(),
+        Overrides::default(),
+    )
+    .await
+    .unwrap();
+
+    // Register fee token contract
+    let register_tx_hash = send_generic_transaction(&l1_client, register_tx, &owner_signer)
+        .await
+        .unwrap();
+    wait_for_transaction_receipt(register_tx_hash, &l1_client, 100)
+        .await
+        .unwrap();
+    sleep(Duration::from_secs(10));
+
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;

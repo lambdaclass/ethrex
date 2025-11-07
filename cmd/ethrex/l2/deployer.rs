@@ -420,11 +420,7 @@ impl Default for DeployerOptions {
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
-            // 0xb7e811662fa10ac068aee115ac2e682821630535
-            initial_fee_token: Some(H160([
-                0xb7, 0xe8, 0x11, 0x66, 0x2f, 0xa1, 0x0a, 0xc0, 0x68, 0xae, 0xe1, 0x15, 0xac, 0x2e,
-                0x68, 0x28, 0x21, 0x63, 0x05, 0x35,
-            ])),
+            initial_fee_token: None,
         }
     }
 }
