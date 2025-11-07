@@ -275,6 +275,8 @@ impl PooledTransactions {
         is_l2_mode: bool,
     ) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
+            // Yield before each iteration to avoid blocking the runtime
+            tokio::task::yield_now().await;
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 if is_l2_mode {
                     debug!(
