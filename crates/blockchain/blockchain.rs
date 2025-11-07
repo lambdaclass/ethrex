@@ -11,7 +11,7 @@ use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{EMPTY_KECCACK_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramStateError};
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
@@ -517,7 +517,7 @@ impl Blockchain {
 
         // get all storage trie roots and embed the rest of the trie into it
         let mut storage_trie_roots = Vec::new();
-        for key in &rpc_witness.keys {
+        for key in &keys {
             if key.len() != 20 {
                 continue; // not an address
             }
@@ -534,7 +534,7 @@ impl Blockchain {
             }
             let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
             let NodeRef::Node(node, _) = node else {
-                return Err(GuestProgramStateError::Custom(
+                return Err(ChainError::Custom(
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
