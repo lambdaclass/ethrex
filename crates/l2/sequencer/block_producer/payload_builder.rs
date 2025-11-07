@@ -114,8 +114,6 @@ pub async fn fill_transactions(
     let safe_bytes_per_blob: u64 = SAFE_BYTES_PER_BLOB.try_into()?;
     let mut privileged_tx_count = 0;
 
-    let chain_config = store.get_chain_config();
-
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
@@ -166,16 +164,6 @@ pub async fn fill_transactions(
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
         let tx_hash = head_tx.tx.hash();
-
-        // Check whether the tx is replay-protected
-        if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
-            // Ignore replay protected tx & all txs from the sender
-            // Pull transaction from the mempool
-            debug!("Ignoring replay-protected transaction: {}", tx_hash);
-            txs.pop();
-            blockchain.remove_transaction_from_pool(&tx_hash)?;
-            continue;
-        }
 
         let maybe_sender_acc_info = store
             .get_account_info(latest_block_number, head_tx.tx.sender())
