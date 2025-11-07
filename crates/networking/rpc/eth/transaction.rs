@@ -76,7 +76,6 @@ pub struct AccessListResult {
 
 impl RpcHandler for CallRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<CallRequest, RpcErr> {
-        return Err(RpcErr::Internal("Temporarily disabled".to_string()));
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
