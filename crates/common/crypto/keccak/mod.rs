@@ -61,6 +61,7 @@ pub struct Keccak256Asm {
 }
 
 impl Keccak256Asm {
+    #[inline]
     pub fn new() -> Self {
         Self {
             state: State::default(),
@@ -69,6 +70,7 @@ impl Keccak256Asm {
         }
     }
 
+    #[inline]
     pub fn update(&mut self, mut data: &[u8]) {
         unsafe {
             // partial block
@@ -118,6 +120,7 @@ impl Keccak256Asm {
         }
     }
 
+    #[inline]
     pub fn finalize(mut self) -> [u8; 32] {
         let mut hash_buf = [0u8; 32];
 
