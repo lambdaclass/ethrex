@@ -128,7 +128,7 @@ jobs:
           chmod +x target/release/ethrex
           mv target/release/ethrex ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
-      - name: Copy verification keys for contracts
+      - name: Copy verification keys
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         run: |
           mkdir -p ./verification_keys
