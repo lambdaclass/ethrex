@@ -132,16 +132,9 @@ jobs:
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         run: |
           mkdir -p ./verification_keys
-          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk-${{ github.ref_name }}
-          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 verification_keys/ethrex-riscv32im-sp1-bn254-vk-${{ github.ref_name }}
-          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-sp1-u32-vk-${{ github.ref_name }}
-
-      - name: Copy ethrex guests
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
-        run: |
-          mkdir -p ./ethrex_guests
-          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf ethrex_guests/ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
-          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-elf ethrex_guests/ethrex-riscv32im-risc0-elf-${{ github.ref_name }}
+          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
+          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 verification_keys/ethrex-riscv32im-sp1-vk-bn254
+          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-sp1-vk-u32
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -156,12 +149,68 @@ jobs:
           name: verification_keys
           path: verification_keys/
 
-      - name: Upload ethrex guests
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
+  # There's a separate job to build the guest programs for SP1 and RISC0 since
+  # they need to be built without the l2 features.
+  build-ethrex-guest:
+    strategy:
+      matrix:
+        zkvm:
+          - sp1
+          - risc0
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install SP1
+        if: ${{ matrix.zkvm == 'sp1' }}
+        env:
+          SHELL: /bin/bash
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://sp1up.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 5.0.8
+
+      - name: Install RISC0
+        if: ${{ matrix.zkvm == 'risc0' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+          ~/.risc0/bin/rzup install risc0-groth16
+          ~/.risc0/bin/rzup install rust
+
+      - name: Build ethrex ${{ matrix.zkvm }} elf
+        run: |
+          cargo build --release --package guest_program --features ${{ matrix.zkvm }}
+          mkdir -p ${{ matrix.zkvm }}_verification_keys
+          if [ "${{ matrix.zkvm }}" = "sp1" ]; then
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-sp1-vk-bn254-${{ github.ref_name }}
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-sp1-vk-u32-${{ github.ref_name }}
+          elif [ "${{ matrix.zkvm }}" = "risc0" ]; then
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ethrex-riscv32im-risc0-elf-${{ github.ref_name}}
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-risc0-vk-${{ github.ref_name}}
+          fi
+
+      - name: Upload ethrex guest elf artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex_guests
-          path: ethrex_guests/
+          name: ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}
+          path: ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}
+
+      - name: Upload ethrex guest verification keys
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.zkvm }}_verification_keys
+          path: ${{ matrix.zkvm }}_verification_keys/
 
   package-contracts:
     needs:
@@ -235,6 +284,7 @@ jobs:
   finalize-release:
     needs:
       - build-ethrex
+      - build-ethrex-guest
       - build-docker
       - package-contracts
     runs-on: ubuntu-latest
@@ -248,19 +298,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ./bin
-          pattern: "ethrex*"
-
-      - name: Download ethrex guests
-        uses: actions/download-artifact@v4
-        with:
-          name: ethrex_guests
-          path: ./bin
+          pattern: "ethrex*" # This includes the binaries and elf files
 
       - name: Download verification keys
         uses: actions/download-artifact@v4
         with:
-          name: verification_keys
           path: ./bin
+          pattern: "*_verification_keys" # sp1_verification_keys, risc0_verification_keys
 
       - name: Get previous tag
         run: |
