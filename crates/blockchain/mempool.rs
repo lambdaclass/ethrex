@@ -1,7 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     sync::RwLock,
-    time::Instant,
 };
 
 use crate::{
@@ -89,29 +88,15 @@ impl Mempool {
     }
 
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, MempoolInner>, StoreError> {
-        let now = Instant::now();
-        let w = self
-            .inner
+        self.inner
             .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()));
-        warn!(
-            waited = Instant::now().duration_since(now).as_secs_f64(),
-            "MEMPOOL WRITE LOCK"
-        );
-        w
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))
     }
 
     fn read(&self) -> Result<std::sync::RwLockReadGuard<'_, MempoolInner>, StoreError> {
-        let now = Instant::now();
-        let r = self
-            .inner
+        self.inner
             .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()));
-        warn!(
-            waited = Instant::now().duration_since(now).as_secs_f64(),
-            "MEMPOOL READ LOCK"
-        );
-        r
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
     /// Add transaction to the pool without doing validity checks
