@@ -1158,16 +1158,6 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
-        // Validate blobs bundle
-
-        let fork = self.current_fork().await?;
-
-        blobs_bundle.validate(&transaction, fork)?;
-
-        // Give the scheduler a little space as both sender computation
-        // and blob validation are CPU bound operations.
-        tokio::task::yield_now().await;
-
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
@@ -1175,8 +1165,21 @@ impl Blockchain {
         }
         let sender = transaction.sender()?;
 
-        // Give the scheduler a little space both sender computation
-        // and transaction validation are CPU bound operations.
+        // Give the scheduler a little space as both sender computation
+        // and blobs validation are CPU bound operations.
+        tokio::task::yield_now().await;
+
+        // Validate blobs bundle
+
+        let fork = self.current_fork().await?;
+
+        let Transaction::EIP4844Transaction(inner_tx) = &transaction else {
+            unreachable!("just constructed as EIP4844Transaction");
+        };
+        blobs_bundle.validate(inner_tx, fork)?;
+
+        // Give the scheduler a little space as both blob and transaction
+        // validation are CPU bound operations.
         tokio::task::yield_now().await;
 
         // Validate transaction
