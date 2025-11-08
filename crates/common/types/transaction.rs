@@ -1290,7 +1290,7 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
     )?;
     // Recover public key
     let public = secp256k1::SECP256K1
-        .recover_ecdsa(Message::from_digest(payload.to_fixed_bytes()), &signature)?;
+        .recover_ecdsa(&Message::from_digest(payload.to_fixed_bytes()), &signature)?;
     // Hash public key to obtain address
     let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
     Ok(Address::from_slice(&hash[12..]))

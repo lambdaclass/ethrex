@@ -415,7 +415,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
             .map_err(|_err| InternalError::msg("Invalid message length for ecrecover"))?,
     );
 
-    let Ok(public_key) = recoverable_signature.recover(message) else {
+    let Ok(public_key) = recoverable_signature.recover(&message) else {
         return Ok(Bytes::new());
     };
 
