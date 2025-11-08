@@ -156,13 +156,6 @@ jobs:
           name: verification_keys
           path: verification_keys/
 
-      - name: Upload SP1 verification keys
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
-        uses: actions/upload-artifact@v4
-        with:
-          name: sp1_verification_keys
-          path: sp1_verification_keys/
-
       - name: Upload ethrex guests
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         uses: actions/upload-artifact@v4
@@ -263,10 +256,10 @@ jobs:
           name: ethrex_guests
           path: ./bin
 
-      - name: Download SP1 verification keys
+      - name: Download verification keys
         uses: actions/download-artifact@v4
         with:
-          name: sp1_verification_keys
+          name: verification_keys
           path: ./bin
 
       - name: Get previous tag
