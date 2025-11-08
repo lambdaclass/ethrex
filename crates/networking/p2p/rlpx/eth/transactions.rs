@@ -241,27 +241,40 @@ impl PooledTransactions {
         requested: &NewPooledTransactionHashes,
         fork: Fork,
     ) -> Result<(), MempoolError> {
+        // Responses are allowed to miss some transactions, but whatever
+        // txs they include must be in the requested order.
+        let mut j = 0;
         for tx in &self.pooled_transactions {
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate(&itx.tx, fork)?;
-            }
             let tx_hash = tx.compute_hash();
-            let Some(pos) = requested
-                .transaction_hashes
-                .iter()
-                .position(|&hash| hash == tx_hash)
-            else {
+            while j < requested.transaction_hashes.len() {
+                let candidate = &requested.transaction_hashes[j];
+                if candidate == &tx_hash {
+                    break;
+                }
+                j += 1;
+            }
+            if j == requested.transaction_hashes.len() {
                 return Err(MempoolError::RequestedPooledTxNotFound);
-            };
+            }
 
-            let expected_type = requested.transaction_types[pos];
-            let expected_size = requested.transaction_sizes[pos];
+            let expected_type = requested.transaction_types[j];
+            let expected_size = requested.transaction_sizes[j];
             if tx.tx_type() as u8 != expected_type {
                 return Err(MempoolError::InvalidPooledTxType(expected_type));
             }
+            // TODO: make a `.length` method instead of going full encode
+            // and then discard the result.
             let tx_size = tx.encode_canonical_to_vec().len();
             if tx_size != expected_size {
                 return Err(MempoolError::InvalidPooledTxSize);
+            }
+            j += 1;
+        }
+        // Let the expensive blob validation for the end, after everything else
+        // was shown to be valid.
+        for tx in &self.pooled_transactions {
+            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
+                itx.blobs_bundle.validate(&itx.tx, fork)?;
             }
         }
         Ok(())
