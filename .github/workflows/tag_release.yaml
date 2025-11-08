@@ -141,7 +141,7 @@ jobs:
         run: |
           mkdir -p ./ethrex_guests
           mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf ethrex_guests/ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
-          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk ethrex_guests/ethrex-riscv32im-risc0-elf-${{ github.ref_name }}
+          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-elf ethrex_guests/ethrex-riscv32im-risc0-elf-${{ github.ref_name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
