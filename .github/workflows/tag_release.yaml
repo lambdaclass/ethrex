@@ -128,13 +128,27 @@ jobs:
           chmod +x target/release/ethrex
           mv target/release/ethrex ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
-      - name: Copy verification keys
+      - name: Copy verification keys for contracts
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         run: |
           mkdir -p ./verification_keys
-          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
-          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-bn254
-          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-u32
+          cp crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
+          cp crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-bn254
+          cp crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-u32
+
+      - name: Copy SP1 verification keys for release
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
+        run: |
+          mkdir -p ./sp1_verification_keys
+          cp crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 sp1_verification_keys/ethrex-riscv32im-sp1-bn254-vk-${{ github.ref_name }}
+          cp crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32 sp1_verification_keys/ethrex-riscv32im-sp1-u32-vk-${{ github.ref_name }}
+
+      - name: Copy ethrex guests
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
+        run: |
+          mkdir -p ./ethrex_guests
+          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf ethrex_guests/ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
+          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk ethrex_guests/ethrex-riscv32im-risc0-elf-${{ github.ref_name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -148,6 +162,20 @@ jobs:
         with:
           name: verification_keys
           path: verification_keys/
+
+      - name: Upload SP1 verification keys
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
+        uses: actions/upload-artifact@v4
+        with:
+          name: sp1_verification_keys
+          path: sp1_verification_keys/
+
+      - name: Upload ethrex guests
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_guests
+          path: ethrex_guests/
 
   package-contracts:
     needs:
@@ -235,6 +263,18 @@ jobs:
         with:
           path: ./bin
           pattern: "ethrex*"
+
+      - name: Download ethrex guests
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_guests
+          path: ./bin
+
+      - name: Download SP1 verification keys
+        uses: actions/download-artifact@v4
+        with:
+          name: sp1_verification_keys
+          path: ./bin
 
       - name: Get previous tag
         run: |
