@@ -394,7 +394,7 @@ pub fn eip7702_recover_address(
     };
 
     //recover
-    let Ok(authority) = signature.recover(&message) else {
+    let Ok(authority) = signature.recover(message) else {
         return Ok(None);
     };
 
