@@ -563,13 +563,11 @@ impl EIP4844Transaction {
     ) {
         buf.put_bytes(TxType::EIP4844.into(), 1);
         self.encode(buf);
-        let mut encoded_blobs = Vec::new();
-        Encoder::new(&mut encoded_blobs)
+        Encoder::new(buf)
             .encode_field(&tx_blobs_bundle.blobs)
             .encode_field(&tx_blobs_bundle.commitments)
             .encode_field(&tx_blobs_bundle.proofs)
             .finish();
-        buf.put_slice(&encoded_blobs);
     }
 
     pub fn rlp_length_as_pooled_tx(&self, blobs_bundle: &BlobsBundle) -> usize {
