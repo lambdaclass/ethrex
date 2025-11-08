@@ -378,24 +378,22 @@ impl NodeRecord {
     }
 
     fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
-        let digest = &self.get_signature_digest();
-        let msg = secp256k1::Message::from_digest_slice(digest)
-            .map_err(|_| NodeError::SignatureError("Invalid message digest".into()))?;
+        let digest = self.get_signature_digest();
+        let msg = secp256k1::Message::from_digest(digest);
         let (_recovery_id, signature_bytes) = secp256k1::SECP256K1
-            .sign_ecdsa_recoverable(&msg, signer)
+            .sign_ecdsa_recoverable(msg, signer)
             .serialize_compact();
 
         Ok(H512::from_slice(&signature_bytes))
     }
 
-    pub fn get_signature_digest(&self) -> Vec<u8> {
+    pub fn get_signature_digest(&self) -> [u8; 32] {
         let mut rlp = vec![];
         structs::Encoder::new(&mut rlp)
             .encode_field(&self.seq)
             .encode_key_value_list::<Bytes>(&self.pairs)
             .finish();
-        let digest = Keccak256::digest(&rlp);
-        digest.to_vec()
+        Keccak256::digest(&rlp).into()
     }
 }
 

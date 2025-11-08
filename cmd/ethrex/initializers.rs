@@ -289,7 +289,7 @@ pub fn get_signer(datadir: &Path) -> SecretKey {
             if let Some(parent) = key_path.parent() {
                 fs::create_dir_all(parent).expect("Key file path could not be created.")
             }
-            let signer = SecretKey::new(&mut OsRng);
+            let signer = SecretKey::new(&mut rand::rng());
             fs::write(key_path, signer.secret_bytes())
                 .expect("Newly created signer could not be saved to disk.");
             signer

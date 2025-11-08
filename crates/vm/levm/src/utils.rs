@@ -371,12 +371,9 @@ pub fn eip7702_recover_address(
     let mut hasher = Keccak256::new();
     hasher.update([MAGIC]);
     hasher.update(rlp_buf);
-    let bytes = &mut hasher.finalize();
+    let bytes = hasher.finalize().into();
 
-    let Ok(message) = Message::from_digest_slice(bytes) else {
-        return Ok(None);
-    };
-
+    let message = Message::from_digest(bytes);
     let bytes = [
         auth_tuple.r_signature.to_big_endian(),
         auth_tuple.s_signature.to_big_endian(),

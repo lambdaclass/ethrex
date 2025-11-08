@@ -164,8 +164,8 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     let peer_pk =
         compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
 
-    let local_nonce = H256::random_using(&mut rand::thread_rng());
-    let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
+    let local_nonce = H256::random();
+    let local_ephemeral_key = SecretKey::new(&mut rand::rng());
 
     let msg = encode_auth_message(signer, local_nonce, &peer_pk, &local_ephemeral_key)?;
     stream.write_all(&msg).await?;
@@ -184,8 +184,8 @@ async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     let peer_pk =
         compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
 
-    let local_nonce = H256::random_using(&mut rand::thread_rng());
-    let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
+    let local_nonce = H256::random();
+    let local_ephemeral_key = SecretKey::new(&mut rand::rng());
 
     let msg = encode_ack_message(&local_ephemeral_key, local_nonce, &peer_pk)?;
     stream.write_all(&msg).await?;
@@ -412,11 +412,11 @@ fn encrypt_message(
     const IV_SIZE: u16 = 16;
     const MAC_FOOTER_SIZE: u16 = 32;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     // Pad with random amount of data. the amount needs to be at least 100 bytes to make
     // the message distinguishable from pre-EIP-8 handshakes.
-    let padding_length = rng.gen_range(100..=300);
+    let padding_length = rng.random_range(100..=300);
     encoded_msg.resize(encoded_msg.len() + padding_length, 0);
 
     // Precompute the size of the message. This is needed for computing the MAC.
@@ -447,7 +447,7 @@ fn encrypt_message(
     let mac_key = sha256(&secret_keys[16..]);
 
     // Use the AES secret to encrypt the auth message.
-    let iv = H128::random_using(&mut rng);
+    let iv = H128::random();
     let mut aes_cipher = Aes128Ctr64BE::new_from_slices(aes_key, &iv.0)?;
     aes_cipher.try_apply_keystream(&mut encoded_msg)?;
     let encrypted_auth_msg = encoded_msg;
@@ -475,10 +475,10 @@ fn retrieve_remote_ephemeral_key(
     signature: Signature,
 ) -> Result<PublicKey, PeerConnectionError> {
     let signature_prehash = shared_secret ^ remote_nonce;
-    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
+    let msg = secp256k1::Message::from_digest(signature_prehash.to_fixed_bytes());
     let rid = RecoveryId::try_from(Into::<i32>::into(signature[64]))?;
     let sig = RecoverableSignature::from_compact(&signature[0..64], rid)?;
-    Ok(secp256k1::SECP256K1.recover_ecdsa(&msg, &sig)?)
+    Ok(secp256k1::SECP256K1.recover_ecdsa(msg, &sig)?)
 }
 
 fn sign_shared_secret(
@@ -487,8 +487,8 @@ fn sign_shared_secret(
     local_ephemeral_key: &SecretKey,
 ) -> Result<Signature, PeerConnectionError> {
     let signature_prehash = shared_secret ^ local_nonce;
-    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
-    let sig = secp256k1::SECP256K1.sign_ecdsa_recoverable(&msg, local_ephemeral_key);
+    let msg = secp256k1::Message::from_digest(signature_prehash.to_fixed_bytes());
+    let sig = secp256k1::SECP256K1.sign_ecdsa_recoverable(msg, local_ephemeral_key);
     let (rid, signature) = sig.serialize_compact();
     let mut signature_bytes = [0; 65];
     signature_bytes[..64].copy_from_slice(&signature);

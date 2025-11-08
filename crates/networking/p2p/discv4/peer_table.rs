@@ -6,14 +6,13 @@ use crate::{
 };
 use ethrex_common::{H256, U256};
 use indexmap::{IndexMap, map::Entry};
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use rustc_hash::FxHashSet;
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, send_message_on},
 };
 use std::{
-    collections::HashSet,
     net::IpAddr,
     time::{Duration, Instant},
 };
@@ -593,7 +592,7 @@ impl PeerTableServer {
             .values()
             .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
             .collect::<Vec<_>>()
-            .choose(&mut rand::rngs::OsRng)
+            .choose(&mut rand::rng())
             .cloned()
             .cloned()
     }
@@ -714,7 +713,7 @@ impl PeerTableServer {
                     .map(|connection| (*node_id, connection))
             })
             .collect();
-        peers.choose(&mut rand::rngs::OsRng).cloned()
+        peers.choose(&mut rand::rng()).cloned()
     }
 
     fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
