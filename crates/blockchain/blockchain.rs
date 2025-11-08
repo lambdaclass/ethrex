@@ -1158,6 +1158,7 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
+        return Ok(H256::default());
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
@@ -1199,6 +1200,7 @@ impl Blockchain {
         &self,
         transaction: Transaction,
     ) -> Result<H256, MempoolError> {
+        return Ok(H256::default());
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
