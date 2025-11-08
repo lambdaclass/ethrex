@@ -1,6 +1,6 @@
 import subprocess
 #23747835
-for i in range(23747336, 23747337):
+for i in range(23747336, 23747837):
     subprocess.run(
         ["make", "create-single-chain-rlp", "NETWORK=mainnet", f"BLOCK_NUM={i}"],
     )
