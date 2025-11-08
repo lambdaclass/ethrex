@@ -31,7 +31,13 @@ for block in bench.values():
         count += 1
         
     
-print(len(bench))
+print("Blocks tested", len(bench))
 print("Mean ggas accross multiple runs:", total/count)
-for run in bench_around.values():
-    print(sum(run.values())/ len(run.values()))
+for run_count, run in bench_around.items():
+    print("Mean ggas in run:",run_count,sum(run.values())/ len(run.values()))
+
+average_difference = []
+for block_num, block in bench.items():
+    average_difference.append(max(block.values()) - min(block.values()))
+    pass
+print("Mean ggas spread across blocks:", sum(average_difference) / count)
