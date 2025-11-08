@@ -8,7 +8,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_storage::error::StoreError;
-use rand::{rng, seq::SliceRandom};
+use rand::{seq::SliceRandom, thread_rng};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
@@ -205,7 +205,7 @@ impl TxBroadcaster {
             .collect::<Vec<MempoolTransaction>>();
 
         let mut shuffled_peers = peers.clone();
-        shuffled_peers.shuffle(&mut rng());
+        shuffled_peers.shuffle(&mut thread_rng());
 
         let (peers_to_send_full_txs, peers_to_send_hashes) =
             shuffled_peers.split_at(peer_sqrt.ceil() as usize);

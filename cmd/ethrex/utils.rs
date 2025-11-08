@@ -54,7 +54,7 @@ pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
 
 pub fn generate_jwt_secret() -> String {
     use rand::Rng;
-    let mut rng = rand::rng();
+    let mut rng = rand::thread_rng();
     let mut secret = [0u8; 32];
     rng.fill(&mut secret);
     hex::encode(secret)

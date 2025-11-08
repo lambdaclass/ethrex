@@ -16,6 +16,7 @@ use crate::{
 use bytes::BytesMut;
 use ethrex_common::{H256, H512};
 use futures::StreamExt;
+use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
@@ -211,7 +212,7 @@ impl DiscoveryServer {
     /// We change this message every CHANGE_FIND_NODE_MESSAGE_INTERVAL.
     fn random_message(signer: &SecretKey) -> BytesMut {
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
-        let random_priv_key = SecretKey::new(&mut rand::rng());
+        let random_priv_key = SecretKey::new(&mut OsRng);
         let random_pub_key = public_key_from_signing_key(&random_priv_key);
         let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
         let mut buf = BytesMut::new();

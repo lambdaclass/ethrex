@@ -88,7 +88,7 @@ sha2 = "0.10.8"
 sha3 = { version = "0.10.8", features = ["asm"] }
 tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
-rand = "0.9.2"
+rand = "0.8.5"
 reqwest = { version = "0.12.7", features = ["socks", "json"] }
 rustc-hash = "2.1.1"
 snap = "1.1.1"

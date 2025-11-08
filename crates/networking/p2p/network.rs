@@ -109,7 +109,7 @@ impl P2PContext {
             tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<Message>)>(100000);
         P2PContext {
             tracker: TaskTracker::default(),
-            signer: SecretKey::from_byte_array([0xcd; 32]).expect("32 bytes, within curve order"),
+            signer: SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
             table: peer_table.clone(),
             storage,
             blockchain: blockchain.clone(),
