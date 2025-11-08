@@ -16,14 +16,14 @@ use ethrex_common::{
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
 };
 use ethrex_storage::error::StoreError;
-use std::collections::HashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::warn;
 
 #[derive(Debug, Default)]
 struct MempoolInner {
-    broadcast_pool: HashSet<H256>,
-    transaction_pool: HashMap<H256, MempoolTransaction>,
-    blobs_bundle_pool: HashMap<H256, BlobsBundle>,
+    broadcast_pool: FxHashSet<H256>,
+    transaction_pool: FxHashMap<H256, MempoolTransaction>,
+    blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
     txs_order: VecDeque<H256>,
     max_mempool_size: usize,
@@ -35,7 +35,7 @@ impl MempoolInner {
     fn new(max_mempool_size: usize) -> Self {
         MempoolInner {
             txs_order: VecDeque::with_capacity(max_mempool_size * 2),
-            transaction_pool: HashMap::with_capacity(max_mempool_size),
+            transaction_pool: FxHashMap::default(),
             max_mempool_size,
             mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
             ..Default::default()
@@ -131,13 +131,8 @@ impl Mempool {
         let txs = inner
             .transaction_pool
             .iter()
-            .filter_map(|(hash, tx)| {
-                if !inner.broadcast_pool.contains(hash) {
-                    None
-                } else {
-                    Some(tx.clone())
-                }
-            })
+            .filter(|(hash, _)| inner.broadcast_pool.contains(hash))
+            .map(|(_, tx)| tx.clone())
             .collect::<Vec<_>>();
         Ok(txs)
     }
