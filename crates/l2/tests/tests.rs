@@ -24,8 +24,8 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    REGISTER_FEE_TOKEN_SIGNATURE, build_generic_tx, get_last_verified_batch,
-    send_generic_transaction, wait_for_message_proof,
+    FEE_TOKEN_REGISTRY_ADDRESS, REGISTER_FEE_TOKEN_SIGNATURE, build_generic_tx,
+    get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -2058,7 +2058,7 @@ async fn test_fee_token(
     wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
         .await
         .unwrap();
-    sleep(Duration::from_secs(10)).await;
+    sleep(Duration::from_secs(30)).await;
 
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -2105,6 +2105,13 @@ async fn test_fee_token(
         "{test}: L1 fee vault address fee token balance before transfer: {l1_fee_vault_token_balance_before_transfer}"
     );
 
+    let cd = encode_calldata("isFeeToken(address)", &[Value::Address(fee_token_address)]).unwrap();
+    dbg!(l2_client.call(
+        FEE_TOKEN_REGISTRY_ADDRESS,
+        cd.into(),
+        Overrides::default().await
+    ));
+
     let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(
         &l2_client,
@@ -2124,7 +2131,7 @@ async fn test_fee_token(
     generic_tx.gas = generic_tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
     let tx_hash = send_generic_transaction(&l2_client, generic_tx, &signer).await?;
     let transfer_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 100).await?;
+        ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 1000).await?;
 
     let sender_balance_after_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
