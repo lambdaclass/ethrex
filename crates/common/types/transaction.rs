@@ -101,7 +101,7 @@ impl RLPDecode for P2PTransaction {
                 0x4 => EIP7702Transaction::decode(tx_encoding)
                     .map(|tx| (P2PTransaction::EIP7702Transaction(tx), remainder)),               
                 // FeeToken
-                0x7d => FeeTokenTransaction::decode_unfinished(tx_encoding)
+                0x7d => FeeTokenTransaction::decode(tx_encoding)
                     .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
                 ty => Err(RLPDecodeError::Custom(format!(
                     "Invalid transaction type: {ty}"
@@ -459,7 +459,7 @@ impl RLPDecode for Transaction {
                0x4 => EIP7702Transaction::decode(tx_encoding)
                     .map(|tx| (Transaction::EIP7702Transaction(tx), remainder)),
                 // FeeToken
-                0x7d => FeeTokenTransaction::decode_unfinished(tx_encoding)
+                0x7d => FeeTokenTransaction::decode(tx_encoding)
                     .map(|tx| (Transaction::FeeTokenTransaction(tx), remainder)),
                // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode(tx_encoding)
