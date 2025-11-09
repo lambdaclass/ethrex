@@ -2055,10 +2055,10 @@ async fn test_fee_token(
     let register_tx_hash = send_generic_transaction(&l1_client, register_tx, &owner_signer)
         .await
         .unwrap();
-    wait_for_transaction_receipt(register_tx_hash, &l1_client, 100)
+    wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
         .await
         .unwrap();
-    sleep(Duration::from_secs(50)).await;
+    sleep(Duration::from_secs(10)).await;
 
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
