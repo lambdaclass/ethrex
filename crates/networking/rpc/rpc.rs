@@ -208,13 +208,16 @@ pub fn start_block_executor(
 ) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
     let (block_worker_channel, mut block_receiver) =
         unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
-    std::thread::spawn(move || {
-        while let Some((notify, block)) = block_receiver.blocking_recv() {
-            let _ = notify
-                .send(blockchain.add_block_pipeline(block))
-                .inspect_err(|_| tracing::error!("failed to notify caller"));
-        }
-    });
+    std::thread::Builder::new()
+        .name("block_executor".to_string())
+        .spawn(move || {
+            while let Some((notify, block)) = block_receiver.blocking_recv() {
+                let _ = notify
+                    .send(blockchain.add_block_pipeline(block))
+                    .inspect_err(|_| tracing::error!("failed to notify caller"));
+            }
+        })
+        .expect("Falied to spawn block_executor thread");
     block_worker_channel
 }
 
@@ -555,6 +558,7 @@ pub async fn map_admin_requests(
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
+        "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -607,7 +611,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::default_context_with_storage;
+    use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
         H160,
         types::{ChainConfig, Genesis},
