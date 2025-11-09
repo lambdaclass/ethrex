@@ -2112,6 +2112,48 @@ async fn test_fee_token(
             .await
             .unwrap()
     );
+    dbg!(
+        l2_client
+            .call(FEE_TOKEN_REGISTRY_ADDRESS, cd.into(), Overrides::default())
+            .await
+            .unwrap()
+    );
+    dbg!(
+        l2_client
+            .call(FEE_TOKEN_REGISTRY_ADDRESS, cd.into(), Overrides::default())
+            .await
+            .unwrap()
+    );
+    dbg!(
+        l2_client
+            .call(FEE_TOKEN_REGISTRY_ADDRESS, cd.into(), Overrides::default())
+            .await
+            .unwrap()
+    );
+    dbg!(
+        l2_client
+            .call(FEE_TOKEN_REGISTRY_ADDRESS, cd.into(), Overrides::default())
+            .await
+            .unwrap()
+    );
+    dbg!(
+        l2_client
+            .call(FEE_TOKEN_REGISTRY_ADDRESS, cd.into(), Overrides::default())
+            .await
+            .unwrap()
+    );
+    dbg!(
+        l2_client
+            .call(FEE_TOKEN_REGISTRY_ADDRESS, cd.into(), Overrides::default())
+            .await
+            .unwrap()
+    );
+    dbg!(
+        l2_client
+            .call(FEE_TOKEN_REGISTRY_ADDRESS, cd.into(), Overrides::default())
+            .await
+            .unwrap()
+    );
 
     let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(
