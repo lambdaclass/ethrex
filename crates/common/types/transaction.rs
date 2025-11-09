@@ -99,7 +99,7 @@ impl RLPDecode for P2PTransaction {
                     .map(|tx| (P2PTransaction::EIP4844TransactionWithBlobs(tx), remainder)),
                 // EIP7702
                 0x4 => EIP7702Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP7702Transaction(tx), remainder)),               
+                    .map(|tx| (P2PTransaction::EIP7702Transaction(tx), remainder)),
                 // FeeToken
                 0x7d => FeeTokenTransaction::decode(tx_encoding)
                     .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
@@ -456,12 +456,12 @@ impl RLPDecode for Transaction {
                 0x3 => EIP4844Transaction::decode(tx_encoding)
                     .map(|tx| (Transaction::EIP4844Transaction(tx), remainder)),
                 // EIP7702
-               0x4 => EIP7702Transaction::decode(tx_encoding)
+                0x4 => EIP7702Transaction::decode(tx_encoding)
                     .map(|tx| (Transaction::EIP7702Transaction(tx), remainder)),
                 // FeeToken
                 0x7d => FeeTokenTransaction::decode(tx_encoding)
                     .map(|tx| (Transaction::FeeTokenTransaction(tx), remainder)),
-               // PrivilegedL2
+                // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode(tx_encoding)
                     .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
                 ty => Err(RLPDecodeError::Custom(format!(
