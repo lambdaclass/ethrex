@@ -1,5 +1,4 @@
 use ethrex_rlp::encode::RLPEncode;
-use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 
 use crate::ValueRLP;
 use crate::nibbles::Nibbles;

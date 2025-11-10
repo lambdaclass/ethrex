@@ -1,4 +1,3 @@
-use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use std::mem;
 
 use ethrex_rlp::encode::RLPEncode;
@@ -14,7 +13,9 @@ use crate::{
 use super::{ExtensionNode, Node, ValueOrHash};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's hash, value & path
-#[derive(Debug, Clone, Default, PartialEq, Eq, rkyv::Deserialize, rkyv::Serialize, rkyv::Archive)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, rkyv::Deserialize, rkyv::Serialize, rkyv::Archive,
+)]
 pub struct LeafNode {
     pub partial: Nibbles,
     pub value: ValueRLP,

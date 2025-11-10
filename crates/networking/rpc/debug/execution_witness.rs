@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256,
-    constants::EMPTY_KECCACK_HASH,
-    serde_utils,
+    Address, H256, serde_utils,
     types::{
         AccountState, ChainConfig,
         block_execution_witness::{ExecutionWitness, GuestProgramStateError},

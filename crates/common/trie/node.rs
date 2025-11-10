@@ -33,7 +33,7 @@ pub enum NodeRef {
     /// The node is embedded within the reference.
     Node(
         #[rkyv(omit_bounds)] Arc<Node>,
-        #[rkyv(with = Skip)] OnceLock<NodeHash>
+        #[rkyv(with = Skip)] OnceLock<NodeHash>,
     ),
     /// The node is in the database, referenced by its hash.
     Hash(NodeHash),

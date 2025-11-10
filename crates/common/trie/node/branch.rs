@@ -1,7 +1,6 @@
 use std::mem;
 
 use ethrex_rlp::encode::RLPEncode;
-use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 
 use crate::{
     InconsistentTreeError, TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles,

@@ -1,6 +1,5 @@
 use ethereum_types::H256;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
-use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use sha3::{Digest, Keccak256};
 
 use crate::rkyv_utils::H256Wrapper;
@@ -10,7 +9,17 @@ use crate::rkyv_utils::H256Wrapper;
 // TODO: Check if we can omit the Inline variant, as nodes will always be bigger than 32 bits in our use case
 // TODO: Check if making this `Copy` can make the code less verbose at a reasonable performance cost
 #[derive(
-    Debug, Clone, Copy, PartialEq, Hash, PartialOrd, Ord, Eq, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Eq,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
 )]
 pub enum NodeHash {
     Hashed(#[rkyv(with=H256Wrapper)] H256),

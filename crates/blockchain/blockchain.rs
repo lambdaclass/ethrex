@@ -719,7 +719,7 @@ impl Blockchain {
                 .iter()
             {
                 accumulated_state_trie_witness
-                    .insert(state_trie_witness.0.clone(), state_trie_witness.1.clone());
+                    .insert(*state_trie_witness.0, state_trie_witness.1.clone());
             }
 
             current_trie_witness = new_state_trie_witness;
@@ -772,14 +772,14 @@ impl Blockchain {
         let initial_state_root = {
             let hash = block_hashes_map
                 .get(&(first_block_header.number - 1))
-                .ok_or(ChainError::WitnessGeneration(format!(
-                    "Failed to get parent block hash"
-                )))?;
+                .ok_or(ChainError::WitnessGeneration(
+                    "Failed to get parent block hash".to_string(),
+                ))?;
             self.storage
                 .get_block_header_by_hash(*hash)?
-                .ok_or(ChainError::WitnessGeneration(format!(
-                    "Failed to get parent block header"
-                )))?
+                .ok_or(ChainError::WitnessGeneration(
+                    "Failed to get parent block header".to_string(),
+                ))?
                 .state_root
         };
 
