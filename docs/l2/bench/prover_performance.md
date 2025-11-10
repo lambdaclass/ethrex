@@ -1,7 +1,7 @@
 # ethrex-prover performance
 
 ## Latest benchmarks against rsp
-- ethrex commit: `870f0fa4a16b8df05a67d0a2396df3892c824298` (merged [#5224](https://github.com/lambdaclass/ethrex/pull/5224/) and [#4723](https://github.com/lambdaclass/ethrex/pull/4723))
+- ethrex commit: `870f0fa4a16b8df05a67d0a2396df3892c824298` (merged [#5224](https://github.com/lambdaclass/ethrex/pull/5224/) and [#4723](https://github.com/lambdaclass/ethrex/pull/4723) to `main`)
 - rsp commit: `2c5718029e7c0b24a34b011088fef221489fc714`
 
 | Block (mainnet) | ethrex (SP1) | rsp     | (ethrex - rsp) / rsp * 100% |
@@ -72,7 +72,7 @@ index 99a0478..d42a1d2 100644
 
 Trie operations are one of the most expensive in our prover right now. We are using [risc0-trie](https://github.com/risc0/risc0-ethereum/tree/main/crates/trie) as a fast zkVM trie reference to optimize our own. [ethrex-trie optimization for zkvm](#ethrex-trie-optimization-for-zkvm) see for a detailed exploration of our trie vs risc0’s.
 
-## Proving times (SP1)
+### Detailed proving times (SP1)
 
 Benchmark server hardware:
 
