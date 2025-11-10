@@ -53,17 +53,14 @@ rex deploy 0 <PRIVATE_KEY> \
 
 ## Operator Workflow
 
-1. Deploy or reuse an `IFeeToken` implementation and note its L2 address. (The devnet deployer can optionally register an initial fee token by passing `--l1.initial-fee-token <address>` when running `cmd/ethrex l2 deploy`; this queues the privileged registration automatically.)
-2. Ensure the token address is registered in the `FeeTokenRegistry` through the L1 `CommonBridge` (see next section).
-3. Instantiate an `EthClient` and a signer (local or remote) that will send transactions.
-4. Build a `TxType::FeeToken` transaction with `ethrex_l2_sdk::build_generic_tx`, setting `Overrides::fee_token` and the desired `value`/calldata.
-5. Submit the transaction with `ethrex_l2_sdk::send_generic_transaction` and wait for the receipt.
+Operators decide which ERC-20s are valid fee tokens:
 
-> ⚠️ **Warning:** Inclusions and refunds still depend on the L1 watcher/sequencer infrastructure. This workflow assumes the sequencer is running, the fee token has been registered on L2, and the privileged queue is being processed. Without those pieces, fee-token transactions will remain stuck even if locally signed.
+1. Deploy or reuse an `IFeeToken` implementation and note its L2 address. When initializing the network, the deployer binary can automatically register one by passing `--initial-fee-token <address>` so the bridge queues it during startup.
+2. Register additional tokens (or remove them) through the L1 `CommonBridge` using `registerNewFeeToken(address)` / `unregisterFeeToken(address)`. Each call enqueues a privileged transaction that the sequencer must force on L2.
 
-That is all the sequencer needs; fee locking and distribution happen automatically via `l2_hook.rs`.
+> ⚠️ **Warning:** Registration completes only after the L1 watcher processes the privileged transaction and the L2 registry emits `FeeTokenRegistered`. Until then, user transactions referencing the token will fail.
 
-If the token is not yet registered, the bridge owner can queue the privileged call from L1. You can use the SDK helpers:
+If the token is not yet registered, the bridge owner can queue the privileged call from L1 with the SDK helpers:
 
 ```rust
 let calldata = ethrex_l2_sdk::calldata::encode_calldata(
@@ -83,8 +80,18 @@ let tx = build_generic_tx(
 ).await?;
 let hash = send_generic_transaction(&l1_client, tx, &owner_signer).await?;
 wait_for_transaction_receipt(hash, &l1_client, 100).await?;
-// L1 watcher will include the privileged tx and the registry will emit FeeTokenRegistered.
+// The L1 watcher will include the privileged tx and the registry will emit FeeTokenRegistered.
 ```
+
+## User Workflow
+
+Once a token is registered, users can submit fee-token transactions:
+
+1. Instantiate an `EthClient` connected to L2 and create a signer.
+2. Build a `TxType::FeeToken` transaction with `build_generic_tx`, setting `Overrides::fee_token = Some(<token>)` and the desired `value` / calldata.
+3. Send the transaction with `send_generic_transaction` and wait for the receipt.
+
+Fee locking and distribution happen automatically inside `l2_hook.rs`.
 
 ```rust
 use anyhow::Result;
