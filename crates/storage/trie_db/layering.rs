@@ -48,9 +48,7 @@ impl TrieLayerCache {
             .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
     }
 
-    pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
-        let key = key.as_ref();
-
+    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
         if let Some(filter) = &self.bloom
@@ -221,7 +219,7 @@ impl TrieDB for TrieWrapper {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self.inner.get(self.state_root, key.clone()) {
+        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
         self.db.get(key)
