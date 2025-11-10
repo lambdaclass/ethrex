@@ -406,7 +406,7 @@ impl Blockchain {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                debug!(count = update.added_storage.len(), "With storages");
+                trace!(count = update.added_storage.len(), "Update storages");
                 let (storage_trie, storage_updates_map) = storage_updates_map
                     .entry(hashed_address_h256)
                     .or_insert_with(|| {
