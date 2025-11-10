@@ -31,15 +31,13 @@ impl RpcHandler for MaxPriorityFee {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eth::test_utils::{
+    use crate::test_utils::{
         BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks,
-        setup_store,
+        default_context_with_storage, example_p2p_node, setup_store,
     };
-
-    use crate::utils::test_utils::default_context_with_storage;
     use crate::{
         rpc::{RpcApiContext, RpcHandler, map_http_requests},
-        utils::{RpcRequest, parse_json_hex, test_utils::example_p2p_node},
+        utils::{RpcRequest, parse_json_hex},
     };
     use ethrex_common::types::MIN_GAS_TIP;
     use serde_json::json;

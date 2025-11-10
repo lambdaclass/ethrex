@@ -612,6 +612,7 @@ impl Store {
                         .last_computed_flatkeyvalue
                         .lock()
                         .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
+                    ctr = 0;
                 }
 
                 let mut iter_inner = self
@@ -635,6 +636,7 @@ impl Store {
                             .last_computed_flatkeyvalue
                             .lock()
                             .map_err(|_| StoreError::LockError)? = key.as_ref().to_vec();
+                        ctr = 0;
                     }
                     if let Ok(value) = control_rx.try_recv() {
                         match value {
@@ -830,8 +832,6 @@ impl StoreEngine for Store {
             .header
             .state_root;
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
-
-        let _span = tracing::trace_span!("Block DB update").entered();
 
         let [cf_codes, cf_block_numbers, cf_headers, cf_bodies] = open_cfs(
             &db,
