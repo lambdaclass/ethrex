@@ -7,3 +7,4 @@ This section provides information about the internals of the L2 side of the proj
 ## Table of contents
 
 - [Dev mode](./dev-mode.md)
+- [Running integration tests](./integration-tests.md)
