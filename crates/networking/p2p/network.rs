@@ -46,6 +46,10 @@ pub struct P2PContext {
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
+    // The initial interval between peer lookups, until the number of peers reaches [target_peers](RLPxInitiatorState::target_peers).
+    pub p2p_initial_lookup_interval: Duration,
+    // We use the same lookup intervals as Discovery to try to get both process to check at the same rate
+    pub p2p_lookup_interval: Duration,
 }
 
 impl P2PContext {
@@ -60,6 +64,8 @@ impl P2PContext {
         client_version: String,
         based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
+        p2p_initial_lookup_interval: u64,
+        p2p_lookup_interval: u64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -91,6 +97,8 @@ impl P2PContext {
             #[cfg(feature = "l2")]
             based_context,
             tx_broadcaster,
+            p2p_initial_lookup_interval: Duration::from_millis(p2p_initial_lookup_interval),
+            p2p_lookup_interval: Duration::from_millis(p2p_lookup_interval),
         })
     }
 }
@@ -116,6 +124,8 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         udp_socket.clone(),
         context.table.clone(),
         bootnodes,
+        context.p2p_initial_lookup_interval,
+        context.p2p_lookup_interval,
     )
     .await
     .inspect_err(|e| {

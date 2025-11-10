@@ -93,6 +93,16 @@ P2P options:
 
           [default: 1000]
 
+      --p2p.initial-lookup-interval <INITIAL_INTERVAL_MS>
+          The initial interval between peer lookups, until the number of peers reaches the target number of peers or the number of contacts reaches the target number of contacts.
+
+          [default: 100]
+
+      --p2p.lookup-interval <INTERVAL_MS>
+          The interval between peer lookups once the number of peers reaches the target number of peers or the number of contacts reaches the target number of contacts.
+
+          [default: 600]
+
       --target.peers <MAX_PEERS>
           Max amount of connected peers.
 
@@ -147,7 +157,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 5.0.0"]
+          [default: "ethrex 6.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
