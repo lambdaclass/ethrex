@@ -30,7 +30,8 @@ For rsp:
 - 64 GB RAM
 - RTX 4090 24 GB
 
-> Note: rsp exited with a `block gas used mismatch` error on the failed cases
+> [!NOTE]  
+> rsp exited with a `block gas used mismatch` error on the failed cases> Note: 
 
 How to reproduce for ethrex:
 1. Clone [ethrex-replay](https://github.com/lambdaclass/ethrex-replay)
