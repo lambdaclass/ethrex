@@ -73,6 +73,7 @@
     - [Load tests](./developers/l1/testing/load-tests.md)
 - [L2](./developers/l2/introduction.md)
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
+  - [Integration tests](./developers/l2/integration-tests.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
   - [FAQ](./ethrex_replay/faq.md)
