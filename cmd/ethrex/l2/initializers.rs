@@ -151,6 +151,8 @@ async fn shutdown_sequencer_handles(
     committer_handle: Option<GenServerHandle<l1_committer::L1Committer>>,
     block_producer_handle: Option<GenServerHandle<block_producer::BlockProducer>>,
 ) {
+    // These GenServers run via start_blocking, so aborting the JoinSet alone never stops them.
+    // Sending Abort elicits CastResponse::Stop and lets the blocking loop unwind cleanly.
     if let Some(mut handle) = committer_handle {
         handle
             .cast(l1_committer::InMessage::Abort)

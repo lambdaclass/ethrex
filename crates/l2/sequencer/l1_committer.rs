@@ -1087,6 +1087,62 @@ impl L1Committer {
             on_chain_proposer_address: self.on_chain_proposer_address,
         })))
     }
+
+    async fn handle_commit_message(
+        &mut self,
+        handle: &GenServerHandle<Self>,
+    ) -> CastResponse {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+            let current_last_committed_batch =
+                get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
+                    .await
+                    .unwrap_or(self.last_committed_batch);
+            let Some(current_time) = utils::system_now_ms() else {
+                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
+                return CastResponse::NoReply;
+            };
+
+            // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
+            if current_last_committed_batch > self.last_committed_batch {
+                info!(
+                    l1_batch = current_last_committed_batch,
+                    last_batch_registered = self.last_committed_batch,
+                    "Committer was not aware of new L1 committed batches, updating internal state accordingly"
+                );
+                self.last_committed_batch = current_last_committed_batch;
+                self.last_committed_batch_timestamp = current_time;
+                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
+                return CastResponse::NoReply;
+            }
+
+            let commit_time: u128 = self.commit_time_ms.into();
+            let should_send_commitment =
+                current_time - self.last_committed_batch_timestamp > commit_time;
+
+            debug!(
+                last_committed_batch_at = self.last_committed_batch_timestamp,
+                will_send_commitment = should_send_commitment,
+                last_committed_batch = self.last_committed_batch,
+                "Committer woke up"
+            );
+
+            #[expect(clippy::collapsible_if)]
+            if should_send_commitment {
+                if self
+                    .commit_next_batch_to_l1()
+                    .await
+                    .inspect_err(|e| error!("L1 Committer Error: {e}"))
+                    .is_ok()
+                {
+                    self.last_committed_batch_timestamp =
+                        system_now_ms().unwrap_or(current_time);
+                    self.last_committed_batch = current_last_committed_batch + 1;
+                }
+            }
+        }
+        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
+        CastResponse::NoReply
+    }
 }
 
 impl GenServer for L1Committer {
@@ -1103,59 +1159,10 @@ impl GenServer for L1Committer {
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            InMessage::Commit => {
-                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-                    let current_last_committed_batch =
-                        get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
-                            .await
-                            .unwrap_or(self.last_committed_batch);
-                    let Some(current_time) = utils::system_now_ms() else {
-                        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
-                        return CastResponse::NoReply;
-                    };
-
-                    // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
-                    if current_last_committed_batch > self.last_committed_batch {
-                        info!(
-                            l1_batch = current_last_committed_batch,
-                            last_batch_registered = self.last_committed_batch,
-                            "Committer was not aware of new L1 committed batches, updating internal state accordingly"
-                        );
-                        self.last_committed_batch = current_last_committed_batch;
-                        self.last_committed_batch_timestamp = current_time;
-                        self.schedule_commit(self.committer_wake_up_ms, handle.clone());
-                        return CastResponse::NoReply;
-                    }
-
-                    let commit_time: u128 = self.commit_time_ms.into();
-                    let should_send_commitment =
-                        current_time - self.last_committed_batch_timestamp > commit_time;
-
-                    debug!(
-                        last_committed_batch_at = self.last_committed_batch_timestamp,
-                        will_send_commitment = should_send_commitment,
-                        last_committed_batch = self.last_committed_batch,
-                        "Committer woke up"
-                    );
-
-                    #[expect(clippy::collapsible_if)]
-                    if should_send_commitment {
-                        if self
-                            .commit_next_batch_to_l1()
-                            .await
-                            .inspect_err(|e| error!("L1 Committer Error: {e}"))
-                            .is_ok()
-                        {
-                            self.last_committed_batch_timestamp =
-                                system_now_ms().unwrap_or(current_time);
-                            self.last_committed_batch = current_last_committed_batch + 1;
-                        }
-                    }
-                }
-                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
-                CastResponse::NoReply
-            }
+            InMessage::Commit => self.handle_commit_message(handle).await,
             InMessage::Abort => {
+                // start_blocking keeps the committer loop alive even if the JoinSet aborts the task.
+                // Returning CastResponse::Stop is what unblocks shutdown by ending that blocking loop.
                 if let Some(ct) = self.cancellation_token.take() {
                     ct.cancel()
                 };

@@ -279,7 +279,11 @@ impl GenServer for BlockProducer {
                 );
                 CastResponse::NoReply
             }
-            InMessage::Abort => CastResponse::Stop,
+            InMessage::Abort => {
+                // start_blocking keeps this GenServer alive even if the JoinSet aborts the task.
+                // Returning CastResponse::Stop is how the blocking runner actually shuts down.
+                CastResponse::Stop
+            }
         }
     }
 
