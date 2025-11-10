@@ -165,7 +165,9 @@ pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub active_filters: ActiveFilters,
+    // L2 nodes don't need to initialize the syncer
     pub syncer: Option<Arc<SyncManager>>,
+    // L2 nodes don't need to initialize the peer handler
     pub peer_handler: Option<PeerHandler>,
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
