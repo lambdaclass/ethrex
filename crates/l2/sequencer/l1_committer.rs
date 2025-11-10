@@ -1088,10 +1088,7 @@ impl L1Committer {
         })))
     }
 
-    async fn handle_commit_message(
-        &mut self,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
+    async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
@@ -1134,8 +1131,7 @@ impl L1Committer {
                     .inspect_err(|e| error!("L1 Committer Error: {e}"))
                     .is_ok()
                 {
-                    self.last_committed_batch_timestamp =
-                        system_now_ms().unwrap_or(current_time);
+                    self.last_committed_batch_timestamp = system_now_ms().unwrap_or(current_time);
                     self.last_committed_batch = current_last_committed_batch + 1;
                 }
             }
