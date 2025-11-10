@@ -9,7 +9,6 @@ use ethrex_common::U256;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
-use tokio::time::Duration;
 
 use crate::simulator::Simulator;
 
