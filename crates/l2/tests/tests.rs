@@ -166,85 +166,85 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     acc_operator_fee += fee_token_fees.operator_fees;
     acc_l1_fees += fee_token_fees.l1_fees;
 
-    // let mut set = JoinSet::new();
+    let mut set = JoinSet::new();
 
-    // set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
-    //
-    // set.spawn(test_transfer(
-    //     l2_client.clone(),
-    //     private_keys.pop().unwrap(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // set.spawn(test_privileged_tx_with_contract_call(
-    //     l1_client.clone(),
-    //     l2_client.clone(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // set.spawn(test_privileged_tx_with_contract_call_revert(
-    //     l1_client.clone(),
-    //     l2_client.clone(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // // this test should go before the withdrawal ones
-    // // it's failure case is making a batch invalid due to invalid privileged transactions
-    // set.spawn(test_privileged_spammer(
-    //     l1_client.clone(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // set.spawn(test_transfer_with_privileged_tx(
-    //     l1_client.clone(),
-    //     l2_client.clone(),
-    //     private_keys.pop().unwrap(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // set.spawn(test_gas_burning(
-    //     l1_client.clone(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // set.spawn(test_privileged_tx_not_enough_balance(
-    //     l1_client.clone(),
-    //     l2_client.clone(),
-    //     private_keys.pop().unwrap(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // set.spawn(test_aliasing(
-    //     l1_client.clone(),
-    //     l2_client.clone(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // set.spawn(test_erc20_failed_deposit(
-    //     l1_client.clone(),
-    //     l2_client.clone(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // set.spawn(test_forced_withdrawal(
-    //     l1_client.clone(),
-    //     l2_client.clone(),
-    //     private_keys.pop().unwrap(),
-    // ));
-    //
-    // set.spawn(test_erc20_roundtrip(
-    //     l1_client.clone(),
-    //     l2_client.clone(),
-    //     private_keys.pop().unwrap(),
-    // ));
+    set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
 
-    // while let Some(res) = set.join_next().await {
-    //     let fees_details = res??;
-    //     acc_priority_fees += fees_details.priority_fees;
-    //     acc_base_fees += fees_details.base_fees;
-    //     acc_operator_fee += fees_details.operator_fees;
-    //     acc_l1_fees += fees_details.l1_fees;
-    // }
+    set.spawn(test_transfer(
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_privileged_tx_with_contract_call(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_privileged_tx_with_contract_call_revert(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    // this test should go before the withdrawal ones
+    // it's failure case is making a batch invalid due to invalid privileged transactions
+    set.spawn(test_privileged_spammer(
+        l1_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_transfer_with_privileged_tx(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_gas_burning(
+        l1_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_privileged_tx_not_enough_balance(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_aliasing(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_erc20_failed_deposit(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_forced_withdrawal(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_erc20_roundtrip(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    while let Some(res) = set.join_next().await {
+        let fees_details = res??;
+        acc_priority_fees += fees_details.priority_fees;
+        acc_base_fees += fees_details.base_fees;
+        acc_operator_fee += fees_details.operator_fees;
+        acc_l1_fees += fees_details.l1_fees;
+    }
 
     let coinbase_balance_after_tests = l2_client
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
@@ -291,13 +291,13 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Not thread-safe (coinbase and bridge balance checks)
-    // test_n_withdraws(
-    //     &l1_client,
-    //     &l2_client,
-    //     &private_keys.pop().unwrap(),
-    //     withdrawals_count,
-    // )
-    // .await?;
+    test_n_withdraws(
+        &l1_client,
+        &l2_client,
+        &private_keys.pop().unwrap(),
+        withdrawals_count,
+    )
+    .await?;
 
     if std::env::var("INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH").is_err() {
         test_total_eth_l2(&l1_client, &l2_client).await?;
@@ -2128,7 +2128,7 @@ async fn test_fee_token(
             .unwrap();
         dbg!(&a);
         dbg!(&register_receipt);
-        if a == "0x0000000000000000000000000000000000000000000000000000000000000001".to_string() {
+        if a == "0x0000000000000000000000000000000000000000000000000000000000000001" {
             keep = false;
         }
         sleep(Duration::from_secs(1)).await;
