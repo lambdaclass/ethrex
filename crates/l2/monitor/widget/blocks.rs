@@ -148,12 +148,12 @@ impl StatefulWidget for &mut BlocksTable {
             .map(|(number, n_txs, hash, coinbase, gas, blob_bas, size)| {
                 Row::new(vec![
                     Span::styled(number, Style::default()),
-                    Span::styled(n_txs.to_string(), Style::default()),
+                    Span::styled(n_txs, Style::default()),
                     Span::styled(hash, Style::default()),
                     Span::styled(coinbase, Style::default()),
-                    Span::styled(gas.to_string(), Style::default()),
-                    Span::styled(blob_bas.to_string(), Style::default()),
-                    Span::styled(size.to_string(), Style::default()),
+                    Span::styled(gas, Style::default()),
+                    Span::styled(blob_bas, Style::default()),
+                    Span::styled(size, Style::default()),
                 ])
             });
         let latest_blocks_table = Table::new(rows, constraints)
