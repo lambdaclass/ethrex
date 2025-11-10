@@ -2,7 +2,7 @@ use crate::modules::types::{
     AccessListItem, AuthorizationListTuple, RawPostValue, TransactionExpectedException,
 };
 
-use ethrex_common::{U256, types::Fork};
+use ethrex_common::{types::Fork, U256};
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 
@@ -151,8 +151,8 @@ where
             "Cancun" => Fork::Cancun,
             "Prague" => Fork::Prague,
             "Byzantium" => Fork::Byzantium,
-            "EIP158" => Fork::SpuriousDragon,
-            "EIP150" => Fork::Tangerine,
+            "EIP158" => Fork::EIP158,
+            "EIP150" => Fork::EIP150,
             other => {
                 return Err(serde::de::Error::custom(format!(
                     "Unknown fork name: {other}",
