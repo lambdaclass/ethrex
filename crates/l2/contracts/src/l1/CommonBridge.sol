@@ -458,34 +458,38 @@ contract CommonBridge is
         _sendToL2(L2_PROXY_ADMIN, sendValues);
     }
 
-		/// @inheritdoc ICommonBridge
-    function registerNewFeeToken(address newFeeToken) external override onlyOwner {
-			bytes memory callData = abi.encodeCall(
-				IFeeTokenRegistry.registerFeeToken,
-				(newFeeToken)
-			);
-			SendValues memory sendValues = SendValues({
-					to: L2_FEE_TOKEN_REGISTRY,
-					gasLimit: 21000 * 10,
-					value: 0,
-					data: callData
-			});
-			_sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    /// @inheritdoc ICommonBridge
+    function registerNewFeeToken(
+        address newFeeToken
+    ) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenRegistry.registerFeeToken,
+            (newFeeToken)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_REGISTRY,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
-		/// @inheritdoc ICommonBridge
-    function unregisterFeeToken(address existingFeeToken) external override onlyOwner {
-			bytes memory callData = abi.encodeCall(
-				IFeeTokenRegistry.unregisterFeeToken,
-				(existingFeeToken)
-			);
-			SendValues memory sendValues = SendValues({
-					to: L2_FEE_TOKEN_REGISTRY,
-					gasLimit: 21000 * 10,
-					value: 0,
-					data: callData
-			});
-			_sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    /// @inheritdoc ICommonBridge
+    function unregisterFeeToken(
+        address existingFeeToken
+    ) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenRegistry.unregisterFeeToken,
+            (existingFeeToken)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_REGISTRY,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
     /// @notice Allow owner to upgrade the contract.
