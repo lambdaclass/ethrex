@@ -121,7 +121,7 @@ fn parse(request: &RpcRequest) -> Result<Node, RpcErr> {
 
 pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Result<Value, RpcErr> {
     let Some(peer_handler) = context.peer_handler.as_mut() else {
-        return Ok(serde_json::to_value(false)?);
+        return Err(RpcErr::Internal("Peer handler not initialized".to_string()));
     };
     let mut server = peer_handler.initiator.clone();
     let node = parse(request)?;
