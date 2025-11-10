@@ -707,7 +707,8 @@ impl Store {
         account_updates: Vec<(Nibbles, Vec<u8>)>,
         storage_updates: StorageUpdates,
     ) -> Result<(), StoreError> {
-        let now = Instant::now();
+        let now_full = Instant::now();
+        let now_blocking_part = Instant::now();
         let db = &*self.db;
         let fkv_ctl = &self.flatkeyvalue_control_tx;
         let trie_cache = &self.trie_cache;
@@ -733,6 +734,10 @@ impl Store {
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
         // Update finished, signal block processing.
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
+        println!(
+            "Trie Updates only part we wait for duration: {}",
+            now_blocking_part.elapsed().as_millis()
+        );
 
         // Phase 2: update disk layer.
         let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
@@ -775,7 +780,10 @@ impl Store {
         result?;
         // Phase 3: update diff layers with the removal of bottom layer.
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
-        println!("Trie Updates duration: {}", now.elapsed().as_millis());
+        println!(
+            "Trie Updates full duration: {}",
+            now_full.elapsed().as_millis()
+        );
         Ok(())
     }
 
