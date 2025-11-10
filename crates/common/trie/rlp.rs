@@ -3,8 +3,9 @@ use std::array;
 // Contains RLP encoding and decoding implementations for Trie Nodes
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
 use ethrex_rlp::{
+    constants::RLP_NULL,
     decode::{RLPDecode, decode_bytes},
-    encode::RLPEncode,
+    encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -14,18 +15,45 @@ use crate::{Nibbles, NodeHash};
 
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let mut encoder = Encoder::new(buf);
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let payload_len = self.choices.iter().fold(value_len, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())
+        });
+
+        encode_length(payload_len, buf);
         for child in self.choices.iter() {
-            match child.compute_hash() {
-                NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
-                child @ NodeHash::Inline(raw) if raw.1 != 0 => {
-                    encoder = encoder.encode_raw(child.as_ref())
-                }
-                _ => encoder = encoder.encode_bytes(&[]),
+            match child.compute_hash_ref() {
+                NodeHash::Hashed(hash) => hash.0.encode(buf),
+                NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
             }
         }
-        encoder = encoder.encode_bytes(&self.value);
-        encoder.finish();
+        <[u8] as RLPEncode>::encode(&self.value, buf);
+    }
+
+    // Duplicated to prealloc the buffer and avoid calculating the payload length twice
+    fn encode_to_vec(&self) -> Vec<u8> {
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let choices_len = self.choices.iter().fold(0, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())
+        });
+        let payload_len = choices_len + value_len;
+
+        let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
+
+        encode_length(payload_len, &mut buf);
+        for child in self.choices.iter() {
+            match child.compute_hash_ref() {
+                NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+                NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => {
+                    buf.extend_from_slice(&encoded[..*len as usize])
+                }
+            }
+        }
+        <[u8] as RLPEncode>::encode(&self.value, &mut buf);
+
+        buf
     }
 }
 
