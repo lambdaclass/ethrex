@@ -33,6 +33,7 @@ spawned-concurrency.workspace = true
 sha2.workspace = true
 futures.workspace = true
 indexmap.workspace = true
+rocksdb = { workspace = true, optional = true }
 canopydb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 
@@ -47,8 +48,6 @@ hmac = "0.12.1"
 aes = "0.8.4"
 ctr = "0.9.2"
 rand = "0.8.5"
-
-rocksdb = { workspace = true, optional = true }
 
 rayon = "1.10.0"
 crossbeam.workspace = true

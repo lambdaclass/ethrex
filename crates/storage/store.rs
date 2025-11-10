@@ -1474,6 +1474,7 @@ mod tests {
         test_store_suite(EngineType::InMemory).await;
     }
 
+    #[cfg(feature = "rocksdb")]
     #[tokio::test]
     async fn test_rocksdb_store() {
         test_store_suite(EngineType::RocksDB).await;
