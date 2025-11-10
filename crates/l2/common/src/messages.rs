@@ -18,6 +18,11 @@ pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
     keccak("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)".as_bytes())
 });
 
+pub const BRIDGE_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xff,
+]);
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct L1MessageProof {
     pub batch_number: u64,
@@ -169,6 +174,9 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
 pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
     let mut acc: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
     for m in messages {
+        if m.to == BRIDGE_ADDRESS && m.from == BRIDGE_ADDRESS {
+            continue;
+        }
         let entry = acc.entry(m.chain_id).or_insert(BalanceDiff {
             chain_id: m.chain_id,
             value: U256::zero(),
