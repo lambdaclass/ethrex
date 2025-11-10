@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Iden;tifier: MIT
 pragma solidity =0.8.29;
 import "./interfaces/IFeeTokenRegistry.sol";
 
 contract FeeTokenRegistry is IFeeTokenRegistry {
-    address internal constant BRIDGE =
-        address(0xffff);
+    address public constant BRIDGE =
+        0x000000000000000000000000000000000000FFff;
 
 		mapping(address => bool) private feeTokens;
 
