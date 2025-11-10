@@ -67,6 +67,7 @@
   - [Importing blocks from a file](./developers/l1/importing-blocks.md)
   - [Kurtosis localnet](./developers/l1/kurtosis-localnet.md)
   - [Metrics](./developers/l1/metrics.md)
+  - [Dashboards](./developers/l1/dashboards.md)
   - [Testing](./developers/l1/testing/README.md)
     - [Ethereum foundation tests](./developers/l1/testing/ef-tests.md)
     - [Hive tests](./developers/l1/testing/hive.md)
