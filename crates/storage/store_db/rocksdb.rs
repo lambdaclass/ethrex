@@ -43,7 +43,7 @@ use ethrex_rlp::{
 use std::fmt::Debug;
 
 // TODO: use finalized hash to determine when to commit
-const COMMIT_THRESHOLD: usize = 128;
+const COMMIT_THRESHOLD: usize = 0;
 
 /// Canonical block hashes column family: [`u8;_`] => [`Vec<u8>`]
 /// - [`u8;_`] = `block_number.to_le_bytes()`
