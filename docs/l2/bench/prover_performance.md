@@ -18,13 +18,11 @@
 | 23769083        | 44,943,006 | 12m 27s      | 07m 49s | 59.3%                       |
 | 23769082        | 7,949,562  | 02m 25s      | 01m 27s | 66.7%                       |
 
-Benchmark server hardware:
-
+**Benchmark server hardware:**
 For ethrex:
 - AMD EPYC 7713 64-Core Processor
 - 128 GB RAM
 - RTX 4090 24 GB
-
 For rsp:
 - AMD EPYC 7F72 24-Core Processor
 - 64 GB RAM
@@ -33,14 +31,14 @@ For rsp:
 > [!NOTE]  
 > rsp exited with a `block gas used mismatch` error on the failed cases
 
-How to reproduce for ethrex:
+**How to reproduce for ethrex:**
 1. Clone [ethrex-replay](https://github.com/lambdaclass/ethrex-replay)
   1. Optionally, edit `Cargo.toml` to change the `ethrex` libraries to a specific branch/commit you want to benchmark.
   2. Run `cargo update` if you do change it.
 3. Run `cargo r -r -F "sp1,gpu" -p ethrex-replay -- blocks --action prove --zkvm sp1 --from 23769082 --to 23769092 --rpc-url <RPC>`
   1. For ethrex, an RPC endpoint that implements `debug_executionWitness` (like an ethrex or reth node) works best.
 
-How to reproduce for rsp:
+**How to reproduce for rsp:**
 1. Clone [rsp](https://github.com/succinctlabs/rsp)
   1. Make the following change so that we measure rsp's proving time the same way we measure it for ethrex (duration of the `prove()` call):
   ```bash
