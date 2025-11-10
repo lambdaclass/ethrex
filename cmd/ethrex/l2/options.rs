@@ -425,7 +425,7 @@ pub struct WatcherOptions {
         long = "l1.router-address",
         value_name = "ADDRESS",
         env = "ETHREX_WATCHER_ROUTER_ADDRESS",
-        help_heading = "L1 Watcher options",
+        help_heading = "L1 Watcher options"
     )]
     pub router_address: Option<Address>,
     #[arg(
@@ -464,7 +464,10 @@ impl WatcherOptions {
         self.bridge_address = self.bridge_address.or(defaults.bridge_address);
         self.router_address = self.router_address.or(defaults.router_address);
         self.l2s_rpc_urls = self.l2s_rpc_urls.clone().or(defaults.l2s_rpc_urls.clone());
-        self.l2s_chain_ids = self.l2s_chain_ids.clone().or(defaults.l2s_chain_ids.clone());
+        self.l2s_chain_ids = self
+            .l2s_chain_ids
+            .clone()
+            .or(defaults.l2s_chain_ids.clone());
     }
 }
 
