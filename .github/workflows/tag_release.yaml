@@ -314,6 +314,7 @@ jobs:
       - build-ethrex-guest
       - build-docker
       - package-contracts
+      - package-verification-keys
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
