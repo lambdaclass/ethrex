@@ -246,7 +246,7 @@ jobs:
       - name: Archive ethrex guests
         run: |
           cd ethrex_guests/
-          tar -czvf ethrex-guests.tar.gz .
+          tar -czvf ../ethrex-guests.tar.gz .
 
       - name: Upload ethrex guests artifact
         uses: actions/upload-artifact@v4
