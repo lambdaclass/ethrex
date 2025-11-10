@@ -16,10 +16,9 @@ use crate::{Nibbles, NodeHash};
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         let value_len = <[u8] as RLPEncode>::length(&self.value);
-        let choices_len = self.choices.iter().fold(0, |acc, child| {
+        let payload_len = self.choices.iter().fold(value_len, |acc, child| {
             acc + RLPEncode::length(child.compute_hash_ref())
         });
-        let payload_len = choices_len + value_len;
 
         encode_length(payload_len, buf);
         for child in self.choices.iter() {
