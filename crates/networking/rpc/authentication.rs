@@ -79,7 +79,8 @@ mod tests {
     }
 
     #[test]
-    fn test_iat_missing() {
+    fn test_iat_missing_fails() {
+        // Our `Claims` type expect `iat` so JWTs with it would simply fail to deserialize.
         let secret = Bytes::from("my_secret_key");
         let faulty_claims = FaultyClaims {
             id: None,
@@ -92,14 +93,12 @@ mod tests {
         )
         .unwrap();
 
-        println!("Generated token without iat: {}", token);
-
         let res = validate_jwt_authentication(&token, &secret);
         assert_eq!(res.unwrap_err(), AuthenticationError::TokenDecodingError);
     }
 
     #[test]
-    fn test_iat_zero() {
+    fn test_iat_zero_fails() {
         let secret = Bytes::from("my_secret_key");
         let faulty_claims = Claims {
             iat: 0,
@@ -117,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn test_iat_too_old() {
+    fn test_iat_too_old_fails() {
         let secret = Bytes::from("my_secret_key");
         let old_iat = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -140,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn test_iat_future() {
+    fn test_iat_future_fails() {
         let secret = Bytes::from("my_secret_key");
         let future_iat = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -163,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn test_iat_within_range() {
+    fn test_iat_within_range_passes() {
         let secret = Bytes::from("my_secret_key");
 
         // Test with iat 59 seconds in the past
