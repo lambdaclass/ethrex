@@ -53,10 +53,13 @@ rex deploy 0 <PRIVATE_KEY> \
 
 ## Operator Workflow
 
-1. Deploy or reuse an `IFeeToken` implementation and note its L2 address.
-2. Instantiate an `EthClient` and a signer (local or remote) that will send the transaction.
-3. Build a `TxType::FeeToken` transaction with `ethrex_l2_sdk::build_generic_tx`, setting `Overrides::fee_token` and the desired `value`/calldata.
-4. Submit the transaction with `ethrex_l2_sdk::send_generic_transaction` and wait for the receipt.
+1. Deploy or reuse an `IFeeToken` implementation and note its L2 address. (The devnet deployer can optionally register an initial fee token by passing `--l1.initial-fee-token <address>` when running `cmd/ethrex l2 deploy`; this queues the privileged registration automatically.)
+2. Ensure the token address is registered in the `FeeTokenRegistry` through the L1 `CommonBridge` (see next section).
+3. Instantiate an `EthClient` and a signer (local or remote) that will send transactions.
+4. Build a `TxType::FeeToken` transaction with `ethrex_l2_sdk::build_generic_tx`, setting `Overrides::fee_token` and the desired `value`/calldata.
+5. Submit the transaction with `ethrex_l2_sdk::send_generic_transaction` and wait for the receipt.
+
+> ⚠️ **Warning:** Inclusions and refunds still depend on the L1 watcher/sequencer infrastructure. This workflow assumes the sequencer is running, the fee token has been registered on L2, and the privileged queue is being processed. Without those pieces, fee-token transactions will remain stuck even if locally signed.
 
 That is all the sequencer needs; fee locking and distribution happen automatically via `l2_hook.rs`.
 
