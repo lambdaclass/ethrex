@@ -33,10 +33,10 @@ For rsp:
 
 **How to reproduce for ethrex:**
 1. Clone [ethrex-replay](https://github.com/lambdaclass/ethrex-replay)
-  1. Optionally, edit `Cargo.toml` to change the `ethrex` libraries to a specific branch/commit you want to benchmark.
-  2. Run `cargo update` if you do change it.
+    1. Optionally, edit `Cargo.toml` to change the `ethrex` libraries to a specific branch/commit you want to benchmark.
+    2. Run `cargo update` if you do change it.
 3. Run `cargo r -r -F "sp1,gpu" -p ethrex-replay -- blocks --action prove --zkvm sp1 --from 23769082 --to 23769092 --rpc-url <RPC>`
-  1. For ethrex, an RPC endpoint that implements `debug_executionWitness` (like an ethrex or reth node) works best.
+    1. For ethrex, an RPC endpoint that implements `debug_executionWitness` (like an ethrex or reth node) works best.
 
 **How to reproduce for rsp:**
 1. Clone [rsp](https://github.com/succinctlabs/rsp)
@@ -55,9 +55,9 @@ index 99a0478..d42a1d2 100644
 
              hooks
   ```
-  2. You can then grep the stdout for `proving time`
+    2. You can then grep the stdout for `proving time`
 3. Run `SP1_PROVER=cuda cargo r -r --manifest-path bin/host/Cargo.toml --block-number <BLOCK NUMBER> --rpc-url <RPC> --prove`
-  1. For rsp, an alchemy RPC endpoint works best.
+    1. For rsp, an alchemy RPC endpoint works best.
 
 ## Optimizations
 
