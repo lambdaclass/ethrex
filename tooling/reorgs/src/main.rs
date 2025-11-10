@@ -188,6 +188,7 @@ async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
     let mut base_chain = simulator.get_base_chain();
     for _ in 0..10 {
         let extended_base_chain = node0.build_payload(base_chain).await;
+    
         node0.notify_new_payload(&extended_base_chain).await;
         node0.update_forkchoice(&extended_base_chain).await;
 
@@ -216,7 +217,6 @@ async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
 
     let side_chain = node1.build_payload(side_chain).await;
     node1.notify_new_payload(&side_chain).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
     node1.update_forkchoice(&side_chain).await;
 
     // Sanity check: balance hasn't changed
@@ -225,7 +225,6 @@ async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
 
     // Notify the first node of the side chain block, it should reorg
     node0.notify_new_payload(&side_chain).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
     node0.update_forkchoice(&side_chain).await;
 
     // Check the transfer has been processed
@@ -234,7 +233,6 @@ async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
 
     // Finally, move to the extended base chain, it should reorg back
     node0.notify_new_payload(&extended_base_chain).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
     node0.update_forkchoice(&extended_base_chain).await;
 
     // Check the transfer has been reverted
