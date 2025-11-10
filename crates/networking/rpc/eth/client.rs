@@ -50,14 +50,18 @@ impl RpcHandler for Syncing {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let Some(syncer) = &context.syncer else {
+            return Err(RpcErr::Internal(
+                "Syncing status requested but syncer is not initialized".to_string(),
+            ));
+        };
         if context.blockchain.is_synced() {
             Ok(Value::Bool(!context.blockchain.is_synced()))
         } else {
             let syncing_status = SyncingStatusRpc {
                 starting_block: context.storage.get_earliest_block_number().await?,
                 current_block: context.storage.get_latest_block_number().await?,
-                highest_block: context
-                    .syncer
+                highest_block: syncer
                     .get_last_fcu_head()
                     .map_err(|error| RpcErr::Internal(error.to_string()))?
                     .to_low_u64_be(),

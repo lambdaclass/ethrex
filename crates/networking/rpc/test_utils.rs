@@ -266,8 +266,8 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         storage,
         blockchain,
         active_filters: Default::default(),
-        syncer: Arc::new(dummy_sync_manager().await),
-        peer_handler: dummy_peer_handler().await,
+        syncer: Some(Arc::new(dummy_sync_manager().await)),
+        peer_handler: Some(dummy_peer_handler().await),
         node_data: NodeData {
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
