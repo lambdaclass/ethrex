@@ -1,5 +1,5 @@
 use ethrex_common::H256;
-use ethrex_crypto::keccak::{Keccak256};
+use ethrex_crypto::keccak::Keccak256;
 use lambdaworks_crypto::merkle_tree::{merkle::MerkleTree, traits::IsMerkleTreeBackend};
 
 // We use a newtype wrapper around `H256` because Rust's orphan rule
