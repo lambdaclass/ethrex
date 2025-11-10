@@ -87,6 +87,12 @@ contract CommonBridge is
     /// @notice Deadline for the sequencer to include the transaction.
     mapping(bytes32 => uint256) public privilegedTxDeadline;
 
+    /// @dev Deprecated variable.
+	  /// @notice The L1 token address that is treated as the one to be bridged to the L2.
+    /// @dev If set to address(0), ETH is considered the native token.
+    /// Otherwise, this address is used for native token deposits and withdrawals.
+    address public NATIVE_TOKEN_L1;
+
     /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
     uint256 private pendingPrivilegedTxIndex;
 
