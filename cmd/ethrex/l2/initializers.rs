@@ -11,7 +11,6 @@ use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
-use ethrex_l2::SequencerConfig;
 use ethrex_l2::sequencer::block_producer;
 use ethrex_l2::sequencer::l1_committer;
 use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
@@ -25,12 +24,13 @@ use ethrex_p2p::{
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use eyre::OptionExt;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::GenServerHandle;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
 use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 use url::Url;
@@ -39,29 +39,18 @@ use url::Url;
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_handler: PeerHandler,
+    peer_handler: Option<PeerHandler>,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
     blockchain: Arc<Blockchain>,
-    cancel_token: CancellationToken,
+    syncer: Option<Arc<SyncManager>>,
     tracker: TaskTracker,
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
 ) {
     init_datadir(&opts.datadir);
-
-    // Create SyncManager
-    let syncer = SyncManager::new(
-        peer_handler.clone(),
-        &opts.syncmode,
-        cancel_token,
-        blockchain.clone(),
-        store.clone(),
-        opts.datadir.clone(),
-    )
-    .await;
 
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
@@ -222,46 +211,77 @@ pub async fn init_l2(
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
-
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
     let mut join_set = JoinSet::new();
 
-    let p2p_context = P2PContext::new(
-        local_p2p_node.clone(),
-        tracker.clone(),
-        signer,
-        peer_table.clone(),
-        store.clone(),
-        blockchain.clone(),
-        get_client_version(),
-        #[cfg(feature = "l2")]
-        Some(P2PBasedContext {
-            store_rollup: rollup_store.clone(),
-            // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
-            // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
-            // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
-            // This should be replaced with the Signer enum once the refactor is complete.
-            committer_key: Arc::new(
-                SecretKey::from_slice(
-                    &hex::decode(
-                        "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
-                    )
-                    .expect("Invalid committer key"),
-                )
-                .expect("Failed to create committer key"),
-            ),
-        }),
-        opts.node_opts.tx_broadcasting_time_interval,
-    )
-    .await
-    .expect("P2P context could not be created");
-
-    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
-    let peer_handler = PeerHandler::new(peer_table, initiator);
-
     let cancel_token = tokio_util::sync::CancellationToken::new();
+
+    let based = opts.sequencer_opts.based;
+
+    let (peer_handler, syncer) = if based {
+        let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
+        let p2p_context = P2PContext::new(
+            local_p2p_node.clone(),
+            tracker.clone(),
+            signer,
+            peer_table.clone(),
+            store.clone(),
+            blockchain.clone(),
+            get_client_version(),
+            #[cfg(feature = "l2")]
+            Some(P2PBasedContext {
+                store_rollup: rollup_store.clone(),
+                // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
+                // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
+                // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
+                // This should be replaced with the Signer enum once the refactor is complete.
+                committer_key: Arc::new(
+                    SecretKey::from_slice(
+                        &hex::decode(
+                            "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
+                        )
+                        .expect("Invalid committer key"),
+                    )
+                    .expect("Failed to create committer key"),
+                ),
+            }),
+            opts.node_opts.tx_broadcasting_time_interval,
+        )
+        .await
+        .expect("P2P context could not be created");
+        let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+        let peer_handler = PeerHandler::new(peer_table, initiator);
+
+        // Create SyncManager
+        let syncer = SyncManager::new(
+            peer_handler.clone(),
+            &opts.node_opts.syncmode,
+            cancel_token.clone(),
+            blockchain.clone(),
+            store.clone(),
+            opts.node_opts.datadir.clone(),
+        )
+        .await;
+
+        // TODO: This should be handled differently, the current problem
+        // with using opts.node_opts.p2p_disabled is that with the removal
+        // of the l2 feature flag, p2p_disabled is set to false by default
+        // prioritizing the L1 UX.
+        init_network(
+            &opts.node_opts,
+            &network,
+            &datadir,
+            peer_handler.clone(),
+            tracker.clone(),
+            blockchain.clone(),
+            p2p_context,
+        )
+        .await;
+        (Some(peer_handler), Some(Arc::new(syncer)))
+    } else {
+        (None, None)
+    };
 
     init_rpc_api(
         &opts.node_opts,
@@ -271,7 +291,7 @@ pub async fn init_l2(
         local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
-        cancel_token.clone(),
+        syncer,
         tracker.clone(),
         rollup_store.clone(),
         log_filter_handler,
@@ -281,32 +301,10 @@ pub async fn init_l2(
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
-        init_metrics(&opts.node_opts, tracker.clone());
+        init_metrics(&opts.node_opts, tracker);
     }
 
-    let l2_sequencer_cfg = SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
-        error!("{err}");
-    })?;
-    let cancellation_token = CancellationToken::new();
-
-    // TODO: This should be handled differently, the current problem
-    // with using opts.node_opts.p2p_diabled is that with the removal
-    // of the l2 feature flag, p2p_diabled is set to false by default
-    // prioritizing the L1 UX.
-    if l2_sequencer_cfg.based.enabled {
-        init_network(
-            &opts.node_opts,
-            &network,
-            &datadir,
-            peer_handler.clone(),
-            tracker,
-            blockchain.clone(),
-            p2p_context,
-        )
-        .await;
-    } else {
-        info!("P2P is disabled");
-    }
+    let sequencer_cancellation_token = CancellationToken::new();
     let l2_url = Url::parse(&format!(
         "http://{}:{}",
         opts.node_opts.http_addr, opts.node_opts.http_port
@@ -316,8 +314,8 @@ pub async fn init_l2(
         store,
         rollup_store,
         blockchain,
-        l2_sequencer_cfg,
-        cancellation_token.clone(),
+        opts.sequencer_opts.try_into()?,
+        sequencer_cancellation_token.clone(),
         l2_url,
         genesis,
         checkpoints_dir,
@@ -333,8 +331,7 @@ pub async fn init_l2(
             ).await;
             join_set.abort_all();
         }
-
-        _ = cancellation_token.cancelled() => {
+        _ = sequencer_cancellation_token.cancelled() => {
             shutdown_sequencer_handles(committer_handle.clone(), block_producer_handle.clone()).await;
         }
     }
@@ -342,8 +339,11 @@ pub async fn init_l2(
     let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
-    store_node_config_file(node_config, node_config_path).await;
+    if based {
+        let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
+        let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
+        store_node_config_file(node_config, node_config_path).await;
+    }
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
     Ok(())
