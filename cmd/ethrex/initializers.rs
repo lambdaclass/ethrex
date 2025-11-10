@@ -36,7 +36,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{debug, error, info, warn};
+use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -61,8 +61,10 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
         LogColor::Auto => stdout_is_tty,
     };
 
+    let include_target = matches!(opts.log_level, Level::DEBUG | Level::TRACE);
+
     let fmt_layer = fmt::layer()
-        .with_target(false)
+        .with_target(include_target)
         .with_ansi(use_color)
         .with_filter(filter);
 
