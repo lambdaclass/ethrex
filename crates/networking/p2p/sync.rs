@@ -24,8 +24,6 @@ use ethrex_common::{
     types::{AccountState, Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-#[cfg(any(test, feature = "test-utils"))]
-use ethrex_storage::EngineType;
 use ethrex_storage::{STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{Trie, TrieError};
@@ -47,7 +45,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
-const MIN_FULL_BLOCKS: usize = 64;
+const MIN_FULL_BLOCKS: u64 = 10_000;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 /// Amount of seconds between blocks
@@ -119,22 +117,6 @@ impl Syncer {
             cancel_token,
             blockchain,
             datadir,
-        }
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    /// Creates a dummy Syncer for tests where syncing is not needed
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub async fn dummy() -> Self {
-        Self {
-            snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::dummy().await,
-            // This won't be used
-            cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
-            )),
-            datadir: ".".into(),
         }
     }
 
@@ -288,17 +270,16 @@ impl Syncer {
             current_head = last_block_hash;
             current_head_number = last_block_number;
 
-            // If the sync head is less than 64 blocks away from our current head switch to full-sync
-            if sync_head_found {
-                let latest_block_number = store.get_latest_block_number().await?;
-                if last_block_number.saturating_sub(latest_block_number) < MIN_FULL_BLOCKS as u64 {
-                    // Too few blocks for a snap sync, switching to full sync
-                    debug!(
-                        "Sync head is less than {MIN_FULL_BLOCKS} blocks away, switching to FullSync"
-                    );
-                    self.snap_enabled.store(false, Ordering::Relaxed);
-                    return self.sync_cycle_full(sync_head, store.clone()).await;
-                }
+            // If the sync head is not 0 we search to fullsync
+            let head_found = sync_head_found && store.get_latest_block_number().await? > 0;
+            // Or the head is very close to 0
+            let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
+
+            if head_found || head_close_to_0 {
+                // Too few blocks for a snap sync, switching to full sync
+                info!("Sync head is found, switching to FullSync");
+                self.snap_enabled.store(false, Ordering::Relaxed);
+                return self.sync_cycle_full(sync_head, store.clone()).await;
             }
 
             // Discard the first header as we already have it

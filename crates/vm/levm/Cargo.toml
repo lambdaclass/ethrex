@@ -40,7 +40,6 @@ bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose
 ark-bn254 = { git = "https://github.com/arkworks-rs/algebra", branch = "master", features = [
   "asm",
 ] }
-#ark-bn254 = { version = "0.5.0", features = ["asm"] }
 ark-ec = { git = "https://github.com/arkworks-rs/algebra", branch = "master", features = [
   "parallel",
 ] }
