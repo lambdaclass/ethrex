@@ -62,7 +62,7 @@ pub struct GuestProgramState {
 ///
 /// It is essentially an `RpcExecutionWitness` but it also contains `ChainConfig`,
 /// and `first_block_number`.
-#[derive(Default, Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
+#[derive(Default, Serialize, Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive, Clone)]
 pub struct ExecutionWitness {
     // Contract bytecodes needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]

@@ -11,7 +11,7 @@ use ethrex_rlp::{
 // TODO: move path-tracking logic somewhere else
 // PERF: try using a stack-allocated array
 /// Struct representing a list of nibbles (half-bytes)
-#[derive(Debug, Clone, Default, RDeserialize, RSerialize, Archive)]
+#[derive(Debug, Clone, Default, rkyv::Deserialize, rkyv::Serialize, rkyv::Archive)]
 pub struct Nibbles {
     data: Vec<u8>,
     /// Parts of the path that have already been consumed (used for tracking

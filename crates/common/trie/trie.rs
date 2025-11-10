@@ -348,7 +348,7 @@ impl Trie {
 
                     node.into()
                 }
-                Node::Leaf(node) => node.clone().into(),
+                Node::Leaf(node) => node.into(),
             })
         }
 

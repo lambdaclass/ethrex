@@ -14,7 +14,7 @@ use super::{BranchNode, Node, NodeRef, ValueOrHash};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
-#[derive(Debug, Clone, PartialEq, RSerialize, RDeserialize, Archive)]
+#[derive(Debug, Clone, PartialEq, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive)]
 pub struct ExtensionNode {
     pub prefix: Nibbles,
     pub child: NodeRef,
