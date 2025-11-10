@@ -322,34 +322,64 @@ impl GenServer for PeerConnectionServer {
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message {
                 Self::CastMsg::IncomingMessage(message) => {
+                    let msg = message.to_string();
                     trace!(
                         peer=%established_state.node,
-                        %message,
+                        msg,
                         "Received incomming message",
                     );
-                    handle_incoming_message(established_state, message).await
+                    let start = Instant::now();
+                    let res = handle_incoming_message(established_state, message).await;
+                    let end = Instant::now();
+                    trace!(
+                        peer=%established_state.node,
+                        msg,
+                        took = end.duration_since(start).as_secs_f64(),
+                        "Incomming message",
+                    );
+                    res
                 }
                 Self::CastMsg::OutgoingMessage(message) => {
+                    let msg = message.to_string();
                     trace!(
                         peer=%established_state.node,
-                        %message,
+                        msg,
                         "Received outgoing request",
                     );
-                    handle_outgoing_message(established_state, message).await
+                    let start = Instant::now();
+                    let res = handle_outgoing_message(established_state, message).await;
+                    let end = Instant::now();
+                    trace!(
+                        peer=%established_state.node,
+                        msg,
+                        took = end.duration_since(start).as_secs_f64(),
+                        "Received outgoing request",
+                    );
+                    res
                 }
                 Self::CastMsg::OutgoingRequest(message, sender) => {
+                    let msg = message.to_string();
                     trace!(
                         peer=%established_state.node,
-                        %message,
+                        msg,
                         "Received outgoing request",
                     );
-                    handle_outgoing_request(
+                    let start = Instant::now();
+                    let res = handle_outgoing_request(
                         established_state,
                         message,
                         Arc::<oneshot::Sender<Message>>::into_inner(sender)
                             .expect("Could not obtain sender channel"),
                     )
-                    .await
+                    .await;
+                    let end = Instant::now();
+                    trace!(
+                        peer=%established_state.node,
+                        msg,
+                        took = end.duration_since(start).as_secs_f64(),
+                        "Received outgoing request",
+                    );
+                    res
                 }
                 Self::CastMsg::RequestTimeout { id } => {
                     // Discard the request from current requests
