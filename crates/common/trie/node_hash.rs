@@ -123,6 +123,14 @@ impl RLPEncode for NodeHash {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         RLPEncode::encode(&Into::<Vec<u8>>::into(self), buf)
     }
+
+    fn length(&self) -> usize {
+        match self {
+            NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
+            NodeHash::Inline((_, 0)) => 1,               // if empty then it's encoded to RLP_NULL
+            NodeHash::Inline((_, len)) => *len as usize, // already encoded
+        }
+    }
 }
 
 impl RLPDecode for NodeHash {
