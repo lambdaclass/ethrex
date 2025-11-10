@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -490,14 +490,14 @@ impl GuestProgramState {
             Ok(())
         }
 
-        let mut block_numbers_in_common = vec![];
+        let mut block_numbers_in_common = BTreeSet::new();
         for block in blocks {
             let hash = block.header.compute_block_hash();
             set_hash_or_validate(&block.header, hash)?;
 
             let number = block.header.number;
             if let Some(header) = self.block_headers.get(&number) {
-                block_numbers_in_common.push(number);
+                block_numbers_in_common.insert(number);
                 set_hash_or_validate(header, hash)?;
             }
         }
