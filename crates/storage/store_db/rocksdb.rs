@@ -25,6 +25,7 @@ use std::{
         Arc, Mutex,
         mpsc::{SyncSender, sync_channel},
     },
+    time::Instant,
 };
 use tracing::{debug, error, info};
 
@@ -706,6 +707,7 @@ impl Store {
         account_updates: Vec<(Nibbles, Vec<u8>)>,
         storage_updates: StorageUpdates,
     ) -> Result<(), StoreError> {
+        let now = Instant::now();
         let db = &*self.db;
         let fkv_ctl = &self.flatkeyvalue_control_tx;
         let trie_cache = &self.trie_cache;
@@ -773,6 +775,7 @@ impl Store {
         result?;
         // Phase 3: update diff layers with the removal of bottom layer.
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+        println!("Trie Updates duration: {}", now.elapsed().as_millis());
         Ok(())
     }
 
