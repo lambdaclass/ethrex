@@ -1,8 +1,8 @@
-use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, apply_prefix};
+use crate::{error::StoreError, trie_db::layering::TrieLayerCache};
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
@@ -716,9 +716,12 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
         storage_key: H256,
+        trie_layer_cache: Arc<TrieLayerCache>,
     ) -> Result<Option<U256>, StoreError> {
         match self.get_block_header(block_number)? {
-            Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
+            Some(header) => {
+                self.get_storage_at_root(header.state_root, address, storage_key, trie_layer_cache)
+            }
             None => Ok(None),
         }
     }
@@ -728,6 +731,7 @@ impl Store {
         state_root: H256,
         address: Address,
         storage_key: H256,
+        trie_layer_cache: Arc<TrieLayerCache>,
     ) -> Result<Option<U256>, StoreError> {
         let hashed_address = hash_address(&address);
         let account_hash = H256::from_slice(&hashed_address);
@@ -742,13 +746,26 @@ impl Store {
             let account = AccountState::decode(&encoded_account)?;
             account.storage_root
         };
-        let storage_trie = self.open_storage_trie(account_hash, storage_root, state_root)?;
+        // let's check the cache now
+        let value = trie_layer_cache
+            .get(state_root, storage_key.as_bytes())
+            .map(|datum| U256::decode(&datum))
+            .transpose()?;
 
-        let hashed_key = hash_key(&storage_key);
-        storage_trie
-            .get(&hashed_key)?
-            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose()
+        let value = match value {
+            Some(val) => Some(val),
+            None => {
+                let storage_trie =
+                    self.open_storage_trie(account_hash, storage_root, state_root)?;
+                let hashed_key = hash_key(&storage_key);
+                storage_trie
+                    .get(&hashed_key)?
+                    .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+                    .transpose()?
+            }
+        };
+
+        Ok(value)
     }
 
     pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
@@ -1370,6 +1387,10 @@ impl Store {
 
     pub async fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
         self.engine.create_checkpoint(path.as_ref()).await
+    }
+
+    pub fn get_trie_layer_cache(&self) -> Result<Arc<TrieLayerCache>, StoreError> {
+        self.engine.get_trie_layer_cache()
     }
 }
 

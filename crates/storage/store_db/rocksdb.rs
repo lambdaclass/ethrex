@@ -1958,6 +1958,14 @@ impl StoreEngine for Store {
         let last_computed_flatkeyvalue = self.last_written()?;
         Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
     }
+
+    fn get_trie_layer_cache(&self) -> Result<Arc<TrieLayerCache>, StoreError> {
+        Ok(self
+            .trie_cache
+            .try_lock()
+            .map_err(|e| StoreError::Custom(e.to_string()))?
+            .clone())
+    }
 }
 
 /// Open column families

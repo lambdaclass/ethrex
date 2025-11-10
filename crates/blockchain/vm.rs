@@ -3,9 +3,9 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{Store, trie_db::layering::TrieLayerCache};
 use ethrex_vm::{EvmError, VmDatabase};
-use std::{cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -17,15 +17,20 @@ pub struct StoreVmDatabase {
     // And may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: HashMap<BlockNumber, BlockHash>,
     pub state_root: H256,
+    pub trie_layer_cache: Arc<TrieLayerCache>,
 }
 
 impl StoreVmDatabase {
     pub fn new(store: Store, block_header: BlockHeader) -> Self {
+        let trie_layer_cache = store
+            .get_trie_layer_cache()
+            .expect("We shouldn't have a store error");
         StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: HashMap::new(),
             state_root: block_header.state_root,
+            trie_layer_cache,
         }
     }
 
@@ -34,11 +39,15 @@ impl StoreVmDatabase {
         block_header: BlockHeader,
         block_hash_cache: HashMap<BlockNumber, BlockHash>,
     ) -> Self {
+        let trie_layer_cache = store
+            .get_trie_layer_cache()
+            .expect("We shouldn't have a store error");
         StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache,
             state_root: block_header.state_root,
+            trie_layer_cache,
         }
     }
 }
@@ -54,7 +63,7 @@ impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
-            .get_storage_at_root(self.state_root, address, key)
+            .get_storage_at_root(self.state_root, address, key, self.trie_layer_cache.clone())
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
