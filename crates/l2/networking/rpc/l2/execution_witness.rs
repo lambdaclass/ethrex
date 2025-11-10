@@ -77,7 +77,8 @@ pub async fn handle_execution_witness(
         .await
         .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;
 
-    let rpc_execution_witness = RpcExecutionWitness::from(execution_witness);
+    let rpc_execution_witness = RpcExecutionWitness::try_from(execution_witness)
+        .map_err(|e| RpcErr::Internal(format!("Failed to build rpc execution witness {e}")))?;
 
     serde_json::to_value(rpc_execution_witness).map_err(|error| RpcErr::Internal(error.to_string()))
 }

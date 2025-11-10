@@ -19,7 +19,7 @@ use ethrex_common::{
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
 #[cfg(feature = "l2")]
-use ethrex_trie::{Node, Trie};
+use ethrex_trie::Trie;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 

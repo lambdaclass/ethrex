@@ -11,7 +11,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::hash_address;
-use ethrex_trie::{EMPTY_TRIE_HASH, InMemoryTrieDB, Nibbles, Node, NodeRef, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, InMemoryTrieDB, Nibbles, Node, NodeRef, Trie, TrieError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -42,15 +42,15 @@ pub struct RpcExecutionWitness {
     pub headers: Vec<Bytes>,
 }
 
-impl From<ExecutionWitness> for RpcExecutionWitness {
-    fn from(value: ExecutionWitness) -> Self {
-        // TODO: unwrap
+impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
+    type Error = TrieError;
+    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
         let mut nodes = Vec::new();
         for node in value.storage_trie_roots {
-            node.encode_subtrie(&mut nodes).unwrap();
+            node.encode_subtrie(&mut nodes)?;
         }
-        value.state_trie_root.encode_subtrie(&mut nodes).unwrap();
-        Self {
+        value.state_trie_root.encode_subtrie(&mut nodes)?;
+        Ok(Self {
             state: nodes
                 .into_iter()
                 .map(|n| Bytes::from(n.encode_to_vec()))
@@ -62,7 +62,7 @@ impl From<ExecutionWitness> for RpcExecutionWitness {
                 .into_iter()
                 .map(Bytes::from)
                 .collect(),
-        }
+        })
     }
 }
 
@@ -217,7 +217,8 @@ impl RpcHandler for ExecutionWitnessRequest {
             .await
             .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;
 
-        let rpc_execution_witness = RpcExecutionWitness::from(execution_witness);
+        let rpc_execution_witness = RpcExecutionWitness::try_from(execution_witness)
+            .map_err(|e| RpcErr::Internal(format!("Failed to create rpc execution witness {e}")))?;
 
         serde_json::to_value(rpc_execution_witness)
             .map_err(|error| RpcErr::Internal(error.to_string()))
