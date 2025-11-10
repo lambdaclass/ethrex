@@ -475,21 +475,6 @@ impl GuestProgramState {
         &self,
         blocks: &[Block],
     ) -> Result<(), GuestProgramStateError> {
-        fn set_hash_or_validate(
-            header: &BlockHeader,
-            hash: H256,
-        ) -> Result<(), GuestProgramStateError> {
-            if let Err(prev_hash) = header.hash.set(hash)
-                && prev_hash != hash
-            {
-                return Err(GuestProgramStateError::Custom(format!(
-                    "Block header hash was previously set for {} with the wrong value. It should be set correctly or left unset.",
-                    header.number
-                )));
-            }
-            Ok(())
-        }
-
         let mut block_numbers_in_common = BTreeSet::new();
         for block in blocks {
             let hash = block.header.compute_block_hash();
@@ -588,4 +573,19 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
     Keccak256::new_with_prefix(key.to_fixed_bytes())
         .finalize()
         .to_vec()
+}
+
+/// Initializes hash of header or validates the hash is correct in case it's already set
+/// Note that header doesn't need to be mutable because the hash is a OnceCell
+fn set_hash_or_validate(header: &BlockHeader, hash: H256) -> Result<(), GuestProgramStateError> {
+    // If it's already set the .set() method will return the current value
+    if let Err(prev_hash) = header.hash.set(hash)
+        && prev_hash != hash
+    {
+        return Err(GuestProgramStateError::Custom(format!(
+            "Block header hash was previously set for {} with the wrong value. It should be set correctly or left unset.",
+            header.number
+        )));
+    }
+    Ok(())
 }
