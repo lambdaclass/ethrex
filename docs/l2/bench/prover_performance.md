@@ -41,7 +41,7 @@ For rsp:
 **How to reproduce for rsp:**
 1. Clone [rsp](https://github.com/succinctlabs/rsp)
   1. Make the following change so that we measure rsp's proving time the same way we measure it for ethrex (duration of the `prove()` call), you can then grep the stdout for `proving_time`:
-      ```bash
+```bash
         diff --git a/crates/executor/host/src/full_executor.rs b/crates/executor/host/src/full_executor.rs
     index 99a0478..d42a1d2 100644
     --- a/crates/executor/host/src/full_executor.rs
@@ -54,7 +54,7 @@ For rsp:
                  let proof_bytes = bincode::serialize(&proof.proof).unwrap();
     
                  hooks
-    ```
+```
 3. Run `SP1_PROVER=cuda cargo r -r --manifest-path bin/host/Cargo.toml --block-number <BLOCK NUMBER> --rpc-url <RPC> --prove`
     1. For rsp, an alchemy RPC endpoint works best.
 
