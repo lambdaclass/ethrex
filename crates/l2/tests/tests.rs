@@ -2031,10 +2031,17 @@ async fn test_fee_token(
     )
     .await?;
 
-    let owner_pk =
-        parse_private_key("941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e")
-            .unwrap();
+    let owner_pk = bridge_owner_private_key();
     let owner_signer: Signer = LocalSigner::new(owner_pk).into();
+    dbg!(owner_signer.address());
+    dbg!(owner_signer.address());
+    dbg!(owner_signer.address());
+    dbg!(owner_signer.address());
+    dbg!(owner_signer.address());
+    dbg!(owner_signer.address());
+    dbg!(owner_signer.address());
+    dbg!(owner_signer.address());
+    dbg!(owner_signer.address());
     let calldata = encode_calldata(
         REGISTER_FEE_TOKEN_SIGNATURE,
         &[Value::Address(fee_token_address)],
@@ -2046,7 +2053,10 @@ async fn test_fee_token(
         bridge_address().unwrap(),
         owner_signer.address(),
         calldata.into(),
-        Overrides::default(),
+        Overrides {
+            gas_limit: Some(21000 * 100),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -2106,87 +2116,22 @@ async fn test_fee_token(
     );
 
     let cd = encode_calldata("isFeeToken(address)", &[Value::Address(fee_token_address)]).unwrap();
-    dbg!(
-        l2_client
+    let mut keep = true;
+    while keep {
+        let a = l2_client
             .call(
                 FEE_TOKEN_REGISTRY_ADDRESS,
                 cd.clone().into(),
-                Overrides::default()
+                Overrides::default(),
             )
             .await
-            .unwrap()
-    );
-    dbg!(
-        l2_client
-            .call(
-                FEE_TOKEN_REGISTRY_ADDRESS,
-                cd.clone().into(),
-                Overrides::default()
-            )
-            .await
-            .unwrap()
-    );
-    dbg!(
-        l2_client
-            .call(
-                FEE_TOKEN_REGISTRY_ADDRESS,
-                cd.clone().into(),
-                Overrides::default()
-            )
-            .await
-            .unwrap()
-    );
-    dbg!(
-        l2_client
-            .call(
-                FEE_TOKEN_REGISTRY_ADDRESS,
-                cd.clone().into(),
-                Overrides::default()
-            )
-            .await
-            .unwrap()
-    );
-    dbg!(
-        l2_client
-            .call(
-                FEE_TOKEN_REGISTRY_ADDRESS,
-                cd.clone().into(),
-                Overrides::default()
-            )
-            .await
-            .unwrap()
-    );
-    dbg!(
-        l2_client
-            .call(
-                FEE_TOKEN_REGISTRY_ADDRESS,
-                cd.clone().into(),
-                Overrides::default()
-            )
-            .await
-            .unwrap()
-    );
-    dbg!(
-        l2_client
-            .call(
-                FEE_TOKEN_REGISTRY_ADDRESS,
-                cd.clone().into(),
-                Overrides::default()
-            )
-            .await
-            .unwrap()
-    );
-    dbg!(
-        l2_client
-            .call(
-                FEE_TOKEN_REGISTRY_ADDRESS,
-                cd.clone().into(),
-                Overrides::default()
-            )
-            .await
-            .unwrap()
-    );
-
+            .unwrap();
+        dbg!(&a);
+        if a == "0x0000000000000000000000000000000000000000000000000000000000000001".to_string() {
+            keep = false;
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
     let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(
         &l2_client,
