@@ -223,7 +223,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
-          path: ethrex_guests/sp1/ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
+          path: ethrex_guests/sp1/
 
       - name: Download SP1 verification keys artifacts
         uses: actions/download-artifact@v4
@@ -235,7 +235,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ethrex-riscv32im-risc0-elf-${{ github.ref_name }}
-          path: ethrex_guests/risc0/ethrex-riscv32im-risc0-elf-${{ github.ref_name }}
+          path: ethrex_guests/risc0/
 
       - name: Download RISC0 verification keys artifacts
         uses: actions/download-artifact@v4
