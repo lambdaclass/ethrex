@@ -1,5 +1,63 @@
 # ethrex-prover performance
 
+## Latest benchmarks against rsp
+ethrex commit: 870f0fa4a16b8df05a67d0a2396df3892c824298 (merged [#5224](https://github.com/lambdaclass/ethrex/pull/5224/) and [#4723](https://github.com/lambdaclass/ethrex/pull/4723))
+rsp commit: 2c5718029e7c0b24a34b011088fef221489fc714
+
+| Block (mainnet) | ethrex (SP1) | rsp     | (ethrex - rsp) / rsp * 100% |
+| --------------- | ------------ | ------- | --------------------------- |
+| 23769082        | 02m 25s      | 01m 27s | 66.7%                       |
+| 23769083        | 12m 27s      | 07m 49s | 59.3%                       |
+| 23769084        | 08m 32s      | Failed  | -                           |
+| 23769085        | 06m 42s      | Failed  | -                           |
+| 23769086        | 07m 31s      | 04m 45s | 58.2%                       |
+| 23769087        | 05m 58s      | Failed  | -                           |
+| 23769088        | 04m 41s      | 02m 59s | 57.5%                       |
+| 23769089        | 08m 04s      | 04m 44s | 70.4%                       |
+| 23769090        | 08m 09s      | 04m 40s | 74.6%                       |
+| 23769091        | 06m 55s      | Failed  | -                           |
+| 23769092        | 06m 25s      | 04m 01s | 59.8%                       |
+
+Benchmark server hardware:
+
+For ethrex:
+- AMD EPYC 7713 64-Core Processor
+- 128 GB RAM
+- RTX 4090 24 GB
+
+For rsp:
+- AMD EPYC 7F72 24-Core Processor
+- 64 GB RAM
+- RTX 4090 24 GB
+
+How to reproduce for ethrex:
+1. Clone [ethrex-replay](https://github.com/lambdaclass/ethrex-replay)
+  1. Optionally, edit `Cargo.toml` to change the `ethrex` libraries to a specific branch/commit you want to benchmark.
+  2. Run `cargo update` if you do change it.
+3. Run `cargo r -r -F "sp1,gpu" -p ethrex-replay -- blocks --action prove --zkvm sp1 --from 23769082 --to 23769092 --rpc-url <RPC>`
+  1. For ethrex, an RPC endpoint that implements `debug_executionWitness` (like an ethrex or reth node) works best.
+
+How to reproduce for rsp:
+1. Clone [rsp](https://github.com/succinctlabs/rsp)
+  1. Make the following change so that we measure rsp's proving time the same way we measure it for ethrex (duration of the `prove()` call):
+  ```bash
+    diff --git a/crates/executor/host/src/full_executor.rs b/crates/executor/host/src/full_executor.rs
+index 99a0478..d42a1d2 100644
+--- a/crates/executor/host/src/full_executor.rs
++++ b/crates/executor/host/src/full_executor.rs
+@@ -123,6 +123,7 @@ pub trait BlockExecutor<C: ExecutorComponents> {
+             .map_err(|err| eyre::eyre!("{err}"))??;
+
+             let proving_duration = proving_start.elapsed();
++            println!("proving time: {}", proving_duration.as_secs());
+             let proof_bytes = bincode::serialize(&proof.proof).unwrap();
+
+             hooks
+  ```
+  2. You can then grep the stdout for `proving time`
+3. Run `SP1_PROVER=cuda cargo r -r --manifest-path bin/host/Cargo.toml --block-number <BLOCK NUMBER> --rpc-url <RPC> --prove`
+  1. For rsp, an alchemy RPC endpoint works best.
+
 ## Optimizations
 
 | Name | PR | tl;dr |
@@ -8,9 +66,9 @@
 | trie opt. 1 | https://github.com/lambdaclass/ethrex/pull/4648 | Halves trie hashing calls |
 | trie opt. 2 | https://github.com/lambdaclass/ethrex/pull/4723 | Trie hashing zkVM cycles reduced 1/4, faster than risc0-trie |
 | trie opt. 3 | https://github.com/lambdaclass/ethrex/pull/4763 | Trie `get` and `insert` ops. reduced cycles by 1/14. |
-| trie opt. 4 | 🚧 WIP https://github.com/lambdaclass/ethrex/pull/4808 | Should allow us to reduce 10%-20% total proving cycles |
-| ecpairing precompile  | 🚧 WIP https://github.com/lambdaclass/ethrex/pull/4809 | Reduced ecpairing cycles from 138k to 6k (10% total proving cycles gone) |
-| ecmul precompile | unimplemented!(); | Should allow us to reduce 80k cycles to a few thousands. |
+| trie opt. 4 | https://github.com/lambdaclass/ethrex/pull/5224 | Serialize resolved tries and removes decoding, 22% total cycles reduced |
+| ecpairing precompile  | https://github.com/lambdaclass/ethrex/pull/4809 | Reduced ecpairing cycles from 138k to 6k (10% total proving cycles gone) |
+| ecmul precompile | https://github.com/lambdaclass/ethrex/pull/5133 | Reduces another 10% of total cycles |
 
 Trie operations are one of the most expensive in our prover right now. We are using [risc0-trie](https://github.com/risc0/risc0-ethereum/tree/main/crates/trie) as a fast zkVM trie reference to optimize our own. [ethrex-trie optimization for zkvm](#ethrex-trie-optimization-for-zkvm) see for a detailed exploration of our trie vs risc0’s.
 
