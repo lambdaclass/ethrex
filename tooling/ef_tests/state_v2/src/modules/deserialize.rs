@@ -2,7 +2,7 @@ use crate::modules::types::{
     AccessListItem, AuthorizationListTuple, RawPostValue, TransactionExpectedException,
 };
 
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::{U256, types::Fork};
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 
