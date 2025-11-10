@@ -582,7 +582,7 @@ impl PeerTableServer {
             }
         }
         // No untried contact found, resetting tried peers.
-        tracing::info!("Resetting list of tried peers.");
+        tracing::trace!("Resetting list of tried peers.");
         self.already_tried_peers.clear();
         None
     }
