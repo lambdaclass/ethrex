@@ -2065,7 +2065,7 @@ async fn test_fee_token(
     let register_tx_hash = send_generic_transaction(&l1_client, register_tx, &owner_signer)
         .await
         .unwrap();
-    wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
+    let register_receipt = wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
         .await
         .unwrap();
     sleep(Duration::from_secs(30)).await;
@@ -2127,6 +2127,7 @@ async fn test_fee_token(
             .await
             .unwrap();
         dbg!(&a);
+        dbg!(&register_receipt);
         if a == "0x0000000000000000000000000000000000000000000000000000000000000001".to_string() {
             keep = false;
         }
