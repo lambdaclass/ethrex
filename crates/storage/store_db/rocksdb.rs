@@ -155,7 +155,8 @@ pub struct Store {
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
-    last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    last_computed_flatkeyvalue_account: Arc<Mutex<Vec<u8>>>,
+    last_computed_flatkeyvalue_storage: Arc<Mutex<Vec<u8>>>,
 }
 
 impl Store {
@@ -387,7 +388,8 @@ impl Store {
             trie_cache: Default::default(),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
-            last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            last_computed_flatkeyvalue_account: Arc::new(Mutex::new(last_written.clone())),
+            last_computed_flatkeyvalue_storage: Arc::new(Mutex::new(last_written)),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -653,7 +655,7 @@ impl Store {
                 if ctr > 10_000 {
                     self.db.write(std::mem::take(&mut batch))?;
                     *self
-                        .last_computed_flatkeyvalue
+                        .last_computed_flatkeyvalue_account
                         .lock()
                         .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
                     ctr = 0;
@@ -677,7 +679,7 @@ impl Store {
                     if ctr > 10_000 {
                         self.db.write(std::mem::take(&mut batch))?;
                         *self
-                            .last_computed_flatkeyvalue
+                            .last_computed_flatkeyvalue_storage
                             .lock()
                             .map_err(|_| StoreError::LockError)? = key.as_ref().to_vec();
                         ctr = 0;
@@ -720,7 +722,11 @@ impl Store {
                     batch.put_cf(&cf_misc, "last_written", [0xff]);
                     self.db.write(batch)?;
                     *self
-                        .last_computed_flatkeyvalue
+                        .last_computed_flatkeyvalue_account
+                        .lock()
+                        .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
+                    *self
+                        .last_computed_flatkeyvalue_storage
                         .lock()
                         .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
                     return Ok(());
@@ -830,9 +836,17 @@ impl Store {
         Ok(())
     }
 
-    fn last_written(&self) -> Result<Vec<u8>, StoreError> {
+    fn last_written_account(&self) -> Result<Vec<u8>, StoreError> {
         let last_computed_flatkeyvalue = self
-            .last_computed_flatkeyvalue
+            .last_computed_flatkeyvalue_account
+            .lock()
+            .map_err(|_| StoreError::LockError)?;
+        Ok(last_computed_flatkeyvalue.clone())
+    }
+
+    fn last_written_storage(&self) -> Result<Vec<u8>, StoreError> {
+        let last_computed_flatkeyvalue = self
+            .last_computed_flatkeyvalue_storage
             .lock()
             .map_err(|_| StoreError::LockError)?;
         Ok(last_computed_flatkeyvalue.clone())
@@ -1530,7 +1544,7 @@ impl StoreEngine for Store {
             CF_STORAGE_TRIE_NODES,
             CF_STORAGE_FLATKEYVALUE,
             None,
-            self.last_written()?,
+            self.last_written_storage()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
@@ -1552,7 +1566,7 @@ impl StoreEngine for Store {
             CF_ACCOUNT_TRIE_NODES,
             CF_ACCOUNT_FLATKEYVALUE,
             None,
-            self.last_written()?,
+            self.last_written_account()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
@@ -1577,7 +1591,7 @@ impl StoreEngine for Store {
             CF_STORAGE_TRIE_NODES,
             CF_STORAGE_FLATKEYVALUE,
             Some(hashed_address),
-            self.last_written()?,
+            self.last_written_storage()?,
         )?);
         Ok(Trie::open(db, storage_root))
     }
@@ -1588,7 +1602,7 @@ impl StoreEngine for Store {
             CF_ACCOUNT_TRIE_NODES,
             CF_ACCOUNT_FLATKEYVALUE,
             None,
-            self.last_written()?,
+            self.last_written_account()?,
         )?);
         Ok(Trie::open(db, state_root))
     }
@@ -1599,7 +1613,7 @@ impl StoreEngine for Store {
             CF_ACCOUNT_TRIE_NODES,
             CF_ACCOUNT_FLATKEYVALUE,
             None,
-            self.last_written()?,
+            self.last_written_account()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
@@ -1625,7 +1639,7 @@ impl StoreEngine for Store {
             CF_STORAGE_TRIE_NODES,
             CF_STORAGE_FLATKEYVALUE,
             None,
-            self.last_written()?,
+            self.last_written_storage()?,
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
@@ -2016,7 +2030,7 @@ impl StoreEngine for Store {
 
     fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
-        let last_computed_flatkeyvalue = self.last_written()?;
+        let last_computed_flatkeyvalue = self.last_written_account()?;
         Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
     }
 }
