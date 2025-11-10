@@ -515,7 +515,7 @@ jobs:
     needs:
       [detect-changes, integration-test, state-diff-test, integration-test-tdx]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
