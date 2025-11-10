@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-10
+
+- Replace sha3 keccak to an assembly version using ffi [#5247](https://github.com/lambdaclass/ethrex/pull/5247)
+
 ### 2025-11-03
 
 - Avoid unnecessary hash validations [#5167](https://github.com/lambdaclass/ethrex/pull/5167)

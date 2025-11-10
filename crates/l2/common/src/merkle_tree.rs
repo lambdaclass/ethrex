@@ -1,5 +1,5 @@
 use ethrex_common::H256;
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::keccak::{Keccak256};
 use lambdaworks_crypto::merkle_tree::{merkle::MerkleTree, traits::IsMerkleTreeBackend};
 
 // We use a newtype wrapper around `H256` because Rust's orphan rule
@@ -29,15 +29,15 @@ impl IsMerkleTreeBackend for TreeData {
     ///
     /// Source: https://github.com/OpenZeppelin/openzeppelin-contracts/blob/1a87de932664d9b905612f4d9d1655fd27a41722/contracts/utils/cryptography/MerkleProof.sol#L114-L128
     fn hash_new_parent(child_1: &Self::Node, child_2: &Self::Node) -> Self::Node {
-        let (left, right) = if child_1 < child_2 {
-            (child_1, child_2)
+        let mut hasher = Keccak256::new();
+        if child_1 < child_2 {
+            hasher.update(child_1);
+            hasher.update(child_2);
         } else {
-            (child_2, child_1)
-        };
-        let mut data = [0u8; 64];
-        data[..32].copy_from_slice(left);
-        data[32..].copy_from_slice(right);
-        keccak_hash(data)
+            hasher.update(child_2);
+            hasher.update(child_1);
+        }
+        hasher.finalize().into()
     }
 }
 
