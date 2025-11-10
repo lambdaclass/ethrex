@@ -726,6 +726,18 @@ impl Store {
         }
     }
 
+    pub fn get_storage_at_old(
+        &self,
+        block_number: BlockNumber,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        match self.get_block_header(block_number)? {
+            Some(header) => self.get_storage_at_root_old(header.state_root, address, storage_key),
+            None => Ok(None),
+        }
+    }
+
     pub fn get_storage_at_root(
         &self,
         state_root: H256,
@@ -755,8 +767,7 @@ impl Store {
         let value = match value {
             Some(val) => Some(val),
             None => {
-                let storage_trie =
-                    self.open_storage_trie(account_hash, storage_root, state_root)?;
+                let storage_trie = self.open_direct_storage_trie(account_hash, storage_root)?;
                 let hashed_key = hash_key(&storage_key);
                 storage_trie
                     .get(&hashed_key)?
@@ -764,6 +775,37 @@ impl Store {
                     .transpose()?
             }
         };
+
+        Ok(value)
+    }
+
+    pub fn get_storage_at_root_old(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let hashed_address = hash_address(&address);
+        let account_hash = H256::from_slice(&hashed_address);
+        let storage_root = if self.engine.flatkeyvalue_computed(account_hash)? {
+            // We will use FKVs, we don't need the root
+            *EMPTY_TRIE_HASH
+        } else {
+            let state_trie = self.open_state_trie(state_root)?;
+            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+                return Ok(None);
+            };
+            let account = AccountState::decode(&encoded_account)?;
+            account.storage_root
+        };
+        // let's check the cache now
+
+        let storage_trie = self.open_storage_trie(account_hash, storage_root, state_root)?;
+        let hashed_key = hash_key(&storage_key);
+        let value = storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()?;
 
         Ok(value)
     }

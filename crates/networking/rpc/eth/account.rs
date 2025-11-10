@@ -134,14 +134,13 @@ impl RpcHandler for GetStorageAtRequest {
             )); // Should we return Null here?
         };
 
-        // let storage_value = context
-        //     .storage
-        //     .get_storage_at(block_number, self.address, self.storage_slot)?
-        //     .unwrap_or_default();
-        // let storage_value = H256::from_uint(&storage_value);
-        // serde_json::to_value(format!("{storage_value:#x}"))
-        //     .map_err(|error| RpcErr::Internal(error.to_string()))
-        todo!()
+        let storage_value = context
+            .storage
+            .get_storage_at_old(block_number, self.address, self.storage_slot)?
+            .unwrap_or_default();
+        let storage_value = H256::from_uint(&storage_value);
+        serde_json::to_value(format!("{storage_value:#x}"))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
