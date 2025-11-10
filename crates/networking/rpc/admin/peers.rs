@@ -86,13 +86,17 @@ impl From<PeerData> for RpcPeer {
 }
 
 pub async fn peers(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
-    let peers = context
-        .peer_handler
+    let Some(peer_handler) = &mut context.peer_handler else {
+        return Err(RpcErr::Internal("Peer handler not initialized".to_string()));
+    };
+
+    let peers = peer_handler
         .read_connected_peers()
         .await
         .into_iter()
         .map(RpcPeer::from)
         .collect::<Vec<_>>();
+
     Ok(serde_json::to_value(peers)?)
 }
 
@@ -116,7 +120,10 @@ fn parse(request: &RpcRequest) -> Result<Node, RpcErr> {
 }
 
 pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Result<Value, RpcErr> {
-    let mut server = context.peer_handler.initiator.clone();
+    let Some(peer_handler) = context.peer_handler.as_mut() else {
+        return Err(RpcErr::Internal("Peer handler not initialized".to_string()));
+    };
+    let mut server = peer_handler.initiator.clone();
     let node = parse(request)?;
 
     let start = Instant::now();
@@ -128,7 +135,7 @@ pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Resu
     // This loop is necessary because connections are asynchronous, so to check if the connection with the peer was actually
     // established we need to wait.
     loop {
-        if peer_is_connected(&mut context.peer_handler, &node.enode_url()).await {
+        if peer_is_connected(peer_handler, &node.enode_url()).await {
             return Ok(serde_json::to_value(true)?);
         }
 
