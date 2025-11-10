@@ -4,7 +4,6 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
-use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{info, warn};
 
@@ -170,6 +169,11 @@ async fn handle_forkchoice(
     context: RpcApiContext,
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "Fork choice requested but syncer is not initialized".to_string(),
+        ));
+    };
     info!(
         version = %format!("v{}", version),
         head = %format!("{:#x}", fork_choice_state.head_block_hash),
@@ -215,6 +219,7 @@ async fn handle_forkchoice(
         ));
     }
 
+    /*   Revert #4985
     if context.syncer.sync_mode() == SyncMode::Snap {
         // Don't trigger a sync if the block is already canonical
         if context
@@ -229,7 +234,7 @@ async fn handle_forkchoice(
                 .sync_to_head(fork_choice_state.head_block_hash);
             return Ok((None, PayloadStatus::syncing().into()));
         }
-    }
+    } */
 
     match apply_fork_choice(
         &context.storage,
@@ -278,9 +283,7 @@ async fn handle_forkchoice(
                 ),
                 InvalidForkChoice::Syncing => {
                     // Start sync
-                    context
-                        .syncer
-                        .sync_to_head(fork_choice_state.head_block_hash);
+                    syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
