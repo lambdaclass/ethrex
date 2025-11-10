@@ -188,7 +188,6 @@ async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
     let mut base_chain = simulator.get_base_chain();
     for _ in 0..10 {
         let extended_base_chain = node0.build_payload(base_chain).await;
-    
         node0.notify_new_payload(&extended_base_chain).await;
         node0.update_forkchoice(&extended_base_chain).await;
 
