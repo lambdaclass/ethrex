@@ -1239,7 +1239,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0",
+          "pluginVersion": "12.2.1",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
@@ -1293,6 +1293,7 @@
                   "type": "linear"
                 },
                 "showPoints": "auto",
+                "showValues": false,
                 "spanNulls": false,
                 "stacking": {
                   "group": "A",
@@ -1343,7 +1344,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0",
+          "pluginVersion": "12.2.1",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
@@ -1495,7 +1496,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0",
+          "pluginVersion": "12.2.1",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
@@ -1602,6 +1603,194 @@
                 "mode": "palette-classic"
               },
               "custom": {
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              "mappings": [],
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 14,
+            "w": 7,
+            "x": 0,
+            "y": 28
+          },
+          "id": 103,
+          "options": {
+            "displayLabels": [
+              "percent"
+            ],
+            "legend": {
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "values": [
+                "value",
+                "percent"
+              ]
+            },
+            "pieType": "pie",
+            "reduceOptions": {
+              "calcs": [
+                "sum"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "sort": "desc",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "repeat": "instance",
+          "repeatDirection": "v",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]))",
+              "legendFormat": "{{function_name}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "RPC Time Breakdown (Total Time per Method)",
+          "type": "piechart"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "left",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "footer": {
+                  "reducers": []
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.1
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Method"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 300
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 14,
+            "w": 5,
+            "x": 7,
+            "y": 28
+          },
+          "id": 104,
+          "options": {
+            "cellHeight": "sm",
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "Avg Duration"
+              }
+            ]
+          },
+          "pluginVersion": "12.2.1",
+          "repeat": "instance",
+          "repeatDirection": "v",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "topk(15, rate(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[5m]) / rate(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[5m]))",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "__auto",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Top 15 Slowest RPC Methods (Avg Duration)",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "instance": true,
+                  "job": true,
+                  "namespace": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "Value": "Avg Duration",
+                  "function_name": "Method"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
                 "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
@@ -1650,9 +1839,9 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
+            "h": 14,
+            "w": 6,
+            "x": 12,
             "y": 28
           },
           "id": 101,
@@ -1675,6 +1864,8 @@
             }
           },
           "pluginVersion": "12.2.1",
+          "repeat": "instance",
+          "repeatDirection": "v",
           "targets": [
             {
               "datasource": {
@@ -1750,9 +1941,9 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
+            "h": 14,
+            "w": 6,
+            "x": 18,
             "y": 28
           },
           "id": 102,
@@ -1773,6 +1964,8 @@
             }
           },
           "pluginVersion": "12.2.1",
+          "repeat": "instance",
+          "repeatDirection": "v",
           "targets": [
             {
               "datasource": {
@@ -1810,223 +2003,6 @@
           ],
           "title": "RPC Latency Percentiles (All Methods)",
           "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                }
-              },
-              "mappings": [],
-              "unit": "s"
-            },
-            "overrides": [
-              {
-                "__systemRef": "hideSeriesFrom",
-                "matcher": {
-                  "id": "byNames",
-                  "options": {
-                    "mode": "exclude",
-                    "names": [
-                      "engine_exchangeCapabilities",
-                      "engine_forkchoiceUpdatedV3",
-                      "engine_getBlobsV2",
-                      "engine_getPayloadBodiesByRangeV1",
-                      "eth_blockNumber",
-                      "eth_chainId",
-                      "eth_gasPrice",
-                      "eth_getBlockByNumber",
-                      "eth_syncing"
-                    ],
-                    "prefix": "All except:",
-                    "readOnly": true
-                  }
-                },
-                "properties": [
-                  {
-                    "id": "custom.hideFrom",
-                    "value": {
-                      "legend": false,
-                      "tooltip": true,
-                      "viz": true
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 36
-          },
-          "id": 103,
-          "options": {
-            "displayLabels": [
-              "percent"
-            ],
-            "legend": {
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "values": [
-                "value",
-                "percent"
-              ]
-            },
-            "pieType": "pie",
-            "reduceOptions": {
-              "calcs": [
-                "sum"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "sort": "desc",
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "12.2.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]))",
-              "legendFormat": "{{function_name}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "RPC Time Breakdown (Total Time per Method)",
-          "type": "piechart"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "custom": {
-                "align": "left",
-                "cellOptions": {
-                  "type": "auto"
-                },
-                "filterable": true,
-                "footer": {
-                  "reducers": []
-                },
-                "inspect": false
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "yellow",
-                    "value": 0.1
-                  },
-                  {
-                    "color": "red",
-                    "value": 1
-                  }
-                ]
-              },
-              "unit": "s"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Method"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 300
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 36
-          },
-          "id": 104,
-          "options": {
-            "cellHeight": "sm",
-            "showHeader": true,
-            "sortBy": [
-              {
-                "desc": true,
-                "displayName": "Avg Duration"
-              }
-            ]
-          },
-          "pluginVersion": "12.2.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "topk(15, rate(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[5m]) / rate(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[5m]))",
-              "format": "table",
-              "instant": true,
-              "legendFormat": "__auto",
-              "range": false,
-              "refId": "A"
-            }
-          ],
-          "title": "Top 15 Slowest RPC Methods (Avg Duration)",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "Time": true,
-                  "instance": true,
-                  "job": true,
-                  "namespace": true
-                },
-                "indexByName": {},
-                "renameByName": {
-                  "Value": "Avg Duration",
-                  "function_name": "Method"
-                }
-              }
-            }
-          ],
-          "type": "table"
         }
       ],
       "title": "RPC Performance",
@@ -3019,7 +2995,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 1107
+            "y": 1150
           },
           "id": 56,
           "options": {
@@ -3118,7 +3094,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 1107
+            "y": 1150
           },
           "id": 57,
           "options": {
@@ -3218,7 +3194,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 1107
+            "y": 1150
           },
           "id": 58,
           "options": {
