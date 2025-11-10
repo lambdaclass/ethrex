@@ -780,7 +780,7 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     bn254_g1_mul(g1, scalar)
 }
 
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+#[cfg(not(feature = "sp1"))]
 #[inline]
 pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
     let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_big_endian());
@@ -811,7 +811,7 @@ pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
     Ok(Bytes::from(out))
 }
 
-#[cfg(any(feature = "sp1", feature = "risc0"))]
+#[cfg(feature = "sp1")]
 #[inline]
 pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     use substrate_bn::{AffineG1, Fq, Fr, G1, Group};
@@ -830,11 +830,6 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     let scalar =
         Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
 
-    #[cfg(feature = "risc0")]
-    // RISC0's substrate-bn patch does not implement Mul<Fr> for AffineG1, but
-    // it does implement Mul<Fr> for G1. So we convert AffineG1 to G1 first.
-    let result = G1::from(g1) * scalar;
-    #[cfg(feature = "sp1")]
     let result = g1 * scalar;
 
     let mut x_bytes = [0u8; 32];
