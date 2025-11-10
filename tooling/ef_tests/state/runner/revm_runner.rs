@@ -679,6 +679,7 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::Homestead => SpecId::HOMESTEAD,
         Fork::DaoFork => SpecId::DAO_FORK,
         Fork::EIP150 => SpecId::TANGERINE,
+        Fork::EIP155 => SpecId::SPURIOUS_DRAGON,
         Fork::EIP158 => SpecId::SPURIOUS_DRAGON,
         Fork::Byzantium => SpecId::BYZANTIUM,
         Fork::Constantinople => SpecId::CONSTANTINOPLE,
