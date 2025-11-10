@@ -190,14 +190,14 @@ jobs:
       - name: Build ethrex ${{ matrix.zkvm }} elf
         run: |
           cargo build --release --package guest_program --features ${{ matrix.zkvm }}
-          mkdir -p ethrex_verification_keys
+          mkdir -p ${{ matrix.zkvm }}_verification_keys
           if [ "${{ matrix.zkvm }}" = "sp1" ]; then
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ethrex_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-bn254-${{ github.ref_name }}
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ethrex_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-u32-${{ github.ref_name }}
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-bn254-${{ github.ref_name }}
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-u32-${{ github.ref_name }}
           elif [ "${{ matrix.zkvm }}" = "risc0" ]; then
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name}}
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ethrex_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-${{ github.ref_name}}
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-${{ github.ref_name}}
           fi
 
       - name: Upload ethrex guest elf artifact
@@ -209,12 +209,12 @@ jobs:
       - name: Upload ethrex guest verification keys
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex_verification_keys
-          path: ethrex_verification_keys/*
+          name: ${{ matrix.zkvm }}_verification_keys
+          path: ${{ matrix.zkvm }}_verification_keys/
 
-  # Creates ethrex-verification-keys.tar.gz artifact including both SP1 and
-  # RISC0 verification keys.
-  package-verification-keys:
+  # Creates ethrex-guests.tar.gz artifact including both SP1 and
+  # RISC0 elf and verification keys.
+  package-ethrex-guest:
     needs:
       - build-ethrex-guest
     runs-on: ubuntu-latest
@@ -222,22 +222,40 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download verification keys artifacts
+      - name: Download SP1 elf artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex_verification_keys
-          path: ethrex_verification_keys/
+          name: ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
+          path: ethrex_guests/sp1/ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
 
-      - name: Archive verification keys
+      - name: Download SP1 verification keys artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sp1_verification_keys
+          path: ethrex_guests/sp1/
+
+      - name: Download RISC0 elf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-riscv32im-risc0-elf-${{ github.ref_name }}
+          path: ethrex_guests/risc0/ethrex-riscv32im-risc0-elf-${{ github.ref_name }}
+
+      - name: Download RISC0 verification keys artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: risc0_verification_keys
+          path: ethrex_guests/risc0/
+
+      - name: Archive ethrex guests
         run: |
-          cd ethrex_verification_keys/
-          tar -czvf ethrex-verification-keys.tar.gz .
+          cd ethrex_guests/
+          tar -czvf ethrex-guests.tar.gz .
 
-      - name: Upload verification keys artifact
+      - name: Upload ethrex guests artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-verification-keys.tar.gz
-          path: ethrex-verification-keys.tar.gz
+          name: ethrex-guests.tar.gz
+          path: ethrex-guests.tar.gz
 
   package-contracts:
     needs:
@@ -314,7 +332,7 @@ jobs:
       - build-ethrex-guest
       - build-docker
       - package-contracts
-      - package-verification-keys
+      - package-ethrex-guest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
