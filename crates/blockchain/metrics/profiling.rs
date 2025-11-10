@@ -1,6 +1,6 @@
 use prometheus::{Encoder, HistogramTimer, HistogramVec, TextEncoder, register_histogram_vec};
 use std::sync::LazyLock;
-use tracing::{Subscriber, span::Id};
+use tracing::{Subscriber, span::{Attributes, Id}, field::{Field, Visit}};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 use crate::MetricsError;
@@ -25,15 +25,47 @@ pub struct FunctionProfilingLayer;
 /// Wrapper around [`HistogramTimer`] to avoid conflicts with other layers
 struct ProfileTimer(HistogramTimer);
 
+/// Visitor to extract the 'method' field from RPC spans for more granular profiling
+#[derive(Default)]
+struct MethodVisitor {
+    method: Option<String>,
+}
+
+impl Visit for MethodVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "method" {
+            self.method = Some(value.to_string());
+        }
+    }
+    
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "method" {
+            self.method = Some(format!("{:?}", value).trim_matches('"').to_string());
+        }
+    }
+}
+
 impl<S> Layer<S> for FunctionProfilingLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        // Extract the 'method' field if present (used by RPC instrumentation)
+        let mut visitor = MethodVisitor::default();
+        attrs.record(&mut visitor);
+        
+        if let Some(method_name) = visitor.method {
+            // Store the method name in span extensions for later use
+            if let Some(span) = ctx.span(id) {
+                span.extensions_mut().insert(method_name);
+            }
+        }
+    }
+
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
         if let Some(span) = ctx.span(id)
             && span.metadata().target().starts_with("ethrex")
         {
-            let name = span.metadata().name();
             let target = span.metadata().target();
             
             // Determine namespace based on the module target
@@ -52,8 +84,16 @@ where
                 "other"
             };
 
+            // Check if we have a stored method name (from RPC middleware)
+            // Otherwise fall back to the span name
+            let function_name = span
+                .extensions()
+                .get::<String>()
+                .map(|s| s.clone())
+                .unwrap_or_else(|| span.metadata().name().to_string());
+
             let timer = METRICS_BLOCK_PROCESSING_PROFILE
-                .with_label_values(&[namespace, name])
+                .with_label_values(&[namespace, &function_name])
                 .start_timer();
             // PERF: `extensions_mut` uses a Mutex internally (per span)
             span.extensions_mut().insert(ProfileTimer(timer));
