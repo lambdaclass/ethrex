@@ -2,6 +2,9 @@
 
 ## Perf
 
+### 2025-11-07
+- Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
+
 ### 2025-11-05
 - Merkelization backpressure and batching [#5200](https://github.com/lambdaclass/ethrex/pull/5200)
 
