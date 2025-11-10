@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Testing - Ethrex</title>
+        <title>Dashboards - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../../../favicon.svg">
-        <link rel="shortcut icon" href="../../../favicon.png">
-        <link rel="stylesheet" href="../../../css/variables.css">
-        <link rel="stylesheet" href="../../../css/general.css">
-        <link rel="stylesheet" href="../../../css/chrome.css">
-        <link rel="stylesheet" href="../../../css/print.css" media="print">
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../../../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../../../fonts/fonts.css">
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../../../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../../../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../../../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../../../";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../../toc.js"></script>
+        <script src="../../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../../../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="../../../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,26 +237,93 @@
 }
 
 </style>
-<h1 id="testing"><a class="header" href="#testing">Testing</a></h1>
-<p>The ethrex project runs several suites of tests to ensure proper protocol implementation</p>
-<h2 id="table-of-contents"><a class="header" href="#table-of-contents">Table of contents</a></h2>
+<h1 id="ethrex-l1-performance-dashboard-oct-2025"><a class="header" href="#ethrex-l1-performance-dashboard-oct-2025">Ethrex L1 Performance Dashboard (Oct 2025)</a></h1>
+<p>Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is <code>prometheus</code>, and the <code>job</code> variable defaults to <code>ethrex L1</code>, which is the job configured by default in our provisioning.</p>
+<p><img src="img/overview.png" alt="Overview" /></p>
+<h2 id="how-to-use-it"><a class="header" href="#how-to-use-it">How to use it</a></h2>
+<p>Use the <code>network</code> variable (discovered via the consensus config metric) to scope the view by network, then pick one or more <code>instance</code> entries. Every panel honors these selectors. Tip: several panels rely on Grafana transforms such as Organize fields, Join by field, Filter by value, and Group by—keep those in mind if you customize the layout.</p>
+<p><img src="img/variables.png" alt="dashboard variables" /></p>
+<h2 id="execution-and-consensus-summary"><a class="header" href="#execution-and-consensus-summary">Execution and consensus summary</a></h2>
+<h3 id="execution-client"><a class="header" href="#execution-client">Execution Client</a></h3>
+<p>Confirms the execution client name and build that each monitored instance is running so you can spot mismatched deployments quickly.</p>
+<p><img src="img/execution_client.png" alt="Execution Client" /></p>
+<h3 id="consensus-config"><a class="header" href="#consensus-config">Consensus Config</a></h3>
+<p>Shows the consensus configuration reported by <code>ethereum-metrics-exporter</code>, helping you verify which network the node is running.</p>
+<p><img src="img/consensus_config.png" alt="Consensus Config" /></p>
+<h3 id="consensus-fork"><a class="header" href="#consensus-fork">Consensus Fork</a></h3>
+<p>Highlights the active fork reported by <code>ethereum-metrics-exporter</code>, which is a useful signal during planned upgrades.</p>
+<p><img src="img/consensus_fork.png" alt="Consensus Fork" /></p>
+<h2 id="block-processing"><a class="header" href="#block-processing">Block processing</a></h2>
+<p>Row panels showing key block processing metrics across all selected instances.</p>
+<p><img src="img/block_processing_row.png" alt="Block Processing row" /></p>
+<h3 id="gas-used-"><a class="header" href="#gas-used-">Gas Used %</a></h3>
+<p>Tracks how much of the block gas limit is consumed across instances, surfacing heavy traffic or underfilled blocks at a glance.</p>
+<p><img src="img/gas_used.png" alt="Gas Used %" /></p>
+<h3 id="ggass"><a class="header" href="#ggass">Ggas/s</a></h3>
+<p>Charts gigagas per second to compare execution throughput between nodes and reveal sustained load versus isolated spikes.</p>
+<p><img src="img/ggas_per_sec.png" alt="Ggas/s" /></p>
+<h3 id="block-height"><a class="header" href="#block-height">Block Height</a></h3>
+<p>Plots the head block seen by each instance so you can immediately detect stalled sync or lagging nodes.</p>
+<p><img src="img/block_height.png" alt="Block Height" /></p>
+<h3 id="ggass-by-block"><a class="header" href="#ggass-by-block">Ggas/s by Block</a></h3>
+<p>Scatter view that ties throughput to the specific block number once all selected instances agree on the same head, making block-level investigations straightforward.</p>
+<p><img src="img/ggas_by_block.png" alt="Ggas by Block" /></p>
+<p><em><strong>Limitations</strong>: This panel only shows data when all selected instances agree on the same head block, and it doesn't handle reorgs gracefully. Here are a couple of things to have in mind when looking at it:</em></p>
 <ul>
-<li><a href="./ef-tests.html">Ethereum Foundation Tests</a></li>
-<li><a href="./hive.html">Hive Tests</a></li>
-<li><a href="./assertoor.html">Assertoor</a></li>
-<li><a href="./rust.html">Rust Unit Tests</a></li>
-<li><a href="./load-tests.html">Load Tests</a></li>
+<li>During reorgs, we might see weird shapes in the data, with lines at a certain block connected to past ones when more than one slot reorgs happen.</li>
+<li>We could see double measurements for the same block number if reorgs on the same block occur.</li>
+<li>Mean could vary when adding or removing instances, as only blocks agreed upon by all selected instances are shown.</li>
 </ul>
+<h3 id="block-time"><a class="header" href="#block-time">Block Time</a></h3>
+<p>Estimates per-block execution time and lines it up with block numbers, helping you correlate latency spikes with particular blocks.</p>
+<p><img src="img/block_time.png" alt="Block Time" /></p>
+<p><em><strong>Limitations</strong>: This panel has the same limitations as the "Ggas/s by Block" panel above, as it relies on the same logic to align blocks across instances.</em></p>
+<h2 id="block-execution-breakdown"><a class="header" href="#block-execution-breakdown">Block execution breakdown</a></h2>
+<p>This row repeats a pie chart for each instance showing how execution time splits between storage reads, account reads, and non-database work so you can confirm performance tuning effects.</p>
+<p><img src="img/block_execution_breakdown.png" alt="Block Execution Breakdown" /></p>
+<h2 id="process-and-server-info"><a class="header" href="#process-and-server-info">Process and server info</a></h2>
+<p>Row panels showing process-level and host-level metrics to help you monitor resource usage and spot potential issues.</p>
+<p><img src="img/process_and_server_info_row.png" alt="Process &amp; Server info row" /></p>
+<h3 id="uptime"><a class="header" href="#uptime">Uptime</a></h3>
+<p>Displays time since the Ethrex process started. <em>[need proper instance labels]</em></p>
+<p><img src="img/uptime.png" alt="Uptime" /></p>
+<h3 id="threads"><a class="header" href="#threads">Threads</a></h3>
+<p>Shows the number of tokio process threads in use. <em>[need proper instance labels]</em></p>
+<p><img src="img/threads.png" alt="Threads" /></p>
+<h3 id="open-fds"><a class="header" href="#open-fds">Open FDs</a></h3>
+<p>Reports current file descriptor usage so you can compare against limits. <em>[need proper instance labels]</em></p>
+<p><img src="img/open_fds.png" alt="Open FDs" /></p>
+<h3 id="open-fds-historic"><a class="header" href="#open-fds-historic">Open FDs Historic</a></h3>
+<p>Time-series view of descriptor usage to spot gradual leaks or sudden bursts tied to workload changes.</p>
+<p><img src="img/open_fds_historic.png" alt="Open FDs Historic" /></p>
+<h3 id="datadir-size"><a class="header" href="#datadir-size">Datadir Size</a></h3>
+<p>Tracks database footprint growth, helping you plan disk needs and confirming pruning/compaction behavior.
+<img src="img/datadir_size.png" alt="Datadir Size" /></p>
+<h3 id="node-cpu-avg-cores-used"><a class="header" href="#node-cpu-avg-cores-used">Node CPU (avg. cores used)</a></h3>
+<p>Shows effective CPU cores consumed by each instance, separating sustained computation from short-lived bursts.</p>
+<p><img src="img/node_cpu.png" alt="Node CPU" /></p>
+<h3 id="node-memory-rss"><a class="header" href="#node-memory-rss">Node Memory (RSS)</a></h3>
+<p>Follows the resident memory footprint of the Ethrex process so you can investigate leaks or pressure.</p>
+<p><img src="img/node_memory.png" alt="Node Memory" /></p>
+<h3 id="host-cpu-utilization-"><a class="header" href="#host-cpu-utilization-">Host CPU Utilization (%)</a></h3>
+<p>Uses node exporter metrics to track whole-host CPU load and distinguish client strain from other processes on the server.</p>
+<p><img src="img/host_cpu_utilization.png" alt="Host CPU Utilization" /></p>
+<h3 id="host-ram-gib---used-vs-total"><a class="header" href="#host-ram-gib---used-vs-total">Host RAM (GiB) - Used vs Total</a></h3>
+<p>Compares used versus total RAM to highlight when machines approach memory limits and need attention.</p>
+<p><img src="img/host_ram.png" alt="Host RAM" /></p>
+<h2 id="block-building-wip"><a class="header" href="#block-building-wip">Block building (WIP)</a></h2>
+<p>This collapsed row offers a combined view of the block building base fee, gigagas per second during payload construction, and the time the builder spends assembling blocks. These panels are works in progress, collapsed by default, and may be refined over time.</p>
+<p><img src="img/block_building_wip.png" alt="Block building wip" /></p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../../developers/l1/dashboards.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../developers/l1/metrics.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../../developers/l1/testing/ef-tests.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../developers/l1/testing/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -266,11 +333,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../../developers/l1/dashboards.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../developers/l1/metrics.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../../developers/l1/testing/ef-tests.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../developers/l1/testing/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -285,17 +352,17 @@
         </script>
 
 
-        <script src="../../../elasticlunr.min.js"></script>
-        <script src="../../../mark.min.js"></script>
-        <script src="../../../searcher.js"></script>
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
 
-        <script src="../../../clipboard.min.js"></script>
-        <script src="../../../highlight.js"></script>
-        <script src="../../../book.js"></script>
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../../../mermaid.min.js"></script>
-        <script src="../../../mermaid-init.js"></script>
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
 
 
     </div>
