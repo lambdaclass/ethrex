@@ -2521,6 +2521,8 @@ mod serde_impl {
 }
 
 mod mempool {
+    use crate::types::transaction::serde_impl::AuthorizationTupleEntry;
+
     use super::*;
     use std::{
         cmp::Ordering,
@@ -2615,6 +2617,48 @@ mod mempool {
     impl PartialOrd for MempoolTransaction {
         fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
             Some(self.cmp(other))
+        }
+    }
+
+    impl From<MempoolTransaction> for GenericTransaction {
+        fn from(value: MempoolTransaction) -> Self {
+            GenericTransaction {
+                r#type: value.tx_type(),
+                nonce: Some(value.nonce()),
+                to: value.to(),
+                from: value.sender(),
+                gas: Some(value.gas_limit()),
+                value: value.value(),
+                gas_price: value.gas_price().as_u64(),
+                max_priority_fee_per_gas: value.max_priority_fee(),
+                max_fee_per_gas: value.max_fee_per_gas(),
+                max_fee_per_blob_gas: value.max_fee_per_blob_gas(),
+                access_list: value
+                    .access_list()
+                    .iter()
+                    .map(|(address, storage_keys)| AccessListEntry {
+                        address: address.clone(),
+                        storage_keys: storage_keys.clone(),
+                    })
+                    .collect(),
+                authorization_list: value.authorization_list().map(|list| {
+                    list.iter()
+                        .map(|auth| AuthorizationTupleEntry {
+                            chain_id: auth.chain_id,
+                            address: auth.address,
+                            nonce: auth.nonce,
+                            y_parity: auth.y_parity,
+                            r: auth.r_signature,
+                            s: auth.s_signature,
+                        })
+                        .collect()
+                }),
+                blob_versioned_hashes: value.blob_versioned_hashes(),
+                wrapper_version: None,
+                blobs: vec![],
+                chain_id: value.chain_id(),
+                input: value.data().clone(),
+            }
         }
     }
 }

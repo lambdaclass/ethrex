@@ -125,9 +125,13 @@ pub fn open_store(datadir: &Path) -> Store {
     }
 }
 
-pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
+pub fn init_blockchain(
+    store: Store,
+    blockchain_opts: BlockchainOptions,
+    l2_blockchain: Option<Arc<Blockchain>>,
+) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_opts).into()
+    Blockchain::new(store, blockchain_opts, l2_blockchain).into()
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -380,6 +384,7 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    l2_blockchain: Option<Arc<Blockchain>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
     let datadir = &opts.datadir;
     init_datadir(datadir);
@@ -405,6 +410,7 @@ pub async fn init_l1(
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
         },
+        l2_blockchain,
     );
 
     regenerate_head_state(&store, &blockchain).await?;

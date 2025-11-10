@@ -242,6 +242,7 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                             perf_logs_enabled: false,
                             ..Default::default()
                         },
+                        None,
                     );
                     fill_mempool(&block_chain, accounts).await;
 

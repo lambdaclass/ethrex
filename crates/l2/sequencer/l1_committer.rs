@@ -910,8 +910,11 @@ impl L1Committer {
         // one for each block is fetched from the rollup store during head state regeneration.
         blockchain_opts.r#type = BlockchainType::L2(L2Config::default());
 
-        let checkpoint_blockchain =
-            Arc::new(Blockchain::new(checkpoint_store.clone(), blockchain_opts));
+        let checkpoint_blockchain = Arc::new(Blockchain::new(
+            checkpoint_store.clone(),
+            blockchain_opts,
+            None,
+        ));
 
         regenerate_head_state(&checkpoint_store, rollup_store, &checkpoint_blockchain).await?;
 

@@ -69,6 +69,10 @@ impl L2Command {
         let log_filter_handler = l2::init_tracing(&init_options);
         let mut l2_options = init_options;
 
+        if l2_options.sequencer_opts.supernode {
+            return l2::initializers::init_supernode(l2_options, log_filter_handler).await;
+        }
+
         if l2_options.node_opts.dev {
             println!("Removing L1 and L2 databases...");
             remove_db(DB_ETHREX_DEV_L1.as_ref(), true);
@@ -77,6 +81,7 @@ impl L2Command {
             init_l1(
                 crate::cli::Options::default_l1(),
                 log_filter_handler.clone(),
+                None,
             )
             .await?;
             println!("Deploying contracts...");
@@ -93,7 +98,7 @@ impl L2Command {
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");
         }
-        l2::init_l2(l2_options, log_filter_handler).await?;
+        l2::init_l2(l2_options, None, log_filter_handler).await?;
         Ok(())
     }
 }

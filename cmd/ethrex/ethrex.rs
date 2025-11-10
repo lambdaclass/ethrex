@@ -58,7 +58,7 @@ async fn main() -> eyre::Result<()> {
     info!("ethrex version: {}", get_client_version());
 
     let (datadir, cancel_token, peer_table, local_node_record) =
-        init_l1(opts, Some(log_filter_handler)).await?;
+        init_l1(opts, Some(log_filter_handler), None).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
 

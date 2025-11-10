@@ -1,9 +1,10 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store,
+    get_network, get_signer, init_blockchain, init_l1, init_network, init_store,
 };
-use crate::l2::{L2Options, SequencerOptions};
+use crate::l2::deployer::{DeployerOptions, deploy_l1_contracts};
+use crate::l2::{CommitterOptions, L2Options, SequencerOptions, WatcherOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
@@ -26,6 +27,7 @@ use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::SecretKey;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
+use tokio::time::sleep;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
@@ -144,7 +146,7 @@ pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Regist
     }
 }
 
-pub async fn init_l2(
+pub async fn init_supernode(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
@@ -153,9 +155,6 @@ pub async fn init_l2(
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = datadir.join("rollup_store");
-
-    // Checkpoints are stored in the main datadir
-    let checkpoints_dir = datadir.clone();
 
     let network = get_network(&opts.node_opts);
 
@@ -187,9 +186,92 @@ pub async fn init_l2(
         perf_logs_enabled: true,
     };
 
-    let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
+    let blockchain = init_blockchain(store.clone(), blockchain_opts.clone(), None);
 
     regenerate_head_state(&store, &rollup_store, &blockchain).await?;
+
+    let l1 = init_l1(
+        crate::cli::Options::default_l1(),
+        log_filter_handler.clone(),
+        Some(blockchain.clone()),
+    )
+    .await?;
+    let contract_addresses = deploy_l1_contracts(DeployerOptions::default()).await?;
+    let l2 = init_l2(
+        L2Options {
+            sequencer_opts: SequencerOptions {
+                committer_opts: CommitterOptions {
+                    on_chain_proposer_address: Some(contract_addresses.on_chain_proposer_address),
+                    ..opts.sequencer_opts.committer_opts
+                },
+                watcher_opts: WatcherOptions {
+                    bridge_address: Some(contract_addresses.bridge_address),
+                    ..opts.sequencer_opts.watcher_opts
+                },
+                ..opts.sequencer_opts
+            },
+            ..opts
+        },
+        Some((blockchain, store, rollup_store)),
+        log_filter_handler,
+    )
+    .await?;
+
+    Ok(())
+}
+
+pub async fn init_l2(
+    opts: L2Options,
+    prebuilt_blockchain: Option<(Arc<Blockchain>, Store, StoreRollup)>,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+) -> eyre::Result<()> {
+    raise_fd_limit()?;
+
+    let datadir = opts.node_opts.datadir.clone();
+    let network = get_network(&opts.node_opts);
+    // Checkpoints are stored in the main datadir
+    let checkpoints_dir = datadir.clone();
+    let genesis = network.get_genesis()?;
+
+    let (blockchain, store, rollup_store) = if let Some((b, s, r)) = prebuilt_blockchain {
+        (b, s, r)
+    } else {
+        init_datadir(&opts.node_opts.datadir);
+        let rollup_store_dir = datadir.join("rollup_store");
+
+        let store = init_store(&datadir, genesis.clone()).await;
+        let rollup_store = init_rollup_store(&rollup_store_dir).await;
+
+        let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
+        let l1_fee_config = get_l1_fee_config(&opts.sequencer_opts);
+
+        let fee_config = FeeConfig {
+            base_fee_vault: opts
+                .sequencer_opts
+                .block_producer_opts
+                .base_fee_vault_address,
+            operator_fee_config,
+            l1_fee_config,
+        };
+
+        // We wrap fee_config in an Arc<RwLock> to let the watcher
+        // update the L1 fee periodically.
+        let l2_config = L2Config {
+            fee_config: Arc::new(std::sync::RwLock::new(fee_config)),
+        };
+
+        let blockchain_opts = ethrex_blockchain::BlockchainOptions {
+            max_mempool_size: opts.node_opts.mempool_max_size,
+            r#type: BlockchainType::L2(l2_config),
+            perf_logs_enabled: true,
+        };
+
+        let blockchain = init_blockchain(store.clone(), blockchain_opts.clone(), None);
+
+        regenerate_head_state(&store, &rollup_store, &blockchain).await?;
+
+        (blockchain, store, rollup_store)
+    };
 
     let signer = get_signer(&datadir);
 

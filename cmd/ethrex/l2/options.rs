@@ -105,6 +105,8 @@ pub struct SequencerOptions {
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
+    #[clap(long, default_value = "false", conflicts_with = "dev")]
+    pub supernode: bool,
 }
 
 pub fn parse_signer(
