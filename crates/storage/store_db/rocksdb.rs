@@ -884,7 +884,7 @@ impl StoreEngine for Store {
         }
 
         for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 4 * code.jump_targets.len());
             code.bytecode.encode(&mut buf);
             code.jump_targets
                 .into_iter()
@@ -1258,7 +1258,7 @@ impl StoreEngine for Store {
 
     async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
-        let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+        let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 4 * code.jump_targets.len());
         code.bytecode.encode(&mut buf);
         code.jump_targets
             .into_iter()
@@ -1306,8 +1306,8 @@ impl StoreEngine for Store {
             hash: code_hash,
             bytecode: Bytes::copy_from_slice(bytecode),
             jump_targets: targets
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .chunks_exact(4)
+                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                 .collect(),
         };
         Ok(Some(code))
@@ -1868,7 +1868,7 @@ impl StoreEngine for Store {
 
         for (code_hash, code) in account_codes {
             let key = code_hash.as_bytes().to_vec();
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 4 * code.jump_targets.len());
             code.bytecode.encode(&mut buf);
             code.jump_targets
                 .into_iter()

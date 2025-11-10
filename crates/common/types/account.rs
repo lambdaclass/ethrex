@@ -24,8 +24,8 @@ use crate::{
 pub struct Code {
     pub hash: H256,
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u16]> (needs to enable serde rc feature)
-    pub jump_targets: Vec<u16>,
+    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
+    pub jump_targets: Vec<u32>,
 }
 
 impl Code {
@@ -40,8 +40,8 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u16> {
-        debug_assert!(code.len() <= u16::MAX as usize);
+    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+        debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = Vec::new();
         let mut i = 0;
         while i < code.len() {
@@ -49,7 +49,7 @@ impl Code {
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    targets.push(i as u16);
+                    targets.push(i as u32);
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
