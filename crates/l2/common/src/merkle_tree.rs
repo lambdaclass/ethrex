@@ -37,7 +37,7 @@ impl IsMerkleTreeBackend for TreeData {
             hasher.update(child_2);
             hasher.update(child_1);
         }
-        hasher.finalize().into()
+        hasher.finalize()
     }
 }
 
