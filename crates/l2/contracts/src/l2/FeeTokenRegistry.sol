@@ -7,6 +7,11 @@ contract FeeTokenRegistry is IFeeTokenRegistry {
 
     mapping(address => bool) private feeTokens;
 
+		modifier onlyBridge() {
+        require(msg.sender == BRIDGE, "FeeTokenRegistry: not bridge");
+        _;
+    }
+
     /// @inheritdoc IFeeTokenRegistry
     function isFeeToken(address token) external view override returns (bool) {
         return feeTokens[token];
@@ -25,11 +30,6 @@ contract FeeTokenRegistry is IFeeTokenRegistry {
         require(feeTokens[token], "Token not registered");
         feeTokens[token] = false;
         emit FeeTokenUnregistered(token);
-    }
-
-    modifier onlyBridge() {
-        require(msg.sender == BRIDGE, "FeeTokenRegistry: not bridge");
-        _;
     }
 }
 
