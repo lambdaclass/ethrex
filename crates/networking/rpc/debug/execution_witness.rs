@@ -46,14 +46,17 @@ pub struct RpcExecutionWitness {
 
 impl From<ExecutionWitness> for RpcExecutionWitness {
     fn from(value: ExecutionWitness) -> Self {
+        // TODO: unwrap
+        let mut nodes = Vec::new();
+        for node in value.storage_trie_roots {
+            node.encode_subtrie(&mut nodes).unwrap();
+        }
+        value.state_trie_root.encode_subtrie(&mut nodes).unwrap();
         Self {
-            // TODO: fix
-            state: Default::default(),
-            // state: value
-            //     .nodes
-            //     .into_iter()
-            //     .map(|n| Bytes::from(n.encode_to_vec()))
-            //     .collect(),
+            state: nodes
+                .into_iter()
+                .map(|n| Bytes::from(n.encode_to_vec()))
+                .collect(),
             keys: value.keys.into_iter().map(Bytes::from).collect(),
             codes: value.codes.into_iter().map(Bytes::from).collect(),
             headers: value

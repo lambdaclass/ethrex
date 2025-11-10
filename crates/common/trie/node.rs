@@ -11,7 +11,7 @@ pub use leaf::LeafNode;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize, with::Skip};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -329,6 +329,27 @@ impl Node {
             Node::Extension(n) => n.compute_hash(),
             Node::Leaf(n) => n.compute_hash(),
         }
+    }
+
+    pub fn encode_subtrie(&self, encoded: &mut Vec<NodeRLP>) -> Result<(), TrieError> {
+        match self {
+            Node::Branch(node) => {
+                for choice in &node.choices {
+                    if let NodeRef::Node(choice, _) = choice {
+                        choice.encode_subtrie(encoded)?;
+                    }
+                }
+            }
+            Node::Extension(node) => {
+                if let NodeRef::Node(child, _) = &node.child {
+                    child.encode_subtrie(encoded)?;
+                }
+            }
+            Node::Leaf(_) => {}
+        };
+
+        encoded.push(self.encode_to_vec());
+        Ok(())
     }
 }
 
