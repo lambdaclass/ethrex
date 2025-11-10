@@ -751,11 +751,9 @@ impl Store {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
-            let state_trie = self.open_state_trie(state_root)?;
-            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+            let Some(account) = self.get_account_state_by_root(state_root, address)? else {
                 return Ok(None);
             };
-            let account = AccountState::decode(&encoded_account)?;
             account.storage_root
         };
         // let's check the cache now
