@@ -57,7 +57,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     net::TcpStream,
@@ -931,6 +931,7 @@ async fn handle_incoming_message(
             if state.blockchain.is_synced() {
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
+                let mempool_start = Instant::now();
                 for tx in &txs.transactions {
                     // Reject blob transactions in L2 mode
                     #[cfg(feature = "l2")]
@@ -951,6 +952,7 @@ async fn handle_incoming_message(
                         continue;
                     }
                 }
+                let mempool_end = Instant::now();
                 state
                     .tx_broadcaster
                     .cast(InMessage::AddTxs(
@@ -959,6 +961,11 @@ async fn handle_incoming_message(
                     ))
                     .await
                     .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
+                trace!(
+                    add_to_mempool = mempool_end.duration_since(mempool_start).as_secs_f64(),
+                    broadcast_scheduled = Instant::now().duration_since(mempool_end).as_secs_f64(),
+                    "Transactions"
+                );
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
@@ -1014,13 +1021,25 @@ async fn handle_incoming_message(
             }
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
+            let start = Instant::now();
             let hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
+            let prepared_for_req = Instant::now();
             let request = GetPooledTransactions::new(random(), hashes);
+            let request_prepared = Instant::now();
             state
                 .requested_pooled_txs
                 .insert(request.id, new_pooled_transaction_hashes);
             send(state, Message::GetPooledTransactions(request)).await?;
+            let request_sent = Instant::now();
+            trace!(
+                get_txs_to_req = prepared_for_req.duration_since(start).as_secs_f64(),
+                prepare_req = request_prepared
+                    .duration_since(prepared_for_req)
+                    .as_secs_f64(),
+                send = request_sent.duration_since(request_prepared).as_secs_f64(),
+                "NewPooledTransactionHashes"
+            );
         }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
@@ -1028,11 +1047,14 @@ async fn handle_incoming_message(
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
             // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
+            let start = Instant::now();
             for tx in &msg.pooled_transactions {
                 if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx
                     && (itx.blobs_bundle.is_empty()
                         || itx
                             .blobs_bundle
+                            // FIXME: this validation is done again in `validate_requested`,
+                            // and then again in `Blockchain::add_blob_transaction`.
                             .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
                             .is_err())
                 {
@@ -1046,6 +1068,7 @@ async fn handle_incoming_message(
                     ));
                 }
             }
+            let validated_blobs = Instant::now();
             if state.blockchain.is_synced() {
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     let fork = state.blockchain.current_fork().await?;
@@ -1064,6 +1087,7 @@ async fn handle_incoming_message(
                         state.requested_pooled_txs.remove(&msg.id);
                     }
                 }
+                let validated_tx = Instant::now();
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
 
@@ -1071,6 +1095,13 @@ async fn handle_incoming_message(
                 let is_l2_mode = false;
                 msg.handle(&state.node, &state.blockchain, is_l2_mode)
                     .await?;
+                let handled_msg = Instant::now();
+                trace!(
+                    blob_validation = validated_blobs.duration_since(start).as_secs_f64(),
+                    tx_validation = validated_tx.duration_since(validated_blobs).as_secs_f64(),
+                    handle_msg = handled_msg.duration_since(validated_tx).as_secs_f64(),
+                    "PooledTransactions"
+                );
             }
         }
         Message::GetStorageRanges(req) => {
