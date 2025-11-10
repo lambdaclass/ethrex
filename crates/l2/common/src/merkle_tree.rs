@@ -36,7 +36,7 @@ impl IsMerkleTreeBackend for TreeData {
         };
         let mut data = [0u8; 64];
         data[..32].copy_from_slice(left);
-        data[64..].copy_from_slice(right);
+        data[32..].copy_from_slice(right);
         keccak_hash(data)
     }
 }
