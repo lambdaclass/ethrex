@@ -240,8 +240,8 @@ pub async fn init_l2(
         .await;
 
         // TODO: This should be handled differently, the current problem
-        // with using opts.node_opts.p2p_diabled is that with the removal
-        // of the l2 feature flag, p2p_diabled is set to false by default
+        // with using opts.node_opts.p2p_disabled is that with the removal
+        // of the l2 feature flag, p2p_disabled is set to false by default
         // prioritizing the L1 UX.
         init_network(
             &opts.node_opts,

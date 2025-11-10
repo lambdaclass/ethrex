@@ -593,7 +593,7 @@ async fn handle_new_payload_v1_v2(
 ) -> Result<PayloadStatus, RpcErr> {
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
-            "Syncing status requested but syncer is not initialized".to_string(),
+            "New payload requested but syncer is not initialized".to_string(),
         ));
     };
     // Validate block hash
