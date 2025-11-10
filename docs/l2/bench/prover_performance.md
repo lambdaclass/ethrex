@@ -30,6 +30,8 @@ For rsp:
 - 64 GB RAM
 - RTX 4090 24 GB
 
+> Note: rsp exited with a `block gas used mismatch` error on the failed cases
+
 How to reproduce for ethrex:
 1. Clone [ethrex-replay](https://github.com/lambdaclass/ethrex-replay)
   1. Optionally, edit `Cargo.toml` to change the `ethrex` libraries to a specific branch/commit you want to benchmark.
