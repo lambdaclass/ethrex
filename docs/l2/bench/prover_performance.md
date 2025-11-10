@@ -19,10 +19,12 @@
 | 23769082        | 7,949,562  | 02m 25s      | 01m 27s | 66.7%                       |
 
 **Benchmark server hardware:**
+
 For ethrex:
 - AMD EPYC 7713 64-Core Processor
 - 128 GB RAM
 - RTX 4090 24 GB
+
 For rsp:
 - AMD EPYC 7F72 24-Core Processor
 - 64 GB RAM
