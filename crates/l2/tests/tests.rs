@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::account_diff::{AccountStateDiff, get_accounts_diff_size};
@@ -134,7 +134,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(5);
 
     // Not thread-safe (fee vault and bridge balance checks).
-    // test_deposit(&l1_client, &l2_client, &private_keys.pop().unwrap()).await?;
+    test_deposit(&l1_client, &l2_client, &private_keys.pop().unwrap()).await?;
 
     let coinbase_balance_before_tests = l2_client
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
@@ -2033,15 +2033,6 @@ async fn test_fee_token(
 
     let owner_pk = bridge_owner_private_key();
     let owner_signer: Signer = LocalSigner::new(owner_pk).into();
-    dbg!(owner_signer.address());
-    dbg!(owner_signer.address());
-    dbg!(owner_signer.address());
-    dbg!(owner_signer.address());
-    dbg!(owner_signer.address());
-    dbg!(owner_signer.address());
-    dbg!(owner_signer.address());
-    dbg!(owner_signer.address());
-    dbg!(owner_signer.address());
     let calldata = encode_calldata(
         REGISTER_FEE_TOKEN_SIGNATURE,
         &[Value::Address(fee_token_address)],
@@ -2065,10 +2056,9 @@ async fn test_fee_token(
     let register_tx_hash = send_generic_transaction(&l1_client, register_tx, &owner_signer)
         .await
         .unwrap();
-    let register_receipt = wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
+    wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
         .await
         .unwrap();
-    sleep(Duration::from_secs(30)).await;
 
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -2116,9 +2106,9 @@ async fn test_fee_token(
     );
 
     let cd = encode_calldata("isFeeToken(address)", &[Value::Address(fee_token_address)]).unwrap();
-    let mut keep = true;
-    while keep {
-        let a = l2_client
+    let expected = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    for attempt in 1..=100 {
+        let is_registered = l2_client
             .call(
                 FEE_TOKEN_REGISTRY_ADDRESS,
                 cd.clone().into(),
@@ -2126,10 +2116,13 @@ async fn test_fee_token(
             )
             .await
             .unwrap();
-        dbg!(&a);
-        dbg!(&register_receipt);
-        if a == "0x0000000000000000000000000000000000000000000000000000000000000001" {
-            keep = false;
+        if is_registered == expected {
+            break;
+        }
+        if attempt == 100 {
+            return Err(anyhow::anyhow!(
+                "{test}: fee token not registered after {attempt} attempts (last value: {is_registered})"
+            ));
         }
         sleep(Duration::from_secs(1)).await;
     }

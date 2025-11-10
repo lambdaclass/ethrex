@@ -205,7 +205,6 @@ pub async fn fill_transactions(
                 continue;
             }
         };
-        // dbg!(&receipt);
 
         let tx_backup = context.vm.db.get_tx_backup().map_err(|e| {
             BlockProducerError::FailedToGetDataFrom(format!("transaction backup: {e}"))
