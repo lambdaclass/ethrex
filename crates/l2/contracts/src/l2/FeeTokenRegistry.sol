@@ -14,7 +14,7 @@ contract FeeTokenRegistry is IFeeTokenRegistry {
     }
 
 		/// @inheritdoc IFeeTokenRegistry
-    function registerFeeToken(address token) external override onlyBridge {
+    function registerFeeToken(address token) external override {
         require(token != address(0), "FeeTokenRegistry: zero address");
         require(!feeTokens[token], "Token already registered");
         feeTokens[token] = true;
