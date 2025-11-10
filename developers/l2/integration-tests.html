@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Ethrex L2 as local development mode - Ethrex</title>
+        <title>Integration tests - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,35 +237,135 @@
 }
 
 </style>
-<h1 id="ethrex-as-a-local-l2-development-node"><a class="header" href="#ethrex-as-a-local-l2-development-node">Ethrex as a local L2 development node</a></h1>
+<h1 id="running-integration-tests"><a class="header" href="#running-integration-tests">Running integration tests</a></h1>
+<p>In this section, we will explain how to run integration tests for ethrex L2 with the objective of validating the correct functioning of our stack in our releases. For this, we will use ethrex as a local L2 dev node.</p>
 <h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
-<li>This guide assumes you've read the dev <a href="../installing.html">installation guide</a></li>
-<li>An Ethereum utility tool like <a href="https://github.com/lambdaclass/rex">rex</a></li>
+<li>Install the latest ethrex release or pre-release binary following the instructions in the <a href="https://docs.ethrex.xyz/getting-started/installation/binary_distribution.html">Install ethrex (binary distribution)</a> section.</li>
+<li>For running the tests, you'll need a fresh clone of <a href="https://github.com/lambdaclass/ethrex/">ethrex</a>.</li>
+<li>(Optional for troubleshooting)
+<ul>
+<li>An Ethereum utility tool like <a href="https://github.com/lambdaclass/rex">rex</a>.</li>
+<li><a href="https://jqlang.org/download/"><code>jq</code></a> for JSON processing.</li>
+<li><a href="https://curl.se/download.html"><code>curl</code></a> for making HTTP requests.</li>
 </ul>
-<h2 id="dev-mode"><a class="header" href="#dev-mode">Dev mode</a></h2>
-<p>In dev mode ethrex acts as a local Ethereum development node and a local layer 2 rollup</p>
-<pre><code class="language-sh">ethrex l2 --dev
+</li>
+</ul>
+<h2 id="setting-up-the-environment"><a class="header" href="#setting-up-the-environment">Setting up the environment</a></h2>
+<p>Our integration tests assume that there is an ethrex L1 node, an ethrex L2 node, and an ethrex L2 prover up and running. So before running them, we need to start the nodes.</p>
+<h3 id="running-ethrex-l2-dev-node"><a class="header" href="#running-ethrex-l2-dev-node">Running ethrex L2 dev node</a></h3>
+<p>For this, we are using the <code>ethrex l2 --dev</code> command, which does this job for us. In one console, run the following:</p>
+<pre><code>./ethrex l2 --dev \
+--committer.commit-time 150000 \
+--block-producer.block-time 1000 \
+--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+--block-producer.l1-fee-vault-address 0x45681AE1768a8936FB87aB11453B4755e322ceec \
+--block-producer.operator-fee-per-gas 1000000000 \
+--no-monitor
 </code></pre>
-<p>after running the command the ethrex monitor will open with information about the status of the local L2.</p>
-<p>The default port of the L1 JSON-RPC is 8545 you can test it by running</p>
-<pre><code class="language-sh">rex block-number http://localhost:8545
+<p>Read the note below for explanations about the flags used.</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>ethrex's MPT implementation is path-based, and the database commit threshold is set to <code>128</code>. In simple words, the latter implies that the database only stores the state 128 blocks before the current one (e.g., if the current block is block 256, then the database stores the state at block 128), while the state of the blocks within lives in in-memory diff layers (which are lost during node shutdowns).
+In ethrex L2, this has a direct impact since if our sequencer seals batches with more than 128 blocks, it won't be able to retrieve the state previous to the first block of the batch being sealed because it was pruned; therefore, it won't be able to create new batches to send to L1.
+To solve this, after a batch is sealed, we create a checkpoint of the database at that point to ensure the state needed at the time of commitment is available for the sequencer.
+For this test to be valuable, we need to ensure this edge case is covered. To do so, we set up an L2 with batches of approximately 150 blocks. We achieve this by setting the flag <code>--block-producer.block-time</code> to 1 second, which specifies the interval in milliseconds for our builder to build an L2 block. This means the L2 block builder will build blocks every 1 second. We also set the flag <code>--committer.commit-time</code> to 150 seconds (2 minutes and 30 seconds), which specifies the interval in milliseconds in which we want to commit to the L1. This ensures that enough blocks are included in each batch.
+The L2's gas pricing mechanism is tested in the integration tests, so we need to set the following flags to ensure the L2 gas pricing mechanism is active:</p>
+<ul>
+<li><code>--block-producer.base-fee-vault-address</code></li>
+<li><code>--block-producer.operator-fee-vault-address</code></li>
+<li><code>--block-producer.l1-fee-vault-address</code></li>
+<li><code>--block-producer.operator-fee-per-gas</code></li>
+</ul>
+<p>Read more about ethrex L2 gas pricing mechanism <a href="https://docs.ethrex.xyz/l2/fundamentals/transaction_fees.html">here</a>.
+We set the flag <code>--no-monitor</code> to disable the built-in monitoring dashboard since it is not needed for running the integration tests.</p>
+</div>
+<p>So far, we have an ethrex L1 and an ethrex L2 node up and running. We only miss the ethrex L2 prover, which we are going to spin up in <code>exec</code> mode, meaning that it won't generate ZK proofs.</p>
+<h3 id="running-ethrex-l2-prover"><a class="header" href="#running-ethrex-l2-prover">Running ethrex L2 prover</a></h3>
+<p>In another terminal, run the following to spin up an ethrex L2 prover in exec mode:</p>
+<pre><code>./ethrex l2 prover \
+--backend exec \
+--proof-coordinators http://localhost:3900
 </code></pre>
-<p>The default port of the L2 JSON-RPC is 1729 you can test it by running</p>
-<pre><code class="language-sh">rex block-number http://localhost:1729
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>The flag <code>--proof-coordinators</code> is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to <code>localhost:3900</code> because the <code>ethrex l2 --dev</code> command uses the port <code>3900</code> for the proof coordinator by default.<br />
+To see more about the proof coordinator, read the <a href="https://docs.ethrex.xyz/l2/architecture/sequencer.html#ethrex-l2-sequencer">ethrex L2 sequencer</a> and <a href="https://docs.ethrex.xyz/l2/architecture/prover.html#ethrex-l2-prover">ethrex L2 prover</a> sections.</p>
+</div>
+<h2 id="running-the-integration-tests"><a class="header" href="#running-the-integration-tests">Running the integration tests</a></h2>
+<p>During the execution of <code>ethrex l2 --dev</code>, a <code>.env</code> file is created and filled with environment variables containing contract addresses. This <code>.env</code> file is always needed for dev environments, so we need it for running the integration tests. Therefore, before running the integration tests, copy the <code>.env</code> file into <code>ethrex/cmd</code>:</p>
+<pre><code>cp .env ethrex/cmd
 </code></pre>
-<h2 id="guides"><a class="header" href="#guides">Guides</a></h2>
-<p>For more information on how to perform certain operations, go to <a href="">Guides</a>.</p>
+<p>Finally, in another terminal (should be a third one at this point), change your current directory to <code>ethrex/crates/l2</code> and run:</p>
+<pre><code>make test
+</code></pre>
+<h2 id="faq"><a class="header" href="#faq">FAQ</a></h2>
+<h3 id="what-should-i-expect"><a class="header" href="#what-should-i-expect">What should I expect?</a></h3>
+<p>Once you run <code>make test</code>, you should see the output of the tests being executed one after another. The tests will interact with the ethrex L2 node and the ethrex L2 prover that you started previously. If everything is set up correctly, all tests should pass successfully.</p>
+<h3 id="how-long-do-the-tests-take-to-run"><a class="header" href="#how-long-do-the-tests-take-to-run">How long do the tests take to run?</a></h3>
+<p>The current configuration of the L2 node (with a block time of 1 second and a commit time of 150 seconds) means that each batch will contain approximately 150 blocks. Given this setup, the integration tests typically take around 30 to 45 minutes to complete, depending the timing in which you performed the steps.</p>
+<h3 id="i-think-my-tests-are-taking-too-long-how-can-i-debug-this"><a class="header" href="#i-think-my-tests-are-taking-too-long-how-can-i-debug-this">I think my tests are taking too long, how can I debug this?</a></h3>
+<p>If your tests are taking significantly longer than expected, you are likely watching the <code>Retrying to get message proof for tx ...</code> counter in the tests terminal increase without progressing. Let's unveil what is happening here. This message indicates that the transaction has been included in an L2 block, but that block has not yet been included in a batch. There's no current way to fairly estimate when the block including the transaction will be included in a batch, but we can see how far is the block from being included.</p>
+<p>Using the hash of the transaction shown in the log message, you can check the status of the transaction using an Ethereum utility tool like <code>rex</code>. Run the following commands in a new terminal:</p>
+<ol>
+<li>Get the block number where the transaction was included (replace <code>&lt;TX_HASH&gt;</code> with the actual transaction hash):
+<pre><code class="language-shell">rex l2 tx &lt;TX_HASH&gt;
+</code></pre>
+</li>
+<li>As the block is assumed to not be included in a batch yet, we need to check which blocks have been included in the latest batch. <code>rex</code> does not have a command for this yet, so we will use <code>curl</code> to make a JSON-RPC call to the ethrex L2 node. Run the following command:
+<pre><code class="language-shell">curl -X POST http://localhost:1729 \
+-H "Content-Type: application/json" \
+-d '{
+"jsonrpc":"2.0",
+"method":"ethrex_batchNumber",
+"params": [],
+"id":1
+}' | jq .result
+</code></pre>
+</li>
+<li>Once you have the batch number, you can get the range of blocks included in that batch by running the following command (replace <code>&lt;BATCH_NUMBER&gt;</code> with the actual batch number obtained in the previous step, in hex format, e.g., <code>0x1</code>):
+<pre><code class="language-shell">curl -X POST http://localhost:1729 \
+-H "Content-Type: application/json" \
+-d '{
+    "jsonrpc":"2.0",
+    "method":"ethrex_getBatchByNumber",
+    "params": ["&lt;BATCH_NUMBER&gt;", false],
+    "id":1
+}' | jq .result.first_block,.result.last_block
+</code></pre>
+</li>
+<li>Compare the block number obtained in step 1 with the range of blocks obtained in step 3 to see how far the block is from being included in a batch. To have a rough estimate, take into account the mean of blocks that are being included into the batches and consider that a batch is sealed approximately every 150 seconds (2 minutes and 30 seconds) based on the current configuration.</li>
+</ol>
+<h3 id="should-i-worry-about-the-periodic-warning-logs-of-the-l2-prover"><a class="header" href="#should-i-worry-about-the-periodic-warning-logs-of-the-l2-prover">Should I worry about the periodic warning logs of the L2 prover?</a></h3>
+<p>Logs are being constantly improved to provide better clarity. However, during the execution of the integration tests, you might notice periodic warning logs from the L2 prover indicating that there are no new batches to prove. These warnings are expected behavior in this testing scenario and can be safely ignored.</p>
+<h3 id="the-tests-are-failing-what-should-i-do"><a class="header" href="#the-tests-are-failing-what-should-i-do">The tests are failing, what should I do?</a></h3>
+<p>If the tests are failing, first ensure that both the ethrex L2 node and the ethrex L2 prover are running correctly without any errors. Check their logs for any issues. If everything seems fine, try restarting both services and rerun the tests. Ensure that your configuration files (e.g., <code>.env</code>) are correctly set up and that all required environment variables are defined. If the problem persists, consider reaching out to the ethrex community or support channels for further assistance.</p>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>This is a placeholder for future troubleshooting tips.
+Please report any issues you encounter while running the integration tests to help us improve this section.</p>
+</div>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../developers/l2/introduction.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../developers/l2/dev-mode.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../developers/l2/integration-tests.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../vm/levm/debug.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -275,11 +375,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../developers/l2/introduction.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../developers/l2/dev-mode.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../developers/l2/integration-tests.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../vm/levm/debug.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
