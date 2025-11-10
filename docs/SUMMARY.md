@@ -76,6 +76,7 @@
 - [L2](./developers/l2/introduction.md)
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
   - [Running the Prover](./developers/l2/prover.md)
+  - [Integration tests](./developers/l2/integration-tests.md)
 - [Prover](./prover/prover.md)
   - [Guest program](./prover/guest_program.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
