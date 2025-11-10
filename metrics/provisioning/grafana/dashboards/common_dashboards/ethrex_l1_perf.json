@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 47,
+  "id": 3,
   "links": [],
   "panels": [
     {
@@ -37,9 +37,6 @@
               "type": "auto"
             },
             "filterable": true,
-            "footer": {
-              "reducers": []
-            },
             "inspect": false
           },
           "mappings": [],
@@ -68,6 +65,14 @@
       "id": 13,
       "options": {
         "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
         "showHeader": true
       },
       "pluginVersion": "12.2.0",
@@ -127,9 +132,6 @@
               "type": "auto"
             },
             "filterable": true,
-            "footer": {
-              "reducers": []
-            },
             "inspect": false
           },
           "mappings": [],
@@ -159,6 +161,14 @@
       "id": 15,
       "options": {
         "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
         "showHeader": true
       },
       "pluginVersion": "12.2.0",
@@ -220,9 +230,6 @@
               "type": "auto"
             },
             "filterable": true,
-            "footer": {
-              "reducers": []
-            },
             "inspect": false
           },
           "mappings": [],
@@ -251,6 +258,14 @@
       "id": 17,
       "options": {
         "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
         "showHeader": true
       },
       "pluginVersion": "12.2.0",
@@ -351,7 +366,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -470,7 +484,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -606,7 +619,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1178,7 +1190,7 @@
       "type": "xychart"
     },
     {
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1186,80 +1198,400 @@
         "y": 26
       },
       "id": 49,
-      "panels": [],
-      "title": "Block Execution Breakdown",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
           },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              "mappings": []
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 13,
+            "w": 6,
+            "x": 0,
+            "y": 27
+          },
+          "id": 18,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "right",
+              "showLegend": true,
+              "values": [
+                "percent"
+              ]
+            },
+            "pieType": "pie",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "sort": "desc",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
             }
           },
-          "mappings": []
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 27
-      },
-      "id": 18,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "values": [
-            "percent"
-          ]
-        },
-        "pieType": "pie",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
+          "pluginVersion": "12.2.0",
+          "repeat": "instance",
+          "repeatDirection": "v",
+          "targets": [
+            {
+              "disableTextWrap": false,
+              "editorMode": "code",
+              "expr": "(\n  sum by (function_name) (\n    increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name!~\"Block execution|Execute Block|Trie update\"}[$__range])\n  )\n)\nor\nlabel_replace(\n  sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Block execution\"}[$__range]) )\n  - sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=~\"Storage read|Account read|Account code read|Block hash read\"}[$__range]) ),\n  \"function_name\",\"Block Execution (w/o reads)\",\"__name__\",\".*\"\n)\nor\nlabel_replace(\n  sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Execute Block\"}[$__range]) )\n  - sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Block execution\"}[$__range]) ),\n  \"function_name\",\"Merkleization Diff\",\"__name__\",\".*\"\n)",
+              "fullMetaSearch": false,
+              "includeNullMetadata": false,
+              "legendFormat": "__auto",
+              "range": true,
+              "refId": "A",
+              "useBackend": false
+            }
           ],
-          "fields": "",
-          "values": false
+          "title": "Block Execution Breakdown - $instance",
+          "type": "piechart"
         },
-        "sort": "desc",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.2.0",
-      "repeat": "instance",
-      "repeatDirection": "h",
-      "targets": [
         {
-          "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "(\n  sum by (function_name) (\n    increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name!=\"Block execution\"}[$__range])\n  )\n)\nor\nlabel_replace(\n  sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Block execution\"}[$__range]) )\n  - sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=~\"Storage read|Account read|Account Read\"}[$__range]) ),\n  \"function_name\",\"Block execution (without db)\",\"__name__\",\".*\"\n)",
-          "fullMetaSearch": false,
-          "includeNullMetadata": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A",
-          "useBackend": false
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "This panel shows the difference between the Execution vs merkleization in the `execute_block_pipeline` function. It's shown as a percentage of the whole function. If it's negative, execution took more time than merkleization.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 13,
+            "w": 6,
+            "x": 6,
+            "y": 27
+          },
+          "id": 63,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.0",
+          "repeat": "instance",
+          "repeatDirection": "v",
+          "targets": [
+            {
+              "disableTextWrap": false,
+              "editorMode": "code",
+              "expr": "label_replace(\n  (sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Trie update\"}[$__range]) )\n  - sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Block execution\"}[$__range]) ))\n  / sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Execute Block\"}[$__range]) ),\n  \"function_name\",\"Execution vs Merkleization Diff %\",\"__name__\",\".*\"\n)",
+              "fullMetaSearch": false,
+              "includeNullMetadata": false,
+              "legendFormat": "__auto",
+              "range": true,
+              "refId": "A",
+              "useBackend": false
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "label_replace(\n    1 - ( sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Trie update\"}[$__range]) )\n    / sum( increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Execute Block\"}[$__range]) )),\n  \"function_name\",\"Merkleization vs Total diff\",\"__name__\",\".*\"\n)",
+              "hide": true,
+              "instant": false,
+              "legendFormat": "__auto",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Execution vs Merkleization Diff % - $instance",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "This Panel shows the deaggregated measures of the current instrumentation we have for block processing tied by block.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "series",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "fillOpacity": 50,
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineWidth": 2,
+                "pointShape": "circle",
+                "pointSize": {
+                  "fixed": 7
+                },
+                "pointStrokeWidth": 1,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "show": "points+lines"
+              },
+              "links": [
+                {
+                  "oneClick": false,
+                  "targetBlank": true,
+                  "title": "Show on Etherscan",
+                  "url": "https://${network}.etherscan.io/block/${__data.fields.Block}"
+                }
+              ],
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Block"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 13,
+            "w": 12,
+            "x": 12,
+            "y": 27
+          },
+          "id": 61,
+          "interval": "5s",
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "mapping": "auto",
+            "series": [
+              {
+                "frame": {
+                  "matcher": {
+                    "id": "byIndex",
+                    "options": 0
+                  }
+                },
+                "x": {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Block"
+                  }
+                },
+                "y": {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Value"
+                  }
+                }
+              }
+            ],
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.0",
+          "repeat": "instance",
+          "repeatDirection": "v",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "(\n  # Calculates the Execute Block first and removes zeroes generated by idelta to smooth the panel\n  sum by (instance, function_name) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Execute Block\"}[$__rate_interval]),\n      0\n    )\n  )\n) > 0\nor\n(\n# Calculates the rest of the instruments, except Execute Block, which was calculated before\n  sum by (instance, function_name) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name!~\"Execute Block|Block execution\"}[$__rate_interval]),\n      0\n    )\n  )\n)\nor\nlabel_replace(\n  sum by (instance) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=\"Block execution\"}[$__rate_interval]),\n      0\n    )\n  )\n  - sum by (instance) (\n    clamp_min(\n      idelta(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", function_name=~\"Storage read|Account read|Account code read|Block hash read\"}[$__rate_interval]),\n      0\n    )\n  ),\n  \"function_name\",\"Block Execution (w/o reads)\",\"instance\",\".*\"\n)",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{instance}} {{function_name}}",
+              "range": true,
+              "refId": "Function"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "Block",
+              "range": true,
+              "refId": "Block"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "all_same_block",
+              "range": true,
+              "refId": "all_same_block"
+            }
+          ],
+          "title": "Block Execution Deaggregated by Block - $instance",
+          "transformations": [
+            {
+              "id": "joinByField",
+              "options": {
+                "mode": "inner"
+              }
+            },
+            {
+              "id": "filterByValue",
+              "options": {
+                "filters": [
+                  {
+                    "config": {
+                      "id": "equal",
+                      "options": {
+                        "value": "0"
+                      }
+                    },
+                    "fieldName": "all_same_block"
+                  }
+                ],
+                "match": "any",
+                "type": "exclude"
+              }
+            },
+            {
+              "id": "filterFieldsByName",
+              "options": {
+                "byVariable": false,
+                "include": {
+                  "pattern": "^(?!.*all_same_block).*$"
+                }
+              }
+            }
+          ],
+          "type": "xychart"
         }
       ],
-      "title": "Block Execution Breakdown - $instance",
-      "type": "piechart"
+      "title": "Block Execution Breakdown ",
+      "type": "row"
     },
     {
       "collapsed": false,
@@ -1267,7 +1599,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 27
       },
       "id": 48,
       "panels": [],
@@ -1306,7 +1638,7 @@
         "h": 3,
         "w": 5,
         "x": 0,
-        "y": 36
+        "y": 28
       },
       "id": 34,
       "options": {
@@ -1375,7 +1707,7 @@
         "h": 3,
         "w": 2,
         "x": 5,
-        "y": 36
+        "y": 28
       },
       "id": 33,
       "options": {
@@ -1443,7 +1775,7 @@
         "h": 3,
         "w": 5,
         "x": 7,
-        "y": 36
+        "y": 28
       },
       "id": 43,
       "options": {
@@ -1515,7 +1847,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1547,7 +1878,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 36
+        "y": 28
       },
       "id": 46,
       "options": {
@@ -1619,7 +1950,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1654,7 +1984,7 @@
         "h": 5,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 31
       },
       "id": 32,
       "options": {
@@ -1725,7 +2055,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1757,7 +2086,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 44
+        "y": 36
       },
       "id": 30,
       "options": {
@@ -1828,7 +2157,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1885,7 +2213,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 44
+        "y": 36
       },
       "id": 31,
       "options": {
@@ -1956,7 +2284,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": true,
             "stacking": {
               "group": "A",
@@ -1989,7 +2316,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 50
+        "y": 42
       },
       "id": 45,
       "options": {
@@ -2056,7 +2383,6 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "showValues": false,
             "spanNulls": true,
             "stacking": {
               "group": "A",
@@ -2128,7 +2454,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 50
+        "y": 42
       },
       "id": 42,
       "options": {
@@ -2178,7 +2504,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 50
       },
       "id": 55,
       "panels": [
@@ -2248,7 +2574,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 59
+            "y": 1061
           },
           "id": 56,
           "options": {
@@ -2347,7 +2673,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 59
+            "y": 1061
           },
           "id": 57,
           "options": {
@@ -2447,7 +2773,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 59
+            "y": 1061
           },
           "id": 58,
           "options": {
@@ -2487,7 +2813,7 @@
   ],
   "preload": false,
   "refresh": "5s",
-  "schemaVersion": 42,
+  "schemaVersion": 41,
   "tags": [],
   "templating": {
     "list": [
@@ -2569,5 +2895,5 @@
   "timezone": "utc",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 29
+  "version": 35
 }
