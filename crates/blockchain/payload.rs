@@ -370,8 +370,7 @@ impl Blockchain {
         let start = Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        // TODO(#4997): start with an empty block
-        let mut res = self.build_initial_payload(payload.clone())?;
+        let mut res = self.build_empty_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
             let self_clone = self.clone();
@@ -399,7 +398,7 @@ impl Blockchain {
         self.build_payload_inner(payload, true)
     }
 
-    pub fn build_initial_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+    pub fn build_empty_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         self.build_payload_inner(payload, false)
     }
 
