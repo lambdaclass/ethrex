@@ -1,8 +1,8 @@
 # ethrex-prover performance
 
 ## Latest benchmarks against rsp
-ethrex commit: 870f0fa4a16b8df05a67d0a2396df3892c824298 (merged [#5224](https://github.com/lambdaclass/ethrex/pull/5224/) and [#4723](https://github.com/lambdaclass/ethrex/pull/4723))
-rsp commit: 2c5718029e7c0b24a34b011088fef221489fc714
+- ethrex commit: `870f0fa4a16b8df05a67d0a2396df3892c824298` (merged [#5224](https://github.com/lambdaclass/ethrex/pull/5224/) and [#4723](https://github.com/lambdaclass/ethrex/pull/4723))
+- rsp commit: `2c5718029e7c0b24a34b011088fef221489fc714`
 
 | Block (mainnet) | ethrex (SP1) | rsp     | (ethrex - rsp) / rsp * 100% |
 | --------------- | ------------ | ------- | --------------------------- |
