@@ -54,8 +54,8 @@ index 99a0478..d42a1d2 100644
              let proof_bytes = bincode::serialize(&proof.proof).unwrap();
 
              hooks
-  ```
-    2. You can then grep the stdout for `proving time`
+```
+You can then grep the stdout for `proving time`
 3. Run `SP1_PROVER=cuda cargo r -r --manifest-path bin/host/Cargo.toml --block-number <BLOCK NUMBER> --rpc-url <RPC> --prove`
     1. For rsp, an alchemy RPC endpoint works best.
 
