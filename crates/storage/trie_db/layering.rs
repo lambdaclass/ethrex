@@ -7,7 +7,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
+    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
@@ -126,7 +126,7 @@ impl TrieLayerCache {
 
         self.last_id += 1;
         let entry = TrieLayer {
-            nodes: Arc::new(nodes),
+            nodes,
             parent,
             id: self.last_id,
         };
@@ -188,7 +188,7 @@ impl TrieLayerCache {
             parent_nodes
                 .unwrap_or_default()
                 .into_iter()
-                .chain(layer.nodes.as_ref().clone())
+                .chain(layer.nodes)
                 .collect(),
         )
     }
