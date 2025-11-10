@@ -2072,10 +2072,11 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
@@ -2084,7 +2085,6 @@ dependencies = [
  "hex",
  "rustc-hash",
  "secp256k1",
- "sha3",
  "thiserror 2.0.16",
  "tokio",
  "tokio-util",
@@ -2093,7 +2093,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -2113,7 +2113,6 @@ dependencies = [
  "serde 1.0.228",
  "serde_json",
  "sha2",
- "sha3",
  "thiserror 2.0.16",
  "tinyvec",
  "tracing",
@@ -2122,7 +2121,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -2133,16 +2132,17 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
  "thiserror 2.0.16",
+ "tiny-keccak",
 ]
 
 [[package]]
 name = "ethrex-dev"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "aligned-sdk",
  "axum",
@@ -2218,11 +2218,12 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",
@@ -2233,13 +2234,12 @@ dependencies = [
  "secp256k1",
  "serde 1.0.228",
  "serde_with",
- "sha3",
  "thiserror 2.0.16",
 ]
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "axum",
  "bytes",
@@ -2268,7 +2268,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2292,7 +2292,6 @@ dependencies = [
  "serde 1.0.228",
  "serde_json",
  "sha2",
- "sha3",
  "strum 0.27.2",
  "thiserror 2.0.16",
  "walkdir",
@@ -2300,7 +2299,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "ethrex-common",
  "serde 1.0.228",
@@ -2311,7 +2310,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "aes",
  "async-trait",
@@ -2322,6 +2321,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
@@ -2339,7 +2339,6 @@ dependencies = [
  "serde 1.0.228",
  "serde_json",
  "sha2",
- "sha3",
  "snap",
  "spawned-concurrency",
  "spawned-rt",
@@ -2352,7 +2351,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2365,7 +2364,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -2374,6 +2373,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
@@ -2388,7 +2388,6 @@ dependencies = [
  "serde 1.0.228",
  "serde_json",
  "sha2",
- "sha3",
  "spawned-concurrency",
  "spawned-rt",
  "thiserror 2.0.16",
@@ -2402,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2427,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "thiserror 2.0.16",
  "tracing",
@@ -2435,7 +2434,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2443,6 +2442,7 @@ dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
@@ -2451,14 +2451,13 @@ dependencies = [
  "rustc-hash",
  "serde 1.0.228",
  "serde_json",
- "sha3",
  "thiserror 2.0.16",
  "tracing",
 ]
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2484,20 +2483,20 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "bytes",
  "crossbeam 0.8.4",
  "digest",
  "ethereum-types 0.15.1",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-threadpool",
  "hex",
  "lazy_static",
  "serde 1.0.228",
  "serde_json",
- "sha3",
  "smallvec",
  "thiserror 2.0.16",
  "tracing",
@@ -2505,7 +2504,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -2513,6 +2512,7 @@ dependencies = [
  "dyn-clone",
  "ethereum-types 0.15.1",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp",
  "ethrex-trie",
@@ -2520,7 +2520,6 @@ dependencies = [
  "lazy_static",
  "rkyv",
  "serde 1.0.228",
- "sha3",
  "thiserror 2.0.16",
  "tracing",
 ]
@@ -2882,7 +2881,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
