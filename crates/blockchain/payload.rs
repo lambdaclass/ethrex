@@ -18,7 +18,7 @@ use ethrex_common::{
     },
 };
 
-use ethrex_crypto::keccak::{Keccak256, keccak_hash};
+use ethrex_crypto::keccak::{Keccak256};
 use ethrex_vm::{Evm, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
