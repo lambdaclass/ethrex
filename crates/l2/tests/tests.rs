@@ -2054,7 +2054,7 @@ async fn test_fee_token(
         owner_signer.address(),
         calldata.into(),
         Overrides {
-            gas_limit: Some(21000 * 15),
+            gas_limit: Some(21000 * 20),
             ..Default::default()
         },
     )
