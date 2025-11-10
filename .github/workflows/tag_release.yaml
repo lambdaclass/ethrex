@@ -190,14 +190,14 @@ jobs:
       - name: Build ethrex ${{ matrix.zkvm }} elf
         run: |
           cargo build --release --package guest_program --features ${{ matrix.zkvm }}
-          mkdir -p ${{ matrix.zkvm }}_verification_keys
+          mkdir -p ethrex_verification_keys
           if [ "${{ matrix.zkvm }}" = "sp1" ]; then
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-sp1-elf-${{ github.ref_name }}
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-sp1-vk-bn254-${{ github.ref_name }}
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-sp1-vk-u32-${{ github.ref_name }}
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ethrex_verification_keys/ethrex-riscv32im-sp1-vk-bn254-${{ github.ref_name }}
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ethrex_verification_keys/ethrex-riscv32im-sp1-vk-u32-${{ github.ref_name }}
           elif [ "${{ matrix.zkvm }}" = "risc0" ]; then
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-elf ethrex-riscv32im-risc0-elf-${{ github.ref_name}}
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-risc0-vk-${{ github.ref_name}}
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ethrex_verification_keys/ethrex-riscv32im-risc0-vk-${{ github.ref_name}}
           fi
 
       - name: Upload ethrex guest elf artifact
@@ -209,8 +209,35 @@ jobs:
       - name: Upload ethrex guest verification keys
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.zkvm }}_verification_keys
-          path: ${{ matrix.zkvm }}_verification_keys/
+          name: ethrex_verification_keys
+          path: ethrex_verification_keys/*
+
+  # Creates ethrex-verification-keys.tar.gz artifact including both SP1 and
+  # RISC0 verification keys.
+  package-verification-keys:
+    needs:
+      - build-ethrex-guest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download verification keys artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_verification_keys
+          path: ethrex_verification_keys/
+
+      - name: Archive verification keys
+        run: |
+          cd ethrex_verification_keys/
+          tar -czvf ethrex-verification-keys.tar.gz .
+
+      - name: Upload verification keys artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex-verification-keys.tar.gz
+          path: ethrex-verification-keys.tar.gz
 
   package-contracts:
     needs:
@@ -298,13 +325,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ./bin
-          pattern: "ethrex*" # This includes the binaries and elf files
-
-      - name: Download verification keys
-        uses: actions/download-artifact@v4
-        with:
-          path: ./bin
-          pattern: "*_verification_keys" # sp1_verification_keys, risc0_verification_keys
+          pattern: "ethrex*" # This includes the binaries, elf files, ethrex-verification-keys.tar.gz, and ethrex-contracts.tar.gz
 
       - name: Get previous tag
         run: |
