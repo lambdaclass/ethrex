@@ -60,9 +60,9 @@ contract CommonBridge is
     /// @dev It's used to validate withdrawals
     address public constant L2_BRIDGE_ADDRESS = address(0xffff);
 
-		/// @notice Address of the fee token registry on the L2
-		/// @dev It's used to allow new tokens to pay fees
-		address public constant L2_FEE_TOKEN_REGISTRY = address(0xfffc);
+    /// @notice Address of the fee token registry on the L2
+    /// @dev It's used to allow new tokens to pay fees
+    address public constant L2_FEE_TOKEN_REGISTRY = address(0xfffc);
 
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
@@ -93,7 +93,7 @@ contract CommonBridge is
     mapping(bytes32 => uint256) public privilegedTxDeadline;
 
     /// @dev Deprecated variable.
-	  /// @notice The L1 token address that is treated as the one to be bridged to the L2.
+    /// @notice The L1 token address that is treated as the one to be bridged to the L2.
     /// @dev If set to address(0), ETH is considered the native token.
     /// Otherwise, this address is used for native token deposits and withdrawals.
     address public NATIVE_TOKEN_L1;
