@@ -133,7 +133,7 @@ impl TrieDB for RocksDBTrieDB {
         let mut buffer = Vec::with_capacity(532);
 
         for (hash, node) in key_values {
-            let cf = self.cf_handle_for_key(&hash)?;
+            let cf = self.cf_handle_for_key(hash)?;
             let db_key = self.make_key(hash.clone());
             buffer.clear();
             node.encode(&mut buffer);
