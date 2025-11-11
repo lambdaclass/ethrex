@@ -36,8 +36,6 @@ pub struct GuestProgramState {
     pub block_headers: BTreeMap<u64, BlockHeader>,
     /// The accounts state trie containing the necessary state for the guest
     /// program execution.
-    /// The trie is built during guest program execution inside the zkVM,
-    /// before the stateless validation.
     pub state_trie: Trie,
     /// The parent block header of the first block in the batch.
     pub parent_block_header: BlockHeader,
@@ -45,9 +43,7 @@ pub struct GuestProgramState {
     pub first_block_number: u64,
     /// The chain configuration.
     pub chain_config: ChainConfig,
-    /// Map of account addresses to their corresponding storage tries.
-    /// This struct is initialized empty inside the zkVM and storage tries are
-    /// built on-demand and cached here during guest program execution.
+    /// Map of storage root hashes to their corresponding storage tries.
     pub storage_tries: BTreeMap<H256, Trie>,
     /// Map of account addresses to their corresponding hashed addresses.
     /// This is a convenience map to avoid recomputing the hashed address

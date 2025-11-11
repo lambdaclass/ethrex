@@ -239,6 +239,7 @@ pub enum Node {
 
 impl Default for Node {
     fn default() -> Self {
+        // empty leaf node as a placeholder
         Self::Leaf(LeafNode {
             partial: Nibbles::from_bytes(&[]),
             value: Vec::new(),

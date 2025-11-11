@@ -752,6 +752,7 @@ impl Blockchain {
             block_headers_bytes.push(current_header.encode_to_vec());
         }
 
+        // Create a list of all read/write addresses and storage slots
         let mut keys = Vec::new();
         for (address, touched_storage_slots) in touched_account_storage_slots {
             keys.push(address.as_bytes().to_vec());
@@ -760,7 +761,7 @@ impl Blockchain {
             }
         }
 
-        // get state trie root and embed the rest of the trie into it
+        // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
             .map(|node| (node.compute_hash().finalize(), node))
@@ -768,11 +769,11 @@ impl Blockchain {
         let state_trie_root = Trie::get_embedded_root(&nodes, initial_state_root)?
             .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))?
             .ok_or(ChainError::Custom(
-                "used trie nodes don't contain the initial state root".to_string(),
+                "used trie nodes do not contain the initial state root".to_string(),
             ))?;
         let state_trie = Trie::new_temp_with_root(state_trie_root.clone().into());
 
-        // get all storage trie roots and embed the rest of the trie into it
+        // Get all initial storage trie roots and embed the rest of the trie into it
         let mut storage_trie_roots = Vec::new();
         for key in &keys {
             if key.len() != 20 {
