@@ -370,7 +370,6 @@ impl Blockchain {
         let start = Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        // TODO(#4997): start with an empty block
         let mut res = self.build_initial_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
