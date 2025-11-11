@@ -2144,33 +2144,7 @@
               },
               "unit": "reqps"
             },
-            "overrides": [
-              {
-                "__systemRef": "hideSeriesFrom",
-                "matcher": {
-                  "id": "byNames",
-                  "options": {
-                    "mode": "exclude",
-                    "names": [
-                      "eth_gasPrice",
-                      "eth_blockNumber"
-                    ],
-                    "prefix": "All except:",
-                    "readOnly": true
-                  }
-                },
-                "properties": [
-                  {
-                    "id": "custom.hideFrom",
-                    "value": {
-                      "legend": false,
-                      "tooltip": true,
-                      "viz": true
-                    }
-                  }
-                ]
-              }
-            ]
+            "overrides": []
           },
           "gridPos": {
             "h": 14,
@@ -3307,7 +3281,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 1424
+            "y": 1438
           },
           "id": 56,
           "options": {
@@ -3406,7 +3380,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 1424
+            "y": 1438
           },
           "id": 57,
           "options": {
@@ -3506,7 +3480,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 1424
+            "y": 1438
           },
           "id": 58,
           "options": {
