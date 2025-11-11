@@ -33,10 +33,14 @@ fn build_risc0_program() {
         "zkvm-risc0-program",
         guest_options,
     )]));
+    let elf = built_guests[0].elf.clone();
     let image_id = built_guests[0].image_id;
 
     // this errs if the dir already exists, so we don't handle an error.
     let _ = std::fs::create_dir("./src/risc0/out");
+
+    std::fs::write("./src/risc0/out/riscv32im-risc0-elf", &elf)
+        .expect("could not write Risc0 elf to file");
 
     std::fs::write(
         "./src/risc0/out/riscv32im-risc0-vk",

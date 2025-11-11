@@ -81,6 +81,7 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Commit,
+    Abort,
 }
 
 #[derive(Clone)]
@@ -1086,21 +1087,8 @@ impl L1Committer {
             on_chain_proposer_address: self.on_chain_proposer_address,
         })))
     }
-}
 
-impl GenServer for L1Committer {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-
-    type Error = CommitterError;
-
-    // Right now we only have the `Commit` message, so we ignore the `message` parameter
-    async fn handle_cast(
-        &mut self,
-        _message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
+    async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
@@ -1150,6 +1138,33 @@ impl GenServer for L1Committer {
         }
         self.schedule_commit(self.committer_wake_up_ms, handle.clone());
         CastResponse::NoReply
+    }
+}
+
+impl GenServer for L1Committer {
+    type CallMsg = CallMessage;
+    type CastMsg = InMessage;
+    type OutMsg = OutMessage;
+
+    type Error = CommitterError;
+
+    // Right now we only have the `Commit` message, so we ignore the `message` parameter
+    async fn handle_cast(
+        &mut self,
+        message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+    ) -> CastResponse {
+        match message {
+            InMessage::Commit => self.handle_commit_message(handle).await,
+            InMessage::Abort => {
+                // start_blocking keeps the committer loop alive even if the JoinSet aborts the task.
+                // Returning CastResponse::Stop is what unblocks shutdown by ending that blocking loop.
+                if let Some(ct) = self.cancellation_token.take() {
+                    ct.cancel()
+                };
+                CastResponse::Stop
+            }
+        }
     }
 
     async fn handle_call(

@@ -14,17 +14,28 @@ Examples:
 
 ## 2nd - Bump version
 
-In the release branch, update the `[workspace.package]` version to `X.Y.Z` in the root `Cargo.toml`, and push the change to the branch.
+The version must be updated to `X.Y.Z` in the release branch. There are multiple `Cargo.toml` and `Cargo.lock` files that need to be updated.
 
-An example can be found here:
+First, we need to update the version of the workspace package. You can find it in the `Cargo.toml` file in the root directory, under the `[workspace.package]` section.
 
-https://github.com/lambdaclass/ethrex/pull/4881/files#diff-2e9d962a08321605940b5a657135052fbcef87b5e360662bb527c96d9a615542
+Then, we need to update three more `Cargo.toml` files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:
 
-There are currently three `Cargo.lock` files that will be affected. Make sure you check them:
+- `crates/l2/prover/src/guest_program/src/sp1/Cargo.toml`
+- `crates/l2/prover/src/guest_program/src/risc0/Cargo.toml`
+- `crates/l2/tee/quote-gen/Cargo.toml`
 
-- root `Cargo.lock`
-- `sp1/Cargo.lock`
-- `risc0/Cargo.lock`
+After updating the version in the `Cargo.toml` files, we need to update the `Cargo.lock` files to reflect the new versions. Run `cargo tree` in their respective directories:
+
+- In the root directory
+- `crates/l2/prover/src/guest_program/src/sp1`
+- `crates/l2/prover/src/guest_program/src/risc0`
+- `crates/l2/tee/quote-gen`
+
+Then, go to the `CLI.md` file located in `docs/` and update the version of the `--builder.extra-data` flag default value to match the new version (for both ethrex and ethrex l2 sections).
+
+Finally, stage and commit the changes to the release branch.
+
+An example of a PR that bumps the version can be found [here](https://github.com/lambdaclass/ethrex/pull/4881/files#diff-2e9d962a08321605940b5a657135052fbcef87b5e360662bb527c96d9a615542).
 
 ## 3rd - Create & Push Tag
 
