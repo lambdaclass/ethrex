@@ -5,7 +5,7 @@
 This tool is used to benchmark the performance of **ethrex**.  
 We aim to execute the same set of blocks on the same hardware to ensure consistent 
 performance comparisons. Doing this on a running node is difficult because of variations 
-in hardware, peer count, and system load.
+in hardware, peer count, block content, and system load.
 
 To achieve consistent results, we run the same blocks multiple times on the same machine 
 using the `import-bench` subcommand.
@@ -40,10 +40,12 @@ The Makefile includes the following command:
 
 ```
 run-bench: ## Runs a benchmark for the current PR.
-# Parameters:
-#  - BENCH_ID: Identifier for the log file, saved as bench-BENCH_ID.log
-#  - NETWORK: Network to access (e.g., hoodi, mainnet)
 ```
+
+Parameters:
+  - BENCH_ID: Identifier for the log file, saved as bench-BENCH_ID.log
+  - NETWORK: Network to access (e.g., hoodi, mainnet)
+
 
 Example: 
 `make run-bench BENCH_ID=1 NETWORK=mainnet`
