@@ -11,9 +11,9 @@ mod trie_iter;
 pub mod trie_sorted;
 mod verify_range;
 use ethereum_types::H256;
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -34,8 +34,8 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256::from_slice(
-        &Keccak256::digest([RLP_NULL]),
+    pub static ref EMPTY_TRIE_HASH: H256 = H256(
+        keccak_hash([RLP_NULL]),
     );
 }
 
