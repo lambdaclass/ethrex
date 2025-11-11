@@ -1129,33 +1129,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
-    async fn clear_headers(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        let db = self.db.clone();
-
-        tokio::task::spawn_blocking(move || {
-            let cf = db
-                .cf_handle(CF_HEADERS)
-                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-
-            let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-            let mut batch = WriteBatch::default();
-
-            while let Some(Ok((key, header_value))) = iter.next() {
-                let a = BlockHeaderRLP::from_bytes(header_value.to_vec())
-                    .to()
-                    .map_err(StoreError::from)?;
-                if headers.contains(&a) {
-                    batch.delete_cf(&cf, key);
-                }
-            }
-
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();

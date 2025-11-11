@@ -426,7 +426,6 @@ impl Syncer {
                 );
                 self.add_blocks_in_batch(blocks, final_batch, store.clone())
                     .await?;
-                store.clear_headers(headers.clone()).await?;
             }
         }
 
@@ -440,7 +439,6 @@ impl Syncer {
             );
             self.add_blocks_in_batch(pending_blocks, true, store.clone())
                 .await?;
-            store.clear_headers(pending_blocks_headers).await?;
         }
 
         Ok(())

@@ -505,12 +505,6 @@ impl StoreEngine for Store {
         Ok(Some(block_header[0].clone()))
     }
 
-    async fn clear_headers(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        let mut store = self.inner()?;
-        store.headers.retain(|_, header| !headers.contains(header));
-        Ok(())
-    }
-
     fn get_canonical_block_hash_sync(
         &self,
         block_number: BlockNumber,

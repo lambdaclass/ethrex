@@ -1354,10 +1354,6 @@ impl Store {
         self.engine.read_headers_batch(start, limit).await
     }
 
-    pub async fn clear_headers(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        self.engine.clear_headers(headers).await
-    }
-
     pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
         self.engine.generate_flatkeyvalue()
     }

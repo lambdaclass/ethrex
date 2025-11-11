@@ -376,8 +376,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         limit: u64,
     ) -> Result<Vec<BlockHeader>, StoreError>;
 
-    async fn clear_headers(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError>;
-
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 
     async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
