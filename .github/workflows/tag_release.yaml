@@ -284,7 +284,6 @@ jobs:
           path: ethrex-contracts.tar.gz
 
   build-docker:
-    if: github.event_name != 'workflow_dispatch'
     name: "Build and publish ethrex docker image"
     runs-on: ubuntu-latest
 
@@ -318,7 +317,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          push: true
+          push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
 
       # Pushes to ghcr.io/lambdaclass/ethrex
@@ -329,7 +328,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          push: true
+          push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
           build_args: BUILD_FLAGS=--features l2,l2-sql
 
