@@ -20,42 +20,9 @@ mod imp {
     }
 
     pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32] {
-        let mut state = State::default();
-        let mut tail_buf = [0; BLOCK_SIZE];
-        let mut hash_buf = [0; 32];
-
-        let tail_len;
-        match data.as_ref() {
-            [] => tail_len = 0,
-            data if data.len() < BLOCK_SIZE => unsafe {
-                tail_len = data.len();
-                tail_buf.get_unchecked_mut(..tail_len).copy_from_slice(data);
-            },
-            data => unsafe {
-                tail_len = SHA3_absorb(&mut state, data.as_ptr(), data.len(), BLOCK_SIZE);
-                if tail_len != 0 {
-                    let tail_data = data.get_unchecked(data.len() - tail_len..);
-                    tail_buf
-                        .get_unchecked_mut(..tail_len)
-                        .copy_from_slice(tail_data);
-                }
-            },
-        }
-
-        unsafe {
-            *tail_buf.get_unchecked_mut(tail_len) = 0x01;
-            *tail_buf.get_unchecked_mut(BLOCK_SIZE - 1) |= 0x80;
-
-            SHA3_absorb(&mut state, tail_buf.as_ptr(), tail_buf.len(), BLOCK_SIZE);
-            SHA3_squeeze(
-                &mut state,
-                hash_buf.as_mut_ptr(),
-                hash_buf.len(),
-                BLOCK_SIZE,
-            );
-        }
-
-        hash_buf
+        let mut state = Keccak256::new();
+        state.update(data);
+        state.finalize()
     }
 
     #[derive(Clone)]
