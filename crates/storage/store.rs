@@ -5,7 +5,6 @@ use crate::{api::StoreEngine, apply_prefix};
 use crate::{error::StoreError, trie_db::layering::TrieLayerCache};
 
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::utils::keccak;
 use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{
