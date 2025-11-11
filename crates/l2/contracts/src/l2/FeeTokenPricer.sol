@@ -1,16 +1,43 @@
+
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 import "./interfaces/IFeeTokenPricer.sol";
 
-contract FeeTokenPricer is IFeeTokenPricer {  
-	address internal constant FEE_TOKEN =
-        0xb7E811662Fa10ac068aeE115AC2e682821630535;
-	
-	  /// @inheritdoc IFeeTokenPricer
-		function getFeeTokenRatio(
-			  address fee_token
-		) external view override returns (uint256) {
-			require(fee_token == FEE_TOKEN, "The fee token does not match with the one set for the chain");
-			return 2;
-		}	
+contract FeeTokenPricer is IFeeTokenPricer {
+    address public constant BRIDGE = 0x000000000000000000000000000000000000FFff;
+
+    mapping(address => uint256) private ratios;
+
+    modifier onlyBridge() {
+        require(msg.sender == BRIDGE, "FeeTokenRegistry: not bridge");
+        _;
+    }
+
+    /// @inheritdoc IFeeTokenPricer
+    function getFeeTokenRatio(
+        address feeToken
+    ) external view override returns (uint256) {
+        return ratios[feeToken];
+    }
+
+    /// @inheritdoc IFeeTokenPricer
+    function setFeeTokenRatio(
+        address feeToken,
+        uint256 ratio
+    ) external override onlyBridge {
+        require(
+            feeToken != address(0),
+            "FeeTokenPricer: address cannot be zero"
+        );
+        ratios[feeToken] = ratio;
+        emit FeeTokenRatioSet(feeToken, ratio);
+    }
+
+    /// @inheritdoc IFeeTokenPricer
+    function unsetFeeTokenRatio(address feeToken) external override onlyBridge {
+        require(ratios[feeToken] != 0, "FeeTokenPricer: token already unset");
+        ratios[feeToken] = uint256(0);
+        emit FeeTokenRatioUnset(feeToken);
+    }
 }
+

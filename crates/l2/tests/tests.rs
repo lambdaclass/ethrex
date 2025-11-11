@@ -24,8 +24,9 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    FEE_TOKEN_REGISTRY_ADDRESS, REGISTER_FEE_TOKEN_SIGNATURE, build_generic_tx,
-    get_fee_token_ratio, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
+    FEE_TOKEN_PRICER_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS, REGISTER_FEE_TOKEN_SIGNATURE,
+    SET_FEE_TOKEN_RATIO_SIGNATURE, build_generic_tx, get_fee_token_ratio, get_last_verified_batch,
+    send_generic_transaction, wait_for_message_proof,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -2060,6 +2061,32 @@ async fn test_fee_token(
         .await
         .unwrap();
 
+    let ratio_value = U256::from(2u8);
+    let set_ratio_calldata = encode_calldata(
+        SET_FEE_TOKEN_RATIO_SIGNATURE,
+        &[Value::Address(fee_token_address), Value::Uint(ratio_value)],
+    )
+    .unwrap();
+    let set_ratio_tx = build_generic_tx(
+        &l1_client,
+        TxType::EIP1559,
+        bridge_address().unwrap(),
+        owner_signer.address(),
+        set_ratio_calldata.into(),
+        Overrides {
+            gas_limit: Some(21000 * 20),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let set_ratio_tx_hash = send_generic_transaction(&l1_client, set_ratio_tx, &owner_signer)
+        .await
+        .unwrap();
+    wait_for_transaction_receipt(set_ratio_tx_hash, &l1_client, 1000)
+        .await
+        .unwrap();
+
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -2122,6 +2149,32 @@ async fn test_fee_token(
         if attempt == 100 {
             return Err(anyhow::anyhow!(
                 "{test}: fee token not registered after {attempt} attempts (last value: {is_registered})"
+            ));
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+    let ratio_call_data = encode_calldata(
+        "getFeeTokenRatio(address)",
+        &[Value::Address(fee_token_address)],
+    )
+    .unwrap();
+    let expected_ratio =
+        "0x0000000000000000000000000000000000000000000000000000000000000002";
+    for attempt in 1..=100 {
+        let current_ratio = l2_client
+            .call(
+                FEE_TOKEN_PRICER_ADDRESS,
+                ratio_call_data.clone().into(),
+                Overrides::default(),
+            )
+            .await
+            .unwrap();
+        if current_ratio == expected_ratio {
+            break;
+        }
+        if attempt == 100 {
+            return Err(anyhow::anyhow!(
+                "{test}: fee token ratio not set after {attempt} attempts (last value: {current_ratio})"
             ));
         }
         sleep(Duration::from_secs(1)).await;

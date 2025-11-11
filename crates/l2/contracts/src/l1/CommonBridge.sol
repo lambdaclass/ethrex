@@ -15,6 +15,7 @@ import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
 import "../l2/interfaces/IFeeTokenRegistry.sol";
+import "../l2/interfaces/IFeeTokenPricer.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -60,9 +61,13 @@ contract CommonBridge is
     /// @dev It's used to validate withdrawals
     address public constant L2_BRIDGE_ADDRESS = address(0xffff);
 
-		/// @notice Address of the fee token registry on the L2
-		/// @dev It's used to allow new tokens to pay fees
-		address public constant L2_FEE_TOKEN_REGISTRY = address(0xfffc);
+    /// @notice Address of the fee token registry on the L2
+    /// @dev It's used to allow new tokens to pay fees
+    address public constant L2_FEE_TOKEN_REGISTRY = address(0xfffc);
+
+    /// @notice Address of the fee token pricer on the L2
+    /// @dev It's used to set ratios for the allowed fee tokens
+    address public constant L2_FEE_TOKEN_PRICER = address(0xfffb);
 
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
@@ -93,7 +98,7 @@ contract CommonBridge is
     mapping(bytes32 => uint256) public privilegedTxDeadline;
 
     /// @dev Deprecated variable.
-	  /// @notice The L1 token address that is treated as the one to be bridged to the L2.
+    /// @notice The L1 token address that is treated as the one to be bridged to the L2.
     /// @dev If set to address(0), ETH is considered the native token.
     /// Otherwise, this address is used for native token deposits and withdrawals.
     address public NATIVE_TOKEN_L1;
@@ -498,6 +503,39 @@ contract CommonBridge is
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
+    /// @inheritdoc ICommonBridge
+    function setFeeTokenRatio(
+        address feeToken,
+        uint256 ratio
+    ) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenPricer.setFeeTokenRatio,
+            (feeToken, ratio)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_PRICER,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function unsetFeeTokenRatio(address feeToken) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenPricer.unsetFeeTokenRatio,
+            (feeToken)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_PRICER,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
     /// @notice Allow owner to upgrade the contract.
     /// @param newImplementation the address of the new implementation
     function _authorizeUpgrade(
@@ -514,3 +552,4 @@ contract CommonBridge is
         _unpause();
     }
 }
+
