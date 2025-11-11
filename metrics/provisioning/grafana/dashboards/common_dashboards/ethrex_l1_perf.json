@@ -1658,7 +1658,7 @@
             "h": 14,
             "w": 7,
             "x": 0,
-            "y": 54
+            "y": 28
           },
           "id": 113,
           "options": {
@@ -1694,7 +1694,7 @@
               "refId": "A"
             }
           ],
-          "title": "Engine Request Rate by Method",
+          "title": "Engine Request Rate by Method - $instance",
           "type": "timeseries"
         },
         {
@@ -1730,7 +1730,7 @@
             "h": 14,
             "w": 5,
             "x": 7,
-            "y": 54
+            "y": 28
           },
           "id": 115,
           "interval": "10ss",
@@ -1777,7 +1777,7 @@
               "refId": "A"
             }
           ],
-          "title": "Engine Latency by Methods (AVG Duration)",
+          "title": "Engine Latency by Methods (AVG Duration) - $instance",
           "type": "bargauge"
         },
         {
@@ -1846,7 +1846,7 @@
             "h": 14,
             "w": 12,
             "x": 12,
-            "y": 54
+            "y": 28
           },
           "id": 112,
           "interval": "10ss",
@@ -1885,7 +1885,7 @@
               "refId": "A"
             }
           ],
-          "title": "Engine Latency by Method",
+          "title": "Engine Latency by Method - $instance",
           "type": "timeseries"
         }
       ],
@@ -1928,7 +1928,7 @@
             "h": 14,
             "w": 7,
             "x": 0,
-            "y": 55
+            "y": 29
           },
           "id": 103,
           "options": {
@@ -1973,7 +1973,7 @@
               "refId": "A"
             }
           ],
-          "title": "RPC Average Time per Method",
+          "title": "RPC Average Time per Method - $instance",
           "type": "piechart"
         },
         {
@@ -2036,7 +2036,7 @@
             "h": 14,
             "w": 5,
             "x": 7,
-            "y": 55
+            "y": 29
           },
           "id": 104,
           "options": {
@@ -2067,7 +2067,7 @@
               "refId": "A"
             }
           ],
-          "title": "Slowest RPC Methods (Avg Duration)",
+          "title": "Slowest RPC Methods (Avg Duration) - $instance",
           "transformations": [
             {
               "id": "organize",
@@ -2144,13 +2144,39 @@
               },
               "unit": "reqps"
             },
-            "overrides": []
+            "overrides": [
+              {
+                "__systemRef": "hideSeriesFrom",
+                "matcher": {
+                  "id": "byNames",
+                  "options": {
+                    "mode": "exclude",
+                    "names": [
+                      "eth_gasPrice",
+                      "eth_blockNumber"
+                    ],
+                    "prefix": "All except:",
+                    "readOnly": true
+                  }
+                },
+                "properties": [
+                  {
+                    "id": "custom.hideFrom",
+                    "value": {
+                      "legend": false,
+                      "tooltip": true,
+                      "viz": true
+                    }
+                  }
+                ]
+              }
+            ]
           },
           "gridPos": {
             "h": 14,
             "w": 6,
             "x": 12,
-            "y": 55
+            "y": 29
           },
           "id": 101,
           "options": {
@@ -2187,7 +2213,7 @@
               "refId": "A"
             }
           ],
-          "title": "RPC Request Rate by Method",
+          "title": "RPC Request Rate by Method - $instance",
           "type": "timeseries"
         },
         {
@@ -2252,7 +2278,7 @@
             "h": 14,
             "w": 6,
             "x": 18,
-            "y": 55
+            "y": 29
           },
           "id": 102,
           "options": {
@@ -2287,7 +2313,7 @@
               "refId": "A"
             }
           ],
-          "title": "RPC Latency by Methods",
+          "title": "RPC Latency by Methods - $instance",
           "type": "timeseries"
         }
       ],
@@ -3281,7 +3307,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 1327
+            "y": 1424
           },
           "id": 56,
           "options": {
@@ -3380,7 +3406,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 1327
+            "y": 1424
           },
           "id": 57,
           "options": {
@@ -3480,7 +3506,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 1327
+            "y": 1424
           },
           "id": 58,
           "options": {
@@ -3602,5 +3628,5 @@
   "timezone": "utc",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 10
+  "version": 39
 }
