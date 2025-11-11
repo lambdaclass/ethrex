@@ -28,7 +28,6 @@ use spawned_concurrency::tasks::{
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
-use std::u64;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
@@ -457,7 +456,7 @@ impl L1Watcher {
         }
         Ok(acc_logs
             .iter()
-            .map(|(msg, _, chain_id)| (msg.clone(), chain_id.clone()))
+            .map(|(msg, _, chain_id)| (msg.clone(), *chain_id))
             .collect())
     }
 }

@@ -360,11 +360,14 @@ fn execute_stateless(
 }
 
 #[cfg(feature = "l2")]
+type MessagesAndPrivilegedTransactions =
+    (Vec<L1Message>, Vec<L2Message>, Vec<PrivilegedL2Transaction>);
+
+#[cfg(feature = "l2")]
 fn get_batch_messages_and_privileged_transactions(
     blocks: &[Block],
     receipts: &[Vec<Receipt>],
-) -> Result<(Vec<L1Message>, Vec<L2Message>, Vec<PrivilegedL2Transaction>), StatelessExecutionError>
-{
+) -> Result<MessagesAndPrivilegedTransactions, StatelessExecutionError> {
     let mut l1messages = vec![];
     let mut privileged_transactions = vec![];
     let mut l2messages = vec![];
