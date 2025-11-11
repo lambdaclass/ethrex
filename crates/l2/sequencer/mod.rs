@@ -138,6 +138,7 @@ pub async fn start_l2(
         super_blockchain.main_blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
+        l1_committer.as_ref().unwrap().clone(),
     )
     .await
     .inspect_err(|err| {

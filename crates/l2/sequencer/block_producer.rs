@@ -1,5 +1,6 @@
 mod payload_builder;
 use std::{
+    str::FromStr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -14,6 +15,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_common::H256;
+use ethrex_levm::hooks::l2_hook::COMMON_BRIDGE_L2_ADDRESS;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
@@ -27,6 +29,7 @@ use tracing::{debug, error, info, warn};
 use crate::{
     BlockProducerConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
+    sequencer::l1_committer::{self, L1Committer},
 };
 
 use super::errors::BlockProducerError;
@@ -62,6 +65,7 @@ pub struct BlockProducer {
     // Needed to ensure privileged tx nonces are sequential
     last_privileged_nonce: Option<u64>,
     block_gas_limit: u64,
+    committer: GenServerHandle<L1Committer>,
 }
 
 #[derive(Clone, Serialize)]
@@ -79,6 +83,7 @@ impl BlockProducer {
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
+        committer: GenServerHandle<L1Committer>,
     ) -> Self {
         let BlockProducerConfig {
             block_time_ms,
@@ -114,6 +119,7 @@ impl BlockProducer {
             // FIXME: Initialize properly to the last privileged nonce in the chain
             last_privileged_nonce: None,
             block_gas_limit: *block_gas_limit,
+            committer,
         }
     }
 
@@ -123,6 +129,7 @@ impl BlockProducer {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        committer: GenServerHandle<L1Committer>,
     ) -> Result<GenServerHandle<BlockProducer>, BlockProducerError> {
         let mut block_producer = Self::new(
             &cfg.block_producer,
@@ -130,6 +137,7 @@ impl BlockProducer {
             rollup_store,
             blockchain,
             sequencer_state,
+            committer,
         )
         .start_blocking();
         block_producer
@@ -179,6 +187,16 @@ impl BlockProducer {
             self.block_gas_limit,
         )
         .await?;
+        let deposits = payload_build_result.receipts.iter().any(|receipt| {
+            receipt.logs.iter().any(|log| {
+                log.address == COMMON_BRIDGE_L2_ADDRESS
+                    && log.topics[0]
+                        == H256::from_str(
+                            "0x85a190caa61692b36b63a55e069330d18ab9af179fed7a25c16a4262bc63b7d2",
+                        )
+                        .unwrap()
+            })
+        });
         info!(
             "Built payload for new block {}",
             payload_build_result.payload.header.number
@@ -231,6 +249,12 @@ impl BlockProducer {
             let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
         );
+
+        if deposits {
+            self.committer
+                .cast(l1_committer::InMessage::ForceCommit)
+                .await?;
+        }
 
         Ok(())
     }

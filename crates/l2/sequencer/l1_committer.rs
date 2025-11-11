@@ -83,6 +83,7 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Commit,
+    ForceCommit,
 }
 
 #[derive(Clone)]
@@ -1137,7 +1138,7 @@ impl GenServer for L1Committer {
     // Right now we only have the `Commit` message, so we ignore the `message` parameter
     async fn handle_cast(
         &mut self,
-        _message: Self::CastMsg,
+        message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
@@ -1164,8 +1165,8 @@ impl GenServer for L1Committer {
             }
 
             let commit_time: u128 = self.commit_time_ms.into();
-            let should_send_commitment =
-                current_time - self.last_committed_batch_timestamp > commit_time;
+            let should_send_commitment = matches!(message, InMessage::ForceCommit)
+                || current_time - self.last_committed_batch_timestamp > commit_time;
 
             debug!(
                 last_committed_batch_at = self.last_committed_batch_timestamp,
