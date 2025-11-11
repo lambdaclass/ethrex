@@ -43,7 +43,7 @@ use std::{
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
 };
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
@@ -540,17 +540,10 @@ impl Store {
         };
         let bytes = Bytes::from_owner(bytes);
         let (bytecode, targets) = decode_bytes(&bytes)?;
-        let (targets, rest) = decode_bytes(targets)?;
-        if !rest.is_empty() || !targets.len().is_multiple_of(2) {
-            return Err(StoreError::DecodeError);
-        }
         let code = Code {
             hash: code_hash,
             bytecode: Bytes::copy_from_slice(bytecode),
-            jump_targets: targets
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect(),
+            jump_targets: <Vec<_>>::decode(targets)?,
         };
         Ok(Some(code))
     }
@@ -558,14 +551,16 @@ impl Store {
     /// Add account code
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
-        let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+        let mut buf = Vec::with_capacity(
+            6 + code.bytecode.len()
+                + code
+                    .jump_targets
+                    .iter()
+                    .map(std::mem::size_of_val)
+                    .sum::<usize>(),
+        );
         code.bytecode.encode(&mut buf);
-        code.jump_targets
-            .into_iter()
-            .flat_map(|t| t.to_le_bytes())
-            .collect::<Vec<u8>>()
-            .as_slice()
-            .encode(&mut buf);
+        code.jump_targets.encode(&mut buf);
         self.write_async(ACCOUNT_CODES, hash_key, buf).await
     }
 
@@ -1054,14 +1049,16 @@ impl Store {
     ) -> Result<(), StoreError> {
         let mut batch_items = Vec::new();
         for (code_hash, code) in account_codes {
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(
+                6 + code.bytecode.len()
+                    + code
+                        .jump_targets
+                        .iter()
+                        .map(std::mem::size_of_val)
+                        .sum::<usize>(),
+            );
             code.bytecode.encode(&mut buf);
-            code.jump_targets
-                .into_iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>()
-                .as_slice()
-                .encode(&mut buf);
+            code.jump_targets.encode(&mut buf);
             batch_items.push((code_hash.as_bytes().to_vec(), buf));
         }
 
@@ -1224,8 +1221,6 @@ impl Store {
             .state_root;
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
-        let _span = tracing::trace_span!("Block DB update").entered();
-
         let UpdateBatch {
             account_updates,
             storage_updates,
@@ -1283,14 +1278,16 @@ impl Store {
         }
 
         for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(
+                6 + code.bytecode.len()
+                    + code
+                        .jump_targets
+                        .iter()
+                        .map(std::mem::size_of_val)
+                        .sum::<usize>(),
+            );
             code.bytecode.encode(&mut buf);
-            code.jump_targets
-                .into_iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>()
-                .as_slice()
-                .encode(&mut buf);
+            code.jump_targets.encode(&mut buf);
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
         }
 
@@ -1534,7 +1531,6 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
-    #[instrument(level = "trace", name = "Trie update", skip_all)]
     pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
@@ -2571,6 +2567,7 @@ fn flatkeyvalue_generator(
                 *last_computed_fkv
                     .lock()
                     .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
+                ctr = 0;
             }
 
             let mut iter_inner = Trie::open(
@@ -2600,6 +2597,7 @@ fn flatkeyvalue_generator(
                     *last_computed_fkv
                         .lock()
                         .map_err(|_| StoreError::LockError)? = key.into_vec();
+                    ctr = 0;
                 }
                 fkv_check_for_stop_msg(control_rx)?;
                 Ok(())

@@ -3162,6 +3162,8 @@ dependencies = [
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
@@ -3563,6 +3565,7 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "jsonwebtoken 9.3.1",
+ "mocks",
  "rand 0.8.5",
  "reqwest 0.12.24",
  "secp256k1 0.30.0",
@@ -3570,6 +3573,8 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sha3",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -5752,6 +5757,19 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "mocks"
+version = "4.0.0"
+dependencies = [
+ "ethrex-blockchain",
+ "ethrex-p2p",
+ "ethrex-storage 5.0.0",
+ "log",
+ "spawned-concurrency",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

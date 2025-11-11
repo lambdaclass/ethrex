@@ -58,6 +58,8 @@ impl RocksDBBackend {
         opts.set_enable_write_thread_adaptive_yield(true);
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
+        opts.set_compression_type(rocksdb::DBCompressionType::None);
+        opts.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
         // opts.enable_statistics();
         // opts.set_stats_dump_period_sec(600);
@@ -77,10 +79,10 @@ impl RocksDBBackend {
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
+            cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
 
             match cf_name.as_str() {
                 HEADERS | BODIES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(4);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
@@ -90,7 +92,6 @@ impl RocksDBBackend {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
@@ -101,7 +102,6 @@ impl RocksDBBackend {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 TRIE_NODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
@@ -114,7 +114,6 @@ impl RocksDBBackend {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 RECEIPTS | ACCOUNT_CODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
@@ -125,7 +124,6 @@ impl RocksDBBackend {
                 }
                 _ => {
                     // Default for other CFs
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
