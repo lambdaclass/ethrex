@@ -75,7 +75,7 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
 
       --p2p.port <PORT>
@@ -147,7 +147,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 5.0.0"]
+          [default: "ethrex 6.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -238,7 +238,7 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
 
       --p2p.port <PORT>
@@ -310,7 +310,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 5.0.0"]
+          [default: "ethrex 6.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

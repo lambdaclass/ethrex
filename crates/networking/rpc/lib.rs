@@ -18,6 +18,9 @@ pub use clients::{EngineClient, EthClient};
 
 pub use rpc::{start_api, start_block_executor};
 
+#[cfg(test)]
+mod test_utils;
+
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to
 // export them in the public API of this crate.
 pub use eth::{
