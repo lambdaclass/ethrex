@@ -105,6 +105,8 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
+        // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
+        // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
