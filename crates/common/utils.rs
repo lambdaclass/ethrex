@@ -79,19 +79,6 @@ pub fn truncate_array<const N: usize, const M: usize>(data: [u8; N]) -> [u8; M] 
     res
 }
 
-/// Splits an array in two at position M.
-/// Fails compilation if N != M + L.
-pub fn split_array<const N: usize, const M: usize, const L: usize>(
-    data: [u8; N],
-) -> ([u8; M], [u8; L]) {
-    const { assert!(N == M + L) };
-    let mut before = [0u8; M];
-    let mut after = [0u8; L];
-    before.copy_from_slice(&data[..M]);
-    after.copy_from_slice(&data[M..]);
-    (before, after)
-}
-
 #[cfg(test)]
 mod test {
     use ethereum_types::U256;
