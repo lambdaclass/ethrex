@@ -56,14 +56,14 @@ impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.store
-            .get_account_state_by_root(self.state_root, address)
+            .get_account_state_by_root(self.state_root, address, &self.trie_layer_cache)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
-            .get_storage_at_root(self.state_root, address, key, self.trie_layer_cache.clone())
+            .get_storage_at_root(self.state_root, address, key, &self.trie_layer_cache)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 

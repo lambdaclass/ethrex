@@ -5,6 +5,7 @@ use crate::{api::StoreEngine, apply_prefix};
 use crate::{error::StoreError, trie_db::layering::TrieLayerCache};
 
 use ethereum_types::{Address, H256, U256};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{
@@ -720,7 +721,7 @@ impl Store {
     ) -> Result<Option<U256>, StoreError> {
         match self.get_block_header(block_number)? {
             Some(header) => {
-                self.get_storage_at_root(header.state_root, address, storage_key, trie_layer_cache)
+                self.get_storage_at_root(header.state_root, address, storage_key, &trie_layer_cache)
             }
             None => Ok(None),
         }
@@ -743,38 +744,47 @@ impl Store {
         state_root: H256,
         address: Address,
         storage_key: H256,
-        trie_layer_cache: Arc<TrieLayerCache>,
+        trie_layer_cache: &Arc<TrieLayerCache>,
     ) -> Result<Option<U256>, StoreError> {
         let hashed_address = hash_address(&address);
         let account_hash = H256::from_slice(&hashed_address);
-        let storage_root = if self.engine.flatkeyvalue_computed(account_hash)? {
+        let storage_root_needed = if self.engine.flatkeyvalue_computed(account_hash)? {
             // We will use FKVs, we don't need the root
-            *EMPTY_TRIE_HASH
+            false
         } else {
-            let Some(account) = self.get_account_state_by_root(state_root, address)? else {
+            let Some(account) =
+                self.get_account_state_by_root(state_root, address, trie_layer_cache)?
+            else {
                 return Ok(None);
             };
-            account.storage_root
+            if account.storage_root == *EMPTY_TRIE_HASH {
+                return Ok(None);
+            }
+            true
         };
+        let hashed_key = hash_key(&storage_key);
+        let prefixed_key = apply_prefix(Some(account_hash), Nibbles::from_bytes(&hashed_key));
         // let's check the cache now
-        let value = trie_layer_cache
-            .get(state_root, storage_key.as_bytes())
-            .map(|datum| U256::decode(&datum))
-            .transpose()?;
+        let value = trie_layer_cache.get(state_root, prefixed_key.as_ref());
 
         let value = match value {
             Some(val) => Some(val),
             None => {
+                let storage_trie = self.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+                let storage_root = if storage_root_needed {
+                    let rlp = storage_trie.db().get(Nibbles::default())?;
+                    rlp.map(|data| keccak(data)).unwrap_or(*EMPTY_TRIE_HASH)
+                } else {
+                    *EMPTY_TRIE_HASH
+                };
                 let storage_trie = self.open_direct_storage_trie(account_hash, storage_root)?;
-                let hashed_key = hash_key(&storage_key);
-                storage_trie
-                    .get(&hashed_key)?
-                    .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-                    .transpose()?
+                storage_trie.get(&hashed_key)?
             }
         };
-
-        Ok(value)
+        value
+            .filter(|rlp| !rlp.is_empty())
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
     }
 
     pub fn get_storage_at_root_old(
@@ -955,9 +965,28 @@ impl Store {
         &self,
         state_root: H256,
         address: Address,
+        trie_layer_cache: &Arc<TrieLayerCache>,
     ) -> Result<Option<AccountState>, StoreError> {
-        let state_trie = self.open_state_trie(state_root)?;
-        self.get_account_state_from_trie(&state_trie, address)
+        let hashed_address = hash_address(&address);
+        if let Some(rlp) =
+            trie_layer_cache.get(state_root, Nibbles::from_bytes(&hashed_address).as_ref())
+        {
+            if rlp.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(AccountState::decode(&rlp)?));
+        }
+        let state_trie = self.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+        let root = state_trie
+            .db()
+            .get(Nibbles::default())?
+            .map(|data| keccak(data))
+            .unwrap_or(*EMPTY_TRIE_HASH);
+        let state_trie = self.open_direct_state_trie(root)?;
+        state_trie
+            .get(&hashed_address)?
+            .map(|rlp| AccountState::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
     }
 
     pub fn get_account_state_from_trie(
