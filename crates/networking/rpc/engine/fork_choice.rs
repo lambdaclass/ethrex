@@ -241,14 +241,20 @@ async fn handle_forkchoice(
     {
         Ok(head) => {
             // Fork Choice was succesful, the node is up to date with the current chain
-            context.blockchain.set_synced();
+            context
+                .super_blockchain
+                .main_blockchain
+                .clone()
+                .set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             match context.storage.get_block_by_hash(head.hash()).await {
                 Ok(Some(block)) => {
                     // Remove executed transactions from mempool
                     context
-                        .blockchain
+                        .super_blockchain
+                        .main_blockchain
+                        .clone()
                         .remove_block_transactions_from_pool(&block)?;
                 }
                 Ok(None) => {
@@ -405,8 +411,14 @@ async fn build_payload(
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
     context
-        .blockchain
-        .initiate_payload_build(payload, payload_id)
+        .super_blockchain
+        .main_blockchain
+        .clone()
+        .initiate_payload_build(
+            payload,
+            payload_id,
+            context.super_blockchain.secondary_blockchain.clone(),
+        )
         .await;
     Ok(payload_id)
 }

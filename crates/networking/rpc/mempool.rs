@@ -25,7 +25,7 @@ struct MempoolStatus {
 
 /// Handling of rpc endpoint `mempool_content`
 pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
-    let transactions = context.blockchain.mempool.content()?;
+    let transactions = context.super_blockchain.main_blockchain.mempool.content()?;
     // Group transactions by sender and nonce and map them to rpc transactions
     let mut mempool_content = MempoolContentEntry::new();
     for tx in transactions {
@@ -41,7 +41,7 @@ pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
 }
 
 pub async fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
-    let pending = context.blockchain.mempool.status()?;
+    let pending = context.super_blockchain.main_blockchain.mempool.status()?;
     // We have no concept of "queued" transactions yet so we will leave this as 0
     let queued = 0;
 

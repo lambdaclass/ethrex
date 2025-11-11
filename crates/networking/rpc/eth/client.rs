@@ -50,8 +50,8 @@ impl RpcHandler for Syncing {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        if context.blockchain.is_synced() {
-            Ok(Value::Bool(!context.blockchain.is_synced()))
+        if context.super_blockchain.main_blockchain.is_synced() {
+            Ok(Value::Bool(false))
         } else {
             let syncing_status = SyncingStatusRpc {
                 starting_block: context.storage.get_earliest_block_number().await?,

@@ -72,7 +72,8 @@ pub async fn handle_execution_witness(
 
     let execution_witness = context
         .l1_ctx
-        .blockchain
+        .super_blockchain
+        .main_blockchain
         .generate_witness_for_blocks_with_fee_configs(&blocks, Some(&fee_configs))
         .await
         .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;

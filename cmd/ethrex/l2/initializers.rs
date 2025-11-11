@@ -1,14 +1,15 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_l1, init_network, init_store,
+    get_network, get_signer, init_blockchain, init_l1, init_l1_blockchain, init_network,
+    init_store,
 };
 use crate::l2::deployer::{DeployerOptions, deploy_l1_contracts};
 use crate::l2::{CommitterOptions, L2Options, SequencerOptions, WatcherOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
-use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
+use ethrex_blockchain::{Blockchain, BlockchainType, L2Config, SuperBlockchain};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
@@ -27,7 +28,6 @@ use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::SecretKey;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
-use tokio::time::sleep;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
@@ -42,7 +42,7 @@ async fn init_rpc_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
-    blockchain: Arc<Blockchain>,
+    super_blockchain: Arc<SuperBlockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     rollup_store: StoreRollup,
@@ -56,7 +56,7 @@ async fn init_rpc_api(
         peer_handler.clone(),
         &opts.syncmode,
         cancel_token,
-        blockchain.clone(),
+        super_blockchain.main_blockchain.clone(),
         store.clone(),
         opts.datadir.clone(),
     )
@@ -66,7 +66,7 @@ async fn init_rpc_api(
         get_http_socket_addr(opts),
         get_authrpc_socket_addr(opts),
         store,
-        blockchain,
+        super_blockchain,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         local_p2p_node,
         local_node_record,
@@ -146,12 +146,7 @@ pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Regist
     }
 }
 
-pub async fn init_supernode(
-    opts: L2Options,
-    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<()> {
-    raise_fd_limit()?;
-
+async fn init_l2_store(opts: &L2Options) -> eyre::Result<(Arc<Blockchain>, Store, StoreRollup)> {
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = datadir.join("rollup_store");
@@ -186,17 +181,56 @@ pub async fn init_supernode(
         perf_logs_enabled: true,
     };
 
-    let blockchain = init_blockchain(store.clone(), blockchain_opts.clone(), None);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
     regenerate_head_state(&store, &rollup_store, &blockchain).await?;
+
+    Ok((blockchain, store, rollup_store))
+}
+
+pub async fn init_supernode(
+    opts: L2Options,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+) -> eyre::Result<()> {
+    raise_fd_limit()?;
+
+    let (l2_blockchain, l2_store, rollup_store) = init_l2_store(&opts).await?;
+
+    let l1_opts = crate::cli::Options::default_l1();
+    let (l1_blockchain, l1_store) = {
+        let datadir = &l1_opts.datadir;
+        init_datadir(datadir);
+
+        let network = get_network(&l1_opts);
+        init_l1_blockchain(datadir, &network, &l1_opts).await?
+    };
+
+    let l1_super_blockchain = Arc::new(SuperBlockchain {
+        main_blockchain: l1_blockchain.clone(),
+        secondary_blockchain: Some(l2_blockchain.clone()),
+    });
+
+    let l2_super_blockchain = Arc::new(SuperBlockchain {
+        main_blockchain: l2_blockchain.clone(),
+        secondary_blockchain: Some(l1_blockchain),
+    });
 
     let l1 = init_l1(
         crate::cli::Options::default_l1(),
         log_filter_handler.clone(),
-        Some(blockchain.clone()),
+        Some((l1_super_blockchain, l1_store)),
     )
     .await?;
-    let contract_addresses = deploy_l1_contracts(DeployerOptions::default()).await?;
+
+    let contract_addresses = deploy_l1_contracts(DeployerOptions {
+        deposit_rich: false,
+        committer_l1_address: Address::from_slice(
+            &hex::decode("D8F3183DEF51A987222D845be228e0Bbb932C222").unwrap(),
+        ),
+        validium: true,
+        ..Default::default()
+    })
+    .await?;
     let l2 = init_l2(
         L2Options {
             sequencer_opts: SequencerOptions {
@@ -212,7 +246,7 @@ pub async fn init_supernode(
             },
             ..opts
         },
-        Some((blockchain, store, rollup_store)),
+        Some((l2_super_blockchain, l2_store, rollup_store)),
         log_filter_handler,
     )
     .await?;
@@ -222,7 +256,7 @@ pub async fn init_supernode(
 
 pub async fn init_l2(
     opts: L2Options,
-    prebuilt_blockchain: Option<(Arc<Blockchain>, Store, StoreRollup)>,
+    prebuilt_blockchain: Option<(Arc<SuperBlockchain>, Store, StoreRollup)>,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
     raise_fd_limit()?;
@@ -233,8 +267,8 @@ pub async fn init_l2(
     let checkpoints_dir = datadir.clone();
     let genesis = network.get_genesis()?;
 
-    let (blockchain, store, rollup_store) = if let Some((b, s, r)) = prebuilt_blockchain {
-        (b, s, r)
+    let (super_blockchain, store, rollup_store) = if let Some((sb, s, r)) = prebuilt_blockchain {
+        (sb, s, r)
     } else {
         init_datadir(&opts.node_opts.datadir);
         let rollup_store_dir = datadir.join("rollup_store");
@@ -266,11 +300,16 @@ pub async fn init_l2(
             perf_logs_enabled: true,
         };
 
-        let blockchain = init_blockchain(store.clone(), blockchain_opts.clone(), None);
+        let blockchain = init_blockchain(store.clone(), blockchain_opts);
 
         regenerate_head_state(&store, &rollup_store, &blockchain).await?;
 
-        (blockchain, store, rollup_store)
+        let super_blockchain = Arc::new(SuperBlockchain {
+            main_blockchain: blockchain,
+            secondary_blockchain: None,
+        });
+
+        (super_blockchain, store, rollup_store)
     };
 
     let signer = get_signer(&datadir);
@@ -291,7 +330,7 @@ pub async fn init_l2(
         signer,
         peer_table.clone(),
         store.clone(),
-        blockchain.clone(),
+        super_blockchain.main_blockchain.clone(),
         get_client_version(),
         #[cfg(feature = "l2")]
         Some(P2PBasedContext {
@@ -327,7 +366,7 @@ pub async fn init_l2(
         local_p2p_node.clone(),
         local_node_record.clone(),
         store.clone(),
-        blockchain.clone(),
+        super_blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
         rollup_store.clone(),
@@ -357,7 +396,7 @@ pub async fn init_l2(
             &datadir,
             peer_handler.clone(),
             tracker,
-            blockchain.clone(),
+            super_blockchain.main_blockchain.clone(),
             p2p_context,
         )
         .await;
@@ -374,7 +413,7 @@ pub async fn init_l2(
     let l2_sequencer = ethrex_l2::start_l2(
         store,
         rollup_store,
-        blockchain,
+        super_blockchain,
         l2_sequencer_cfg,
         cancellation_token.clone(),
         l2_url,

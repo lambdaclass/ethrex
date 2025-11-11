@@ -518,7 +518,7 @@ pub async fn import_blocks(
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
-    let blockchain = init_blockchain(store.clone(), blockchain_opts, None);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.

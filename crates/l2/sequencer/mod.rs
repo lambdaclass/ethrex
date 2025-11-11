@@ -8,7 +8,7 @@ use crate::sequencer::admin_server::start_api;
 use crate::sequencer::errors::SequencerError;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::SuperBlockchain;
 use ethrex_common::types::Genesis;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_storage::Store;
@@ -43,7 +43,7 @@ pub mod utils;
 pub async fn start_l2(
     store: Store,
     rollup_store: StoreRollup,
-    blockchain: Arc<Blockchain>,
+    super_blockchain: Arc<SuperBlockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
     _l2_url: Url,
@@ -90,7 +90,7 @@ pub async fn start_l2(
 
     let l1_watcher = L1Watcher::spawn(
         store.clone(),
-        blockchain.clone(),
+        super_blockchain.main_blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
     )
@@ -100,7 +100,7 @@ pub async fn start_l2(
     });
     let l1_committer = L1Committer::spawn(
         store.clone(),
-        blockchain.clone(),
+        super_blockchain.clone(),
         rollup_store.clone(),
         cfg.clone(),
         shared_state.clone(),
@@ -135,7 +135,7 @@ pub async fn start_l2(
     let block_producer = BlockProducer::spawn(
         store.clone(),
         rollup_store.clone(),
-        blockchain.clone(),
+        super_blockchain.main_blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
     )
@@ -163,7 +163,7 @@ pub async fn start_l2(
         let _ = StateUpdater::spawn(
             cfg.clone(),
             shared_state.clone(),
-            blockchain.clone(),
+            super_blockchain.main_blockchain.clone(),
             store.clone(),
             rollup_store.clone(),
         )
@@ -176,7 +176,7 @@ pub async fn start_l2(
             &cfg,
             store.clone(),
             rollup_store.clone(),
-            blockchain,
+            super_blockchain.main_blockchain.clone(),
             shared_state.clone(),
         )
         .await

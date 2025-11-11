@@ -78,6 +78,12 @@ pub struct L2Config {
 }
 
 #[derive(Debug)]
+pub struct SuperBlockchain {
+    pub main_blockchain: Arc<Blockchain>,
+    pub secondary_blockchain: Option<Arc<Blockchain>>,
+}
+
+#[derive(Debug)]
 pub struct Blockchain {
     storage: Store,
     pub mempool: Mempool,
@@ -89,7 +95,6 @@ pub struct Blockchain {
     /// Mapping from a payload id to either a complete payload or a payload build task
     /// We need to keep completed payloads around in case consensus requests them twice
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
-    l2_blockchain: Option<Arc<Blockchain>>,
 }
 
 #[derive(Debug, Clone)]
@@ -129,18 +134,13 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(
-        store: Store,
-        blockchain_opts: BlockchainOptions,
-        l2_blockchain: Option<Arc<Blockchain>>,
-    ) -> Self {
+    pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
         Self {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
-            l2_blockchain,
         }
     }
 
@@ -151,7 +151,6 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
-            l2_blockchain: None,
         }
     }
 

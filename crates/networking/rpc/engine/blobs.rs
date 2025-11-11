@@ -65,7 +65,13 @@ impl RpcHandler for BlobsV1Request {
 
         let mut res: Vec<Option<BlobAndProofV1>> = vec![None; self.blob_versioned_hashes.len()];
 
-        for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
+        for blobs_bundle in context
+            .super_blockchain
+            .main_blockchain
+            .clone()
+            .mempool
+            .get_blobs_bundle_pool()?
+        {
             // Go over all blobs bundles from the blobs bundle pool.
             let blobs_in_bundle = blobs_bundle.blobs;
             let commitments_in_bundle = blobs_bundle.commitments;
@@ -130,7 +136,13 @@ impl RpcHandler for BlobsV2Request {
 
         let mut res: Vec<Option<BlobAndProofV2>> = vec![None; self.blob_versioned_hashes.len()];
 
-        for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
+        for blobs_bundle in context
+            .super_blockchain
+            .main_blockchain
+            .clone()
+            .mempool
+            .get_blobs_bundle_pool()?
+        {
             // Go over all blobs bundles from the blobs bundle pool.
             let blobs_in_bundle = blobs_bundle.blobs;
             let commitments_in_bundle = blobs_bundle.commitments;

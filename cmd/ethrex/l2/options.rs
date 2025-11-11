@@ -383,7 +383,8 @@ pub struct WatcherOptions {
         value_name = "ADDRESS",
         env = "ETHREX_WATCHER_BRIDGE_ADDRESS",
         help_heading = "L1 Watcher options",
-        required_unless_present = "dev"
+        required_unless_present = "dev",
+        required_unless_present = "supernode"
     )]
     pub bridge_address: Option<Address>,
     #[arg(
@@ -574,7 +575,8 @@ pub struct CommitterOptions {
         value_name = "ADDRESS",
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
         help_heading = "L1 Committer options",
-        required_unless_present = "dev"
+        required_unless_present = "dev",
+        required_unless_present = "supernode"
     )]
     pub on_chain_proposer_address: Option<Address>,
     #[arg(

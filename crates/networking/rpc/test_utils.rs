@@ -3,7 +3,7 @@ use crate::{
     rpc::{NodeData, RpcApiContext, start_api, start_block_executor},
 };
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, SuperBlockchain};
 use ethrex_common::{
     Address, Bloom, H256, H512, U256,
     constants::DEFAULT_REQUESTS_HASH,
@@ -233,6 +233,10 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         .await
         .expect("Failed to build test genesis");
     let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+    let super_chain = Arc::new(SuperBlockchain {
+        main_blockchain: blockchain,
+        secondary_blockchain: None,
+    });
     let jwt_secret = Default::default();
     let local_p2p_node = example_p2p_node();
     let local_node_record = example_local_node_record();
@@ -242,7 +246,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             Some(ws_addr),
             authrpc_addr,
             storage,
-            blockchain,
+            super_chain,
             jwt_secret,
             local_p2p_node,
             local_node_record,
@@ -260,11 +264,15 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
 
 pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
     let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+    let super_blockchain = Arc::new(SuperBlockchain {
+        main_blockchain: blockchain.clone(),
+        secondary_blockchain: None,
+    });
     let local_node_record = example_local_node_record();
-    let block_worker_channel = start_block_executor(blockchain.clone());
+    let block_worker_channel = start_block_executor(blockchain);
     RpcApiContext {
         storage,
-        blockchain,
+        super_blockchain,
         active_filters: Default::default(),
         syncer: Arc::new(dummy_sync_manager().await),
         peer_handler: dummy_peer_handler().await,

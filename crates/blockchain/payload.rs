@@ -12,10 +12,10 @@ use ethrex_common::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, PrivilegedL2Transaction, Receipt, Transaction, TxType,
-        Withdrawal, bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
-        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
-        compute_withdrawals_root,
+        ChainConfig, GenericTransaction, MempoolTransaction, PrivilegedL2Transaction, Receipt,
+        Transaction, TxType, Withdrawal, bloom_from_logs, calc_excess_blob_gas,
+        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
+        compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -45,7 +45,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -339,13 +339,18 @@ impl Blockchain {
 
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
     /// The build process will run for the full block building timeslot or until `get_payload` is called
-    pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
+    pub async fn initiate_payload_build(
+        self: Arc<Blockchain>,
+        payload: Block,
+        payload_id: u64,
+        l2_blockchain: Option<Arc<Blockchain>>,
+    ) {
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
         let payload_build_task = tokio::task::spawn(async move {
             self_clone
-                .build_payload_loop(payload, cancel_token_clone)
+                .build_payload_loop(payload, cancel_token_clone, l2_blockchain)
                 .await
         });
         let mut payloads = self.payloads.lock().await;
@@ -368,18 +373,23 @@ impl Blockchain {
         self: Arc<Blockchain>,
         payload: Block,
         cancel_token: CancellationToken,
+        l2_blockchain: Option<Arc<Blockchain>>,
     ) -> Result<PayloadBuildResult, ChainError> {
         let start = Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         // TODO(#4997): start with an empty block
-        let res = self.build_payload(payload.clone()).await?;
+        let res = self
+            .build_payload(payload.clone(), l2_blockchain.clone())
+            .await?;
         let mut res2 = None;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
             let self_clone = self.clone();
-            let building_task =
-                tokio::task::spawn_blocking(async move || self_clone.build_payload(payload).await);
+            let l2_blockchain_clone = l2_blockchain.clone();
+            let building_task = tokio::task::spawn_blocking(async move || {
+                self_clone.build_payload(payload, l2_blockchain_clone).await
+            });
             // Cancel the current build process and return the previous payload if it is requested earlier
             // TODO(#5011): this doesn't stop the building task, but only keeps it running in the background,
             //   which wastes CPU resources.
@@ -397,7 +407,11 @@ impl Blockchain {
     }
 
     /// Completes the payload building process, return the block value
-    pub async fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+    pub async fn build_payload(
+        &self,
+        payload: Block,
+        l2_blockchain: Option<Arc<Blockchain>>,
+    ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -409,7 +423,7 @@ impl Blockchain {
             self.apply_system_operations(&mut context)?;
         }
         self.apply_withdrawals(&mut context)?;
-        self.fill_transactions(&mut context).await?;
+        self.fill_transactions(&mut context, l2_blockchain).await?;
         self.extract_requests(&mut context)?;
         self.finalize_payload(&mut context)?;
 
@@ -497,6 +511,7 @@ impl Blockchain {
     pub async fn fill_transactions(
         &self,
         context: &mut PayloadBuildContext,
+        l2_blockchain: Option<Arc<Blockchain>>,
     ) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
         let max_blob_number_per_block = chain_config
@@ -578,7 +593,6 @@ impl Blockchain {
                         )
                         && log.topics.first().is_some_and(|topic| *topic == H256::from_str("7d76dd36798b00b9c38def780dc4741f49a0f441afba4260388a8f5634eac186").unwrap())) {
 
-                            info!("PRIV TX");
                         let from = Address::from_slice(log.data.get(0x20-20..0x20).unwrap());
                         let to = Address::from_slice(log.data.get(0x40-20..0x40).unwrap());
                         let transaction_id = U256::from_big_endian(log.data.get(0x40..0x60).unwrap());
@@ -586,7 +600,7 @@ impl Blockchain {
                         let gas_limit = U256::from_big_endian(log.data.get(0x80..0xa0).unwrap());
                         let data_len = U256::from_big_endian(log.data.get(0xc0..0xe0).unwrap()).as_usize();
                         let data = log.data.get(0xe0..0xe0+data_len).unwrap();
-                        let l2 = self.l2_blockchain.clone().unwrap();
+                        let l2 = l2_blockchain.as_ref().unwrap();
                         l2.add_transaction_to_pool(Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction{
                             chain_id: l2.storage.chain_config.chain_id,
                             nonce: transaction_id.as_u64(),

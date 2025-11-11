@@ -111,7 +111,7 @@ impl RpcHandler for CallRequest {
             &self.transaction,
             &header,
             context.storage,
-            context.blockchain,
+            context.super_blockchain.main_blockchain.clone(),
         )
         .await?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
@@ -257,7 +257,8 @@ impl RpcHandler for GetTransactionByHashRequest {
             )?
         } else {
             let Some(tx) = context
-                .blockchain
+                .super_blockchain
+                .main_blockchain
                 .mempool
                 .get_transaction_by_hash(self.transaction_hash)?
             else {
@@ -348,7 +349,7 @@ impl RpcHandler for CreateAccessListRequest {
         };
 
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.clone());
-        let mut vm = context.blockchain.new_evm(vm_db)?;
+        let mut vm = context.super_blockchain.main_blockchain.new_evm(vm_db)?;
 
         // Run transaction and obtain access list
         let (gas_used, access_list, error) = vm.create_access_list(&self.transaction, &header)?;
@@ -397,7 +398,8 @@ impl RpcHandler for GetRawTransaction {
             .await?;
         if tx.is_none() {
             tx = context
-                .blockchain
+                .super_blockchain
+                .main_blockchain
                 .mempool
                 .get_transaction_by_hash(self.transaction_hash)?;
         }
@@ -436,7 +438,7 @@ impl RpcHandler for EstimateGasRequest {
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
-        let blockchain = &context.blockchain;
+        let blockchain = &context.super_blockchain.main_blockchain;
         let block = self.block.clone().unwrap_or_default();
         debug!("Requested estimate on block: {}", block);
         let block_header = match block.resolve_block_header(storage).await? {
@@ -603,7 +605,8 @@ impl RpcHandler for SendRawTransactionRequest {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             context
-                .blockchain
+                .super_blockchain
+                .main_blockchain
                 .add_blob_transaction_to_pool(
                     wrapped_blob_tx.tx.clone(),
                     wrapped_blob_tx.blobs_bundle.clone(),
@@ -611,7 +614,8 @@ impl RpcHandler for SendRawTransactionRequest {
                 .await
         } else {
             context
-                .blockchain
+                .super_blockchain
+                .main_blockchain
                 .add_transaction_to_pool(self.to_transaction())
                 .await
         }?;

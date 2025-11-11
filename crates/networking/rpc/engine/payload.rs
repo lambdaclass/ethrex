@@ -810,7 +810,9 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
             payload,
             ..
         } = context
-            .blockchain
+            .super_blockchain
+            .main_blockchain
+            .clone()
             .get_payload(payload_id)
             .await
             .map_err(|err| match err {

@@ -5,7 +5,7 @@ use crate::{
         read_jwtsecret_file, read_node_config_file,
     },
 };
-use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
+use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType, SuperBlockchain};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
@@ -125,13 +125,9 @@ pub fn open_store(datadir: &Path) -> Store {
     }
 }
 
-pub fn init_blockchain(
-    store: Store,
-    blockchain_opts: BlockchainOptions,
-    l2_blockchain: Option<Arc<Blockchain>>,
-) -> Arc<Blockchain> {
+pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_opts, l2_blockchain).into()
+    Blockchain::new(store, blockchain_opts).into()
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -141,7 +137,7 @@ pub async fn init_rpc_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
-    blockchain: Arc<Blockchain>,
+    super_blockchain: Arc<SuperBlockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -159,7 +155,7 @@ pub async fn init_rpc_api(
         peer_handler.clone(),
         syncmode,
         cancel_token,
-        blockchain.clone(),
+        super_blockchain.main_blockchain.clone(),
         store.clone(),
         opts.datadir.clone(),
     )
@@ -176,7 +172,7 @@ pub async fn init_rpc_api(
         ws_socket_opts,
         get_authrpc_socket_addr(opts),
         store,
-        blockchain,
+        super_blockchain,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         local_p2p_node,
         local_node_record,
@@ -381,27 +377,15 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
-pub async fn init_l1(
-    opts: Options,
-    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    l2_blockchain: Option<Arc<Blockchain>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir = &opts.datadir;
-    init_datadir(datadir);
-
-    let network = get_network(&opts);
-
+pub async fn init_l1_blockchain(
+    datadir: &Path,
+    network: &Network,
+    opts: &Options,
+) -> eyre::Result<(Arc<Blockchain>, Store)> {
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
 
-    raise_fd_limit()?;
-    debug!("Preloading KZG trusted setup");
-    ethrex_crypto::kzg::warm_up_trusted_setup();
-
     let store = init_store(datadir, genesis).await;
-
-    #[cfg(feature = "sync-test")]
-    set_sync_block(&store).await;
 
     let blockchain = init_blockchain(
         store.clone(),
@@ -410,10 +394,42 @@ pub async fn init_l1(
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
         },
-        l2_blockchain,
     );
 
     regenerate_head_state(&store, &blockchain).await?;
+
+    Ok((blockchain, store))
+}
+
+pub async fn init_l1(
+    opts: Options,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    blockchain_stuff: Option<(Arc<SuperBlockchain>, Store)>,
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+    let datadir = &opts.datadir;
+    init_datadir(datadir);
+
+    let network = get_network(&opts);
+
+    raise_fd_limit()?;
+    debug!("Preloading KZG trusted setup");
+    ethrex_crypto::kzg::warm_up_trusted_setup();
+
+    #[cfg(feature = "sync-test")]
+    set_sync_block(&store).await;
+
+    let (super_blockchain, store) = if let Some((super_blockchain, store)) = blockchain_stuff {
+        (super_blockchain, store)
+    } else {
+        let (blockchain, store) = init_l1_blockchain(datadir, &network, &opts).await?;
+        (
+            Arc::new(SuperBlockchain {
+                main_blockchain: blockchain,
+                secondary_blockchain: None,
+            }),
+            store,
+        )
+    };
 
     let signer = get_signer(datadir);
 
@@ -434,7 +450,7 @@ pub async fn init_l1(
         signer,
         peer_table.clone(),
         store.clone(),
-        blockchain.clone(),
+        super_blockchain.main_blockchain.clone(),
         get_client_version(),
         None,
         opts.tx_broadcasting_time_interval,
@@ -452,7 +468,7 @@ pub async fn init_l1(
         local_p2p_node,
         local_node_record.clone(),
         store.clone(),
-        blockchain.clone(),
+        super_blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
@@ -473,7 +489,7 @@ pub async fn init_l1(
             datadir,
             peer_handler.clone(),
             tracker.clone(),
-            blockchain.clone(),
+            super_blockchain.main_blockchain.clone(),
             p2p_context,
         )
         .await;

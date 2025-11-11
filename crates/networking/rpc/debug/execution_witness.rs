@@ -147,7 +147,9 @@ impl RpcHandler for ExecutionWitnessRequest {
         }
 
         let execution_witness = context
-            .blockchain
+            .super_blockchain
+            .main_blockchain
+            .clone()
             .generate_witness_for_blocks(&blocks)
             .await
             .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;

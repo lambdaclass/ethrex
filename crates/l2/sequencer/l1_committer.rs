@@ -11,13 +11,15 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError, vm::StoreVmDatabase,
+    Blockchain, BlockchainOptions, BlockchainType, L2Config, SuperBlockchain, error::ChainError,
+    vm::StoreVmDatabase,
 };
 use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork,
-        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
+        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, Transaction, TxType, batch::Batch, blobs_bundle,
+        fake_exponential,
     },
 };
 use ethrex_l2_common::{
@@ -31,7 +33,7 @@ use ethrex_l2_common::{
     prover::ProverInputData,
     state_diff::{StateDiff, prepare_state_diff},
 };
-use ethrex_l2_rpc::signer::{Signer, SignerHealth};
+use ethrex_l2_rpc::signer::{Signable, Signer, SignerHealth};
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, get_l1_active_fork, get_last_committed_batch,
     send_tx_bump_gas_exponential_backoff,
@@ -94,7 +96,7 @@ pub enum OutMessage {
 
 pub struct L1Committer {
     eth_client: EthClient,
-    blockchain: Arc<Blockchain>,
+    super_blockchain: Arc<SuperBlockchain>,
     on_chain_proposer_address: Address,
     store: Store,
     rollup_store: StoreRollup,
@@ -158,7 +160,7 @@ impl L1Committer {
         committer_config: &CommitterConfig,
         proposer_config: &BlockProducerConfig,
         eth_config: &EthConfig,
-        blockchain: Arc<Blockchain>,
+        super_blockchain: Arc<SuperBlockchain>,
         store: Store,
         rollup_store: StoreRollup,
         based: bool,
@@ -182,7 +184,7 @@ impl L1Committer {
         let (current_checkpoint_store, current_checkpoint_blockchain) =
             Self::get_checkpoint_from_path(
                 genesis.clone(),
-                blockchain.options.clone(),
+                super_blockchain.main_blockchain.options.clone(),
                 &checkpoints_dir.join(batch_checkpoint_name(last_committed_batch)),
                 &rollup_store,
             )
@@ -190,7 +192,7 @@ impl L1Committer {
 
         Ok(Self {
             eth_client,
-            blockchain,
+            super_blockchain,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
             rollup_store,
@@ -219,7 +221,7 @@ impl L1Committer {
 
     pub async fn spawn(
         store: Store,
-        blockchain: Arc<Blockchain>,
+        super_blockchain: Arc<SuperBlockchain>,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
@@ -230,7 +232,7 @@ impl L1Committer {
             &cfg.l1_committer,
             &cfg.block_producer,
             &cfg.eth,
-            blockchain,
+            super_blockchain,
             store.clone(),
             rollup_store.clone(),
             cfg.based.enabled,
@@ -871,7 +873,7 @@ impl L1Committer {
         checkpointee.create_checkpoint(&path).await?;
         Self::get_checkpoint_from_path(
             self.genesis.clone(),
-            self.blockchain.options.clone(),
+            self.super_blockchain.main_blockchain.options.clone(),
             path,
             rollup_store,
         )
@@ -910,11 +912,8 @@ impl L1Committer {
         // one for each block is fetched from the rollup store during head state regeneration.
         blockchain_opts.r#type = BlockchainType::L2(L2Config::default());
 
-        let checkpoint_blockchain = Arc::new(Blockchain::new(
-            checkpoint_store.clone(),
-            blockchain_opts,
-            None,
-        ));
+        let checkpoint_blockchain =
+            Arc::new(Blockchain::new(checkpoint_store.clone(), blockchain_opts));
 
         regenerate_head_state(&checkpoint_store, rollup_store, &checkpoint_blockchain).await?;
 
@@ -994,6 +993,7 @@ impl L1Committer {
                     max_priority_fee_per_gas: Some(gas_price),
                     blobs_bundle: Some(batch.blobs_bundle.clone()),
                     wrapper_version: Some(batch.blobs_bundle.version),
+                    gas_limit: Some(0x100000),
                     ..Default::default()
                 },
             )
@@ -1011,6 +1011,7 @@ impl L1Committer {
                     from: Some(self.signer.address()),
                     max_fee_per_gas: Some(gas_price),
                     max_priority_fee_per_gas: Some(gas_price),
+                    gas_limit: Some(0x100000),
                     ..Default::default()
                 },
             )
@@ -1019,23 +1020,58 @@ impl L1Committer {
         };
 
         let commit_tx_hash =
-            send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
+            if let Some(l1_blockchain) = self.super_blockchain.secondary_blockchain.clone() {
+                info!("L1 BLOCKCHAIN");
+                match tx.r#type {
+                    TxType::EIP1559 => {
+                        let tx = Transaction::EIP1559Transaction(
+                            tx.try_into()
+                                .map_err(|_| CommitterError::Unreachable("".to_string()))?,
+                        );
+                        l1_blockchain
+                            .add_transaction_to_pool(tx.sign(&self.signer).await?)
+                            .await?
+                    }
+                    TxType::EIP4844 => {
+                        let wrapped_tx = Transaction::EIP4844Transaction(
+                            tx.try_into()
+                                .map_err(|_| CommitterError::UnexpectedError("".to_string()))?,
+                        )
+                        .sign(&self.signer)
+                        .await?;
+                        let Transaction::EIP4844Transaction(tx) = wrapped_tx else {
+                            return Err(CommitterError::Unreachable(
+                                "Transaction is EIP4844".to_string(),
+                            ));
+                        };
+                        l1_blockchain
+                            .add_blob_transaction_to_pool(tx, batch.blobs_bundle.clone())
+                            .await?
+                    }
+                    _ => Err(CommitterError::Unreachable(
+                        "Should be EIP1559 or EIP4844".to_string(),
+                    ))?,
+                }
+            } else {
+                info!("L1 RPC");
+                send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?
+            };
 
-        metrics!(
-            let commit_tx_receipt = self
-                .eth_client
-                .get_transaction_receipt(commit_tx_hash)
-                .await?
-                .ok_or(CommitterError::UnexpectedError("no commit tx receipt".to_string()))?;
-            let commit_gas_used = commit_tx_receipt.tx_info.gas_used.try_into()?;
-            METRICS.set_batch_commitment_gas(batch.number, commit_gas_used)?;
-            if !self.validium {
-                let blob_gas_used = commit_tx_receipt.tx_info.blob_gas_used
-                    .ok_or(CommitterError::UnexpectedError("no blob in rollup mode".to_string()))?
-                    .try_into()?;
-                METRICS.set_batch_commitment_blob_gas(batch.number, blob_gas_used)?;
-            }
-        );
+        // metrics!(
+        //     let commit_tx_receipt = self
+        //         .eth_client
+        //         .get_transaction_receipt(commit_tx_hash)
+        //         .await?
+        //         .ok_or(CommitterError::UnexpectedError("no commit tx receipt".to_string()))?;
+        //     let commit_gas_used = commit_tx_receipt.tx_info.gas_used.try_into()?;
+        //     METRICS.set_batch_commitment_gas(batch.number, commit_gas_used)?;
+        //     if !self.validium {
+        //         let blob_gas_used = commit_tx_receipt.tx_info.blob_gas_used
+        //             .ok_or(CommitterError::UnexpectedError("no blob in rollup mode".to_string()))?
+        //             .try_into()?;
+        //         METRICS.set_batch_commitment_blob_gas(batch.number, blob_gas_used)?;
+        //     }
+        // );
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 

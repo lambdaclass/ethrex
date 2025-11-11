@@ -106,7 +106,8 @@ impl RpcHandler for TraceTransactionRequest {
                     CallTracerConfig::default()
                 };
                 let call_trace = context
-                    .blockchain
+                    .super_blockchain
+                    .main_blockchain
                     .trace_transaction_calls(
                         self.tx_hash,
                         reexec,
@@ -163,7 +164,8 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     CallTracerConfig::default()
                 };
                 let call_traces = context
-                    .blockchain
+                    .super_blockchain
+                    .main_blockchain
                     .trace_block_calls(
                         block,
                         reexec,

@@ -52,8 +52,8 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::{Blockchain, SuperBlockchain};
 use ethrex_common::types::Block;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -163,7 +163,7 @@ pub enum RpcRequestWrapper {
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
     pub storage: Store,
-    pub blockchain: Arc<Blockchain>,
+    pub super_blockchain: Arc<SuperBlockchain>,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
     pub peer_handler: PeerHandler,
@@ -227,7 +227,7 @@ pub async fn start_api(
     ws_addr: Option<SocketAddr>,
     authrpc_addr: SocketAddr,
     storage: Store,
-    blockchain: Arc<Blockchain>,
+    super_blockchain: Arc<SuperBlockchain>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -241,10 +241,10 @@ pub async fn start_api(
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
-    let block_worker_channel = start_block_executor(blockchain.clone());
+    let block_worker_channel = start_block_executor(super_blockchain.main_blockchain.clone());
     let service_context = RpcApiContext {
         storage,
-        blockchain,
+        super_blockchain,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
         peer_handler,
