@@ -773,7 +773,7 @@ impl Store {
                 let storage_trie = self.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
                 let storage_root = if storage_root_needed {
                     let rlp = storage_trie.db().get(Nibbles::default())?;
-                    rlp.map(|data| keccak(data)).unwrap_or(*EMPTY_TRIE_HASH)
+                    rlp.map(keccak).unwrap_or(*EMPTY_TRIE_HASH)
                 } else {
                     *EMPTY_TRIE_HASH
                 };
@@ -980,7 +980,7 @@ impl Store {
         let root = state_trie
             .db()
             .get(Nibbles::default())?
-            .map(|data| keccak(data))
+            .map(keccak)
             .unwrap_or(*EMPTY_TRIE_HASH);
         let state_trie = self.open_direct_state_trie(root)?;
         state_trie
