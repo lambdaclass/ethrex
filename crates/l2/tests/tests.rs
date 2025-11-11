@@ -2056,9 +2056,9 @@ async fn test_fee_token(
     let register_tx_hash = send_generic_transaction(&l1_client, register_tx, &owner_signer)
         .await
         .unwrap();
-    wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
-        .await
-        .unwrap();
+    let register_tx_receipt =
+        wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000).await.unwrap();
+    let _ = wait_for_l2_deposit_receipt(&register_tx_receipt, &l1_client, &l2_client).await?;
 
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -2107,25 +2107,18 @@ async fn test_fee_token(
 
     let cd = encode_calldata("isFeeToken(address)", &[Value::Address(fee_token_address)]).unwrap();
     let expected = "0x0000000000000000000000000000000000000000000000000000000000000001";
-    for attempt in 1..=100 {
-        let is_registered = l2_client
-            .call(
-                FEE_TOKEN_REGISTRY_ADDRESS,
-                cd.clone().into(),
-                Overrides::default(),
-            )
-            .await
-            .unwrap();
-        if is_registered == expected {
-            break;
-        }
-        if attempt == 100 {
-            return Err(anyhow::anyhow!(
-                "{test}: fee token not registered after {attempt} attempts (last value: {is_registered})"
-            ));
-        }
-        sleep(Duration::from_secs(1)).await;
-    }
+    let is_registered = l2_client
+        .call(
+            FEE_TOKEN_REGISTRY_ADDRESS,
+            cd.into(),
+            Overrides::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        is_registered, expected,
+        "{test}: fee token registry state unexpected"
+    );
     let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(
         &l2_client,
