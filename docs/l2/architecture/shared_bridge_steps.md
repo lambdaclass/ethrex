@@ -235,7 +235,7 @@ rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
 ### Check counter balance
 
 ```bash
-rex balance <COUNTER_ADDRESS> http://localhost:1730
+rex balance <COUNTER_ADDRESS> http://localhost:1729
 ```
 
 ### Send the transaction
@@ -253,5 +253,10 @@ rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
 ### Check counter balance
 
 ```bash
-rex balance <COUNTER_ADDRESS> http://localhost:1730
+rex balance <COUNTER_ADDRESS> http://localhost:1729
 ```
+
+## Troubleshooting
+
+If you can't deploy the counter contract, either because of `Transaction intrinsic gas overflow` or because the transaction is never included in a block.
+Retry the deploy command adding `--priority-gas-price` and `--gas-price` with the same value, increment it by 10 until it deploys correctly.
