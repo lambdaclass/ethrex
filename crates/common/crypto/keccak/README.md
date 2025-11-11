@@ -27,7 +27,6 @@ The implementation is currently rather manual:
 ```shell
 $ cd cryptogams/arm
 $ ./keccak-1600-armv8.pl linux64 keccak1600-armv8.s
-$ ./keccak-1600-armv8.pl linux64+sha3 keccak1600-armv8.s
 $ cd ../x86_64
 $ ./keccak1600-x86_64.pl linux64 keccak1600-x86_64.s
 ```
