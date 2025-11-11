@@ -356,6 +356,9 @@ impl GuestProgramState {
         else {
             return Ok(None);
         };
+        if storage_root == *EMPTY_TRIE_HASH {
+            return Ok(None);
+        }
         let Some(storage_trie) = self.storage_tries.get(&storage_root) else {
             return Err(GuestProgramStateError::Database(format!(
                 "non empty storage trie not found for root {storage_root}"
