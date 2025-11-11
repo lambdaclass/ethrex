@@ -19,7 +19,10 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
-use ethrex_levm::constants::{POST_OSAKA_GAS_LIMIT_CAP, SYS_CALL_GAS_LIMIT, TX_BASE_COST};
+use ethrex_levm::call_frame::Stack;
+use ethrex_levm::constants::{
+    POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
+};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -100,6 +103,8 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
+        let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -114,7 +119,14 @@ impl LEVM {
                 )));
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx_in_block(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                &mut shared_stack_pool,
+            )?;
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
             cumulative_gas_used += report.gas_used;
@@ -219,7 +231,7 @@ impl LEVM {
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
-        // The transactions recovered address
+        // The transaction's recovered address
         tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
@@ -230,6 +242,27 @@ impl LEVM {
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
+    }
+
+    // Like execute_tx but allows reusing the stack pool
+    fn execute_tx_in_block(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transaction's recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        stack_pool: &mut Vec<Stack>,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        let result = vm.execute().map_err(VMError::into);
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        result
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
