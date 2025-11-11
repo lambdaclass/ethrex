@@ -165,8 +165,10 @@ pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub active_filters: ActiveFilters,
-    pub syncer: Arc<SyncManager>,
-    pub peer_handler: PeerHandler,
+    // L2 nodes don't need to initialize the syncer
+    pub syncer: Option<Arc<SyncManager>>,
+    // L2 nodes don't need to initialize the peer handler
+    pub peer_handler: Option<PeerHandler>,
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -267,8 +269,8 @@ pub async fn start_api(
         storage,
         blockchain,
         active_filters: active_filters.clone(),
-        syncer: Arc::new(syncer),
-        peer_handler,
+        syncer: Some(Arc::new(syncer)),
+        peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
             local_p2p_node,
