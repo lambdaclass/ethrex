@@ -101,7 +101,7 @@ contract CommonBridge is
     address public NATIVE_TOKEN_L1;
 
     /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
-    uint256 private pendingPrivilegedTxIndex = 0;
+    uint256 private pendingPrivilegedTxIndex;
 
     /// @notice Address of the SharedBridgeRouter contract
     address public SHARED_BRIDGE_ROUTER = address(0);
@@ -136,6 +136,7 @@ contract CommonBridge is
 
         lastFetchedL1Block = block.number;
         transactionId = 0;
+        pendingPrivilegedTxIndex = 0;
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 

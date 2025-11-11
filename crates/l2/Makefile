@@ -267,5 +267,5 @@ state-diff-test:
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
-
+	docker logs --follow ethrex_l2 & \
 	cargo test state_reconstruct --release

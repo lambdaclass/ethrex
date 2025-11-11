@@ -1,11 +1,9 @@
-use ethereum_types::Address;
+use bytes::Bytes;
+use ethereum_types::{Address, H256, U256};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    rkyv_utils::{H160Wrapper, OptionH160Wrapper},
-    types::account_diff::{Decoder, DecoderError},
-};
+use crate::rkyv_utils::{H160Wrapper, OptionH160Wrapper};
 
 #[derive(
     Serialize, Deserialize, RDeserialize, RSerialize, Archive, Clone, Copy, Debug, Default,
@@ -102,7 +100,7 @@ impl FeeConfig {
         }
 
         if let Some(operator_fee_config) = self.operator_fee_config {
-            // base fee vault is set
+            // operator fee vault is set
             let base_fee_vault_type: u8 = FeeConfigType::OperatorFee.into();
             fee_config_type += base_fee_vault_type;
             encoded.extend_from_slice(&operator_fee_config.operator_fee_vault.0);
@@ -110,7 +108,7 @@ impl FeeConfig {
         }
 
         if let Some(l1_fee_config) = self.l1_fee_config {
-            // base fee vault is set
+            // l1 fee vault is set
             let l1_fee_type: u8 = FeeConfigType::L1Fee.into();
             fee_config_type += l1_fee_type;
             encoded.extend_from_slice(&l1_fee_config.l1_fee_vault.0);
@@ -128,14 +126,16 @@ impl FeeConfig {
     pub fn decode(bytes: &[u8]) -> Result<(usize, Self), FeeConfigError> {
         let mut decoder = Decoder::new(bytes);
 
+        // Read version
         let version = decoder.get_u8()?;
-
         if version != 0 {
             return Err(FeeConfigError::UnsupportedVersion(version));
         }
 
+        // Read fee config type
         let fee_config_type = decoder.get_u8()?;
 
+        // Read base fee vault if present
         let base_fee_vault = if FeeConfigType::BaseFeeVault.is_in(fee_config_type) {
             let address = decoder.get_address()?;
             Some(address)
@@ -143,6 +143,7 @@ impl FeeConfig {
             None
         };
 
+        // Read operator fee config if present
         let operator_fee_config = if FeeConfigType::OperatorFee.is_in(fee_config_type) {
             let operator_fee_vault = decoder.get_address()?;
             let operator_fee_per_gas = decoder.get_u64()?;
@@ -153,6 +154,8 @@ impl FeeConfig {
         } else {
             None
         };
+
+        // Read L1 fee config if present
         let l1_fee_config = if FeeConfigType::L1Fee.is_in(fee_config_type) {
             let l1_fee_vault = decoder.get_address()?;
             let l1_fee_per_blob_gas = decoder.get_u64()?;
@@ -172,5 +175,117 @@ impl FeeConfig {
                 l1_fee_config,
             },
         ))
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DecoderError {
+    #[error("Decoder failed to deserialize: {0}")]
+    FailedToDeserialize(String),
+    #[error("StateDiff failed to deserialize: {0}")]
+    FailedToDeserializeStateDiff(String),
+}
+
+pub struct Decoder {
+    bytes: Bytes,
+    offset: usize,
+}
+
+impl Decoder {
+    pub fn new(bytes: &[u8]) -> Self {
+        Decoder {
+            bytes: Bytes::copy_from_slice(bytes),
+            offset: 0,
+        }
+    }
+
+    pub fn consumed(&self) -> usize {
+        self.offset
+    }
+
+    pub fn advance(&mut self, size: usize) {
+        self.offset += size;
+    }
+
+    pub fn get_address(&mut self) -> Result<Address, DecoderError> {
+        let res = Address::from_slice(self.bytes.get(self.offset..self.offset + 20).ok_or(
+            DecoderError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
+        )?);
+        self.offset += 20;
+
+        Ok(res)
+    }
+
+    pub fn get_u256(&mut self) -> Result<U256, DecoderError> {
+        let res = U256::from_big_endian(self.bytes.get(self.offset..self.offset + 32).ok_or(
+            DecoderError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
+        )?);
+        self.offset += 32;
+
+        Ok(res)
+    }
+
+    pub fn get_h256(&mut self) -> Result<H256, DecoderError> {
+        let res = H256::from_slice(self.bytes.get(self.offset..self.offset + 32).ok_or(
+            DecoderError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
+        )?);
+        self.offset += 32;
+
+        Ok(res)
+    }
+
+    pub fn get_u8(&mut self) -> Result<u8, DecoderError> {
+        let res = self
+            .bytes
+            .get(self.offset)
+            .ok_or(DecoderError::FailedToDeserializeStateDiff(
+                "Not enough bytes".to_string(),
+            ))?;
+        self.offset += 1;
+
+        Ok(*res)
+    }
+
+    pub fn get_u16(&mut self) -> Result<u16, DecoderError> {
+        let res = u16::from_be_bytes(
+            self.bytes
+                .get(self.offset..self.offset + 2)
+                .ok_or(DecoderError::FailedToDeserializeStateDiff(
+                    "Not enough bytes".to_string(),
+                ))?
+                .try_into()
+                .map_err(|_| {
+                    DecoderError::FailedToDeserializeStateDiff("Cannot parse u16".to_string())
+                })?,
+        );
+        self.offset += 2;
+
+        Ok(res)
+    }
+
+    pub fn get_u64(&mut self) -> Result<u64, DecoderError> {
+        let res = u64::from_be_bytes(
+            self.bytes
+                .get(self.offset..self.offset + 8)
+                .ok_or(DecoderError::FailedToDeserializeStateDiff(
+                    "Not enough bytes".to_string(),
+                ))?
+                .try_into()
+                .map_err(|_| {
+                    DecoderError::FailedToDeserializeStateDiff("Cannot parse u64".to_string())
+                })?,
+        );
+        self.offset += 8;
+
+        Ok(res)
+    }
+
+    pub fn get_bytes(&mut self, size: usize) -> Result<Bytes, DecoderError> {
+        let res = self.bytes.get(self.offset..self.offset + size).ok_or(
+            DecoderError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
+        )?;
+        self.offset += size;
+
+        Ok(Bytes::copy_from_slice(res))
     }
 }

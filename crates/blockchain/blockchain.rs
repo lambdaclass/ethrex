@@ -165,7 +165,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header);
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -190,7 +190,7 @@ impl Blockchain {
             AccountUpdatesList,
             // FIXME: extract to stats struct
             usize,
-            [Instant; 7],
+            [Instant; 6],
         ),
         ChainError,
     > {
@@ -208,7 +208,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
         let mut vm = self.new_evm(vm_db)?;
 
         let exec_merkle_start = Instant::now();
@@ -216,25 +216,43 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
+            let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
-            let execution_handle = s.spawn(move || {
-                let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref);
-                let exec_end_instant = Instant::now();
-                execution_result.map(move |r| (r, exec_end_instant))
-            });
-            let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
-                let account_updates_list = self.handle_merkleization(
-                    rx,
-                    &parent_header,
-                    queue_length_ref,
-                    &mut max_queue_length,
-                )?;
-                let merkle_end_instant = Instant::now();
-                Ok((account_updates_list, merkle_end_instant))
-            });
+            let execution_handle = std::thread::Builder::new()
+                .name("block_executor_execution".to_string())
+                .spawn_scoped(s, move || -> Result<_, ChainError> {
+                    let execution_result =
+                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+
+                    // Validate execution went alright
+                    validate_gas_used(&execution_result.receipts, &block.header)?;
+                    validate_receipts_root(&block.header, &execution_result.receipts)?;
+                    validate_requests_hash(
+                        &block.header,
+                        &chain_config,
+                        &execution_result.requests,
+                    )?;
+
+                    let exec_end_instant = Instant::now();
+                    Ok((execution_result, exec_end_instant))
+                })
+                .expect("Failed to spawn block_executor exec thread");
+            let merkleize_handle = std::thread::Builder::new()
+                .name("block_executor_merkleizer".to_string())
+                .spawn_scoped(s, move || -> Result<_, StoreError> {
+                    let account_updates_list = self.handle_merkleization(
+                        rx,
+                        &parent_header,
+                        queue_length_ref,
+                        max_queue_length_ref,
+                    )?;
+                    let merkle_end_instant = Instant::now();
+                    Ok((account_updates_list, merkle_end_instant))
+                })
+                .expect("Failed to spawn block_executor merkleizer thread");
             (
                 execution_handle.join().unwrap_or_else(|_| {
-                    Err(EvmError::Custom("execution thread panicked".to_string()))
+                    Err(ChainError::Custom("execution thread panicked".to_string()))
                 }),
                 merkleize_handle.join().unwrap_or_else(|_| {
                     Err(StoreError::Custom(
@@ -247,12 +265,6 @@ impl Blockchain {
         let (execution_result, exec_end_instant) = execution_result?;
         let exec_merkle_end_instant = Instant::now();
 
-        // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts)?;
-        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
-        let results_validated_instant = Instant::now();
-
         Ok((
             execution_result,
             account_updates_list,
@@ -264,7 +276,6 @@ impl Blockchain {
                 exec_end_instant,
                 merkle_end_instant,
                 exec_merkle_end_instant,
-                results_validated_instant,
             ],
         ))
     }
@@ -395,7 +406,7 @@ impl Blockchain {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                debug!(count = update.added_storage.len(), "With storages");
+                trace!(count = update.added_storage.len(), "Update storages");
                 let (storage_trie, storage_updates_map) = storage_updates_map
                     .entry(hashed_address_h256)
                     .or_insert_with(|| {
@@ -484,21 +495,6 @@ impl Blockchain {
             ))?
             .header;
 
-        // Later on, we need to access block hashes by number. To avoid needing
-        // to apply fork choice for each block, we cache them here.
-        // The clone is not redundant, the hash function modifies the original block.
-        #[allow(clippy::redundant_clone)]
-        let mut block_hashes_map: BTreeMap<u64, H256> = blocks
-            .iter()
-            .cloned()
-            .map(|block| (block.header.number, block.hash()))
-            .collect();
-
-        block_hashes_map.insert(
-            first_block_header.number.saturating_sub(1),
-            first_block_header.parent_hash,
-        );
-
         // Get state at previous block
         let trie = self
             .storage
@@ -527,11 +523,16 @@ impl Blockchain {
             ChainError::WitnessGeneration("Failed to get root state node".to_string())
         })?;
 
-        let mut block_hashes = HashMap::new();
+        let mut blockhash_opcode_references = HashMap::new();
         let mut codes = Vec::new();
 
         for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;
+            let parent_header = self
+                .storage
+                .get_block_header_by_hash(parent_hash)
+                .map_err(ChainError::StoreError)?
+                .ok_or(ChainError::ParentNotFound)?;
 
             // This assumes that the user has the necessary state stored already,
             // so if the user only has the state previous to the first block, it
@@ -539,7 +540,7 @@ impl Blockchain {
             // doesn't fail, later in this function we store the new state after
             // re-execution.
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header));
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
@@ -586,7 +587,7 @@ impl Blockchain {
                 })?
                 .clone();
 
-            block_hashes.extend(logger_block_hashes);
+            blockhash_opcode_references.extend(logger_block_hashes);
 
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
@@ -680,14 +681,7 @@ impl Blockchain {
 
             let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
                 self.storage
-                    .state_trie(
-                        block_hashes_map
-                            .get(&block.header.number)
-                            .ok_or(ChainError::WitnessGeneration(
-                                "Block hash not found for witness generation".to_string(),
-                            ))?
-                            .to_owned(),
-                    )
+                    .state_trie(block.header.hash())
                     .map_err(|_| ChainError::ParentStateNotFound)?
                     .ok_or(ChainError::ParentStateNotFound)?,
             );
@@ -718,39 +712,41 @@ impl Blockchain {
             used_trie_nodes.push(root.encode_to_vec());
         }
 
-        let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
-
-        needed_block_numbers.sort();
-
-        // Last needed block header for the witness is the parent of the last block we need to execute
-        let last_needed_block_number = blocks
-            .last()
-            .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
-            .header
-            .number
-            .saturating_sub(1);
-
-        // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
-        let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
-
-        if let Some(block_number_from_logger) = needed_block_numbers.first()
-            && **block_number_from_logger < first_needed_block_number
-        {
-            first_needed_block_number = **block_number_from_logger;
-        }
-
+        // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
         let mut block_headers_bytes = Vec::new();
 
-        for block_number in first_needed_block_number..=last_needed_block_number {
-            let hash = block_hashes_map
-                .get(&block_number)
-                .ok_or(ChainError::WitnessGeneration(format!(
-                    "Failed to get block {block_number} hash"
-                )))?;
-            let header = self.storage.get_block_header_by_hash(*hash)?.ok_or(
-                ChainError::WitnessGeneration(format!("Failed to get block {block_number} header")),
-            )?;
-            block_headers_bytes.push(header.encode_to_vec());
+        let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
+        let first_needed_block_hash = first_blockhash_opcode_number
+            .and_then(|n| {
+                (*n < first_block_header.number.saturating_sub(1))
+                    .then(|| blockhash_opcode_references.get(n))?
+                    .copied()
+            })
+            .unwrap_or(first_block_header.parent_hash);
+
+        // At the beginning this is the header of the last block to execute.
+        let mut current_header = blocks
+            .last()
+            .ok_or_else(|| ChainError::WitnessGeneration("Empty batch".to_string()))?
+            .header
+            .clone();
+
+        // Headers from latest - 1 until we reach first block header we need.
+        // We do it this way because we want to fetch headers by hash, not by number
+        while current_header.hash() != first_needed_block_hash {
+            let parent_hash = current_header.parent_hash;
+            let current_number = current_header.number - 1;
+
+            current_header = self
+                .storage
+                .get_block_header_by_hash(parent_hash)?
+                .ok_or_else(|| {
+                    ChainError::WitnessGeneration(format!(
+                        "Failed to get block {current_number} header"
+                    ))
+                })?;
+
+            block_headers_bytes.push(current_header.encode_to_vec());
         }
 
         let chain_config = self.storage.get_chain_config();
@@ -776,6 +772,7 @@ impl Blockchain {
         })
     }
 
+    #[instrument(level = "trace", name = "Block DB update", skip_all)]
     pub fn store_block(
         &self,
         block: Block,
@@ -937,9 +934,8 @@ impl Blockchain {
             exec_end_instant,
             merkle_end_instant,
             exec_merkle_end_instant,
-            results_validated_instant,
             stored_instant,
-        ]: [Instant; 8],
+        ]: [Instant; 7],
     ) {
         let interval = stored_instant.duration_since(start_instant).as_secs_f64();
         if interval != 0f64 {
@@ -969,13 +965,12 @@ impl Blockchain {
             };
             let extra_log = if as_gigas > 0.0 {
                 format!(
-                    " block validation: {}% exec+merkle: {}% (exec: {}% merkle: {}% max_queue_length: {merkle_queue_length}) results validation: {}% store: {}%",
+                    " block validation: {}% exec+merkle: {}% (exec: {}% merkle: {}% max_queue_length: {merkle_queue_length}) store: {}%",
                     percentage(start_instant, block_validated_instant),
                     percentage(exec_merkle_start, exec_merkle_end_instant),
                     percentage(exec_merkle_start, exec_end_instant),
                     percentage(exec_merkle_start, merkle_end_instant),
-                    percentage(merkle_end_instant, results_validated_instant),
-                    percentage(results_validated_instant, stored_instant),
+                    percentage(merkle_end_instant, stored_instant),
                 )
             } else {
                 "".to_string()
@@ -1007,9 +1002,14 @@ impl Blockchain {
         // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
+        let parent_header = self
+            .storage
+            .get_block_header_by_hash(first_block_header.parent_hash)
+            .map_err(|e| (ChainError::StoreError(e), None))?
+            .ok_or((ChainError::ParentNotFound, None))?;
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
-            first_block_header.parent_hash,
+            parent_header,
             block_hash_cache,
         );
         let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;

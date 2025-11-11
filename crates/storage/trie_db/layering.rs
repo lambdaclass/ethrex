@@ -7,7 +7,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
+    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
@@ -44,13 +44,11 @@ impl Default for TrieLayerCache {
 impl TrieLayerCache {
     // TODO: tune this
     fn create_filter() -> Result<qfilter::Filter, qfilter::Error> {
-        qfilter::Filter::new_resizeable(100_000, 100_000_000, 0.02)
+        qfilter::Filter::new_resizeable(1_000_000, 100_000_000, 0.02)
             .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
     }
 
-    pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
-        let key = key.as_ref();
-
+    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
         if let Some(filter) = &self.bloom
@@ -128,7 +126,7 @@ impl TrieLayerCache {
 
         self.last_id += 1;
         let entry = TrieLayer {
-            nodes: Arc::new(nodes),
+            nodes,
             parent,
             id: self.last_id,
         };
@@ -190,7 +188,7 @@ impl TrieLayerCache {
             parent_nodes
                 .unwrap_or_default()
                 .into_iter()
-                .chain(layer.nodes.as_ref().clone())
+                .chain(layer.nodes)
                 .collect(),
         )
     }
@@ -221,7 +219,7 @@ impl TrieDB for TrieWrapper {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self.inner.get(self.state_root, key.clone()) {
+        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
         self.db.get(key)

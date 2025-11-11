@@ -2,6 +2,7 @@ name: L2 (without proving)
 on:
   push:
     branches: ["main"]
+  merge_group:
   pull_request:
     branches: ["**"]
 
@@ -37,7 +38,9 @@ jobs:
       - name: finish
         id: finish
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+              echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
               echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
@@ -135,7 +138,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
-          build_args: BUILD_FLAGS=--features l2
+          build_args: BUILD_FLAGS=--features l2,l2-sql
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

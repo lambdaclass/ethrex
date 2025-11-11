@@ -398,7 +398,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     // function commitBatch(
     //     uint256 batchNumber,
     //     bytes32 newStateRoot,
-    //     bytes32 stateDiffKZGVersionedHash,
+    //     bytes32 BlobKZGVersionedHash,
     //     bytes32 messagesLogsMerkleRoot,
     //     bytes32 processedPrivilegedTransactionsRollingHash,
     //     bytes[] calldata _rlpEncodedBlocks
@@ -407,7 +407,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     // data =   4 bytes (function selector) 0..4
     //          || 8 bytes (batch number)   4..36
     //          || 32 bytes (new state root) 36..68
-    //          || 32 bytes (state diff KZG versioned hash) 68..100
+    //          || 32 bytes (blob KZG versioned hash) 68..100
     //          || 32 bytes (messages logs merkle root) 100..132
     //          || 32 bytes (processed privileged transactions rolling hash) 132..164
 

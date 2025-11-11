@@ -11,13 +11,13 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain, BlockchainOptions, BlockchainType, L2Config, vm::StoreVmDatabase,
+    Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError, vm::StoreVmDatabase,
 };
 use ethrex_common::{
     Address, H256, U256,
     types::{
         BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork, Genesis,
-        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
+        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
         fee_config::FeeConfig,
     },
 };
@@ -85,6 +85,7 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Commit,
+    Abort,
 }
 
 #[derive(Clone)]
@@ -545,7 +546,7 @@ impl L1Committer {
             info!("Got l2 messages: {}", l2_messages.len());
             let privileged_transactions = get_l1_block_privileged_transactions(&txs);
 
-            // // Get block account updates.
+            // Get block account updates.
             let account_updates = if let Some(account_updates) = self
                 .rollup_store
                 .get_account_updates_by_block_number(block_to_commit_number)
@@ -557,13 +558,14 @@ impl L1Committer {
                     "Could not find execution cache result for block {}, falling back to re-execution",
                     last_added_block_number + 1
                 );
+                let parent_header = self
+                    .store
+                    .get_block_header_by_hash(potential_batch_block.header.parent_hash)?
+                    .ok_or(CommitterError::ChainError(ChainError::ParentNotFound))?;
 
                 // Here we use the checkpoint store because we need the previous
                 // state available (i.e. not pruned) for re-execution.
-                let vm_db = StoreVmDatabase::new(
-                    checkpoint_store.clone(),
-                    potential_batch_block.header.parent_hash,
-                );
+                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header);
 
                 let fee_config = self
                     .rollup_store
@@ -984,7 +986,7 @@ impl L1Committer {
                 20, // 20% of headroom
             )
             .await?
-            .to_le_bytes();
+            .to_little_endian();
 
             let gas_price_per_blob = U256::from_little_endian(&le_bytes);
 
@@ -1096,21 +1098,8 @@ impl L1Committer {
             on_chain_proposer_address: self.on_chain_proposer_address,
         })))
     }
-}
 
-impl GenServer for L1Committer {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-
-    type Error = CommitterError;
-
-    // Right now we only have the `Commit` message, so we ignore the `message` parameter
-    async fn handle_cast(
-        &mut self,
-        _message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
+    async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
@@ -1160,6 +1149,33 @@ impl GenServer for L1Committer {
         }
         self.schedule_commit(self.committer_wake_up_ms, handle.clone());
         CastResponse::NoReply
+    }
+}
+
+impl GenServer for L1Committer {
+    type CallMsg = CallMessage;
+    type CastMsg = InMessage;
+    type OutMsg = OutMessage;
+
+    type Error = CommitterError;
+
+    // Right now we only have the `Commit` message, so we ignore the `message` parameter
+    async fn handle_cast(
+        &mut self,
+        message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+    ) -> CastResponse {
+        match message {
+            InMessage::Commit => self.handle_commit_message(handle).await,
+            InMessage::Abort => {
+                // start_blocking keeps the committer loop alive even if the JoinSet aborts the task.
+                // Returning CastResponse::Stop is what unblocks shutdown by ending that blocking loop.
+                if let Some(ct) = self.cancellation_token.take() {
+                    ct.cancel()
+                };
+                CastResponse::Stop
+            }
+        }
     }
 
     async fn handle_call(
@@ -1236,7 +1252,7 @@ async fn estimate_blob_gas(
     eth_client: &EthClient,
     arbitrary_base_blob_gas_price: u64,
     headroom: u64,
-) -> Result<u64, CommitterError> {
+) -> Result<U256, CommitterError> {
     let latest_block = eth_client
         .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
         .await?;
@@ -1263,9 +1279,9 @@ async fn estimate_blob_gas(
 
     // If the blob's market is in high demand, the equation may give a really big number.
     // This function doesn't panic, it performs checked/saturating operations.
-    let blob_gas = fake_exponential_checked(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        total_blob_gas,
+    let blob_gas = fake_exponential(
+        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
+        U256::from(total_blob_gas),
         BLOB_BASE_FEE_UPDATE_FRACTION,
     )
     .map_err(BlobEstimationError::FakeExponentialError)?;
@@ -1273,7 +1289,7 @@ async fn estimate_blob_gas(
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
     // Check if we have an overflow when we take the headroom into account.
-    let blob_gas = arbitrary_base_blob_gas_price
+    let blob_gas = U256::from(arbitrary_base_blob_gas_price)
         .checked_add(gas_with_headroom)
         .ok_or(BlobEstimationError::OverflowError)?;
 

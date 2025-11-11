@@ -10,7 +10,9 @@ use crate::{
 };
 use bytes::Bytes;
 use clap::{FromArgMatches, Parser, Subcommand};
-use ethrex_blockchain::{Blockchain, BlockchainOptions, L2Config, fork_choice::apply_fork_choice};
+use ethrex_blockchain::{
+    Blockchain, BlockchainOptions, BlockchainType, L2Config, fork_choice::apply_fork_choice,
+};
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, Block, blobs_bundle, bytes_from_blob, fee_config::FeeConfig},
@@ -33,7 +35,6 @@ use secp256k1::{PublicKey, SecretKey};
 use std::{
     fs::{create_dir_all, read_dir},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
     time::Duration,
 };
 use tracing::{debug, info};
@@ -398,7 +399,7 @@ impl Command {
                 .await?;
 
                 let rollup_store =
-                    StoreRollup::new(&store_path.join("./rollup_store"), rollup_store_type)?;
+                    StoreRollup::new(&store_path.join("rollup_store"), rollup_store_type)?;
                 rollup_store
                     .init()
                     .await
@@ -421,52 +422,71 @@ impl Command {
 
                     let blob = bytes_from_blob(blob.into());
 
-                    let len = u64::from_be_bytes(
+                    // Decode blocks
+                    let blocks_count = u64::from_be_bytes(
                         blob[0..8].try_into().expect("Failed to get blob length"),
                     );
 
                     let mut buf = &blob[8..];
                     let mut blocks = Vec::new();
-                    for _ in 0..len {
+                    for _ in 0..blocks_count {
                         let (item, rest) = Block::decode_unfinished(buf)?;
                         blocks.push(item);
                         buf = rest;
                     }
 
+                    // Decode fee configs
                     let mut fee_configs = Vec::new();
 
-                    for _ in 0..len {
+                    for _ in 0..blocks_count {
                         let (consumed, fee_config) = FeeConfig::decode(buf)?;
                         fee_configs.push(fee_config);
                         buf = &buf[consumed..];
                     }
 
+                    // Create blockchain to execute blocks
+                    let blockchain_type =
+                        ethrex_blockchain::BlockchainType::L2(L2Config::default());
+                    let opts = BlockchainOptions {
+                        r#type: blockchain_type,
+                        ..Default::default()
+                    };
+                    let blockchain = Blockchain::new(store.clone(), opts);
+
                     for (i, block) in blocks.iter().enumerate() {
-                        let fee_config = Arc::new(RwLock::new(
-                            fee_configs
-                                .get(i)
-                                .cloned()
-                                .ok_or_eyre("Fee config not found for block")?,
-                        ));
+                        // Update blockchain with the block's fee config
+                        let fee_config = fee_configs
+                            .get(i)
+                            .cloned()
+                            .ok_or_eyre("Fee config not found for block")?;
 
-                        let l2_config = L2Config { fee_config };
-
-                        let blockchain_type = ethrex_blockchain::BlockchainType::L2(l2_config);
-                        let opts = BlockchainOptions {
-                            r#type: blockchain_type,
-                            ..Default::default()
+                        let BlockchainType::L2(l2_config) = &blockchain.options.r#type else {
+                            panic!("Invalid blockchain type. Expected L2.");
                         };
-                        let blockchain = Blockchain::new(store.clone(), opts);
 
+                        {
+                            let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
+                                panic!("Fee config lock was poisoned.");
+                            };
+
+                            *fee_config_guard = fee_config;
+                        }
+
+                        // Execute block
                         blockchain.add_block(block.clone())?;
 
-                        let block_hash = block.hash();
+                        // Add fee config to rollup store
+                        rollup_store
+                            .store_fee_config_by_block(block.header.number, fee_config)
+                            .await?;
 
                         info!(
-                            "Added block {} with hash {block_hash:#x}",
+                            "Added block {} with hash {:#x}",
                             block.header.number,
+                            block.hash(),
                         );
                     }
+                    // Apply fork choice
                     let latest_hash_on_batch = blocks.last().ok_or_eyre("Batch is empty")?.hash();
                     apply_fork_choice(
                         &store,
@@ -476,6 +496,7 @@ impl Command {
                     )
                     .await?;
 
+                    // Prepare batch sealing
                     let blob = blobs_bundle::blob_from_bytes(Bytes::copy_from_slice(&blob))
                         .expect("Failed to create blob from bytes; blob was just read from file");
 
@@ -499,7 +520,13 @@ impl Command {
                     )
                     .await?;
 
+                    // Seal batch
                     rollup_store.seal_batch(batch).await?;
+
+                    // Create checkpoint
+                    let checkpoint_path =
+                        store_path.join(format!("checkpoint_batch_{batch_number}"));
+                    store.create_checkpoint(&checkpoint_path).await?;
 
                     info!("Sealed batch {batch_number}.");
                 }

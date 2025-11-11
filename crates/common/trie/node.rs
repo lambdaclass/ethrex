@@ -24,7 +24,29 @@ pub enum NodeRef {
 
 impl NodeRef {
     /// Gets a shared reference to the inner node.
+    /// Requires that the trie is in a consistent state, ie that all leaves being pointed are in the database.
+    /// Outside of snapsync this should always be the case.
     pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+        match self {
+            NodeRef::Node(node, _) => Ok(Some(node.clone())),
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
+            }
+            NodeRef::Hash(_) => db
+                .get(path)?
+                .filter(|rlp| !rlp.is_empty())
+                .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
+                .transpose(),
+        }
+    }
+
+    /// Gets a shared reference to the inner node, checking it's hash.
+    /// Returns `Ok(None)` if the hash is invalid.
+    pub fn get_node_checked(
+        &self,
+        db: &dyn TrieDB,
+        path: Nibbles,
+    ) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
@@ -63,10 +85,7 @@ impl NodeRef {
                 let Some(node) = db
                     .get(path.clone())?
                     .filter(|rlp| !rlp.is_empty())
-                    .and_then(|rlp| match Node::decode(&rlp) {
-                        Ok(node) => (node.compute_hash() == *hash).then_some(Ok(node)),
-                        Err(err) => Some(Err(TrieError::RLPDecode(err))),
-                    })
+                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                     .transpose()?
                 else {
                     return Ok(None);
@@ -116,9 +135,22 @@ impl NodeRef {
     }
 
     pub fn compute_hash(&self) -> NodeHash {
+        *self.compute_hash_ref()
+    }
+
+    pub fn compute_hash_ref(&self) -> &NodeHash {
         match self {
-            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
-            NodeRef::Hash(hash) => *hash,
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash()),
+            NodeRef::Hash(hash) => hash,
+        }
+    }
+
+    pub fn memoize_hashes(&self) {
+        if let NodeRef::Node(node, hash) = &self
+            && hash.get().is_none()
+        {
+            node.memoize_hashes();
+            let _ = hash.set(node.compute_hash());
         }
     }
 
@@ -275,10 +307,25 @@ impl Node {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
+        self.memoize_hashes();
         match self {
             Node::Branch(n) => n.compute_hash(),
             Node::Extension(n) => n.compute_hash(),
             Node::Leaf(n) => n.compute_hash(),
+        }
+    }
+
+    /// Recursively memoizes the hashes of all nodes of the subtrie that has
+    /// `self` as root (post-order traversal)
+    pub fn memoize_hashes(&self) {
+        match self {
+            Node::Branch(n) => {
+                for child in &n.choices {
+                    child.memoize_hashes();
+                }
+            }
+            Node::Extension(n) => n.child.memoize_hashes(),
+            _ => {}
         }
     }
 }
