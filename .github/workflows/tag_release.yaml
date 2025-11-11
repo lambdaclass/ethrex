@@ -8,6 +8,8 @@ on:
     # On pushes to main, this silently builds and pushes docker images tagged as 'main'
     branches:
       - main
+      # FIXME: This is to trigger the job in the PR's CI
+      - fix_v7.0.0-rc.1
 
 permissions:
   contents: write
