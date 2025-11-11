@@ -38,7 +38,6 @@ rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
-# Used for incremental hashing due to MAC, intentionally not from workspace.
 
 serde_json = "1.0.117"
 
