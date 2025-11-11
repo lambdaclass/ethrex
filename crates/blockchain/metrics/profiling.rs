@@ -25,22 +25,34 @@ pub struct FunctionProfilingLayer;
 /// Wrapper around [`HistogramTimer`] to avoid conflicts with other layers
 struct ProfileTimer(HistogramTimer);
 
-/// Visitor to extract the 'method' field from RPC spans for more granular profiling
+/// Wrapper to store method name in span extensions
+struct MethodName(String);
+
+/// Wrapper to store namespace in span extensions
+struct Namespace(String);
+
+/// Visitor to extract 'method' and 'namespace' fields from RPC spans for more granular profiling
 #[derive(Default)]
-struct MethodVisitor {
+struct SpanFieldVisitor {
     method: Option<String>,
+    namespace: Option<String>,
 }
 
-impl Visit for MethodVisitor {
+impl Visit for SpanFieldVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
-        if field.name() == "method" {
-            self.method = Some(value.to_string());
+        match field.name() {
+            "method" => self.method = Some(value.to_string()),
+            "namespace" => self.namespace = Some(value.to_string()),
+            _ => {}
         }
     }
     
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "method" {
-            self.method = Some(format!("{:?}", value).trim_matches('"').to_string());
+        let value_str = format!("{:?}", value).trim_matches('"').to_string();
+        match field.name() {
+            "method" => self.method = Some(value_str),
+            "namespace" => self.namespace = Some(value_str),
+            _ => {}
         }
     }
 }
@@ -50,14 +62,17 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        // Extract the 'method' field if present (used by RPC instrumentation)
-        let mut visitor = MethodVisitor::default();
+        // Extract 'method' and 'namespace' fields if present (used by RPC instrumentation)
+        let mut visitor = SpanFieldVisitor::default();
         attrs.record(&mut visitor);
         
-        if let Some(method_name) = visitor.method {
-            // Store the method name in span extensions for later use
-            if let Some(span) = ctx.span(id) {
-                span.extensions_mut().insert(method_name);
+        if let Some(span) = ctx.span(id) {
+            let mut extensions = span.extensions_mut();
+            if let Some(method_name) = visitor.method {
+                extensions.insert(MethodName(method_name));
+            }
+            if let Some(namespace) = visitor.namespace {
+                extensions.insert(Namespace(namespace));
             }
         }
     }
@@ -67,33 +82,34 @@ where
             && span.metadata().target().starts_with("ethrex")
         {
             let target = span.metadata().target();
+            let extensions = span.extensions();
             
-            // Determine namespace based on the module target
-            // ethrex_networking::rpc -> "rpc"
-            // ethrex_blockchain -> "block_processing"
-            // ethrex_storage -> "storage"
-            let namespace = if target.contains("::rpc") {
-                "rpc"
+            // First, check if namespace was explicitly set in span (from RPC middleware)
+            // Otherwise, determine namespace based on the module target
+            let namespace = if let Some(ns) = extensions.get::<Namespace>() {
+                ns.0.clone()
+            } else if target.contains("::rpc") {
+                "rpc".to_string()
             } else if target.contains("blockchain") {
-                "block_processing"
+                "block_processing".to_string()
             } else if target.contains("storage") {
-                "storage"
+                "storage".to_string()
             } else if target.contains("networking") {
-                "networking"
+                "networking".to_string()
             } else {
-                "other"
+                "other".to_string()
             };
 
             // Check if we have a stored method name (from RPC middleware)
             // Otherwise fall back to the span name
-            let function_name = span
-                .extensions()
-                .get::<String>()
-                .map(|s| s.clone())
+            let function_name = extensions
+                .get::<MethodName>()
+                .map(|m| m.0.clone())
                 .unwrap_or_else(|| span.metadata().name().to_string());
+            drop(extensions);
 
             let timer = METRICS_BLOCK_PROCESSING_PROFILE
-                .with_label_values(&[namespace, &function_name])
+                .with_label_values(&[&namespace, &function_name])
                 .start_timer();
             // PERF: `extensions_mut` uses a Mutex internally (per span)
             span.extensions_mut().insert(ProfileTimer(timer));
