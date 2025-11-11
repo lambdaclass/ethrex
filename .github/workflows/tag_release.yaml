@@ -2,8 +2,12 @@ name: Ethrex Release
 
 on:
   push:
+    # On tags, this generates a release and pushes docker images with the tag name
     tags:
       - "v*.*.*-*"
+    # On pushes to main, this silently builds and pushes docker images tagged as 'main'
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -33,7 +37,6 @@ jobs:
           - platform: ubuntu-22.04
             os: linux
             arch: x86_64
-            cpu_flags: RUSTFLAGS='-C target-cpu=x86-64-v2'
           - platform: ubuntu-22.04-arm
             os: linux
             arch: aarch64
@@ -124,7 +127,7 @@ jobs:
 
       - name: Build ethrex
         run: |
-          COMPILE_CONTRACTS=true ${{ matrix.cpu_flags }} ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.features }}" --bin ethrex
+          COMPILE_CONTRACTS=true ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.features }}" --bin ethrex
           chmod +x target/release/ethrex
           mv target/release/ethrex ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
@@ -297,7 +300,13 @@ jobs:
 
       - name: Format name
         run: |
-          echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+          # For branch builds (main) we want docker images tagged as 'main'. For tag pushes
+          # use the tag name (stripped of a leading 'v').
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            echo "TAG_VERSION=main" >> $GITHUB_ENV
+          else
+            echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+          fi
 
       # Pushes to ghcr.io/lambdaclass/ethrex
       - name: Build and push L1 Docker image
@@ -324,6 +333,7 @@ jobs:
 
   # Creates a release on GitHub with the binaries
   finalize-release:
+    if: github.ref_type == 'tag'
     needs:
       - build-ethrex
       - build-ethrex-guest

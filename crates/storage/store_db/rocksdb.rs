@@ -874,14 +874,16 @@ impl StoreEngine for Store {
         }
 
         for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(
+                6 + code.bytecode.len()
+                    + code
+                        .jump_targets
+                        .iter()
+                        .map(std::mem::size_of_val)
+                        .sum::<usize>(),
+            );
             code.bytecode.encode(&mut buf);
-            code.jump_targets
-                .into_iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>()
-                .as_slice()
-                .encode(&mut buf);
+            code.jump_targets.encode(&mut buf);
             batch_ops.push((CF_ACCOUNT_CODES, code_hash.0.to_vec(), buf));
         }
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
@@ -1290,14 +1292,16 @@ impl StoreEngine for Store {
 
     async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
-        let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+        let mut buf = Vec::with_capacity(
+            6 + code.bytecode.len()
+                + code
+                    .jump_targets
+                    .iter()
+                    .map(std::mem::size_of_val)
+                    .sum::<usize>(),
+        );
         code.bytecode.encode(&mut buf);
-        code.jump_targets
-            .into_iter()
-            .flat_map(|t| t.to_le_bytes())
-            .collect::<Vec<u8>>()
-            .as_slice()
-            .encode(&mut buf);
+        code.jump_targets.encode(&mut buf);
         self.write_async(CF_ACCOUNT_CODES, hash_key, buf).await
     }
 
@@ -1325,17 +1329,10 @@ impl StoreEngine for Store {
         };
         let bytes = Bytes::from_owner(bytes);
         let (bytecode, targets) = decode_bytes(&bytes)?;
-        let (targets, rest) = decode_bytes(targets)?;
-        if !rest.is_empty() || !targets.len().is_multiple_of(2) {
-            return Err(StoreError::DecodeError);
-        }
         let code = Code {
             hash: code_hash,
             bytecode: Bytes::copy_from_slice(bytecode),
-            jump_targets: targets
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect(),
+            jump_targets: <Vec<_>>::decode(targets)?,
         };
         Ok(Some(code))
     }
@@ -1913,14 +1910,16 @@ impl StoreEngine for Store {
 
         for (code_hash, code) in account_codes {
             let key = code_hash.as_bytes().to_vec();
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(
+                6 + code.bytecode.len()
+                    + code
+                        .jump_targets
+                        .iter()
+                        .map(std::mem::size_of_val)
+                        .sum::<usize>(),
+            );
             code.bytecode.encode(&mut buf);
-            code.jump_targets
-                .into_iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>()
-                .as_slice()
-                .encode(&mut buf);
+            code.jump_targets.encode(&mut buf);
             batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, buf));
         }
 

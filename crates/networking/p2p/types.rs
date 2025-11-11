@@ -1,6 +1,7 @@
 use bytes::{BufMut, Bytes};
 use ethrex_common::types::ForkId;
 use ethrex_common::{H256, H264, H512};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -9,7 +10,6 @@ use ethrex_rlp::{
 };
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
-use sha3::{Digest, Keccak256};
 use std::net::Ipv6Addr;
 use std::{
     fmt::Display,
@@ -388,14 +388,13 @@ impl NodeRecord {
         Ok(H512::from_slice(&signature_bytes))
     }
 
-    pub fn get_signature_digest(&self) -> Vec<u8> {
+    pub fn get_signature_digest(&self) -> [u8; 32] {
         let mut rlp = vec![];
         structs::Encoder::new(&mut rlp)
             .encode_field(&self.seq)
             .encode_key_value_list::<Bytes>(&self.pairs)
             .finish();
-        let digest = Keccak256::digest(&rlp);
-        digest.to_vec()
+        keccak_hash(&rlp)
     }
 }
 
