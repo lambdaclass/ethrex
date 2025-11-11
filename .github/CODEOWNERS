@@ -11,3 +11,4 @@ crates/common/types/l2.rs @ilitteri @manuelbilbao @avilagaston9
 crates/common/rkyv_utils.rs @ilitteri @manuelbilbao @avilagaston9
 crates/networking/p2p/rlpx/l2 @ilitteri @manuelbilbao @avilagaston9
 crates/vm/levm/src/hooks/l2_hook.rs @ilitteri @manuelbilbao @avilagaston9
+crates/blockchain/dev @ilitteri @manuelbilbao @avilagaston9
