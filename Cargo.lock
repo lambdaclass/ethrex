@@ -3306,6 +3306,7 @@ dependencies = [
  "lazy_static",
  "local-ip-address",
  "rand 0.8.5",
+ "rayon",
  "reqwest 0.12.24",
  "secp256k1",
  "serde",
