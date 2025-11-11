@@ -278,7 +278,7 @@ impl Store {
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_ACCOUNT_TRIE_NODES | CF_STORAGE_TRIE_NODES  => {
+                CF_ACCOUNT_TRIE_NODES | CF_STORAGE_TRIE_NODES => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
