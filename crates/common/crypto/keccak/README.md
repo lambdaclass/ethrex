@@ -15,8 +15,9 @@ The module exposes a single function:
 ```rust
 pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32];
 ```
-There are no feature flags. If building for `x86_64`, it will link an optimized assembly implementation. Because it uses generic `x86_64` code, no fallback is needed. The choice for the generic version was made due to the AVX2 version being ~40% slower than the generic one.
-If building for `ARMv8`, it will link an optimized implementation using on `sha3` instructions and a fallback one using generic `ARMv8` instructions. This detection is performed at runtime, i.e. dynamic dispatch.
+There are no feature flags. If building for `x86_64`, it will link an optimized assembly implementation. Because it uses generic `x86_64` code, no fallback is needed.
+If building for `ARMv8`, it will link an optimized implementation using generic `ARMv8` instructions.
+In both cases we chose the baseline instruction sets. This was not due to compatibility, which can be handled with dynamic dispatch, but because in the case of `ARMv8` using specialized `SHA3` instructions showed no improvement, and in `x86_64` using `AVX2` actually showed a regression of 30% in throughput.
 For other architectures, it falls back to `tiny_keccak`. This is specially necessary for proving, as the ZKVMs are RISC-V based, but they are not guaranteed to support all of its extensions. We may revisit adding assembly versions for them at a later time.
 
 ## Code Generation
