@@ -11,6 +11,8 @@ use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_l2::sequencer::block_producer;
+use ethrex_l2::sequencer::l1_committer;
 use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
@@ -24,6 +26,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -133,14 +136,36 @@ pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Regist
     }
 }
 
+async fn shutdown_sequencer_handles(
+    committer_handle: Option<GenServerHandle<l1_committer::L1Committer>>,
+    block_producer_handle: Option<GenServerHandle<block_producer::BlockProducer>>,
+) {
+    // These GenServers run via start_blocking, so aborting the JoinSet alone never stops them.
+    // Sending Abort elicits CastResponse::Stop and lets the blocking loop unwind cleanly.
+    if let Some(mut handle) = committer_handle {
+        handle
+            .cast(l1_committer::InMessage::Abort)
+            .await
+            .inspect_err(|err| warn!("Failed to send committer abort: {err:?}"))
+            .ok();
+    }
+    if let Some(mut handle) = block_producer_handle {
+        handle
+            .cast(block_producer::InMessage::Abort)
+            .await
+            .inspect_err(|err| warn!("Failed to send block producer abort: {err:?}"))
+            .ok();
+    }
+}
+
 pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
     raise_fd_limit()?;
-
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
+
     let rollup_store_dir = datadir.join("rollup_store");
 
     // Checkpoints are stored in the main datadir
@@ -280,14 +305,12 @@ pub async fn init_l2(
     }
 
     let sequencer_cancellation_token = CancellationToken::new();
-
     let l2_url = Url::parse(&format!(
         "http://{}:{}",
         opts.node_opts.http_addr, opts.node_opts.http_port
     ))
     .map_err(|err| eyre::eyre!("Failed to parse L2 RPC URL: {err}"))?;
-
-    let l2_sequencer = ethrex_l2::start_l2(
+    let (committer_handle, block_producer_handle, l2_sequencer) = ethrex_l2::start_l2(
         store,
         rollup_store,
         blockchain,
@@ -297,15 +320,19 @@ pub async fn init_l2(
         genesis,
         checkpoints_dir,
     )
-    .into_future();
-
+    .await?;
     join_set.spawn(l2_sequencer);
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
+            shutdown_sequencer_handles(
+                committer_handle.clone(),
+                block_producer_handle.clone()
+            ).await;
             join_set.abort_all();
         }
         _ = sequencer_cancellation_token.cancelled() => {
+            shutdown_sequencer_handles(committer_handle.clone(), block_producer_handle.clone()).await;
         }
     }
     info!("Server shut down started...");
