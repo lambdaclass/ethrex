@@ -304,7 +304,7 @@ jobs:
         run: |
           # For branch builds (main) we want docker images tagged as 'main'. For tag pushes
           # use the tag name (stripped of a leading 'v').
-          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+          if [[ "$GITHUB_REF" == "refs/heads/release-workflow-smoke" ]]; then
             echo "TAG_VERSION=main" >> $GITHUB_ENV
           else
             # extract tag name from ref and strip a leading 'v'
