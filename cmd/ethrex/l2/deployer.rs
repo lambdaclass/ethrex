@@ -552,9 +552,6 @@ pub async fn deploy_l1_contracts(
         None
     };
     if let Some(fee_token) = opts.initial_fee_token {
-        if let Some(hash) = last_hash {
-            wait_for_transaction_receipt(hash, &eth_client, 100).await?;
-        }
         let signer_owner: Signer = LocalSigner::new(opts.bridge_owner).into();
         register_fee_token(
             &eth_client,
@@ -1122,6 +1119,9 @@ async fn make_deposits(
         }
     }
     trace!("Deposits finished");
+    if let Some(hash) = last_hash {
+        wait_for_transaction_receipt(hash, &eth_client, 100).await?;
+    }
     Ok(last_hash)
 }
 
