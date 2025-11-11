@@ -491,18 +491,23 @@ impl StoreEngine for Store {
         Ok(self.inner()?.headers.get(&block_hash).cloned())
     }
 
-    fn get_block_header_by_number(
+    fn get_block_headers_by_number(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<BlockHeader>, StoreError> {
+    ) -> Result<Vec<BlockHeader>, StoreError> {
         let store = self.inner()?;
-        let block_header = store
+        let block_headers = store
             .headers
             .iter()
             .filter(|(_, header)| header.number == block_number)
-            .map(|(_, header)| header)
+            .map(|(_, header)| header.clone())
             .collect::<Vec<_>>();
-        Ok(Some(block_header[0].clone()))
+        if block_headers.is_empty() {
+            return Err(StoreError::Custom(format!(
+                "Missing block number {block_number:?} in memory."
+            )));
+        }
+        Ok(block_headers)
     }
 
     fn get_canonical_block_hash_sync(
@@ -714,16 +719,37 @@ impl StoreEngine for Store {
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<BlockHeader>, StoreError> {
-        (start..start + limit)
-            .map(|n| {
-                let Some(header) = self.get_block_header_by_number(n)? else {
-                    return Err(StoreError::Custom(format!(
-                        "Missing fullsync header for block {n}"
-                    )));
-                };
-                Ok(header)
-            })
-            .collect::<Result<Vec<_>, _>>()
+        let mut headers = vec![];
+        for n in start..start + limit {
+            let same_number_headers = self.get_block_headers_by_number(n)?;
+            if same_number_headers.len() == 1 {
+                headers.push(same_number_headers[0].clone());
+                continue;
+            }
+            // if there's more than one header with the same block number we select the one that is a child of the
+            // previously saved header
+            if let Some(last_header) = headers.last()
+                && let Some(legit_header) = same_number_headers
+                    .iter()
+                    .find(|header| header.parent_hash != last_header.hash())
+            {
+                headers.push(legit_header.clone());
+            } else {
+                // if there's more than one header with start block number we search its parent in the
+                // canonical hashes
+                let stored_canonical_hashes = &self.inner()?.canonical_hashes;
+                let last_canonical_hash = stored_canonical_hashes.get(&(n - 1));
+                if let Some(hash) = last_canonical_hash
+                    && let Some(legit_header) = same_number_headers
+                        .iter()
+                        .find(|header| header.parent_hash != *hash)
+                {
+                    headers.push(legit_header.clone());
+                }
+            }
+        }
+
+        return Ok(headers);
     }
 
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {

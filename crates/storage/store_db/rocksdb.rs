@@ -1117,16 +1117,11 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
-    fn get_block_header_by_number(
+    fn get_block_headers_by_number(
         &self,
-        block_number: BlockNumber,
-    ) -> Result<Option<BlockHeader>, StoreError> {
-        let number_value = block_number.to_le_bytes();
-
-        self.read_sync(CF_BLOCK_NUMBERS, number_value)?
-            .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
-            .transpose()
-            .map_err(StoreError::from)
+        _block_number: BlockNumber,
+    ) -> Result<Vec<BlockHeader>, StoreError> {
+        todo!()
     }
 
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {

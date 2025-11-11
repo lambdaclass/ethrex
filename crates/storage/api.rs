@@ -77,10 +77,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError>;
 
-    fn get_block_header_by_number(
+    fn get_block_headers_by_number(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<BlockHeader>, StoreError>;
+    ) -> Result<Vec<BlockHeader>, StoreError>;
 
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError>;
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError>;
