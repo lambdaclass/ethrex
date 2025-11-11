@@ -1656,9 +1656,9 @@
           },
           "gridPos": {
             "h": 14,
-            "w": 8,
+            "w": 7,
             "x": 0,
-            "y": 28
+            "y": 54
           },
           "id": 113,
           "options": {
@@ -1728,9 +1728,9 @@
           },
           "gridPos": {
             "h": 14,
-            "w": 4,
-            "x": 8,
-            "y": 28
+            "w": 5,
+            "x": 7,
+            "y": 54
           },
           "id": 115,
           "interval": "10ss",
@@ -1777,7 +1777,7 @@
               "refId": "A"
             }
           ],
-          "title": "Engine API AVG Latency (All Methods)",
+          "title": "Engine Latency by Methods (AVG Duration)",
           "type": "bargauge"
         },
         {
@@ -1846,7 +1846,7 @@
             "h": 14,
             "w": 12,
             "x": 12,
-            "y": 28
+            "y": 54
           },
           "id": 112,
           "interval": "10ss",
@@ -1885,7 +1885,7 @@
               "refId": "A"
             }
           ],
-          "title": "Engine API Latency (All Methods)",
+          "title": "Engine Latency by Method",
           "type": "timeseries"
         }
       ],
@@ -1928,7 +1928,7 @@
             "h": 14,
             "w": 7,
             "x": 0,
-            "y": 29
+            "y": 55
           },
           "id": 103,
           "options": {
@@ -1938,7 +1938,6 @@
               "placement": "right",
               "showLegend": true,
               "values": [
-                "value",
                 "percent"
               ]
             },
@@ -1967,7 +1966,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (function_name) (function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}) / sum by (function_name) (function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"})",
+              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]))",
               "instant": true,
               "legendFormat": "{{function_name}}",
               "range": false,
@@ -2037,7 +2036,7 @@
             "h": 14,
             "w": 5,
             "x": 7,
-            "y": 29
+            "y": 55
           },
           "id": 104,
           "options": {
@@ -2151,7 +2150,7 @@
             "h": 14,
             "w": 6,
             "x": 12,
-            "y": 29
+            "y": 55
           },
           "id": 101,
           "options": {
@@ -2224,9 +2223,9 @@
                 "scaleDistribution": {
                   "type": "linear"
                 },
-                "showPoints": "never",
+                "showPoints": "auto",
                 "showValues": false,
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -2253,7 +2252,7 @@
             "h": 14,
             "w": 6,
             "x": 18,
-            "y": 29
+            "y": 55
           },
           "id": 102,
           "options": {
@@ -2282,39 +2281,17 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(function_duration_seconds_bucket{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[5m])))",
-              "legendFormat": "p50",
+              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[18s])) \n/ sum by (function_name) (increase(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[18s]))",
+              "legendFormat": "{{ function_name }}",
               "range": true,
               "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(function_duration_seconds_bucket{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[5m])))",
-              "legendFormat": "p95",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(function_duration_seconds_bucket{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[5m])))",
-              "legendFormat": "p99",
-              "range": true,
-              "refId": "C"
             }
           ],
-          "title": "RPC Latency Percentiles (All Methods)",
+          "title": "RPC Latency by Methods",
           "type": "timeseries"
         }
       ],
-      "title": "RPC Performance",
+      "title": "RPC API",
       "type": "row"
     },
     {
@@ -3304,7 +3281,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 1191
+            "y": 1327
           },
           "id": 56,
           "options": {
@@ -3403,7 +3380,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 1191
+            "y": 1327
           },
           "id": 57,
           "options": {
@@ -3503,7 +3480,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 1191
+            "y": 1327
           },
           "id": 58,
           "options": {
@@ -3625,5 +3602,5 @@
   "timezone": "utc",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 37
+  "version": 10
 }
