@@ -38,7 +38,7 @@ cargo run --release --features l2,l2-sql --manifest-path "../../Cargo.toml" -- l
         --eth-rpc-url <ETH_RPC_URL> \
         --private-key <YOUR_PRIVATE_KEY> \
         --on-chain-proposer-owner <ON_CHAIN_PROPOSER_OWNER>  \
-        --bridge-owner <ON_CHAIN_PROPOSER_OWNER>  \
+        --bridge-owner <BRIDGE_OWNER_PRIVATE_KEY>  \
         --genesis-l2-path "../../fixtures/genesis/l2.json" \
         --proof-sender.l1-address <PROOF_SENDER_L1_ADDRESS>
 ```

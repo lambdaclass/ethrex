@@ -542,19 +542,14 @@ pub async fn deploy_l1_contracts(
 
     initialize_contracts(contract_addresses.clone(), &eth_client, &opts, &signer).await?;
 
-    let last_hash = if opts.deposit_rich {
+    if opts.deposit_rich {
         make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
             .await
             .inspect_err(|err| {
                 warn!("Failed to make deposits: {err}");
-            })?
-    } else {
-        None
-    };
+            })?;
+    }
     if let Some(fee_token) = opts.initial_fee_token {
-        if let Some(hash) = last_hash {
-            wait_for_transaction_receipt(hash, &eth_client, 100).await?;
-        }
         let signer_owner: Signer = LocalSigner::new(opts.bridge_owner).into();
         register_fee_token(
             &eth_client,
@@ -1037,7 +1032,7 @@ async fn make_deposits(
     bridge: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
-) -> Result<Option<H256>, DeployerError> {
+) -> Result<(), DeployerError> {
     trace!("Making deposits");
 
     let genesis: Genesis = if opts.use_compiled_genesis {
@@ -1122,7 +1117,10 @@ async fn make_deposits(
         }
     }
     trace!("Deposits finished");
-    Ok(last_hash)
+    if let Some(hash) = last_hash {
+        wait_for_transaction_receipt(hash, &eth_client, 100).await?;
+    }
+    Ok(())
 }
 
 fn write_contract_addresses_to_env(

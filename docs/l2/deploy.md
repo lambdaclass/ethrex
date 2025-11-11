@@ -38,7 +38,7 @@ ethrex l2 deploy \
     --tdx.verifier-address <TDX_VERIFIER_ADDRESS> \
     --aligned.aggregator-address <ALIGNED_AGGREGATOR_ADDRESS> \
     --on-chain-proposer-owner <OWNER_ADDRESS> \
-    --bridge-owner <OWNER_ADDRESS> \
+    --bridge-owner <BRIDGE_OWNER_PRIVATE_KEY> \
     --randomize-contract-deployment
 ```
 

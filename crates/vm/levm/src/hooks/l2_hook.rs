@@ -417,6 +417,9 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
             TxValidationError::InsufficientAccountFunds,
         ));
     }
+    // Here we want to check if the token is actually registered as valid.
+    // To do this we see if the last byte is 1 or 0.
+    // The contract returns a bool that is padded to 32 bytes.
     if execution_result.output.len() != 32
         || execution_result.output.get(31).is_none_or(|&b| b == 0)
     {
