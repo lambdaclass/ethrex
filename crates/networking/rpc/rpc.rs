@@ -77,7 +77,7 @@ use tokio::sync::{
 };
 use tokio::time::timeout;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -303,7 +303,7 @@ pub async fn start_api(
         loop {
             let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
             if result.is_err() {
-                error!("No messages from the consensus layer. Is the consensus client running?
+                warn!("No messages from the consensus layer. Is the consensus client running?
                  Check the auth JWT coincides with the one used by the CL and the auth RPC address and port used by it and Ethrex match."
                 );
             }
