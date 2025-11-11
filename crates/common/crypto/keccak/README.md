@@ -11,9 +11,16 @@ The code is adapted from the output of the scripts written by the [cryptogams](h
 
 The goal of this module is to have an efficient implementation of Keccak256 for Ethrex, reusing audited code as much as possible, while keeping complexity as low as possible.
 To achieve low complexity, we leave explicitly out of scope implementing `Digest`, having implementations for all variants of CPUs (we keep a selected subset of those provided by _Cryptogams_) and compile-time translation of source files.
-The module exposes a single function:
+The module exposes only the following:
 ```rust
 pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32];
+struct Keccak256;
+impl Keccak256 {
+    fn new() -> Self;
+    fn update(&self, impl AsRef<[u8]>) -> Self;
+    fn finalize(self) -> [u8; 32];
+}
+impl Default for Keccak256;
 ```
 There are no feature flags. If building for `x86_64`, it will link an optimized assembly implementation. Because it uses generic `x86_64` code, no fallback is needed.
 If building for `ARMv8`, it will link an optimized implementation using generic `ARMv8` instructions.
