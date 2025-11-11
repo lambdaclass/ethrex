@@ -2,9 +2,12 @@
 
 ## Perf
 
-### 2025-11-10
+### 2025-11-11
 
 - Replace sha3 keccak to an assembly version using ffi [#5247](https://github.com/lambdaclass/ethrex/pull/5247)
+
+### 2025-11-07
+- Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
 
 ### 2025-11-03
 
