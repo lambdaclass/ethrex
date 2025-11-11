@@ -237,7 +237,6 @@ pub async fn fill_transactions(
                     last_privileged_nonce.replace(id);
                 }
                 ethrex_common::types::SourceChainId::L2(chain_id) => {
-                    let entry = l2_privileged_nonces.entry(chain_id).or_insert(None);
                     l2_privileged_nonces.insert(chain_id, Some(id));
                 }
             }
