@@ -451,6 +451,7 @@ impl Subcommand {
                 if removedb {
                     remove_db(&opts.datadir.clone(), opts.force);
                 }
+                info!("ethrex version: {}", get_client_version());
 
                 let network = get_network(opts);
                 let genesis = network.get_genesis()?;
