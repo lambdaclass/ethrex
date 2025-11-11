@@ -396,7 +396,7 @@ pub async fn init_l1(
 
     let store = init_store(datadir, genesis).await;
     if opts.syncmode == SyncMode::Full {
-        store.generate_flatkeyvalue()?
+        store.generate_flatkeyvalue()?;
     }
 
     #[cfg(feature = "sync-test")]
