@@ -335,7 +335,7 @@ jobs:
 
   # Creates a release on GitHub with the binaries
   finalize-release:
-    if: github.ref_name == 'tag'
+    if: github.ref_type == 'tag'
     needs:
       - build-ethrex
       - build-ethrex-guest
