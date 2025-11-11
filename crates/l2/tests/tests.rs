@@ -47,7 +47,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tokio::task::JoinSet;
-use tokio::time::sleep;
 
 /// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
 /// from L1 to L2 and back.
