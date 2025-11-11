@@ -3,13 +3,23 @@
 ## Perf
 
 ### 2025-11-11
+
 - Insert instead of merge for bloom rebuilds [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
 
+### 2025-11-11
+
+- Fix `FlatKeyValue` generation on fullsync mode [#5274](https://github.com/lambdaclass/ethrex/pull/5274)
+
 ### 2025-11-10
+
 - Disable RocksDB compression [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
 
 ### 2025-11-07
+
 - Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
+
+### 2025-11-05
+- Merkelization backpressure and batching [#5200](https://github.com/lambdaclass/ethrex/pull/5200)
 
 ### 2025-11-03
 
@@ -17,6 +27,7 @@
 - Merge execution with some post-execution validations [#5170](https://github.com/lambdaclass/ethrex/pull/5170)
 
 ### 2025-10-31
+
 - Reduce overhead of trie opening [#5145](https://github.com/lambdaclass/ethrex/pull/5145)
 - Improved discovery and peer initialization [#5147](https://github.com/lambdaclass/ethrex/pull/5147)
 
