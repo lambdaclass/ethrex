@@ -30,7 +30,7 @@ $ ./keccak-1600-armv8.pl linux64 keccak1600-armv8.s
 $ cd ../x86_64
 $ ./keccak1600-x86_64.pl linux64 keccak1600-x86_64.s
 ```
-- With the code generated, we manually copy the functions defined to the matching `naked_asm` blocks inside the module.
+- The x86 can be directly imported by the Rust compiler with the current options, but the ARM code requires a few changes, commented at the top of the `keccak1600-armv8.s` file.
 
 ## Copyright Notice
 
