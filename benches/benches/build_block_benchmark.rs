@@ -189,7 +189,7 @@ pub async fn bench_payload(input: &(Arc<Blockchain>, Block, &Store)) -> (Duratio
     let (payload_block, payload_id) = create_payload_block(genesis_block, store).await;
     blockchain
         .clone()
-        .initiate_payload_build(payload_block, payload_id)
+        .initiate_payload_build(payload_block, payload_id, None)
         .await;
     // 2. engine_getPayload is called, this code path ends up calling Blockchain::get_payload(id),
     // so we also mimic that here without the RPC part.
@@ -242,7 +242,6 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                             perf_logs_enabled: false,
                             ..Default::default()
                         },
-                        None,
                     );
                     fill_mempool(&block_chain, accounts).await;
 
