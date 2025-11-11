@@ -1,8 +1,10 @@
-# Transfer ETH between L2s
+# Transfer ETH or Call a contract between L2s
 
-This document explains the steps needed to perform an ETH transfer from one L2 to another.
+This document explains the steps needed to perform an ETH transfer or a contract call from one L2 to another.
 
-## Change directory
+## Start both L2s
+
+### Change directory
 
 Every command should be run under `ethrex/crates/l2`
 
@@ -10,13 +12,13 @@ Every command should be run under `ethrex/crates/l2`
 cd ethrex/crates/l2
 ```
 
-## Start an L1
+### Start an L1
 
 ```bash
 make init-l1
 ```
 
-## Deploy the first L2
+### Deploy the first L2
 
 On another terminal
 
@@ -24,7 +26,7 @@ On another terminal
 ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 ```
 
-## Start the first L2
+### Start the first L2
 
 ```bash
 ../../target/release/ethrex \
@@ -52,7 +54,7 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
     --watcher.l2-chain-ids 1730
 ```
 
-## Deploy the second L2
+### Deploy the second L2
 
 On another terminal
 
@@ -73,7 +75,7 @@ Copy the `../../fixtures/genesis/l2.json` file to `../../fixtures/genesis/l2_2.j
 ```
 
 
-## Start the second L2
+### Start the second L2
 
 Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs of the previous command
 
@@ -105,7 +107,7 @@ Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs 
 ```
 
 
-## Start the prover
+### Start the prover
 
 On another terminal 
 
@@ -116,8 +118,9 @@ On another terminal
 	--backend exec
 ```
 
+## ETH Transfer
 
-## Check balances
+### Check balances
 
 Check the balances before sending the transfer
 
@@ -127,14 +130,14 @@ rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 http://localhost:1730 # S
 ```
 
 
-## Send the transfer
+### Send the transfer
 
 ```bash
 cast send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 10000000000000001 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 0x4417092b70a3e5f10dc504d0947dd256b965fc62 100000 0x --gas-price 3946771033 --legacy
 ```
 
 
-## Check balances
+### Check balances
 
 After some time the balances should change (about 1-2 minutes)
 
@@ -143,3 +146,112 @@ rex balance 0x4417092b70a3e5f10dc504d0947dd256b965fc62 http://localhost:1729 # R
 rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 http://localhost:1730 # Sender balance on second L2
 ```
 
+## Contract Call
+
+### Add the contract
+
+Create a `Counter.sol` file with the following content
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Counter {
+    uint256 public count;
+
+    function increment() external {
+        count += 1;
+    }
+
+    function get() external view returns (uint256) {
+        return count;
+    }
+}
+```
+
+### Deploy the contract
+
+```bash
+rex deploy --rpc-url http://localhost:1729 --remappings 0 --contract-path ./Counter.sol 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+```
+
+Remember the contract address for the next steps
+
+### Check counter value
+
+```bash
+rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
+```
+
+### Send the transaction
+
+```bash
+cast send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 <COUNTER_ADDRESS> 100000 0xd09de08a --gas-price 3946771033 --legacy
+```
+
+### Check counter value
+
+```bash
+rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
+```
+
+## Contract Call and ETH Transfer
+
+### Add the contract
+
+Create a `Counter.sol` file with the following content (The increment function is now payable)
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Counter {
+    uint256 public count;
+
+    function increment() external payable {
+        count += 1;
+    }
+
+    function get() external view returns (uint256) {
+        return count;
+    }
+}
+```
+
+### Deploy the contract
+
+```bash
+rex deploy --rpc-url http://localhost:1729 --remappings 0 --contract-path ./Counter.sol 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+```
+
+Remember the contract address for the next steps
+
+### Check counter value
+
+```bash
+rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
+```
+
+### Check counter balance
+
+```bash
+rex balance <COUNTER_ADDRESS> http://localhost:1730
+```
+
+### Send the transaction
+
+```bash
+cast send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 1000 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 <COUNTER_ADDRESS> 100000 0xd09de08a --gas-price 3946771033 --legacy
+```
+
+### Check counter value
+
+```bash
+rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
+```
+
+### Check counter balance
+
+```bash
+rex balance <COUNTER_ADDRESS> http://localhost:1730
+```
