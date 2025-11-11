@@ -68,19 +68,6 @@ lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
 }
 
-lazy_static::lazy_static! {
-    // Size of each state trie segment
-    static ref STATE_TRIE_SEGMENT_SIZE: U256 = HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS;
-    // Starting hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_START: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * i)))
-    };
-    // Ending hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_END: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * (i+1))))
-    };
-}
-
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {
     #[default]
