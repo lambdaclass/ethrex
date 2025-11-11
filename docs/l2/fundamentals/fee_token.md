@@ -5,35 +5,37 @@ Ethrex lets L2 transactions pay execution costs with an ERC-20 instead of ETH. A
 Key requirements:
 - The token must implement `IFeeToken` (see `crates/l2/contracts/src/example/FeeToken.sol`), which extends `IERC20L2` and adds the `lockFee` / `payFee` entry points consumed by the sequencer.
 - `lockFee` must reserve funds when invoked by the fee collector (the L2 bridge/`COMMON_BRIDGE_L2_ADDRESS`), and `payFee` must release or burn those funds when the transaction finishes.
+- The token address must be registered in the L2 `FeeTokenRegistry` system contract (`0x…fffc`). Registration happens through the L1 `CommonBridge` by calling `registerNewFeeToken(address)`; only the bridge owner can do this, and the call queues a privileged transaction that the sequencer forces on L2. Likewise, `unregisterFeeToken(address)` removes it.
 
 ### Minimal Contract Surface
 
 ```solidity
 contract FeeToken is ERC20, IFeeToken {
-    
+    address internal constant BRIDGE = 0x000000000000000000000000000000000000FFFF;
+
     ...
 
-    modifier onlyFeeCollector() {
-        require(msg.sender == FEE_COLLECTOR, "only fee collector");
+    modifier onlyBridge() {
+        require(msg.sender == BRIDGE, "only bridge");
         _;
     }
     function lockFee(address payer, uint256 amount)
         external
         override(IFeeToken)
-        onlyFeeCollector
+        onlyBridge
     {
-        _transfer(payer, FEE_COLLECTOR, amount);
+        _transfer(payer, BRIDGE, amount);
     }
 
     function payFee(address receiver, uint256 amount)
         external
         override(IFeeToken)
-        onlyFeeCollector
+        onlyBridge
     {
         if (receiver == address(0)) {
-            _burn(FEE_COLLECTOR, amount);
+            _burn(BRIDGE, amount);
         } else {
-            _transfer(FEE_COLLECTOR, receiver, amount);
+            _transfer(BRIDGE, receiver, amount);
         }
     }
 }
@@ -51,12 +53,45 @@ rex deploy 0 <PRIVATE_KEY> \
 
 ## Operator Workflow
 
-1. Deploy or reuse an `IFeeToken` implementation and note its L2 address.
-2. Instantiate an `EthClient` and a signer (local or remote) that will send the transaction.
-3. Build a `TxType::FeeToken` transaction with `ethrex_l2_sdk::build_generic_tx`, setting `Overrides::fee_token` and the desired `value`/calldata.
-4. Submit the transaction with `ethrex_l2_sdk::send_generic_transaction` and wait for the receipt.
+Operators decide which ERC-20s are valid fee tokens:
 
-That is all the sequencer needs; fee locking and distribution happen automatically via `l2_hook.rs`.
+1. Deploy or reuse an `IFeeToken` implementation and note its L2 address. When initializing the network, the deployer binary can automatically register one by passing `--initial-fee-token <address>` so the bridge queues it during startup.
+2. Register additional tokens (or remove them) through the L1 `CommonBridge` using `registerNewFeeToken(address)` / `unregisterFeeToken(address)`. Each call enqueues a privileged transaction that the sequencer must force on L2.
+
+> ⚠️ **Warning:** Registration completes only after the L1 watcher processes the privileged transaction and the L2 registry emits `FeeTokenRegistered`. Until then, user transactions referencing the token will fail.
+
+If the token is not yet registered, the bridge owner can queue the privileged call from L1 with the SDK helpers:
+
+```rust
+let calldata = ethrex_l2_sdk::calldata::encode_calldata(
+    "registerNewFeeToken(address)",
+    &[Value::Address(fee_token_address)],
+)?;
+let tx = build_generic_tx(
+    &l1_client,
+    TxType::EIP1559,
+    ethrex_l2_sdk::bridge_address()?, // CommonBridge proxy on L1
+    owner_signer.address(),
+    calldata.into(),
+    Overrides {
+        gas_limit: Some(21000 * 10),
+        ..Default::default()
+    },
+).await?;
+let hash = send_generic_transaction(&l1_client, tx, &owner_signer).await?;
+wait_for_transaction_receipt(hash, &l1_client, 100).await?;
+// The L1 watcher will include the privileged tx and the registry will emit FeeTokenRegistered.
+```
+
+## User Workflow
+
+Once a token is registered, users can submit fee-token transactions:
+
+1. Instantiate an `EthClient` connected to L2 and create a signer.
+2. Build a `TxType::FeeToken` transaction with `build_generic_tx`, setting `Overrides::fee_token = Some(<token>)` and the desired `value` / calldata.
+3. Send the transaction with `send_generic_transaction` and wait for the receipt.
+
+Fee locking and distribution happen automatically inside `l2_hook.rs`.
 
 ```rust
 use anyhow::Result;

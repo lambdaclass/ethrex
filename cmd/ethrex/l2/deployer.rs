@@ -16,6 +16,7 @@ use ethrex_common::{
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::{calldata::Value, prover::ProverType, utils::get_address_from_secret_key};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
+use ethrex_l2_sdk::register_fee_token;
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode,
     deploy_with_proxy_from_bytecode, initialize_contract, send_generic_transaction,
@@ -269,12 +270,13 @@ pub struct DeployerOptions {
     pub on_chain_proposer_owner: Address,
     #[arg(
         long,
-        value_name = "ADDRESS",
+        value_name = "PRIVATE_KEY",
+        value_parser = parse_private_key,
         env = "ETHREX_BRIDGE_OWNER",
         help_heading = "Deployer options",
-        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
+        help = "Private key of the owner of the CommonBridge contract, who can upgrade the contract."
     )]
-    pub bridge_owner: Address,
+    pub bridge_owner: SecretKey,
     #[arg(
         long,
         value_name = "PRIVATE_KEY",
@@ -336,6 +338,14 @@ pub struct DeployerOptions {
         help = "Genesis data is extracted at compile time, used for development"
     )]
     pub use_compiled_genesis: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_INITIAL_FEE_TOKEN",
+        help_heading = "Deployer options",
+        help = "This address wil be registered as an initial fee token"
+    )]
+    pub initial_fee_token: Option<Address>,
 }
 
 impl Default for DeployerOptions {
@@ -392,10 +402,17 @@ impl Default for DeployerOptions {
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
             ]),
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
-            bridge_owner: H160([
-                0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
-                0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
-            ]),
+            // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
+            #[allow(clippy::unwrap_used)]
+            bridge_owner: SecretKey::from_slice(
+                H256([
+                    0x94, 0x1e, 0x10, 0x33, 0x20, 0x61, 0x5d, 0x39, 0x4a, 0x55, 0x70, 0x8b, 0xe1,
+                    0x3e, 0x45, 0x99, 0x4c, 0x7d, 0x93, 0xb9, 0x32, 0xb0, 0x64, 0xdb, 0xcb, 0x2b,
+                    0x51, 0x1f, 0xe3, 0x25, 0x4e, 0x2e,
+                ])
+                .as_bytes(),
+            )
+            .unwrap(),
             on_chain_proposer_owner_pk: None,
             sp1_vk_path: None,
             risc0_vk_path: None,
@@ -403,6 +420,7 @@ impl Default for DeployerOptions {
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
+            initial_fee_token: None,
         }
     }
 }
@@ -524,12 +542,27 @@ pub async fn deploy_l1_contracts(
 
     initialize_contracts(contract_addresses.clone(), &eth_client, &opts, &signer).await?;
 
-    if opts.deposit_rich {
-        let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
+    let last_hash = if opts.deposit_rich {
+        make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
             .await
             .inspect_err(|err| {
                 warn!("Failed to make deposits: {err}");
-            });
+            })?
+    } else {
+        None
+    };
+    if let Some(fee_token) = opts.initial_fee_token {
+        if let Some(hash) = last_hash {
+            wait_for_transaction_receipt(hash, &eth_client, 100).await?;
+        }
+        let signer_owner: Signer = LocalSigner::new(opts.bridge_owner).into();
+        register_fee_token(
+            &eth_client,
+            contract_addresses.bridge_address,
+            fee_token,
+            &signer_owner,
+        )
+        .await?;
     }
 
     write_contract_addresses_to_env(contract_addresses.clone(), opts.env_file_path)?;
@@ -813,6 +846,8 @@ async fn initialize_contracts(
 
     let deployer_address =
         get_address_from_secret_key(&opts.private_key).map_err(DeployerError::InternalError)?;
+    let bridge_owner_address =
+        get_address_from_secret_key(&opts.bridge_owner).map_err(DeployerError::InternalError)?;
 
     info!("Initializing OnChainProposer");
 
@@ -977,7 +1012,7 @@ async fn initialize_contracts(
     info!("Initializing CommonBridge");
     let initialize_tx_hash = {
         let calldata_values = vec![
-            Value::Address(opts.bridge_owner),
+            Value::Address(bridge_owner_address),
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
         ];
@@ -1002,7 +1037,7 @@ async fn make_deposits(
     bridge: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
-) -> Result<(), DeployerError> {
+) -> Result<Option<H256>, DeployerError> {
     trace!("Making deposits");
 
     let genesis: Genesis = if opts.use_compiled_genesis {
@@ -1030,6 +1065,8 @@ async fn make_deposits(
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.trim().to_string())
         .collect();
+
+    let mut last_hash = None;
 
     for pk in private_keys.iter() {
         let secret_key = parse_private_key(pk).map_err(|_| {
@@ -1070,6 +1107,7 @@ async fn make_deposits(
 
         match send_generic_transaction(eth_client, build, &signer).await {
             Ok(hash) => {
+                last_hash = Some(hash);
                 info!(
                     address =? signer.address(),
                     ?value_to_deposit,
@@ -1084,7 +1122,7 @@ async fn make_deposits(
         }
     }
     trace!("Deposits finished");
-    Ok(())
+    Ok(last_hash)
 }
 
 fn write_contract_addresses_to_env(

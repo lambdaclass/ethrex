@@ -24,8 +24,8 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    build_generic_tx, get_fee_token_ratio, get_last_verified_batch, send_generic_transaction,
-    wait_for_message_proof,
+    FEE_TOKEN_REGISTRY_ADDRESS, REGISTER_FEE_TOKEN_SIGNATURE, build_generic_tx,
+    get_fee_token_ratio, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -40,13 +40,14 @@ use secp256k1::SecretKey;
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::{Add, AddAssign};
+use std::time::Duration;
 use std::{
     fs::{File, read_to_string},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    time::Duration,
 };
 use tokio::task::JoinSet;
+use tokio::time::sleep;
 
 /// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
 /// from L1 to L2 and back.
@@ -148,6 +149,23 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         .get_balance(l1_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
+    let mut acc_priority_fees = 0;
+    let mut acc_base_fees = 0;
+    let mut acc_operator_fee = 0;
+    let mut acc_l1_fees = 0;
+
+    // Non thread-safe uses owner address
+    let fee_token_fees = test_fee_token(
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+        private_keys.pop().unwrap(),
+    )
+    .await?;
+    acc_priority_fees += fee_token_fees.priority_fees;
+    acc_base_fees += fee_token_fees.base_fees;
+    acc_operator_fee += fee_token_fees.operator_fees;
+    acc_l1_fees += fee_token_fees.l1_fees;
+
     let mut set = JoinSet::new();
 
     set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
@@ -189,12 +207,6 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
-    set.spawn(test_fee_token(
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-        private_keys.pop().unwrap(),
-    ));
-
     set.spawn(test_privileged_tx_not_enough_balance(
         l1_client.clone(),
         l2_client.clone(),
@@ -226,10 +238,6 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
-    let mut acc_priority_fees = 0;
-    let mut acc_base_fees = 0;
-    let mut acc_operator_fee = 0;
-    let mut acc_l1_fees = 0;
     while let Some(res) = set.join_next().await {
         let fees_details = res??;
         acc_priority_fees += fees_details.priority_fees;
@@ -1988,6 +1996,7 @@ async fn test_fee_token(
 ) -> Result<FeesDetails> {
     let test = "test_fee_token";
     let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
+    let l1_client = l1_client();
     println!("{test}: Rich wallet address: {rich_wallet_address:#x}");
 
     let contracts_path = Path::new("contracts");
@@ -2021,6 +2030,36 @@ async fn test_fee_token(
         dummy_modified_storage_slots(0),
     )
     .await?;
+
+    let owner_pk = bridge_owner_private_key();
+    let owner_signer: Signer = LocalSigner::new(owner_pk).into();
+    let calldata = encode_calldata(
+        REGISTER_FEE_TOKEN_SIGNATURE,
+        &[Value::Address(fee_token_address)],
+    )
+    .unwrap();
+    let register_tx = build_generic_tx(
+        &l1_client,
+        TxType::EIP1559,
+        bridge_address().unwrap(),
+        owner_signer.address(),
+        calldata.into(),
+        Overrides {
+            gas_limit: Some(21000 * 20),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // Register fee token contract
+    let register_tx_hash = send_generic_transaction(&l1_client, register_tx, &owner_signer)
+        .await
+        .unwrap();
+    wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
+        .await
+        .unwrap();
+
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -2066,6 +2105,27 @@ async fn test_fee_token(
         "{test}: L1 fee vault address fee token balance before transfer: {l1_fee_vault_token_balance_before_transfer}"
     );
 
+    let cd = encode_calldata("isFeeToken(address)", &[Value::Address(fee_token_address)]).unwrap();
+    let expected = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    for attempt in 1..=100 {
+        let is_registered = l2_client
+            .call(
+                FEE_TOKEN_REGISTRY_ADDRESS,
+                cd.clone().into(),
+                Overrides::default(),
+            )
+            .await
+            .unwrap();
+        if is_registered == expected {
+            break;
+        }
+        if attempt == 100 {
+            return Err(anyhow::anyhow!(
+                "{test}: fee token not registered after {attempt} attempts (last value: {is_registered})"
+            ));
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
     let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(
         &l2_client,
@@ -2085,7 +2145,7 @@ async fn test_fee_token(
     generic_tx.gas = generic_tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
     let tx_hash = send_generic_transaction(&l2_client, generic_tx, &signer).await?;
     let transfer_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 100).await?;
+        ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 1000).await?;
 
     let sender_balance_after_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))

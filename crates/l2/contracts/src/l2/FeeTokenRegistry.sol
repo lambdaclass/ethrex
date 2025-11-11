@@ -1,13 +1,35 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Iden;tifier: MIT
 pragma solidity =0.8.29;
 import "./interfaces/IFeeTokenRegistry.sol";
 
 contract FeeTokenRegistry is IFeeTokenRegistry {
-    address internal constant FEE_TOKEN =
-        0xb7E811662Fa10ac068aeE115AC2e682821630535;
+    address public constant BRIDGE = 0x000000000000000000000000000000000000FFff;
 
-    function isFeeToken(address token) external pure override returns (bool) {
-        return token == FEE_TOKEN;
+    mapping(address => bool) private feeTokens;
+
+		modifier onlyBridge() {
+        require(msg.sender == BRIDGE, "FeeTokenRegistry: not bridge");
+        _;
     }
 
+    /// @inheritdoc IFeeTokenRegistry
+    function isFeeToken(address token) external view override returns (bool) {
+        return feeTokens[token];
+    }
+
+    /// @inheritdoc IFeeTokenRegistry
+    function registerFeeToken(address token) external override onlyBridge {
+        require(token != address(0), "FeeTokenRegistry: zero address");
+        require(!feeTokens[token], "Token already registered");
+        feeTokens[token] = true;
+        emit FeeTokenRegistered(token);
+    }
+
+    /// @inheritdoc IFeeTokenRegistry
+    function unregisterFeeToken(address token) external override onlyBridge {
+        require(feeTokens[token], "Token not registered");
+        feeTokens[token] = false;
+        emit FeeTokenUnregistered(token);
+    }
 }
+

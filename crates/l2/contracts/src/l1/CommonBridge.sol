@@ -14,6 +14,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
+import "../l2/interfaces/IFeeTokenRegistry.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -59,6 +60,10 @@ contract CommonBridge is
     /// @dev It's used to validate withdrawals
     address public constant L2_BRIDGE_ADDRESS = address(0xffff);
 
+		/// @notice Address of the fee token registry on the L2
+		/// @dev It's used to allow new tokens to pay fees
+		address public constant L2_FEE_TOKEN_REGISTRY = address(0xfffc);
+
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
@@ -86,6 +91,12 @@ contract CommonBridge is
 
     /// @notice Deadline for the sequencer to include the transaction.
     mapping(bytes32 => uint256) public privilegedTxDeadline;
+
+    /// @dev Deprecated variable.
+	  /// @notice The L1 token address that is treated as the one to be bridged to the L2.
+    /// @dev If set to address(0), ETH is considered the native token.
+    /// Otherwise, this address is used for native token deposits and withdrawals.
+    address public NATIVE_TOKEN_L1;
 
     /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
     uint256 private pendingPrivilegedTxIndex;
@@ -451,6 +462,40 @@ contract CommonBridge is
             data: callData
         });
         _sendToL2(L2_PROXY_ADMIN, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function registerNewFeeToken(
+        address newFeeToken
+    ) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenRegistry.registerFeeToken,
+            (newFeeToken)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_REGISTRY,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function unregisterFeeToken(
+        address existingFeeToken
+    ) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenRegistry.unregisterFeeToken,
+            (existingFeeToken)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_REGISTRY,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
     /// @notice Allow owner to upgrade the contract.

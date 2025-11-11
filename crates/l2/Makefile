@@ -90,7 +90,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
@@ -107,7 +107,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
