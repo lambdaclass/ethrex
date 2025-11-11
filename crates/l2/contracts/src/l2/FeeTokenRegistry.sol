@@ -7,7 +7,7 @@ contract FeeTokenRegistry is IFeeTokenRegistry {
 
     mapping(address => bool) private feeTokens;
 
-		modifier onlyBridge() {
+    modifier onlyBridge() {
         require(msg.sender == BRIDGE, "FeeTokenRegistry: not bridge");
         _;
     }
