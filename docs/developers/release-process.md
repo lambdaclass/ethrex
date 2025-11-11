@@ -31,6 +31,8 @@ After updating the version in the `Cargo.toml` files, we need to update the `Car
 - `crates/l2/prover/src/guest_program/src/risc0`
 - `crates/l2/tee/quote-gen`
 
+Then, go to the `CLI.md` file located in `docs/` and update the version of the `--builder.extra-data` flag default value to match the new version (for both ethrex and ethrex l2 sections).
+
 Finally, stage and commit the changes to the release branch.
 
 An example of a PR that bumps the version can be found [here](https://github.com/lambdaclass/ethrex/pull/4881/files#diff-2e9d962a08321605940b5a657135052fbcef87b5e360662bb527c96d9a615542).
