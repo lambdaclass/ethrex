@@ -884,7 +884,14 @@ impl StoreEngine for Store {
         }
 
         for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 4 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(
+                6 + code.bytecode.len()
+                    + code
+                        .jump_targets
+                        .iter()
+                        .map(std::mem::size_of_val)
+                        .sum::<usize>(),
+            );
             code.bytecode.encode(&mut buf);
             code.jump_targets
                 .into_iter()
@@ -1258,7 +1265,14 @@ impl StoreEngine for Store {
 
     async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
-        let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 4 * code.jump_targets.len());
+        let mut buf = Vec::with_capacity(
+            6 + code.bytecode.len()
+                + code
+                    .jump_targets
+                    .iter()
+                    .map(std::mem::size_of_val)
+                    .sum::<usize>(),
+        );
         code.bytecode.encode(&mut buf);
         code.jump_targets
             .into_iter()
@@ -1868,7 +1882,14 @@ impl StoreEngine for Store {
 
         for (code_hash, code) in account_codes {
             let key = code_hash.as_bytes().to_vec();
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 4 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(
+                6 + code.bytecode.len()
+                    + code
+                        .jump_targets
+                        .iter()
+                        .map(std::mem::size_of_val)
+                        .sum::<usize>(),
+            );
             code.bytecode.encode(&mut buf);
             code.jump_targets
                 .into_iter()
