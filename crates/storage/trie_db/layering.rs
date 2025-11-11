@@ -134,12 +134,20 @@ impl TrieLayerCache {
 
     /// Rebuilds the global bloom filter by inserting all keys from all layers.
     pub fn rebuild_bloom(&mut self) {
-        let mut new_global_filter = Self::create_filter().unwrap();
+        let Ok(mut new_global_filter) = Self::create_filter() else {
+            tracing::warn!(
+                "TrieLayerCache: rebuild_bloom could not create new filter. Poisoning bloom."
+            );
+            self.bloom = None;
+            return;
+        };
 
-        for (_, layer) in &self.layers {
-            for (path, _) in &layer.nodes {
+        for layer in self.layers.values() {
+            for path in layer.nodes.keys() {
                 if let Err(qfilter::Error::CapacityExceeded) = new_global_filter.insert(path) {
-                    tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
+                    tracing::warn!(
+                        "TrieLayerCache: rebuild_bloom capacity exceeded. Posoning bloom."
+                    );
                     self.bloom = None;
                     return;
                 }
