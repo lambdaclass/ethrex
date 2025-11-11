@@ -45,11 +45,7 @@ mod imp {
     impl Keccak256 {
         #[inline]
         pub fn new() -> Self {
-            Self {
-                state: State::default(),
-                tail_buf: [0; BLOCK_SIZE],
-                tail_len: 0,
-            }
+            Self::default()
         }
 
         #[inline]
