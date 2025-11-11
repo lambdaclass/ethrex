@@ -146,7 +146,7 @@ impl TrieLayerCache {
             for path in layer.nodes.keys() {
                 if let Err(qfilter::Error::CapacityExceeded) = new_global_filter.insert(path) {
                     tracing::warn!(
-                        "TrieLayerCache: rebuild_bloom capacity exceeded. Posoning bloom."
+                        "TrieLayerCache: rebuild_bloom capacity exceeded. Poisoning bloom."
                     );
                     self.bloom = None;
                     return;
