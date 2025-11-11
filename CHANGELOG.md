@@ -2,6 +2,9 @@
 
 ## Perf
 
+### 2025-11-10
+- Disable RocksDB compression [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
+
 ### 2025-11-07
 - Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
 
