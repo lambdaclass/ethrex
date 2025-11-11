@@ -2158,8 +2158,7 @@ async fn test_fee_token(
         &[Value::Address(fee_token_address)],
     )
     .unwrap();
-    let expected_ratio =
-        "0x0000000000000000000000000000000000000000000000000000000000000002";
+    let expected_ratio = "0x0000000000000000000000000000000000000000000000000000000000000002";
     for attempt in 1..=100 {
         let current_ratio = l2_client
             .call(
