@@ -10,7 +10,7 @@ for i in range(int(start), int(end)):
 
     with open(f"../../bench-{i}.log", "r+") as file:
         for line in file:
-            if "Finished regenerating state":
+            if "Finished regenerating state" in line:
                 break
         
         for line in file:
