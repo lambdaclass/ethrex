@@ -83,8 +83,6 @@ mod tests {
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
 
-    // FIXME
-    #[ignore = "fails due to the tx RLP encoding not working with empty signatures"]
     #[tokio::test]
     async fn test_for_eip_1559_txs() {
         let storage = setup_store().await;
@@ -98,8 +96,6 @@ mod tests {
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
 
-    // FIXME
-    #[ignore = "fails due to the tx RLP encoding not working with empty signatures"]
     #[tokio::test]
     async fn test_with_mixed_transactions() {
         let storage = setup_store().await;

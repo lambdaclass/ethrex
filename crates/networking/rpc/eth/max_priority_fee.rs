@@ -59,8 +59,6 @@ mod tests {
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
 
-    // FIXME
-    #[ignore = "fails due to the tx RLP encoding not working with empty signatures"]
     #[tokio::test]
     async fn test_for_eip_1559_txs() {
         let context = default_context().await;
@@ -73,8 +71,6 @@ mod tests {
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
 
-    // FIXME
-    #[ignore = "fails due to the tx RLP encoding not working with empty signatures"]
     #[tokio::test]
     async fn test_with_mixed_transactions() {
         let context = default_context().await;
@@ -109,8 +105,6 @@ mod tests {
         assert_eq!(parsed_result, MIN_GAS_TIP);
     }
 
-    // FIXME
-    #[ignore = "fails due to the tx RLP encoding not working with empty signatures"]
     #[tokio::test]
     async fn request_smoke_test() {
         let raw_json = json!(
