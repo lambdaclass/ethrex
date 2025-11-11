@@ -28,14 +28,13 @@ use ethrex_common::{
     },
     utils::keccak,
 };
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
 };
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
-use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
