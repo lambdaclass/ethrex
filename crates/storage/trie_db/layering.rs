@@ -136,15 +136,15 @@ impl TrieLayerCache {
     pub fn rebuild_bloom(&mut self) {
         let mut new_global_filter = Self::create_filter().unwrap();
 
-        self.layers.iter().for_each(|(_, layer)| {
-            layer.nodes.iter().for_each(|(path, _)| {
+        for (_, layer) in &self.layers {
+            for (path, _) in &layer.nodes {
                 if let Err(qfilter::Error::CapacityExceeded) = new_global_filter.insert(path) {
                     tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
                     self.bloom = None;
                     return;
                 }
-            })
-        });
+            }
+        }
 
         self.bloom = Some(new_global_filter);
     }
