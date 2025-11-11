@@ -985,7 +985,7 @@ impl Blockchain {
             };
             let extra_log = if as_gigas > 0.0 {
                 format!(
-                    " block validation: {}% exec(w/merkle): {}% merkle-only: {}% max_queue_length: {merkle_queue_length}) store: {}%",
+                    " block validation: {}% | exec(w/merkle): {}% | merkle-only: {}% (max_queue_length: {merkle_queue_length}) | store: {}%",
                     percentage(start_instant, block_validated_instant),
                     percentage(exec_merkle_start, exec_end_instant),
                     percentage(exec_end_instant, exec_merkle_end_instant),
