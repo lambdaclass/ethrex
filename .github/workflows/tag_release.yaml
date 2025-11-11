@@ -307,9 +307,7 @@ jobs:
           if [[ "$GITHUB_REF" == "refs/heads/release-workflow-smoke" ]]; then
             echo "TAG_VERSION=main" >> $GITHUB_ENV
           else
-            # extract tag name from ref and strip a leading 'v'
-            ref_name="${GITHUB_REF#refs/tags/}"
-            echo "TAG_VERSION=$(echo $ref_name | tr -d v)" >> $GITHUB_ENV
+            echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
           fi
 
       # Pushes to ghcr.io/lambdaclass/ethrex
