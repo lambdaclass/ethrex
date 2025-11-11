@@ -808,8 +808,6 @@ impl StoreEngine for Store {
             .state_root;
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
-        let _span = tracing::trace_span!("Block DB update").entered();
-
         let mut batch_ops = vec![];
 
         let UpdateBatch {
