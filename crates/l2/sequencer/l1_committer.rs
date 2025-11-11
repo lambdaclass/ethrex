@@ -869,7 +869,7 @@ impl L1Committer {
         path: &Path,
         rollup_store: &StoreRollup,
     ) -> Result<(Store, Arc<Blockchain>), CommitterError> {
-        checkpointee.create_checkpoint(&path).await?;
+        checkpointee.create_checkpoint(path)?;
         Self::get_checkpoint_from_path(
             self.genesis.clone(),
             self.blockchain.options.clone(),
