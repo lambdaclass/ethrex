@@ -4791,7 +4791,7 @@ dependencies = [
 
 [[package]]
 name = "quote-gen"
-version = "0.1.0"
+version = "7.0.0"
 dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",
