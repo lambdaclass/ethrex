@@ -24,7 +24,7 @@ Then, we need to update three more `Cargo.toml` files that are not part of the w
 - `crates/l2/prover/src/guest_program/src/risc0/Cargo.toml`
 - `crates/l2/tee/quote-gen/Cargo.toml`
 
-After updating the version in the `Cargo.toml` files, we need to update the `Cargo.lock` files to reflect the new versions. Run `cargo update` in their respective directories:
+After updating the version in the `Cargo.toml` files, we need to update the `Cargo.lock` files to reflect the new versions. Run `cargo tree` in their respective directories:
 
 - In the root directory
 - `crates/l2/prover/src/guest_program/src/sp1`
