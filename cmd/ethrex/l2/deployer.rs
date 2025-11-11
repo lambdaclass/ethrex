@@ -997,7 +997,7 @@ async fn initialize_contracts(
     info!("Initializing CommonBridge");
     let initialize_tx_hash = {
         let calldata_values = vec![
-            Value::Address(opts.bridge_owner),
+            Value::Address(initializer.address()),
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
         ];
