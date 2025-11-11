@@ -1302,10 +1302,6 @@ impl StoreEngine for Store {
         };
         let bytes = Bytes::from_owner(bytes);
         let (bytecode, targets) = decode_bytes(&bytes)?;
-        let (targets, rest) = decode_bytes(targets)?;
-        if !rest.is_empty() {
-            return Err(StoreError::DecodeError);
-        }
         let code = Code {
             hash: code_hash,
             bytecode: Bytes::copy_from_slice(bytecode),
