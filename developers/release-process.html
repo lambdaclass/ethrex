@@ -248,15 +248,24 @@
 <li><code>release/v3.2.0</code></li>
 </ul>
 <h2 id="2nd---bump-version"><a class="header" href="#2nd---bump-version">2nd - Bump version</a></h2>
-<p>In the release branch, update the <code>[workspace.package]</code> version to <code>X.Y.Z</code> in the root <code>Cargo.toml</code>, and push the change to the branch.</p>
-<p>An example can be found here:</p>
-<p>https://github.com/lambdaclass/ethrex/pull/4881/files#diff-2e9d962a08321605940b5a657135052fbcef87b5e360662bb527c96d9a615542</p>
-<p>There are currently three <code>Cargo.lock</code> files that will be affected. Make sure you check them:</p>
+<p>The version must be updated to <code>X.Y.Z</code> in the release branch. There are multiple <code>Cargo.toml</code> and <code>Cargo.lock</code> files that need to be updated.</p>
+<p>First, we need to update the version of the workspace package. You can find it in the <code>Cargo.toml</code> file in the root directory, under the <code>[workspace.package]</code> section.</p>
+<p>Then, we need to update three more <code>Cargo.toml</code> files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:</p>
 <ul>
-<li>root <code>Cargo.lock</code></li>
-<li><code>sp1/Cargo.lock</code></li>
-<li><code>risc0/Cargo.lock</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/sp1/Cargo.toml</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/risc0/Cargo.toml</code></li>
+<li><code>crates/l2/tee/quote-gen/Cargo.toml</code></li>
 </ul>
+<p>After updating the version in the <code>Cargo.toml</code> files, we need to update the <code>Cargo.lock</code> files to reflect the new versions. Run <code>cargo tree</code> in their respective directories:</p>
+<ul>
+<li>In the root directory</li>
+<li><code>crates/l2/prover/src/guest_program/src/sp1</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/risc0</code></li>
+<li><code>crates/l2/tee/quote-gen</code></li>
+</ul>
+<p>Then, go to the <code>CLI.md</code> file located in <code>docs/</code> and update the version of the <code>--builder.extra-data</code> flag default value to match the new version (for both ethrex and ethrex l2 sections).</p>
+<p>Finally, stage and commit the changes to the release branch.</p>
+<p>An example of a PR that bumps the version can be found <a href="https://github.com/lambdaclass/ethrex/pull/4881/files#diff-2e9d962a08321605940b5a657135052fbcef87b5e360662bb527c96d9a615542">here</a>.</p>
 <h2 id="3rd---create--push-tag"><a class="header" href="#3rd---create--push-tag">3rd - Create &amp; Push Tag</a></h2>
 <p>Create a tag with a format <code>vX.Y.Z-rc.W</code> where <code>X.Y.Z</code> is the semantic version and <code>W</code> is a release candidate version. Other names for subversions are also accepted. Example of valid tags:</p>
 <ul>
