@@ -77,6 +77,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError>;
 
+    fn get_block_header_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHeader>, StoreError>;
+
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError>;
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError>;
 
@@ -364,18 +369,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError>;
 
-    /// Add a batch of headers downloaded during fullsync
-    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError>;
-
     /// Read a batch of headers downloaded during fullsync
-    async fn read_fullsync_batch(
+    async fn read_headers_batch(
         &self,
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<BlockHeader>, StoreError>;
 
-    /// Clear all headers downloaded during fullsync
-    async fn clear_fullsync_headers(&self) -> Result<(), StoreError>;
+    async fn clear_headers(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError>;
 
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 

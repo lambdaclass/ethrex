@@ -47,8 +47,6 @@ pub struct StoreInner {
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
     // Stores current Snap State
     snap_state: SnapState,
-    // Stores fetched headers during a fullsync
-    fullsync_headers: HashMap<BlockNumber, BlockHeader>,
 }
 
 #[derive(Default, Debug)]
@@ -493,6 +491,26 @@ impl StoreEngine for Store {
         Ok(self.inner()?.headers.get(&block_hash).cloned())
     }
 
+    fn get_block_header_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHeader>, StoreError> {
+        let store = self.inner()?;
+        let block_header = store
+            .headers
+            .iter()
+            .filter(|(_, header)| header.number == block_number)
+            .map(|(_, header)| header)
+            .collect::<Vec<_>>();
+        Ok(Some(block_header[0].clone()))
+    }
+
+    async fn clear_headers(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+        store.headers.retain(|_, header| !headers.contains(header));
+        Ok(())
+    }
+
     fn get_canonical_block_hash_sync(
         &self,
         block_number: BlockNumber,
@@ -697,35 +715,21 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        self.inner()?
-            .fullsync_headers
-            .extend(headers.into_iter().map(|h| (h.number, h)));
-        Ok(())
-    }
-
-    async fn read_fullsync_batch(
+    async fn read_headers_batch(
         &self,
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<BlockHeader>, StoreError> {
-        let store = self.inner()?;
         (start..start + limit)
-            .map(|ref n| {
-                store
-                    .fullsync_headers
-                    .get(n)
-                    .cloned()
-                    .ok_or(StoreError::Custom(format!(
+            .map(|n| {
+                let Some(header) = self.get_block_header_by_number(n)? else {
+                    return Err(StoreError::Custom(format!(
                         "Missing fullsync header for block {n}"
-                    )))
+                    )));
+                };
+                Ok(header)
             })
             .collect::<Result<Vec<_>, _>>()
-    }
-
-    async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
-        self.inner()?.fullsync_headers.clear();
-        Ok(())
     }
 
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {

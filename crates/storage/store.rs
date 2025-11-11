@@ -1345,23 +1345,17 @@ impl Store {
         self.engine.write_account_code_batch(account_codes).await
     }
 
-    /// Add a batch of headers downloaded during fullsync
-    pub async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        self.engine.add_fullsync_batch(headers).await
-    }
-
     /// Read a batch of headers downloaded during fullsync
-    pub async fn read_fullsync_batch(
+    pub async fn read_headers_batch(
         &self,
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<BlockHeader>, StoreError> {
-        self.engine.read_fullsync_batch(start, limit).await
+        self.engine.read_headers_batch(start, limit).await
     }
 
-    /// Clear all headers downloaded during fullsync
-    pub async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
-        self.engine.clear_fullsync_headers().await
+    pub async fn clear_headers(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        self.engine.clear_headers(headers).await
     }
 
     pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {

@@ -110,11 +110,6 @@ const CF_PENDING_BLOCKS: &str = "pending_blocks";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(latest_valid).bytes().clone()`
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
-/// Block headers downloaded during fullsync column family: [`u8;_`] => [`Vec<u8>`]
-/// - [`u8;_`] = `block_number.to_le_bytes()`
-/// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
-const CF_FULLSYNC_HEADERS: &str = "fullsync_headers";
-
 pub const CF_FLATKEYVALUE: &str = "flatkeyvalue";
 
 pub const CF_MISC_VALUES: &str = "misc_values";
@@ -198,7 +193,6 @@ impl Store {
             CF_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
-            CF_FULLSYNC_HEADERS,
             CF_FLATKEYVALUE,
             CF_MISC_VALUES,
         ];
@@ -1123,6 +1117,45 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
+    fn get_block_header_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHeader>, StoreError> {
+        let number_value = block_number.to_le_bytes();
+
+        self.read_sync(CF_BLOCK_NUMBERS, number_value)?
+            .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    async fn clear_headers(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        let db = self.db.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let cf = db
+                .cf_handle(CF_HEADERS)
+                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+            let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+            let mut batch = WriteBatch::default();
+
+            while let Some(Ok((key, header_value))) = iter.next() {
+                let a = BlockHeaderRLP::from_bytes(header_value.to_vec())
+                    .to()
+                    .map_err(StoreError::from)?;
+                if headers.contains(&a) {
+                    batch.delete_cf(&cf, key);
+                }
+            }
+
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();
@@ -1882,26 +1915,13 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
-
-        for header in headers {
-            let number_value = header.number.to_le_bytes().to_vec();
-            let header_value = BlockHeaderRLP::from(header).bytes().clone();
-
-            batch_ops.push((CF_FULLSYNC_HEADERS.to_string(), number_value, header_value));
-        }
-
-        self.write_batch_async(batch_ops).await
-    }
-
-    async fn read_fullsync_batch(
+    async fn read_headers_batch(
         &self,
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<BlockHeader>, StoreError> {
         self.read_bulk_async(
-            CF_FULLSYNC_HEADERS,
+            CF_HEADERS,
             (start..start + limit).map(|n| n.to_le_bytes()).collect(),
             |bytes| {
                 BlockHeaderRLP::from_bytes(bytes)
@@ -1910,28 +1930,6 @@ impl StoreEngine for Store {
             },
         )
         .await
-    }
-
-    async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
-        let db = self.db.clone();
-
-        tokio::task::spawn_blocking(move || {
-            let cf = db
-                .cf_handle(CF_FULLSYNC_HEADERS)
-                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-
-            let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-            let mut batch = WriteBatch::default();
-
-            while let Some(Ok((key, _))) = iter.next() {
-                batch.delete_cf(&cf, key);
-            }
-
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
