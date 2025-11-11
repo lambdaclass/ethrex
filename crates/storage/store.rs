@@ -13,11 +13,12 @@ use ethrex_common::{
         BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
         Transaction,
     },
+    utils::keccak,
 };
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
-use sha3::{Digest as _, Keccak256};
 use std::{collections::hash_map::Entry, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -1509,23 +1510,15 @@ impl Iterator for AncestorIterator {
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
-    Keccak256::new_with_prefix(address.to_fixed_bytes())
-        .finalize()
-        .to_vec()
+    keccak_hash(address.to_fixed_bytes()).to_vec()
 }
 
 fn hash_address_fixed(address: &Address) -> H256 {
-    H256(
-        Keccak256::new_with_prefix(address.to_fixed_bytes())
-            .finalize()
-            .into(),
-    )
+    keccak(address.to_fixed_bytes())
 }
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
-    Keccak256::new_with_prefix(key.to_fixed_bytes())
-        .finalize()
-        .to_vec()
+    keccak_hash(key.to_fixed_bytes()).to_vec()
 }
 
 #[derive(Debug, Default, Clone)]
@@ -1552,6 +1545,7 @@ mod tests {
         Bloom, H160,
         constants::EMPTY_KECCACK_HASH,
         types::{Transaction, TxType},
+        utils::keccak,
     };
     use ethrex_rlp::decode::RLPDecode;
     use std::{fs, str::FromStr};
@@ -1607,7 +1601,7 @@ mod tests {
         let mut accounts: Vec<_> = (0u64..1_000)
             .map(|i| {
                 (
-                    H256(Keccak256::digest(i.to_be_bytes()).into()),
+                    keccak(i.to_be_bytes()),
                     AccountState {
                         nonce: 2 * i,
                         balance: U256::from(3 * i),
@@ -1633,14 +1627,9 @@ mod tests {
     }
 
     async fn test_iter_storage(store: Store) {
-        let address = H256(Keccak256::digest(12345u64.to_be_bytes()).into());
+        let address = keccak(12345u64.to_be_bytes());
         let mut slots: Vec<_> = (0u64..1_000)
-            .map(|i| {
-                (
-                    H256(Keccak256::digest(i.to_be_bytes()).into()),
-                    U256::from(2 * i),
-                )
-            })
+            .map(|i| (keccak(i.to_be_bytes()), U256::from(2 * i)))
             .collect();
         slots.sort_by_key(|a| a.0);
         let mut trie = store
