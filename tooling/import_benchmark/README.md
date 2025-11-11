@@ -32,6 +32,7 @@ which can be generated using the `export` subcommand in ethrex.
 4. Stop the node again and run:  
    ```bash
    ethrex export --first <block_num> --last <block_num + X> ~/.local/share/ethrex_NETWORK_bench/chain.rlp
+   ```
 
 ## Run
 
