@@ -2,8 +2,8 @@
 * @lambdaclass/lambda-execution-reviewers
 
 ## ethrex L2 code owners
-crates/l2/contracts/src @jrchatruc @manuelbilbao
 crates/l2 @ilitteri @manuelbilbao @avilagaston9
+crates/l2/contracts/src @jrchatruc @manuelbilbao
 cmd/ethrex/l2 @ilitteri @manuelbilbao @avilagaston9
 cmd/ethrex/build* @ilitteri @manuelbilbao @avilagaston9
 crates/common/types/l2 @ilitteri @manuelbilbao @avilagaston9
