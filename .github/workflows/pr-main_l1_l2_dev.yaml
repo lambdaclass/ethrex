@@ -1,4 +1,4 @@
-name: L1 & L2 Dev
+name: L2 Dev
 on:
   push:
     branches: ["main"]
