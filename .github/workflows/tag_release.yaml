@@ -2,8 +2,10 @@ name: Ethrex Release
 
 on:
   push:
+    # On tags, this generates a release and pushes docker images with the tag name
     tags:
       - "v*.*.*-*"
+    # On pushes to main, this silently builds and pushes docker images tagged as 'main'
     branches:
       - main
 
@@ -298,7 +300,13 @@ jobs:
 
       - name: Format name
         run: |
-          echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+          # For branch builds (main) we want docker images tagged as 'main'. For tag pushes
+          # use the tag name (stripped of a leading 'v').
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            echo "TAG_VERSION=main" >> $GITHUB_ENV
+          else
+            echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+          fi
 
       # Pushes to ghcr.io/lambdaclass/ethrex
       - name: Build and push L1 Docker image
@@ -325,6 +333,7 @@ jobs:
 
   # Creates a release on GitHub with the binaries
   finalize-release:
+    if: github.ref_type == 'tag'
     needs:
       - build-ethrex
       - build-ethrex-guest
