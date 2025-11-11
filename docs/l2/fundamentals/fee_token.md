@@ -57,6 +57,7 @@ Operators decide which ERC-20s are valid fee tokens:
 
 1. Deploy or reuse an `IFeeToken` implementation and note its L2 address. When initializing the network, the deployer binary can automatically register one by passing `--initial-fee-token <address>` so the bridge queues it during startup.
 2. Register additional tokens (or remove them) through the L1 `CommonBridge` using `registerNewFeeToken(address)` / `unregisterFeeToken(address)`. Each call enqueues a privileged transaction that the sequencer must force on L2.
+3. After a token is registered, the bridge owner must set its conversion ratio in the L2 `FeeTokenPricer` (`0x…fffb`). Call `setFeeTokenRatio(address,uint256)` on the L1 bridge (again a privileged transaction) to define how many fee-token units correspond to one wei. Without a ratio, fee-token transactions revert because the sequencer cannot price the gas.
 
 > ⚠️ **Warning:** Registration completes only after the L1 watcher processes the privileged transaction and the L2 registry emits `FeeTokenRegistered`. Until then, user transactions referencing the token will fail.
 
@@ -81,6 +82,24 @@ let tx = build_generic_tx(
 let hash = send_generic_transaction(&l1_client, tx, &owner_signer).await?;
 wait_for_transaction_receipt(hash, &l1_client, 100).await?;
 // The L1 watcher will include the privileged tx and the registry will emit FeeTokenRegistered.
+```
+
+Setting the ratio uses the exact same pattern; just change the signature and add the `uint256` argument:
+
+```shell
+rex send <L1_BRIDGE_ADDRESS> \
+  "setFeeTokenRatio(address,uint256)" \
+  <L2_FEE_TOKEN_ADDRESS> \
+  2 \
+  --rpc-url http://localhost:8545 \
+  --private-key <BRIDGE_OWNER_PK>
+
+# After the privileged tx lands on L2, confirm:
+rex call 0x000000000000000000000000000000000000fffb \
+  "getFeeTokenRatio(address)" \
+  <L2_FEE_TOKEN_ADDRESS> \
+  --rpc-url http://localhost:1729
+# 0x...02
 ```
 
 ## User Workflow

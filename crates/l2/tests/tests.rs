@@ -1990,6 +1990,65 @@ async fn test_call_to_contract_with_deposit(
     Ok(())
 }
 
+const OWNER_L1_GAS_LIMIT: u64 = 21000 * 20;
+
+// Sends a bridge owner transaction on L1 and waits for confirmation.
+async fn send_owner_bridge_call(
+    l1_client: &EthClient,
+    owner_signer: &Signer,
+    bridge_address: Address,
+    signature: &str,
+    args: &[Value],
+) {
+    let calldata = encode_calldata(signature, args).unwrap();
+    let tx = build_generic_tx(
+        l1_client,
+        TxType::EIP1559,
+        bridge_address,
+        owner_signer.address(),
+        calldata.into(),
+        Overrides {
+            gas_limit: Some(OWNER_L1_GAS_LIMIT),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let tx_hash = send_generic_transaction(l1_client, tx, owner_signer)
+        .await
+        .unwrap();
+    wait_for_transaction_receipt(tx_hash, l1_client, 1000)
+        .await
+        .unwrap();
+}
+
+// Polls the L2 until a call returns the expected value.
+async fn wait_for_l2_call_value(
+    test: &str,
+    client: &EthClient,
+    target: Address,
+    calldata: Bytes,
+    expected: &str,
+    failure_reason: &str,
+) -> Result<()> {
+    for attempt in 1..=100 {
+        let value = client
+            .call(target, calldata.clone(), Overrides::default())
+            .await
+            .unwrap();
+        if value == expected {
+            return Ok(());
+        }
+        if attempt == 100 {
+            return Err(anyhow::anyhow!(
+                "{test}: {failure_reason} after {attempt} attempts (last value: {value})"
+            ));
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+    Ok(())
+}
+
 async fn test_fee_token(
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
@@ -2034,58 +2093,28 @@ async fn test_fee_token(
 
     let owner_pk = bridge_owner_private_key();
     let owner_signer: Signer = LocalSigner::new(owner_pk).into();
-    let calldata = encode_calldata(
+    let bridge_addr = bridge_address().unwrap();
+
+    // Register fee token contract
+    send_owner_bridge_call(
+        &l1_client,
+        &owner_signer,
+        bridge_addr,
         REGISTER_FEE_TOKEN_SIGNATURE,
         &[Value::Address(fee_token_address)],
     )
-    .unwrap();
-    let register_tx = build_generic_tx(
-        &l1_client,
-        TxType::EIP1559,
-        bridge_address().unwrap(),
-        owner_signer.address(),
-        calldata.into(),
-        Overrides {
-            gas_limit: Some(21000 * 20),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
+    .await;
 
-    // Register fee token contract
-    let register_tx_hash = send_generic_transaction(&l1_client, register_tx, &owner_signer)
-        .await
-        .unwrap();
-    wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
-        .await
-        .unwrap();
-
+    // Set fee token ratio
     let ratio_value = U256::from(2u8);
-    let set_ratio_calldata = encode_calldata(
+    send_owner_bridge_call(
+        &l1_client,
+        &owner_signer,
+        bridge_addr,
         SET_FEE_TOKEN_RATIO_SIGNATURE,
         &[Value::Address(fee_token_address), Value::Uint(ratio_value)],
     )
-    .unwrap();
-    let set_ratio_tx = build_generic_tx(
-        &l1_client,
-        TxType::EIP1559,
-        bridge_address().unwrap(),
-        owner_signer.address(),
-        set_ratio_calldata.into(),
-        Overrides {
-            gas_limit: Some(21000 * 20),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
-    let set_ratio_tx_hash = send_generic_transaction(&l1_client, set_ratio_tx, &owner_signer)
-        .await
-        .unwrap();
-    wait_for_transaction_receipt(set_ratio_tx_hash, &l1_client, 1000)
-        .await
-        .unwrap();
+    .await;
 
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -2132,52 +2161,35 @@ async fn test_fee_token(
         "{test}: L1 fee vault address fee token balance before transfer: {l1_fee_vault_token_balance_before_transfer}"
     );
 
+    // Wait for the fee token to be registered on the L2
     let cd = encode_calldata("isFeeToken(address)", &[Value::Address(fee_token_address)]).unwrap();
     let expected = "0x0000000000000000000000000000000000000000000000000000000000000001";
-    for attempt in 1..=100 {
-        let is_registered = l2_client
-            .call(
-                FEE_TOKEN_REGISTRY_ADDRESS,
-                cd.clone().into(),
-                Overrides::default(),
-            )
-            .await
-            .unwrap();
-        if is_registered == expected {
-            break;
-        }
-        if attempt == 100 {
-            return Err(anyhow::anyhow!(
-                "{test}: fee token not registered after {attempt} attempts (last value: {is_registered})"
-            ));
-        }
-        sleep(Duration::from_secs(1)).await;
-    }
+    wait_for_l2_call_value(
+        test,
+        &l2_client,
+        FEE_TOKEN_REGISTRY_ADDRESS,
+        Bytes::from(cd),
+        expected,
+        "fee token not registered",
+    )
+    .await?;
+
+    // Wait for the ratio to be set on the L2
     let ratio_call_data = encode_calldata(
         "getFeeTokenRatio(address)",
         &[Value::Address(fee_token_address)],
     )
     .unwrap();
     let expected_ratio = "0x0000000000000000000000000000000000000000000000000000000000000002";
-    for attempt in 1..=100 {
-        let current_ratio = l2_client
-            .call(
-                FEE_TOKEN_PRICER_ADDRESS,
-                ratio_call_data.clone().into(),
-                Overrides::default(),
-            )
-            .await
-            .unwrap();
-        if current_ratio == expected_ratio {
-            break;
-        }
-        if attempt == 100 {
-            return Err(anyhow::anyhow!(
-                "{test}: fee token ratio not set after {attempt} attempts (last value: {current_ratio})"
-            ));
-        }
-        sleep(Duration::from_secs(1)).await;
-    }
+    wait_for_l2_call_value(
+        test,
+        &l2_client,
+        FEE_TOKEN_PRICER_ADDRESS,
+        Bytes::from(ratio_call_data),
+        expected_ratio,
+        "fee token ratio not set",
+    )
+    .await?;
     let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(
         &l2_client,
