@@ -26,7 +26,7 @@ To makefile includes the following command:
 ```
 run-bench: ## Runs a bench for the current pr.
 Parameters
- -BENCH_NUM: number for the log file where it will be saved with the format bench-BENCH_NUM.log
+ -BENCH_ID: number for the log file where it will be saved with the format bench-BENCH_ID.log
  -NETWORK: which network to acesss (hoodi, mainnet)
 ```
 

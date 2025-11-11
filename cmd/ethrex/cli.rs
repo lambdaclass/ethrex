@@ -465,8 +465,8 @@ impl Subcommand {
                     &opts.datadir,
                     genesis,
                     BlockchainOptions {
-                        max_mempool_size: opts.mempool_max_size,
                         r#type: blockchain_type,
+                        perf_logs_enabled: true,
                         ..Default::default()
                     },
                 )
@@ -671,12 +671,11 @@ pub async fn import_blocks_bench(
     path: &str,
     datadir: &Path,
     genesis: Genesis,
-    mut blockchain_opts: BlockchainOptions,
+    blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
-    blockchain_opts.perf_logs_enabled = true;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
     let path_metadata = metadata(path).expect("Failed to read path");
@@ -746,6 +745,12 @@ pub async fn import_blocks_bench(
                     _ => warn!("Failed to add block {number} with hash {hash:#x}"),
                 })?;
 
+            // TODO: replace this
+            // This sleep is because we have a background process writing to disk the last layer
+            // And until it's done we can't execute the new block
+            // Because this wants to compare against running a real node in terms of reported performance
+            // It takes less than 500ms, so this is good enough, but we should report the performance
+            // without taking into account that wait.
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
