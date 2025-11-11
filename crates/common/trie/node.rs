@@ -135,9 +135,22 @@ impl NodeRef {
     }
 
     pub fn compute_hash(&self) -> NodeHash {
+        *self.compute_hash_ref()
+    }
+
+    pub fn compute_hash_ref(&self) -> &NodeHash {
         match self {
-            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
-            NodeRef::Hash(hash) => *hash,
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash()),
+            NodeRef::Hash(hash) => hash,
+        }
+    }
+
+    pub fn memoize_hashes(&self) {
+        if let NodeRef::Node(node, hash) = &self
+            && hash.get().is_none()
+        {
+            node.memoize_hashes();
+            let _ = hash.set(node.compute_hash());
         }
     }
 
@@ -294,10 +307,25 @@ impl Node {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
+        self.memoize_hashes();
         match self {
             Node::Branch(n) => n.compute_hash(),
             Node::Extension(n) => n.compute_hash(),
             Node::Leaf(n) => n.compute_hash(),
+        }
+    }
+
+    /// Recursively memoizes the hashes of all nodes of the subtrie that has
+    /// `self` as root (post-order traversal)
+    pub fn memoize_hashes(&self) {
+        match self {
+            Node::Branch(n) => {
+                for child in &n.choices {
+                    child.memoize_hashes();
+                }
+            }
+            Node::Extension(n) => n.child.memoize_hashes(),
+            _ => {}
         }
     }
 }
