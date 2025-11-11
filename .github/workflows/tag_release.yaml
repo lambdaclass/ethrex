@@ -8,7 +8,6 @@ on:
     # On pushes to main, this silently builds and pushes docker images tagged as 'main'
     branches:
       - main
-      - release-workflow-smoke
 
 permissions:
   contents: write
