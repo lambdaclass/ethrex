@@ -395,6 +395,9 @@ pub async fn init_l1(
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store = init_store(datadir, genesis).await;
+    if opts.syncmode == SyncMode::Full {
+        store.generate_flatkeyvalue()?;
+    }
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
