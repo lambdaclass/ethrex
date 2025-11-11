@@ -404,7 +404,11 @@ impl Blockchain {
     }
 
     /// Completes the payload building process, return the block value
-    pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+    pub fn build_payload_inner(
+        &self,
+        payload: Block,
+        fill_transactions: bool,
+    ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -416,8 +420,10 @@ impl Blockchain {
             self.apply_system_operations(&mut context)?;
         }
         self.apply_withdrawals(&mut context)?;
-        self.fill_transactions(&mut context)?;
-        self.extract_requests(&mut context)?;
+        if fill_transactions {
+            self.fill_transactions(&mut context)?;
+            self.extract_requests(&mut context)?;
+        }
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
