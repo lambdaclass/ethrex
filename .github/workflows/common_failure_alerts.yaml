@@ -15,6 +15,7 @@ on:
       - LEVM
       - Publish Docker
       - Publish Ethrex docs page
+      - Replay
     branches:
       - main
     types:
