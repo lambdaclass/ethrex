@@ -1055,8 +1055,10 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
         valid_batch.push((g1, g2));
     }
     let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
-    let result = BN254AtePairing::compute_batch(&valid_batch_refs)
-        .map_err(|PairingError::PointNotInSubgroup| PrecompileError::PointNotInSubgroup)?;
+    let result = BN254AtePairing::compute_batch(&valid_batch_refs).map_err(|e| match e {
+        PairingError::PointNotInSubgroup => PrecompileError::PointNotInSubgroup,
+        PairingError::DivisionByZero => PrecompileError::InvalidPoint,
+    })?;
 
     Ok(result == QuadraticExtensionFieldElement::one())
 }
@@ -1334,7 +1336,9 @@ pub fn bls12_g1add(
                     // equation holds since it has no solutions for an `x` coordinate where `y` is
                     // zero within the prime field space.
                     let x_squared = p0.0.square();
-                    let s = (x_squared.double() + &x_squared + BLS12381Curve::a()) / p0.1.double();
+                    let s = ((x_squared.double() + &x_squared + BLS12381Curve::a())
+                        / p0.1.double())
+                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
                     let x = s.square() - p0.0.double();
                     let y = s * (p0.0 - &x) - p0.1;
@@ -1347,7 +1351,8 @@ pub fn bls12_g1add(
             // The division may panic only when `t` has no inverse. This can only happen if
             // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
             // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
-            let l = (&p0.1 - p1.1) / (&p0.0 - &p1.0);
+            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
+                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
             let x = l.square() - &p0.0 - p1.0;
             let y = l * (p0.0 - &x) - p0.1;
@@ -1498,8 +1503,9 @@ pub fn bls12_g2add(
                     // equation holds since it has no solutions for an `x` coordinate where `y` is
                     // zero within the prime field space.
                     let x_squared = p0.0.square();
-                    let s =
-                        (x_squared.double() + &x_squared + BLS12381TwistCurve::a()) / p0.1.double();
+                    let s = ((x_squared.double() + &x_squared + BLS12381TwistCurve::a())
+                        / p0.1.double())
+                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
                     let x = s.square() - p0.0.double();
                     let y = s * (p0.0 - &x) - p0.1;
@@ -1512,7 +1518,8 @@ pub fn bls12_g2add(
             // The division may panic only when `t` has no inverse. This can only happen if
             // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
             // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
-            let l = (&p0.1 - p1.1) / (&p0.0 - &p1.0);
+            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
+                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
             let x = l.square() - &p0.0 - p1.0;
             let y = l * (p0.0 - &x) - p0.1;
