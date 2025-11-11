@@ -1118,7 +1118,7 @@ async fn make_deposits(
     }
     trace!("Deposits finished");
     if let Some(hash) = last_hash {
-        wait_for_transaction_receipt(hash, &eth_client, 100).await?;
+        wait_for_transaction_receipt(hash, eth_client, 100).await?;
     }
     Ok(())
 }
