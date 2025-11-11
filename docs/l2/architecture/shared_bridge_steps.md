@@ -1,4 +1,14 @@
-# Steps to test a transfer between 2 L2s
+# Transfer ETH between L2s
+
+This document explains the steps needed to perform an ETH transfer from one L2 to another.
+
+## Change directory
+
+Every command should be run under `ethrex/crates/l2`
+
+```bash
+cd ethrex/crates/l2
+```
 
 ## Start an L1
 
@@ -7,6 +17,8 @@ make init-l1
 ```
 
 ## Deploy the first L2
+
+On another terminal
 
 ```bash
 ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
@@ -25,7 +37,7 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 	--metrics.port 3702 \
 	--datadir dev_ethrex_l2 \
 	--l1.bridge-address 0xc12f570116c82f1ff70d4cc1e75b178578870570 \
-	--l1.on-chain-proposer-address 0x38fd92f2ad8da983e2bbf7cde41f7c35eba24b44 \
+	--l1.on-chain-proposer-address 0x63f1854b380b1f02bb2201eadd04c4a096c5a78f \
 	--eth.rpc-url http://localhost:8545 \
 	--osaka-activation-time 1761677592 \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
@@ -41,6 +53,8 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 ```
 
 ## Deploy the second L2
+
+On another terminal
 
 Copy the `../../fixtures/genesis/l2.json` file to `../../fixtures/genesis/l2_2.json` and modify chain id to 1730
 
@@ -61,7 +75,7 @@ Copy the `../../fixtures/genesis/l2.json` file to `../../fixtures/genesis/l2_2.j
 
 ## Start the second L2
 
-Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS`
+Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs of the previous command
 
 ```bash
 ../../target/release/ethrex \
@@ -93,6 +107,8 @@ Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS`
 
 ## Start the prover
 
+On another terminal 
+
 ```bash
 ../../target/release/ethrex \
 	l2 prover \
@@ -102,6 +118,8 @@ Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS`
 
 
 ## Check balances
+
+Check the balances before sending the transfer
 
 ```bash
 rex balance 0x4417092b70a3e5f10dc504d0947dd256b965fc62 http://localhost:1729 # Receiver balance on first L2
@@ -117,6 +135,8 @@ cast send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0
 
 
 ## Check balances
+
+After some time the balances should change (about 1-2 minutes)
 
 ```bash
 rex balance 0x4417092b70a3e5f10dc504d0947dd256b965fc62 http://localhost:1729 # Receiver balance on first L2
