@@ -318,13 +318,15 @@ impl Syncer {
 
         // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
         let mut pending_blocks = vec![];
+        let mut pending_blocks_headers = vec![];
         while let Some(block) = store.get_pending_block(sync_head).await? {
             if store.is_canonical_sync(block.hash())? {
                 // Ignore canonical blocks still in pending
                 break;
             }
             sync_head = block.header.parent_hash;
-            pending_blocks.insert(0, block);
+            pending_blocks.insert(0, block.clone());
+            pending_blocks_headers.insert(0, block.header);
         }
 
         // Request all block headers between the sync head and our local chain
@@ -379,11 +381,11 @@ impl Syncer {
                 if single_batch {
                     headers = block_headers.into_iter().rev().collect();
                 } else {
-                    store.add_fullsync_batch(block_headers).await?;
+                    store.add_block_headers(block_headers).await?;
                 }
                 break;
             }
-            store.add_fullsync_batch(block_headers).await?;
+            store.add_block_headers(block_headers).await?;
             single_batch = false;
         }
         end_block_number += 1;
@@ -395,7 +397,7 @@ impl Syncer {
             let final_batch = end_block_number == start + batch_size as u64;
             // Retrieve batch from DB
             if !single_batch {
-                headers = store.read_fullsync_batch(start, batch_size as u64).await?;
+                headers = store.read_headers_batch(start, batch_size as u64).await?;
             }
             let mut blocks = Vec::new();
             // Request block bodies
@@ -439,7 +441,6 @@ impl Syncer {
                 .await?;
         }
 
-        store.clear_fullsync_headers().await?;
         Ok(())
     }
 

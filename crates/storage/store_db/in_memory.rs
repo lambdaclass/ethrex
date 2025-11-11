@@ -47,8 +47,6 @@ pub struct StoreInner {
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
     // Stores current Snap State
     snap_state: SnapState,
-    // Stores fetched headers during a fullsync
-    fullsync_headers: HashMap<BlockNumber, BlockHeader>,
 }
 
 #[derive(Default, Debug)]
@@ -493,6 +491,25 @@ impl StoreEngine for Store {
         Ok(self.inner()?.headers.get(&block_hash).cloned())
     }
 
+    fn get_block_headers_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Vec<BlockHeader>, StoreError> {
+        let store = self.inner()?;
+        let block_headers = store
+            .headers
+            .iter()
+            .filter(|(_, header)| header.number == block_number)
+            .map(|(_, header)| header.clone())
+            .collect::<Vec<_>>();
+        if block_headers.is_empty() {
+            return Err(StoreError::Custom(format!(
+                "Missing block number {block_number:?} in memory."
+            )));
+        }
+        Ok(block_headers)
+    }
+
     fn get_canonical_block_hash_sync(
         &self,
         block_number: BlockNumber,
@@ -697,35 +714,42 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        self.inner()?
-            .fullsync_headers
-            .extend(headers.into_iter().map(|h| (h.number, h)));
-        Ok(())
-    }
-
-    async fn read_fullsync_batch(
+    async fn read_headers_batch(
         &self,
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<BlockHeader>, StoreError> {
-        let store = self.inner()?;
-        (start..start + limit)
-            .map(|ref n| {
-                store
-                    .fullsync_headers
-                    .get(n)
-                    .cloned()
-                    .ok_or(StoreError::Custom(format!(
-                        "Missing fullsync header for block {n}"
-                    )))
-            })
-            .collect::<Result<Vec<_>, _>>()
-    }
+        let mut headers = vec![];
+        for n in start..start + limit {
+            let same_number_headers = self.get_block_headers_by_number(n)?;
+            if same_number_headers.len() == 1 {
+                headers.push(same_number_headers[0].clone());
+                continue;
+            }
+            // if there's more than one header with the same block number we select the one that is a child of the
+            // previously saved header
+            if let Some(last_header) = headers.last()
+                && let Some(legit_header) = same_number_headers
+                    .iter()
+                    .find(|header| header.parent_hash != last_header.hash())
+            {
+                headers.push(legit_header.clone());
+            } else {
+                // if there's more than one header with start block number we search its parent in the
+                // canonical hashes
+                let stored_canonical_hashes = &self.inner()?.canonical_hashes;
+                let last_canonical_hash = stored_canonical_hashes.get(&(n - 1));
+                if let Some(hash) = last_canonical_hash
+                    && let Some(legit_header) = same_number_headers
+                        .iter()
+                        .find(|header| header.parent_hash != *hash)
+                {
+                    headers.push(legit_header.clone());
+                }
+            }
+        }
 
-    async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
-        self.inner()?.fullsync_headers.clear();
-        Ok(())
+        return Ok(headers);
     }
 
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
