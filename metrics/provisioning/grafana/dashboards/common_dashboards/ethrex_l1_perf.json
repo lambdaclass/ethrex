@@ -1659,9 +1659,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "(sum by (function_name) (rate(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__rate_interval])) / sum by (function_name) (rate(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__rate_interval])) > 0) or (sum by (function_name) (function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}) / sum by (function_name) (function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}))",
+              "expr": "sum by (function_name) (function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}) / sum by (function_name) (function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"})",
               "legendFormat": "{{function_name}}",
-              "range": true,
+              "instant": true,
+              "range": false,
               "refId": "A"
             }
           ],
@@ -2090,9 +2091,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "(sum by (function_name) (rate(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__rate_interval])) / sum by (function_name) (rate(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__rate_interval])) > 0) or (sum by (function_name) (function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}) / sum by (function_name) (function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}))",
+              "expr": "sum by (function_name) (function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}) / sum by (function_name) (function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"})",
               "legendFormat": "{{function_name}}",
-              "range": true,
+              "instant": true,
+              "range": false,
               "refId": "A"
             }
           ],
