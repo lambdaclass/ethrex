@@ -2,6 +2,9 @@
 
 ## Perf
 
+### 2025-11-11
+- Separate Account and storage Column families in rocksdb [#5055](https://github.com/lambdaclass/ethrex/pull/5055)
+
 ### 2025-11-07
 - Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
 
