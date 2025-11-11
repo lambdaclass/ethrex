@@ -6,6 +6,7 @@ crates/l2 @ilitteri @manuelbilbao @avilagaston9
 crates/l2/contracts/src @jrchatruc @manuelbilbao
 cmd/ethrex/l2 @ilitteri @manuelbilbao @avilagaston9
 cmd/ethrex/build* @ilitteri @manuelbilbao @avilagaston9
+crates/common/crypto @ilitteri @manuelbilbao @avilagaston9
 crates/common/types/l2 @ilitteri @manuelbilbao @avilagaston9
 crates/common/types/l2.rs @ilitteri @manuelbilbao @avilagaston9
 crates/common/rkyv_utils.rs @ilitteri @manuelbilbao @avilagaston9
