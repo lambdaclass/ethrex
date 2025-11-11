@@ -1,8 +1,8 @@
+use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
-use crate::{api::StoreEngine};
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
@@ -554,7 +554,7 @@ impl Store {
                 }
             }
 
-            // TODO(#5195): committing each storage trie individually is inefficient. 
+            // TODO(#5195): committing each storage trie individually is inefficient.
             // We would benefit form a mass storage node insertion method.
 
             // Add account to trie

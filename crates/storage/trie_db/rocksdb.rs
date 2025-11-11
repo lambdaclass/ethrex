@@ -78,7 +78,10 @@ impl RocksDBTrieDB {
     }
 
     // Gets the correct column family handle based on whether the key is a leaf or not.
-    fn cf_handle_for_key(&self, key: &Nibbles) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
+    fn cf_handle_for_key(
+        &self,
+        key: &Nibbles,
+    ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
         if key.is_leaf() {
             self.cf_handle_flatkeyvalue()
         } else {
@@ -171,7 +174,8 @@ mod tests {
         let db = Arc::new(db);
 
         // Create TrieDB
-        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None, vec![]).unwrap();
+        let trie_db =
+            RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None, vec![]).unwrap();
 
         // Test data
         let node_hash = Nibbles::from_hex(vec![1]);
@@ -214,7 +218,8 @@ mod tests {
         // Create TrieDB with address prefix
         let address = H256::from([0xaa; 32]);
         let trie_db =
-            RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", Some(address), vec![]).unwrap();
+            RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", Some(address), vec![])
+                .unwrap();
 
         // Test data
         let node_hash = Nibbles::from_hex(vec![1]);
@@ -251,7 +256,8 @@ mod tests {
         let db = Arc::new(db);
 
         // Create TrieDB
-        let trie_db = RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None, vec![]).unwrap();
+        let trie_db =
+            RocksDBTrieDB::new(db, "test_trie_cf", "test_flatkey_cf", None, vec![]).unwrap();
 
         // Test data
         // NOTE: we don't use the same paths to avoid overwriting in the batch
