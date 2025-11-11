@@ -156,6 +156,10 @@ fn finalize_non_privileged_execution(
         use_fee_token,
     )?;
 
+    // We want to pay the base fee vault if it is set.
+    // If not set and it is a fee token transaction we want to burn the fee by sending it
+    // to the zero address because it is an ERC20.
+    // If not an ERC20 the fees are burned not by a transaction.
     if let Some(base_fee_vault) = fee_config.base_fee_vault {
         pay_base_fee_vault(vm, actual_gas_used, base_fee_vault, use_fee_token)?;
     } else if use_fee_token {
