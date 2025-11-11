@@ -1309,7 +1309,7 @@ impl StoreEngine for Store {
         let code = Code {
             hash: code_hash,
             bytecode: Bytes::copy_from_slice(bytecode),
-            jump_targets: <Vec<_>>::decode(&targets)?,
+            jump_targets: <Vec<_>>::decode(targets)?,
         };
         Ok(Some(code))
     }
