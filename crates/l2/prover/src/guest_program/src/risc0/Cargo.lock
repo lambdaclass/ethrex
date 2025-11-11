@@ -1157,6 +1157,7 @@ version = "6.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
@@ -1165,7 +1166,6 @@ dependencies = [
  "hex",
  "rustc-hash",
  "secp256k1",
- "sha3",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -1194,7 +1194,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sha3",
  "thiserror",
  "tinyvec",
  "tracing",
@@ -1208,6 +1207,7 @@ dependencies = [
  "c-kzg",
  "kzg-rs",
  "thiserror",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -1217,6 +1217,7 @@ dependencies = [
  "bytes",
  "ethereum-types",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",
@@ -1227,7 +1228,6 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_with",
- "sha3",
  "thiserror",
 ]
 
@@ -1257,7 +1257,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sha3",
  "strum",
  "substrate-bn",
  "thiserror",
@@ -1298,6 +1297,7 @@ dependencies = [
  "bytes",
  "ethereum-types",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
@@ -1306,7 +1306,6 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
- "sha3",
  "thiserror",
  "tracing",
 ]
@@ -1327,6 +1326,7 @@ dependencies = [
  "crossbeam",
  "digest",
  "ethereum-types",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-threadpool",
  "hex",
@@ -1334,7 +1334,6 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_json",
- "sha3",
  "smallvec",
  "thiserror",
  "tracing",
@@ -1350,6 +1349,7 @@ dependencies = [
  "dyn-clone",
  "ethereum-types",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp",
  "ethrex-trie",
@@ -1357,7 +1357,6 @@ dependencies = [
  "lazy_static",
  "rkyv",
  "serde",
- "sha3",
  "thiserror",
  "tracing",
 ]
