@@ -4,86 +4,119 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["**"]
-    paths:
-      - "crates/l2/prover/**"
-      - ".github/workflows/pr-main_l2_prover.yaml"
+
+permissions:
+  contents: read
+  actions: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  lint:
-    # "Lint" is a required check, don't change the name
-    name: Lint
+  lint_zk:
+    name: Lint ${{ matrix.backend }} backend
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
       matrix:
-        # backend: ["sp1", "risc0", "exec"] # TODO: fix Risc0 (https://github.com/lambdaclass/ethrex/issues/2145)
-        backend: ["sp1", "exec"]
+        backend: ["sp1", "risc0"]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: RISC-V Risc0 toolchain install
+        if: matrix.backend == 'risc0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # should be able to specify a version for `rzup install rust` (toolchain version)
+        # but it throws a "error decoding response body" in that case
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+          ~/.risc0/bin/rzup install risc0-groth16
+          ~/.risc0/bin/rzup install rust
+
+      - name: RISC-V SP1 toolchain install
+        if: matrix.backend == 'sp1'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 5.0.8
+
+      - name: Check ${{ matrix.backend }} backend
+        run: |
+          cargo check -r -p ethrex-prover -F ${{ matrix.backend }}
+
+      - name: Clippy ${{ matrix.backend }} backend
+        run: |
+          cargo clippy -r -p ethrex-prover --all-targets -F ${{ matrix.backend }}
+
+      - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
+        run: |
+          git diff --exit-code -- crates/l2/prover/src/guest_program/${{ matrix.backend }}/Cargo.lock
+
+  lint_exec:
+    name: Lint exec backend
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
-      - name: RISC-V SP1 toolchain install
-        if: ${{ matrix.backend == 'sp1' }}
-        run: |
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.0
-      - name: Check
-        run: |
-          if [ "${{ matrix.backend }}" == "exec" ]; then
-            cargo check -p ethrex-prover
-          else
-            cargo check -p ethrex-prover -F ${{ matrix.backend }}
-          fi
-      - name: Clippy
-        run: |
-          if [ "${{ matrix.backend }}" == "exec" ]; then
-            cargo clippy -p ethrex-prover --all-targets
-          else
-            cargo clippy -p ethrex-prover --all-targets -F ${{ matrix.backend }}
-          fi
 
-  test:
-    # "Test" is a required check, don't change the name
-    name: Test
+      - name: Check exec
+        run: |
+          cargo check -p ethrex-prover
+      - name: Clippy exec
+        run: |
+          cargo clippy -p ethrex-prover --all-targets
+
+  lint_tdx:
+    name: Lint tdx backend
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-      - name: Rust toolchain install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.82.0
-      # TODO(#1974): Restore these steps once we fix risc0
-      # Use cargo-risczero v1.2.0
-      # The risc0-zkvm crate should match this version
-      # - name: RISC-V RISC0 toolchain install
-      #   run: |
-      #     curl -L https://risczero.com/install | bash
-      #     ~/.risc0/bin/rzup install
-      #     ~/.risc0/bin/rzup install cargo-risczero 1.2.0
-      #     ~/.risc0/bin/rzup default cargo-risczero 1.2.0
-      # - name: Build prover and RISC0's zkVM
-      #   run: |
-      #     cd crates/l2/prover
-      #     cargo build --release --features build_risc0
-      # - name: Test Prover Execution
-      #   run: |
-      #     cd crates/l2/prover
-      #     RUST_LOG=info make perf-risc0
-      - name: RISC-V SP1 toolchain install
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Check tdx
         run: |
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.0
-      - name: Build prover and SP1's zkVM
+          cd crates/l2/tee/quote-gen
+          cargo check
+      - name: Clippy tdx
         run: |
-          cd crates/l2/prover
-          cargo build --release --features sp1
-      - name: Test Prover Execution
+          cd crates/l2/tee/quote-gen
+          cargo clippy --all-targets
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  all-tests:
+    # "Lint" is a required check, don't change the name
+    name: Lint
+    runs-on: ubuntu-latest
+    needs: [lint_exec, lint_tdx, lint_zk]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ always() && needs.lint_exec.result != 'skipped' && needs.lint_tdx.result != 'skipped' && needs.lint_zk.result != 'skipped' }}
+    steps:
+      - name: Check if any job failed
         run: |
-          cd crates/l2/prover
-          RUST_LOG=info make perf-sp1
+          if [ "${{ needs.lint_exec.result }}" != "success" ]; then
+            echo "Job Lint exec Check failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.lint_tdx.result }}" != "success" ]; then
+            echo "Job Lint TDX failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.lint_zk.result }}" != "success" ]; then
+            echo "Job Lint ZK failed"
+            exit 1
+          fi

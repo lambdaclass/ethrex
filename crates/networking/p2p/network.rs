@@ -1,103 +1,127 @@
-use crate::kademlia::{self, KademliaTable};
-use crate::rlpx::p2p::Capability;
-use crate::rlpx::{
-    connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
-};
-use crate::types::Node;
+#[cfg(feature = "l2")]
+use crate::rlpx::l2::l2_connection::P2PBasedContext;
+#[cfg(not(feature = "l2"))]
+#[derive(Clone, Debug)]
+pub struct P2PBasedContext;
 use crate::{
     discv4::{
-        helpers::current_unix_time,
-        server::{DiscoveryError, Discv4Server},
+        peer_table::{PeerData, PeerTable},
+        server::{DiscoveryServer, DiscoveryServerError},
     },
-    rlpx::utils::log_peer_error,
+    metrics::METRICS,
+    rlpx::{
+        connection::server::{PeerConnBroadcastSender, PeerConnection},
+        message::Message,
+        p2p::SUPPORTED_SNAP_CAPABILITIES,
+    },
+    tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
+    types::Node,
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_common::H512;
 use ethrex_storage::Store;
-use k256::{
-    ecdsa::SigningKey,
-    elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
+use secp256k1::SecretKey;
+use spawned_concurrency::tasks::GenServerHandle;
+use std::{
+    io,
+    net::SocketAddr,
+    sync::{Arc, atomic::Ordering},
+    time::{Duration, SystemTime},
 };
-use std::{io, net::SocketAddr, sync::Arc};
-use tokio::{
-    net::{TcpListener, TcpSocket, TcpStream},
-    sync::Mutex,
-};
+use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio_util::task::TaskTracker;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
-// Totally arbitrary limit on how
-// many messages the connections can queue,
-// if we miss messages to broadcast, maybe
-// we should bump this limit.
-pub const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
-
-pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
-    let local_node_id = node_id_from_signing_key(&signer);
-    Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
-}
-
-#[derive(Debug)]
-pub enum NetworkError {
-    DiscoveryStart(DiscoveryError),
-}
+pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 
 #[derive(Clone, Debug)]
 pub struct P2PContext {
     pub tracker: TaskTracker,
-    pub signer: SigningKey,
-    pub table: Arc<Mutex<KademliaTable>>,
+    pub signer: SecretKey,
+    pub table: PeerTable,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
-    pub(crate) broadcast: RLPxConnBroadcastSender,
+    pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
-    pub enr_seq: u64,
+    pub client_version: String,
+    #[cfg(feature = "l2")]
+    pub based_context: Option<P2PBasedContext>,
+    pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
 }
 
-pub async fn start_network(
-    local_node: Node,
-    tracker: TaskTracker,
-    bootnodes: Vec<Node>,
-    signer: SigningKey,
-    peer_table: Arc<Mutex<KademliaTable>>,
-    storage: Store,
-    blockchain: Arc<Blockchain>,
-) -> Result<(), NetworkError> {
-    let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
-        tokio::task::Id,
-        Arc<RLPxMessage>,
-    )>(MAX_MESSAGES_TO_BROADCAST);
+impl P2PContext {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new(
+        local_node: Node,
+        tracker: TaskTracker,
+        signer: SecretKey,
+        peer_table: PeerTable,
+        storage: Store,
+        blockchain: Arc<Blockchain>,
+        client_version: String,
+        based_context: Option<P2PBasedContext>,
+        tx_broadcasting_time_interval: u64,
+    ) -> Result<Self, NetworkError> {
+        let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
+            tokio::task::Id,
+            Arc<Message>,
+        )>(MAX_MESSAGES_TO_BROADCAST);
 
-    let context = P2PContext {
-        local_node,
-        // Note we are passing the current timestamp as the sequence number
-        // This is because we are not storing our local_node updates in the db
-        // see #1756
-        enr_seq: current_unix_time(),
-        tracker,
-        signer,
-        table: peer_table,
-        storage,
-        blockchain,
-        broadcast: channel_broadcast_send_end,
-    };
-    let discovery = Discv4Server::try_new(context.clone())
+        let tx_broadcaster = TxBroadcaster::spawn(
+            peer_table.clone(),
+            blockchain.clone(),
+            tx_broadcasting_time_interval,
+        )
         .await
-        .map_err(NetworkError::DiscoveryStart)?;
+        .inspect_err(|e| {
+            error!("Failed to start Tx Broadcaster: {e}");
+        })?;
 
-    info!(
-        "Starting discovery service at {}",
-        context.local_node.udp_addr()
-    );
-    discovery
-        .start(bootnodes)
-        .await
-        .map_err(NetworkError::DiscoveryStart)?;
+        #[cfg(not(feature = "l2"))]
+        let _ = &based_context;
 
-    info!(
-        "Listening for requests at {}",
-        context.local_node.tcp_addr()
+        Ok(P2PContext {
+            local_node,
+            tracker,
+            signer,
+            table: peer_table,
+            storage,
+            blockchain,
+            broadcast: channel_broadcast_send_end,
+            client_version,
+            #[cfg(feature = "l2")]
+            based_context,
+            tx_broadcaster,
+        })
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum NetworkError {
+    #[error("Failed to start discovery server: {0}")]
+    DiscoveryServerError(#[from] DiscoveryServerError),
+    #[error("Failed to start Tx Broadcaster: {0}")]
+    TxBroadcasterError(#[from] TxBroadcasterError),
+}
+
+pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
+    let udp_socket = Arc::new(
+        UdpSocket::bind(context.local_node.udp_addr())
+            .await
+            .expect("Failed to bind udp socket"),
     );
+
+    DiscoveryServer::spawn(
+        context.local_node.clone(),
+        context.signer,
+        udp_socket.clone(),
+        context.table.clone(),
+        bootnodes,
+    )
+    .await
+    .inspect_err(|e| {
+        error!("Failed to start discovery server: {e}");
+    })?;
+
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
     Ok(())
@@ -121,79 +145,266 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        context
-            .tracker
-            .spawn(handle_peer_as_receiver(context.clone(), peer_addr, stream));
+        if tcp_addr == peer_addr {
+            // Ignore connections from self
+            continue;
+        }
+
+        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
     }
 }
 
 fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
-    let tcp_socket = TcpSocket::new_v4()?;
+    let tcp_socket = match tcp_addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4(),
+        SocketAddr::V6(_) => TcpSocket::new_v6(),
+    }?;
+    tcp_socket.set_reuseport(true).ok();
+    tcp_socket.set_reuseaddr(true).ok();
     tcp_socket.bind(tcp_addr)?;
+
     tcp_socket.listen(50)
 }
 
-async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-    let table = context.table.clone();
-    match handshake::as_receiver(context, peer_addr, stream).await {
-        Ok(mut conn) => conn.start(table).await,
-        Err(e) => {
-            debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
+pub async fn periodically_show_peer_stats(blockchain: Arc<Blockchain>, mut peer_table: PeerTable) {
+    periodically_show_peer_stats_during_syncing(blockchain, &mut peer_table).await;
+    periodically_show_peer_stats_after_sync(&mut peer_table).await;
+}
+
+pub async fn periodically_show_peer_stats_during_syncing(
+    blockchain: Arc<Blockchain>,
+    peer_table: &mut PeerTable,
+) {
+    let start = std::time::Instant::now();
+    loop {
+        {
+            if blockchain.is_synced() {
+                return;
+            }
+            let metrics_enabled = *METRICS.enabled.lock().await;
+            // Show the metrics only when these are enabled
+            if !metrics_enabled {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+
+            // Common metrics
+            let elapsed = format_duration(start.elapsed());
+            let peer_number = peer_table.peer_count().await.unwrap_or(0);
+            let current_step = METRICS.current_step.get();
+            let current_header_hash = *METRICS.sync_head_hash.lock().await;
+
+            // Headers metrics
+            let headers_to_download = METRICS.sync_head_block.load(Ordering::Relaxed);
+            // We may download more than expected headers due to duplicates
+            // We just clamp it to the max to avoid showing the user confusing data
+            let headers_downloaded =
+                u64::min(METRICS.downloaded_headers.get(), headers_to_download);
+            let headers_remaining = headers_to_download.saturating_sub(headers_downloaded);
+            let headers_download_progress = if headers_to_download == 0 {
+                "0%".to_string()
+            } else {
+                format!(
+                    "{:.2}%",
+                    (headers_downloaded as f64 / headers_to_download as f64) * 100.0
+                )
+            };
+
+            // Account leaves metrics
+            let account_leaves_downloaded =
+                METRICS.downloaded_account_tries.load(Ordering::Relaxed);
+            let account_leaves_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
+            let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
+                (account_leaves_inserted as f64 / account_leaves_downloaded as f64) * 100.0
+            } else {
+                0.0
+            };
+            let account_leaves_pending =
+                account_leaves_downloaded.saturating_sub(account_leaves_inserted);
+            let account_leaves_time = format_duration({
+                let end_time = METRICS
+                    .account_tries_download_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
+
+                METRICS
+                    .account_tries_download_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+            let account_leaves_inserted_time = format_duration({
+                let end_time = METRICS
+                    .account_tries_insert_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
+
+                METRICS
+                    .account_tries_insert_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+
+            // Storage leaves metrics
+            let storage_leaves_downloaded = METRICS.storage_leaves_downloaded.get();
+            let storage_leaves_inserted = METRICS.storage_leaves_inserted.get();
+            let storage_leaves_inserted_percentage = if storage_leaves_downloaded != 0 {
+                storage_leaves_inserted as f64 / storage_leaves_downloaded as f64 * 100.0
+            } else {
+                0.0
+            };
+            // We round up because of the accounts whose slots get downloaded and then not used
+            let storage_leaves_inserted_percentage =
+                (storage_leaves_inserted_percentage * 10.0).round() / 10.0;
+            let storage_leaves_time = format_duration({
+                let end_time = METRICS
+                    .storage_tries_download_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
+
+                METRICS
+                    .storage_tries_download_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+            let storage_leaves_inserted_time = format_duration({
+                let end_time = METRICS
+                    .storage_tries_insert_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
+
+                METRICS
+                    .storage_tries_insert_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .unwrap_or(Duration::from_secs(0))
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+
+            // Healing stuff
+            let heal_time = format_duration({
+                let end_time = METRICS
+                    .heal_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
+
+                METRICS
+                    .heal_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .expect("Failed to get storage tries download time")
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+            let healed_accounts = METRICS
+                .global_state_trie_leafs_healed
+                .load(Ordering::Relaxed);
+            let healed_storages = METRICS
+                .global_storage_tries_leafs_healed
+                .load(Ordering::Relaxed);
+            let heal_current_throttle =
+                if METRICS.healing_empty_try_recv.load(Ordering::Relaxed) == 0 {
+                    "Database"
+                } else {
+                    "Peers"
+                };
+
+            // Bytecode metrics
+            let bytecodes_download_time = format_duration({
+                let end_time = METRICS
+                    .bytecode_download_end_time
+                    .lock()
+                    .await
+                    .unwrap_or(SystemTime::now());
+
+                METRICS
+                    .bytecode_download_start_time
+                    .lock()
+                    .await
+                    .map(|start_time| {
+                        end_time
+                            .duration_since(start_time)
+                            .expect("Failed to get storage tries download time")
+                    })
+                    .unwrap_or(Duration::from_secs(0))
+            });
+
+            let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
+
+            info!(
+                r#"
+P2P Snap Sync | elapsed {elapsed} | peers {peer_number} | step {current_step} | head {current_header_hash:x}
+  headers : {headers_downloaded}/{headers_to_download} ({headers_download_progress}), remaining {headers_remaining}
+  accounts: downloaded {account_leaves_downloaded} @ {account_leaves_time} | inserted {account_leaves_inserted} ({account_leaves_inserted_percentage:.1}%) in {account_leaves_inserted_time} | pending {account_leaves_pending}
+  storage : downloaded {storage_leaves_downloaded} @ {storage_leaves_time} | inserted {storage_leaves_inserted} ({storage_leaves_inserted_percentage:.1}%) in {storage_leaves_inserted_time}
+  healing : accounts {healed_accounts}, storages {healed_storages}, elapsed {heal_time}, throttle {heal_current_throttle}
+  bytecodes: downloaded {bytecodes_downloaded} in {bytecodes_download_time}"#
+            );
         }
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
 }
 
-pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
-    let addr = SocketAddr::new(node.ip, node.tcp_port);
-    let stream = match tcp_stream(addr).await {
-        Ok(result) => result,
-        Err(e) => {
-            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
-            context.table.lock().await.replace_peer(node.node_id);
-            return;
-        }
-    };
-    let table = context.table.clone();
-    match handshake::as_initiator(context, node, stream).await {
-        Ok(mut conn) => conn.start(table).await,
-        Err(e) => {
-            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
-            table.lock().await.replace_peer(node.node_id);
-        }
-    };
-}
-
-async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, io::Error> {
-    TcpSocket::new_v4()?.connect(addr).await
-}
-
-pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
-    let public_key = PublicKey::from(signer.verifying_key());
-    let encoded = public_key.to_encoded_point(false);
-    H512::from_slice(&encoded.as_bytes()[1..])
-}
-
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
-pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>) {
-    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
+pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable) {
+    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(60);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
         // clone peers to keep the lock short
-        let peers: Vec<kademlia::PeerData> =
-            peer_table.lock().await.iter_peers().cloned().collect();
-        let total_peers = peers.len();
+        let peers: Vec<PeerData> = peer_table.get_peers_data().await.unwrap_or(Vec::new());
         let active_peers = peers
             .iter()
-            .filter(|peer| -> bool { peer.channels.as_ref().is_some() })
+            .filter(|peer| -> bool { peer.connection.as_ref().is_some() })
             .count();
         let snap_active_peers = peers
             .iter()
             .filter(|peer| -> bool {
-                peer.channels.as_ref().is_some()
-                    && peer.supported_capabilities.contains(&Capability::Snap)
+                peer.connection.as_ref().is_some()
+                    && SUPPORTED_SNAP_CAPABILITIES
+                        .iter()
+                        .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
+        info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
         interval.tick().await;
     }
+}
+
+fn format_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    let milliseconds = total_seconds / 1000;
+
+    format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:02}ms")
 }

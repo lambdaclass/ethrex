@@ -14,10 +14,10 @@ use super::{BlockHash, BlockHeader, BlockNumber, ChainConfig};
 // See https://github.com/ethereum/go-ethereum/blob/530adfc8e3ef9c8b6356facecdec10b30fb81d7d/core/forkid/forkid.go#L51
 const TIMESTAMP_THRESHOLD: u64 = 1438269973;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct ForkId {
-    fork_hash: H32,
-    fork_next: BlockNumber,
+    pub fork_hash: H32,
+    pub fork_next: BlockNumber,
 }
 
 impl ForkId {
@@ -27,7 +27,7 @@ impl ForkId {
         head_timestamp: u64,
         head_block_number: u64,
     ) -> Self {
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
         let (block_number_based_forks, timestamp_based_forks) =
             chain_config.gather_forks(genesis_header);
 
@@ -65,7 +65,7 @@ impl ForkId {
         chain_config: ChainConfig,
         genesis_header: BlockHeader,
     ) -> bool {
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
         let (block_number_based_forks, timestamp_based_forks) =
             chain_config.gather_forks(genesis_header);
 
@@ -316,6 +316,60 @@ mod tests {
                 time: 1740434112,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0xdfbd9bed").unwrap(),
+                    fork_next: 1759308480,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1759308479,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xdfbd9bed").unwrap(),
+                    fork_next: 1759308480,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1759308480,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x783def52").unwrap(),
+                    fork_next: 1759800000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1759799999,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x783def52").unwrap(),
+                    fork_next: 1759800000,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1759800000,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xa280a45c").unwrap(),
+                    fork_next: 1760389824,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1760389823,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xa280a45c").unwrap(),
+                    fork_next: 1760389824,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1760389824,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x9bc6cb31").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -324,7 +378,111 @@ mod tests {
                 head: 123,
                 time: 2740434112,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xdfbd9bed").unwrap(),
+                    fork_hash: H32::from_str("0x9bc6cb31").unwrap(),
+                    fork_next: 0,
+                },
+                is_valid: true,
+            },
+        ];
+        assert_test_cases(test_cases, genesis.config, genesis_header);
+    }
+
+    #[test]
+    fn hoodi_test_cases() {
+        let genesis_file = std::fs::File::open("../../cmd/ethrex/networks/hoodi/genesis.json")
+            .expect("Failed to open genesis file");
+        let genesis_reader = BufReader::new(genesis_file);
+        let genesis: Genesis =
+            serde_json::from_reader(genesis_reader).expect("Failed to read genesis file");
+        let genesis_header = genesis.get_block().header;
+        // See https://github.com/ethereum/go-ethereum/blob/444a6d007a08bddcec0b68b60ab507ea8bc1d078/core/forkid/forkid_test.go#L100
+        let test_cases: Vec<TestCase> = vec![
+            TestCase {
+                head: 123,
+                time: 0,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xbef71d30").unwrap(),
+                    fork_next: 1742999832,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1742999831,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xbef71d30").unwrap(),
+                    fork_next: 1742999832,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1742999832,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x0929e24e").unwrap(),
+                    fork_next: 1761677592,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1761677591,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x0929e24e").unwrap(),
+                    fork_next: 1761677592,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1761677592,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xe7e0e7ff").unwrap(),
+                    fork_next: 1762365720,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1762365719,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xe7e0e7ff").unwrap(),
+                    fork_next: 1762365720,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1762365720,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x3893353e").unwrap(),
+                    fork_next: 1762955544,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1762955543,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x3893353e").unwrap(),
+                    fork_next: 1762955544,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1762955544,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x23aa1351").unwrap(),
+                    fork_next: 0,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 2740434112,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x23aa1351").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -424,6 +582,60 @@ mod tests {
                 time: 1741159776,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0xed88b5fd").unwrap(),
+                    fork_next: 1760427360,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1760427359,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xed88b5fd").unwrap(),
+                    fork_next: 1760427360,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1760427360,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xe2ae4999").unwrap(),
+                    fork_next: 1761017184,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1761017183,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xe2ae4999").unwrap(),
+                    fork_next: 1761017184,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1761017184,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x56078a1e").unwrap(),
+                    fork_next: 1761607008,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1761607007,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x56078a1e").unwrap(),
+                    fork_next: 1761607008,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1761607008,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x268956b6").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -432,7 +644,7 @@ mod tests {
                 head: 1735372,
                 time: 2741159776,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xed88b5fd").unwrap(),
+                    fork_hash: H32::from_str("0x268956b6").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,

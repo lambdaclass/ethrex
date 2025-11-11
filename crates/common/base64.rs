@@ -1,9 +1,9 @@
-/// base64 decoder/encoder using safe alphabet according to:
-/// https://datatracker.ietf.org/doc/html/rfc4648#section-4
-/// https://datatracker.ietf.org/doc/html/rfc4648#section-5
-///
-/// Encoding is implementing with padding at the end (add 1 or 2 '=' if necessary to make the data a multiple of 4)
-/// Decoding does not require the data to be padded, that is it makes no difference if padding is present or not
+//! base64 decoder/encoder using safe alphabet according to:
+//! https://datatracker.ietf.org/doc/html/rfc4648#section-4
+//! https://datatracker.ietf.org/doc/html/rfc4648#section-5
+//!
+//! Encoding is implementing with padding at the end (add 1 or 2 '=' if necessary to make the data a multiple of 4)
+//! Decoding does not require the data to be padded, that is it makes no difference if padding is present or not
 
 fn byte_to_alphabet(byte: u8) -> char {
     match byte {
@@ -33,7 +33,7 @@ pub fn encode(bytes: &[u8]) -> Vec<u8> {
 
     let mut bytes_iter = bytes.iter();
     while bytes_iter.len() > 0 {
-        // each block is made of as much as 24 bits (3 bytes)
+        // each block is made up of as many as 24 bits (3 bytes)
         let mut block: Vec<u8> = vec![];
 
         while block.len() < 3 {

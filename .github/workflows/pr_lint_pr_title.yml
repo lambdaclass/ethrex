@@ -5,6 +5,10 @@ on:
     types:
       - opened
       - edited
+      - synchronize
+
+permissions:
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -39,7 +43,6 @@ jobs:
           # Configure which scopes are allowed (newline-delimited).
           # These are regex patterns auto-wrapped in `^ $`.
           scopes: |
-            core
             l1
             l2
             levm

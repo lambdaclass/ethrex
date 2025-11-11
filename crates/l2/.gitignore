@@ -1,7 +1,8 @@
 .env*
 
-# Ignore all config files that doesn't end with _example.toml
-/configs
-!*_example.toml
+store/
 
 solc_out
+
+# qpl-tool temp files
+out/

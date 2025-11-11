@@ -1,20 +1,38 @@
 use crate::{
-    call_frame::CallFrame,
-    errors::{ExecutionReport, VMError},
-    vm::VM,
+    errors::{ContextResult, VMError},
+    hooks::{L2Hook, backup_hook::BackupHook, default_hook::DefaultHook},
+    vm::{VM, VMType},
 };
+use ethrex_common::types::fee_config::FeeConfig;
+use std::{cell::RefCell, rc::Rc};
 
 pub trait Hook {
-    fn prepare_execution(
-        &self,
-        vm: &mut VM<'_>,
-        initial_call_frame: &mut CallFrame,
-    ) -> Result<(), VMError>;
+    fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError>;
 
     fn finalize_execution(
-        &self,
+        &mut self,
         vm: &mut VM<'_>,
-        initial_call_frame: &CallFrame,
-        report: &mut ExecutionReport,
+        report: &mut ContextResult,
     ) -> Result<(), VMError>;
+}
+
+pub fn get_hooks(vm_type: &VMType) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    match vm_type {
+        VMType::L1 => l1_hooks(),
+        VMType::L2(fee_config) => l2_hooks(*fee_config),
+    }
+}
+
+pub fn l1_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    vec![Rc::new(RefCell::new(DefaultHook))]
+}
+
+pub fn l2_hooks(fee_config: FeeConfig) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    vec![
+        Rc::new(RefCell::new(L2Hook {
+            fee_config,
+            pre_execution_backup: Default::default(),
+        })),
+        Rc::new(RefCell::new(BackupHook::default())),
+    ]
 }

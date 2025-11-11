@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io
+		load-test-fibonacci load-test-io run-hive-eels-blobs
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -8,13 +8,27 @@ help: ## 📚 Show help for each of the Makefile recipes
 build: ## 🔨 Build the client
 	cargo build --workspace
 
-lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+lint-l1:
+	cargo clippy --lib --bins -F debug,sync-test \
+		--release -- -D warnings
+
+lint-l2:
+	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
+		--workspace --exclude ethrex-prover --exclude guest_program \
+		--release -- -D warnings
+
+lint-gpu:
+	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
+		--workspace --exclude ethrex-prover --exclude guest_program \
+		--release -- -D warnings
+
+lint: lint-l1 lint-l2 ## 🧹 Linter check
 
 CRATE ?= *
+# CAUTION: It is important that the ethrex-l2 crate remains excluded here,
+# as its tests depend on external setup that is not handled by this Makefile.
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-prover-bench --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
-	$(MAKE) -C cmd/ef_tests/blockchain test
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-l2
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
@@ -22,160 +36,160 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex .
+	docker build -t ethrex:local .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
 
 run-image: build-image ## 🏃 Run the Docker image
-	docker run --rm -p 127.0.0.1:8545:8545 ethrex --http.addr 0.0.0.0
+	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
-	cargo run --bin ethrex --features dev -- \
-			--network ./test_data/genesis-l1.json \
+	cargo run --bin ethrex -- \
+			--network ./fixtures/genesis/l1.json \
 			--http.port 8545 \
 			--http.addr 0.0.0.0 \
 			--authrpc.port 8551 \
-			--evm levm \
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 42963f52f3cfc4eb9deb5248c8529ff97acc709c
-# Shallow clones can't specify a single revision, but at least we avoid working
-# the whole history by making it shallow since a given date (one day before our
-# target revision).
-ethereum-package:
-	git clone --single-branch --branch ethrex-integration-pectra https://github.com/lambdaclass/ethereum-package
+ETHEREUM_PACKAGE_REVISION := 82e5a7178138d892c0c31c3839c89d53ffd42d9a
+ETHEREUM_PACKAGE_DIR := ethereum-package
 
-checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum package revision
-	cd ethereum-package && \
-		git fetch && \
-		git checkout $(ETHEREUM_PACKAGE_REVISION)
+checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
+	@if [ ! -d "$(ETHEREUM_PACKAGE_DIR)" ]; then \
+		echo "Cloning ethereum-package repository..."; \
+		git clone --quiet https://github.com/ethpandaops/ethereum-package $(ETHEREUM_PACKAGE_DIR); \
+	fi
+	@cd $(ETHEREUM_PACKAGE_DIR) && \
+	CURRENT_REV=$$(git rev-parse HEAD) && \
+	if [ "$$CURRENT_REV" != "$(ETHEREUM_PACKAGE_REVISION)" ]; then \
+		echo "Current HEAD ($$CURRENT_REV) is not the target revision. Checking out $(ETHEREUM_PACKAGE_REVISION)..."; \
+		git fetch --quiet && \
+		git checkout --quiet $(ETHEREUM_PACKAGE_REVISION); \
+	else \
+		echo "ethereum-package is already at the correct revision."; \
+	fi
 
 ENCLAVE ?= lambdanet
+KURTOSIS_CONFIG_FILE ?= ./fixtures/networks/default.yaml
 
-localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file test_data/network_params.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
-
-localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_blob.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
-
-
-localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_tx.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+# If on a Mac, use OrbStack to run Docker containers because Docker Desktop doesn't work well with Kurtosis
+localnet: build-image checkout-ethereum-package ## 🌐 Start kurtosis network
+	@set -e; \
+	trap 'printf "\nStopping localnet...\n"; $(MAKE) stop-localnet || true; exit 0' INT TERM HUP QUIT; \
+	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json; \
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(KURTOSIS_CONFIG_FILE); \
+	CID=$$(docker ps -q --filter ancestor=ethrex:local | head -n1); \
+	if [ -n "$$CID" ]; then docker logs -f $$CID || true; else echo "No ethrex container found; skipping logs."; fi
 
 stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
 
-stop-localnet-silent:
-	@echo "Double checking local net is not already started..."
-	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
-	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
+HIVE_BRANCH ?= master
 
-HIVE_REVISION := d98bcfa37f501f4ea1869d0a79fde35ed472937f
-# Shallow clones can't specify a single revision, but at least we avoid working
-# the whole history by making it shallow since a given date (one day before our
-# target revision).
-HIVE_SHALLOW_SINCE := 2024-09-02
-QUIET ?= false
-
-hive:
-	if [ "$(QUIET)" = "true" ]; then \
-		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
-		cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .; \
+setup-hive: ## 🐝 Set up Hive testing framework
+	if [ -d "hive" ]; then \
+		cd hive && \
+		git fetch origin && \
+		git checkout $(HIVE_BRANCH) && \
+		git pull origin $(HIVE_BRANCH) && \
+		go build .; \
 	else \
-		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
-		cd hive && git checkout --detach $(HIVE_REVISION) && go build .; \
-	fi
-
-setup-hive: hive ## 🐝 Set up Hive testing framework
-	if [ "$$(cd hive && git rev-parse HEAD)" != "$(HIVE_REVISION)" ]; then \
-		if [ "$(QUIET)" = "true" ]; then \
-			cd hive && \
-			git checkout --quiet master && \
-			git fetch --quiet --shallow-since=$(HIVE_SHALLOW_SINCE) && \
-			git checkout --quiet --detach $(HIVE_REVISION) && go build .;\
-		else \
-			cd hive && \
-			git checkout master && \
-			git fetch --shallow-since=$(HIVE_SHALLOW_SINCE) && \
-			git checkout --detach $(HIVE_REVISION) && go build .;\
-		fi \
+		git clone --branch $(HIVE_BRANCH) https://github.com/ethereum/hive && \
+		cd hive && \
+		git checkout $(HIVE_BRANCH) && \
+		go build .; \
 	fi
 
 TEST_PATTERN ?= /
-SIM_LOG_LEVEL ?= 4
-EVM_BACKEND := revm
-SIM_PARALLELISM := 16
+SIM_LOG_LEVEL ?= 3
+SIM_PARALLELISM ?= 16
 
-L1_CLIENT       ?= ethrex
-
-display-hive-alternatives:
-	@echo ""
-	@echo "Running L1 with ${L1_CLIENT} as client. Other clients are available in order to compare tests results."
-	@echo "In order to use a different client, use the environment variable 'L1_CLIENT' with one of the follwoing values:"
-	@echo "   - ethrex: https://github.com/lambdaclass/ethrex"
-	@echo "   - go-ethereum: https://github.com/ethereum/go-ethereum"
-	@echo ""
-
-# Runs a hive testing suite
-# The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
-# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
+# Runs a Hive testing suite. A web interface showing the results is available at http://127.0.0.1:8080 via the `view-hive` target.
+# The endpoints tested can be filtered by supplying a test pattern in the form "/endpoint_1|endpoint_2|..|endpoint_n".
+# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber, you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-run-hive: display-hive-alternatives build-image setup-hive ## 🧪 Run Hive testing suite
-	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+# The simulation log level can be set using SIM_LOG_LEVEL (from 1 up to 4).
 
-run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all Hive testing suites
-	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
+HIVE_CLIENT_FILE := ../fixtures/hive/clients.yaml
 
-run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	$(MAKE) view-hive
+
+run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	$(MAKE) view-hive
+
+run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
+	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+
+# EELS Hive
+TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
+run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/blockchain/.fixtures_url)
+
+run-hive-eels-engine: ## Run hive EELS Engine tests
+	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-engine
+
+run-hive-eels-rlp: ## Run hive EELS RLP tests
+	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-rlp
+
+run-hive-eels-blobs: ## Run hive EELS Blobs tests
+	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
-install-cli: ## 🛠️ Installs the ethrex-l2 cli
-	cargo install --path cmd/ethrex_l2/ --force
+view-hive: ## 🛠️ Builds hiveview with the logs from the hive execution
+	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
-	@if [ -z "$$L" ]; then \
-		LEVM="revm"; \
-		echo "Running the test-node without the LEVM feature"; \
-		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
-	else \
-		LEVM="levm"; \
-		echo "Running the test-node with the LEVM feature"; \
-	fi; \
+	echo "Running the test-node with LEVM"; \
+
 	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
-	--features "dev" \
-	--  \
-	--evm $$LEVM \
-	--network test_data/genesis-l2.json \
+	-- \
+	--network fixtures/genesis/l2.json \
 	--http.port 1729 \
 	--dev \
 	--datadir test_ethrex
 
-load-test: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000
+load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t eth-transfers
+
+load-test-erc20:
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t erc20
 
 load-test-fibonacci:
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --fibonacci
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t fibonacci
 
 load-test-io:
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --io
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
-	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
+	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
-flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
-	sudo bash bench/scripts/flamegraph.sh
+fixtures/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
+	solc ./fixtures/contracts/ERC20/ERC20.sol -o $@
 
-test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
-	solc ./test_data/ERC20.sol -o $@
-load-test-erc20: test_data/ERC20/ERC20.bin install-cli
-	ethrex_l2 test erc20 --path test_data/private_keys.txt -t 100
+sort-genesis-files:
+	cd ./tooling/genesis && cargo run
+
+# Using & so make calls this recipe only once per run
+mermaid-init.js mermaid.min.js &:
+	@# Required for mdbook-mermaid to work
+	@mdbook-mermaid install . \
+		|| (echo "mdbook-mermaid invocation failed, remember to install docs dependencies first with \`make docs-deps\`" \
+		&& exit 1)
+
+docs-deps: ## 📦 Install dependencies for generating the documentation
+	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck mdbook-katex
+
+docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
+	mdbook build
+
+docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
+	mdbook serve --open

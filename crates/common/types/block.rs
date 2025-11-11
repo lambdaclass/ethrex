@@ -1,11 +1,15 @@
 use super::{
-    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
+use crate::utils::keccak;
 use crate::{
-    constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
-    types::{Receipt, Transaction},
     Address, H256, U256,
+    constants::{
+        BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
+        MIN_BASE_FEE_PER_BLOB_GAS,
+    },
+    types::{Receipt, Transaction},
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
@@ -16,41 +20,32 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
-use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
-use std::cmp::{max, Ordering};
+use std::cmp::{Ordering, max};
 
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
 
-use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
 
-lazy_static! {
-    pub static ref DEFAULT_OMMERS_HASH: H256 = H256::from_slice(&hex::decode("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap()); // = Keccak256(RLP([])) as of EIP-3675
-    pub static ref DEFAULT_REQUESTS_HASH: H256 = H256::from_slice(&hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").unwrap()); // = Sha256([])) as of EIP-7685
-}
-#[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(
+    PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default, RSerialize, RDeserialize, Archive,
+)]
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
-    #[serde(skip)]
-    hash: OnceCell<BlockHash>,
 }
 
 impl Block {
     pub fn new(header: BlockHeader, body: BlockBody) -> Block {
-        Block {
-            header,
-            body,
-            hash: OnceCell::new(),
-        }
+        Block { header, body }
     }
 
     pub fn hash(&self) -> BlockHash {
-        *self.hash.get_or_init(|| self.header.compute_block_hash())
+        self.header.hash()
     }
 }
 
@@ -84,19 +79,32 @@ impl RLPDecode for Block {
 }
 
 /// Header part of a block on the chain.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize, RSerialize, RDeserialize, Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
+    #[serde(skip)]
+    #[rkyv(with=rkyv::with::Skip)]
+    pub hash: OnceCell<BlockHash>,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub parent_hash: H256,
     #[serde(rename = "sha3Uncles")]
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub ommers_hash: H256, // ommer = uncle
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     #[serde(rename = "miner")]
     pub coinbase: Address,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub state_root: H256,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub transactions_root: H256,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub receipts_root: H256,
+    #[rkyv(with=crate::rkyv_utils::BloomWrapper)]
     pub logs_bloom: Bloom,
     #[serde(default)]
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub difficulty: U256,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub number: BlockNumber,
@@ -107,13 +115,16 @@ pub struct BlockHeader {
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub timestamp: u64,
     #[serde(with = "crate::serde_utils::bytes")]
+    #[rkyv(with= crate::rkyv_utils::BytesWrapper)]
     pub extra_data: Bytes,
     #[serde(rename = "mixHash")]
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub prev_randao: H256,
     #[serde(with = "crate::serde_utils::u64::hex_str_padding")]
     pub nonce: u64,
-    #[serde(with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub base_fee_per_gas: Option<u64>,
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub withdrawals_root: Option<H256>,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -127,8 +138,10 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub excess_blob_gas: Option<u64>,
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub parent_beacon_block_root: Option<H256>,
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub requests_hash: Option<H256>,
 }
 
@@ -188,6 +201,7 @@ impl RLPDecode for BlockHeader {
 
         Ok((
             BlockHeader {
+                hash: OnceCell::new(),
                 parent_hash,
                 ommers_hash,
                 coinbase,
@@ -216,7 +230,9 @@ impl RLPDecode for BlockHeader {
 }
 
 // The body of a block on the chain
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive,
+)]
 pub struct BlockBody {
     pub transactions: Vec<Transaction>,
     // TODO: ommers list is always empty, so we can remove it
@@ -234,13 +250,15 @@ impl BlockBody {
         }
     }
 
-    pub fn get_transactions_with_sender(&self) -> Vec<(&Transaction, Address)> {
+    pub fn get_transactions_with_sender(
+        &self,
+    ) -> Result<Vec<(&Transaction, Address)>, secp256k1::Error> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
             .par_iter()
-            .map(|tx| (tx, tx.sender()))
-            .collect()
+            .map(|tx| Ok((tx, tx.sender()?)))
+            .collect::<Result<Vec<(&Transaction, Address)>, secp256k1::Error>>()
     }
 }
 
@@ -258,7 +276,7 @@ pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
     let iter = receipts
         .iter()
         .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner()));
+        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
@@ -304,15 +322,22 @@ impl BlockHeader {
         self.encode(&mut buf);
         keccak(buf)
     }
+
+    pub fn hash(&self) -> H256 {
+        *self.hash.get_or_init(|| self.compute_block_hash())
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Deserialize, Serialize, RSerialize, RDeserialize, Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct Withdrawal {
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub index: u64,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub validator_index: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub address: Address,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub amount: u64,
@@ -359,70 +384,82 @@ fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) -> bool {
 
 /// Calculates the base fee per blob gas for the current block based on
 /// it's parent excess blob gas and the update fraction, which depends on the fork.
-pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> u64 {
+pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> U256 {
     if update_fraction == 0 {
-        return 0;
+        return U256::zero();
     }
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        parent_excess_blob_gas,
+        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
+        U256::from(parent_excess_blob_gas),
         update_fraction,
     )
+    .unwrap_or_default()
 }
 
-// Defined in [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844)
-pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u64 {
-    let mut i = 1;
-    let mut output = 0;
-    let mut numerator_accum = factor * denominator;
-    while numerator_accum > 0 {
-        output += numerator_accum;
-        numerator_accum = numerator_accum * numerator / (denominator * i);
-        i += 1;
-    }
-    output / denominator
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum FakeExponentialError {
-    #[error("Denominator cannot be zero.")]
-    DenominatorIsZero,
-    #[error("Checked div failed is None.")]
-    CheckedDiv,
-    #[error("Checked mul failed is None.")]
-    CheckedMul,
-}
-
-pub fn fake_exponential_checked(
-    factor: u64,
-    numerator: u64,
+/// Approximates factor * e ** (numerator / denominator) using Taylor expansion
+/// https://eips.ethereum.org/EIPS/eip-4844#helpers
+/// 400_000_000 numerator is the limit for this operation to work with U256,
+/// it will overflow with a larger numerator
+pub fn fake_exponential(
+    factor: U256,
+    numerator: U256,
     denominator: u64,
-) -> Result<u64, FakeExponentialError> {
-    let mut i = 1_u64;
-    let mut output = 0_u64;
-    let mut numerator_accum = factor * denominator;
+) -> Result<U256, FakeExponentialError> {
     if denominator == 0 {
         return Err(FakeExponentialError::DenominatorIsZero);
     }
 
-    while numerator_accum > 0 {
-        output = output.saturating_add(numerator_accum);
-
-        let denominator_i = denominator
-            .checked_mul(i)
-            .ok_or(FakeExponentialError::CheckedMul)?;
-
-        if denominator_i == 0 {
-            return Err(FakeExponentialError::DenominatorIsZero);
-        }
-
-        numerator_accum = numerator_accum * numerator / denominator_i;
-        i += 1;
+    if numerator.is_zero() {
+        return Ok(factor);
     }
 
-    output
-        .checked_div(denominator)
-        .ok_or(FakeExponentialError::CheckedDiv)
+    let mut output: U256 = U256::zero();
+    let denominator_u256: U256 = denominator.into();
+
+    // Initial multiplication: factor * denominator
+    let mut numerator_accum = factor
+        .checked_mul(denominator_u256)
+        .ok_or(FakeExponentialError::CheckedMul)?;
+
+    let mut denominator_by_i = denominator_u256;
+
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "division can't overflow since denominator is not 0"
+    )]
+    {
+        while !numerator_accum.is_zero() {
+            // Safe addition to output
+            output = output
+                .checked_add(numerator_accum)
+                .ok_or(FakeExponentialError::CheckedAdd)?;
+
+            // Safe multiplication and division within loop
+            numerator_accum = numerator_accum
+                .checked_mul(numerator)
+                .ok_or(FakeExponentialError::CheckedMul)?
+                / denominator_by_i;
+
+            // denominator comes from a u64 value, will never overflow before other variables.
+            denominator_by_i += denominator_u256;
+        }
+
+        output
+            .checked_div(denominator.into())
+            .ok_or(FakeExponentialError::CheckedDiv)
+    }
+}
+
+#[derive(Debug, thiserror::Error, Serialize, Clone, PartialEq, Deserialize, Eq)]
+pub enum FakeExponentialError {
+    #[error("FakeExponentialError: Denominator cannot be zero.")]
+    DenominatorIsZero,
+    #[error("FakeExponentialError: Checked div failed is None.")]
+    CheckedDiv,
+    #[error("FakeExponentialError: Checked mul failed is None.")]
+    CheckedMul,
+    #[error("FakeExponentialError: Checked add failed is None.")]
+    CheckedAdd,
 }
 
 // Calculates the base fee for the current block based on its gas_limit and parent's gas and fee
@@ -432,6 +469,7 @@ pub fn calculate_base_fee_per_gas(
     parent_gas_limit: u64,
     parent_gas_used: u64,
     parent_base_fee_per_gas: u64,
+    elasticity_multiplier: u64,
 ) -> Option<u64> {
     // Check gas limit, if the check passes we can also rest assured that none of the
     // following divisions will have zero as a divider
@@ -439,32 +477,38 @@ pub fn calculate_base_fee_per_gas(
         return None;
     }
 
-    let parent_gas_target = parent_gas_limit / ELASTICITY_MULTIPLIER;
+    let parent_gas_target = parent_gas_limit / elasticity_multiplier;
 
-    Some(match parent_gas_used.cmp(&parent_gas_target) {
-        Ordering::Equal => parent_base_fee_per_gas,
+    match parent_gas_used.cmp(&parent_gas_target) {
+        Ordering::Equal => Some(parent_base_fee_per_gas),
         Ordering::Greater => {
             let gas_used_delta = parent_gas_used - parent_gas_target;
 
-            let parent_fee_gas_delta = parent_base_fee_per_gas * gas_used_delta;
-            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            let parent_fee_gas_delta =
+                u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
+            let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
             let base_fee_per_gas_delta =
                 max(target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR, 1);
 
-            parent_base_fee_per_gas + base_fee_per_gas_delta
+            (u128::from(parent_base_fee_per_gas) + base_fee_per_gas_delta)
+                .try_into()
+                .ok()
         }
         Ordering::Less => {
             let gas_used_delta = parent_gas_target - parent_gas_used;
 
-            let parent_fee_gas_delta = parent_base_fee_per_gas * gas_used_delta;
-            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            let parent_fee_gas_delta =
+                u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
+            let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
             let base_fee_per_gas_delta = target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR;
 
-            parent_base_fee_per_gas - base_fee_per_gas_delta
+            (u128::from(parent_base_fee_per_gas) - base_fee_per_gas_delta)
+                .try_into()
+                .ok()
         }
-    })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -509,10 +553,21 @@ pub enum InvalidBlockHeaderError {
     RequestsHashPresent,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidBlockBodyError {
+    #[error("Withdrawals root does not match")]
+    WithdrawalsRootNotMatch,
+    #[error("Transactions root does not match")]
+    TransactionsRootNotMatch,
+    #[error("Ommers is not empty")]
+    OmmersIsNotEmpty,
+}
+
 /// Validates that the header fields are correct in reference to the parent_header
 pub fn validate_block_header(
     header: &BlockHeader,
     parent_header: &BlockHeader,
+    elasticity_multiplier: u64,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.gas_used > header.gas_limit {
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
@@ -523,6 +578,7 @@ pub fn validate_block_header(
         parent_header.gas_limit,
         parent_header.gas_used,
         parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+        elasticity_multiplier,
     ) {
         base_fee
     } else {
@@ -557,8 +613,45 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
 
-    if header.parent_hash != parent_header.compute_block_hash() {
+    if header.parent_hash != parent_header.hash() {
         return Err(InvalidBlockHeaderError::ParentHashIncorrect);
+    }
+
+    Ok(())
+}
+
+/// Validates that the body matches with the header
+pub fn validate_block_body(
+    block_header: &BlockHeader,
+    block_body: &BlockBody,
+) -> Result<(), InvalidBlockBodyError> {
+    // Validates that:
+    //  - Transactions root and withdrawals root matches with the header
+    //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
+    let computed_tx_root = compute_transactions_root(&block_body.transactions);
+
+    if block_header.transactions_root != computed_tx_root {
+        return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
+    }
+
+    if !block_body.ommers.is_empty() {
+        return Err(InvalidBlockBodyError::OmmersIsNotEmpty);
+    }
+
+    match (block_header.withdrawals_root, &block_body.withdrawals) {
+        (Some(withdrawals_root), Some(withdrawals)) => {
+            let computed_withdrawals_root = compute_withdrawals_root(withdrawals);
+            if withdrawals_root != computed_withdrawals_root {
+                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
+            }
+        }
+        (Some(withdrawals_root), None) => {
+            if withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
+                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
+            }
+        }
+        (None, None) => {}
+        _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
 
     Ok(())
@@ -639,37 +732,50 @@ fn validate_excess_blob_gas(
     let expected_excess_blob_gas = chain_config
         .get_fork_blob_schedule(header.timestamp)
         .map(|schedule| {
-            calc_excess_blob_gas(
-                parent_header.excess_blob_gas.unwrap_or_default(),
-                parent_header.blob_gas_used.unwrap_or_default(),
-                schedule.target,
-            )
+            calc_excess_blob_gas(parent_header, schedule, chain_config.fork(header.timestamp))
         })
         .unwrap_or_default();
-    if header.excess_blob_gas.unwrap() != expected_excess_blob_gas {
+    if header
+        .excess_blob_gas
+        .is_none_or(|header_excess_blob_gas| header_excess_blob_gas != expected_excess_blob_gas)
+    {
         return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
     }
     Ok(())
 }
 
-pub fn calc_excess_blob_gas(
-    parent_excess_blob_gas: u64,
-    parent_blob_gas_used: u64,
-    target: u64,
-) -> u64 {
+pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fork: Fork) -> u64 {
+    let parent_blob_gas_used = parent.blob_gas_used.unwrap_or_default();
+    let parent_base_fee_per_gas = parent.base_fee_per_gas.unwrap_or_default();
+    let parent_excess_blob_gas = parent.excess_blob_gas.unwrap_or_default();
+
     let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
-    let target_blob_gas_per_block = target * GAS_PER_BLOB;
+    let target_blob_gas_per_block = (schedule.target * GAS_PER_BLOB) as u64;
     if excess_blob_gas < target_blob_gas_per_block {
-        0
-    } else {
-        excess_blob_gas - target_blob_gas_per_block
+        return 0;
     }
+
+    if fork >= Fork::Osaka
+        && U256::from(BLOB_BASE_COST * parent_base_fee_per_gas)
+            > (U256::from(GAS_PER_BLOB))
+                * calculate_base_fee_per_blob_gas(
+                    parent_excess_blob_gas,
+                    schedule.base_fee_update_fraction,
+                )
+    {
+        return parent_excess_blob_gas
+            + parent_blob_gas_used * (schedule.max as u64 - schedule.target as u64)
+                / schedule.max as u64;
+    }
+
+    excess_blob_gas - target_blob_gas_per_block
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::types::EMPTY_KECCACK_HASH;
+    use crate::constants::EMPTY_KECCACK_HASH;
+    use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;
@@ -743,6 +849,7 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
         let block = BlockHeader {
             parent_hash: H256::from_str(
@@ -786,8 +893,9 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block).is_ok())
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
     }
 
     #[test]
@@ -796,7 +904,7 @@ mod test {
             "0x01f8d68330182404842daf517a830186a08080b880c1597f3c842558e64df52c3e0f0973067577c030c0c6578dbb2eef63155a21106fd4426057527f296b2ecdfabc81e34ffc82e89dec20f6b7c41fa1969d3c3bc44262c86f08b5b76077527fb7ece918787c50c878052c30a8b1d4abc07331e6d14b8ded52bbc58a6e9992b76097527f0110937c38cc13b914f201fc09dc6f7a80c001a09930cb92b4a27dce971c697a8c47fa34c98d076abc7b36e1239d6abcfc7c8403a041b35118447fe77c38c0b3a92a2dd3ecba4a9e4b35cc6534cd787f56c0cf2e21",
             "0xf86e81fa843127403882f61894db8d964741c53e55df9c2d4e9414c6c96482874e870aa87bee538000808360306ca03aa421df67a101c45ff9cb06ce28f518a5d8d8dbb76a79361280071909650a27a05a447ff053c4ae601cfe81859b58d5603f2d0a73481c50f348089032feb0b073",
             "0x02f8ef83301824048413f157f8842daf517a830186a094000000000000000000000000000000000000000080b8807a0a600060a0553db8600060c855c77fb29ecd7661d8aefe101a0db652a728af0fded622ff55d019b545d03a7532932a60ad52604260cd5360bf60ce53609460cf53603e60d05360f560d153bc596000609e55600060c6556000601f556000609155535660556057536055605853606e60595360e7605a5360d0605b5360eb60c080a03acb03b1fc20507bc66210f7e18ff5af65038fb22c626ae488ad9513d9b6debca05d38459e9d2a221eb345b0c2761b719b313d062ff1ea3d10cf5b8762c44385a6",
-            "0x01f8ea8330182402842daf517a830186a094000000000000000000000000000000000000000080b880bdb30d976000604e557145600060a155d67fe7e473caf6e33cba341136268fc1189ba07837ef8a266570289ff53afc43436260c7527f333dfe837f4838f6053e5e46e4151aeec28f356ec39a2db9769f36ec92e3e3f660e7527f0b261608674300d4621eff679096a6ed786591aca69f2b22a3ea6949621daade610107527f3cc080a01f3f906540fb56b0576c51b3ffa86df213fd1f407378c9441cfdd9d5f3c1df3da035691b16c053b68ec74683ae020293cbc6a47ac773dc8defb96cb680c576e5a3"
+            "0x01f8ea8330182402842daf517a830186a094000000000000000000000000000000000000000080b880bdb30d976000604e557145600060a155d67fe7e473caf6e33cba341136268fc1189ba07837ef8a266570289ff53afc43436260c7527f333dfe837f4838f6053e5e46e4151aeec28f356ec39a2db9769f36ec92e3e3f660e7527f0b261608674300d4621eff679096a6ed786591aca69f2b22a3ea6949621daade610107527f3cc080a01f3f906540fb56b0576c51b3ffa86df213fd1f407378c9441cfdd9d5f3c1df3da035691b16c053b68ec74683ae020293cbc6a47ac773dc8defb96cb680c576e5a3",
         ];
         let transactions: Vec<Transaction> = encoded_transactions
             .iter()
@@ -811,5 +919,98 @@ mod test {
                 .unwrap(),
         );
         assert_eq!(transactions_root, expected_root);
+    }
+
+    #[test]
+    // The values for this test were taken from sepolia testnet block number 6029872
+    // Where a silent overflow within base fee calculations led to the wrong expected base fee
+    fn test_calculate_base_fee_per_gas_big_numbers() {
+        let expected_base_fee = Some(1317727380375);
+        let block_gas_limit = 30000000;
+        let parent_gas_limit = 30000000;
+        let parent_gas_used = 1981764;
+        let parent_base_fee_per_gas = 1478077008012;
+        let calc_base_fee = calculate_base_fee_per_gas(
+            block_gas_limit,
+            parent_gas_limit,
+            parent_gas_used,
+            parent_base_fee_per_gas,
+            ELASTICITY_MULTIPLIER,
+        );
+        assert_eq!(calc_base_fee, expected_base_fee)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo1() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(5149252),
+            blob_gas_used: Some(1310720),
+            base_fee_per_gas: Some(30),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 9,
+            max: 14,
+            base_fee_update_fraction: 8832827,
+        };
+        let fork = Fork::Osaka;
+
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 5617366)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo3() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(19251039),
+            blob_gas_used: Some(2490368),
+            base_fee_per_gas: Some(50),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 21,
+            max: 32,
+            base_fee_update_fraction: 20609697,
+        };
+        let fork = Fork::Osaka;
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 20107103)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo1_ef() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(0x360000),
+            blob_gas_used: Some(0),
+            base_fee_per_gas: Some(0x11),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 9,
+            max: 14,
+            base_fee_update_fraction: 0x86c73b,
+        };
+        let fork = Fork::Osaka;
+
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 3538944)
+    }
+
+    #[test]
+    fn test_fake_exponential_overflow() {
+        // With u64 this overflows
+        assert!(fake_exponential(U256::from(57532635), U256::from(3145728), 3338477).is_ok());
+    }
+
+    #[test]
+    fn test_fake_exponential_bounds_overflow() {
+        // Making sure the limit we state in the documentation of 400_000_000 works
+        let thing = fake_exponential(
+            MIN_BASE_FEE_PER_BLOB_GAS.into(),
+            400_000_000.into(),
+            BLOB_BASE_FEE_UPDATE_FRACTION,
+        );
+        // With u64 this overflows
+        assert!(thing.is_ok());
     }
 }

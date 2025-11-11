@@ -1,4 +1,5 @@
 use crate::utils::RpcRequest;
+use ethrex_common::{FromStrRadixErr, types::transaction::GenericTransactionError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EthClientError {
@@ -9,7 +10,7 @@ pub enum EthClientError {
     #[error("eth_gasPrice request error: {0}")]
     GetGasPriceError(#[from] GetGasPriceError),
     #[error("eth_estimateGas request error: {0}")]
-    EstimateGasPriceError(#[from] EstimateGasPriceError),
+    EstimateGasError(#[from] EstimateGasError),
     #[error("eth_sendRawTransaction request error: {0}")]
     SendRawTransactionError(#[from] SendRawTransactionError),
     #[error("eth_call request error: {0}")]
@@ -22,6 +23,10 @@ pub enum EthClientError {
     GetBlockByHashError(#[from] GetBlockByHashError),
     #[error("eth_getBlockByNumber request error: {0}")]
     GetBlockByNumberError(#[from] GetBlockByNumberError),
+    #[error("net_peerCount request error: {0}")]
+    GetPeerCountError(#[from] GetPeerCountError),
+    #[error("debug_getRawBlock request error: {0}")]
+    GetRawBlockError(#[from] GetRawBlockError),
     #[error("eth_getLogs request error: {0}")]
     GetLogsError(#[from] GetLogsError),
     #[error("eth_getTransactionReceipt request error: {0}")]
@@ -34,8 +39,16 @@ pub enum EthClientError {
     GetCodeError(#[from] GetCodeError),
     #[error("eth_getTransactionByHash request error: {0}")]
     GetTransactionByHashError(#[from] GetTransactionByHashError),
+    #[error("ethrex_getWithdrawalProof request error: {0}")]
+    GetMessageProofError(#[from] GetMessageProofError),
+    #[error("debug_executionWitness request error: {0}")]
+    GetWitnessError(#[from] GetWitnessError),
+    #[error("eth_maxPriorityFeePerGas request error: {0}")]
+    GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
+    #[error("eth_config request error: {0}")]
+    GetEthConfigError(#[from] GetEthConfigError),
     #[error("Unreachable nonce")]
-    UnrecheableNonce,
+    UnreachableNonce,
     #[error("Error: {0}")]
     Custom(String),
     #[error("Failed to encode calldata: {0}")]
@@ -44,6 +57,30 @@ pub enum EthClientError {
     TimeoutError,
     #[error("Internal Error. This is most likely a bug: {0}")]
     InternalError(String),
+    #[error("Parse Url Error. {0}")]
+    ParseUrlError(String),
+    #[error("Failed to sign payload: {0}")]
+    FailedToSignPayload(String),
+    #[error("Failed to get transaction pool: {0}")]
+    FailedToGetTxPool(#[from] TxPoolContentError),
+    #[error("ethrex_getBatchByNumber request error: {0}")]
+    GetBatchByNumberError(#[from] GetBatchByNumberError),
+    #[error("ethrex_getBlobBaseFee request error: {0}")]
+    GetBlobBaseFeeError(#[from] GetBlobBaseFeeRequestError),
+    #[error("All RPC calls failed")]
+    FailedAllRPC,
+    #[error("Generic transaction error: {0}")]
+    GenericTransactionError(#[from] GenericTransactionError),
+    #[error("Failed to parse hex string: {0}")]
+    FromStrRadixError(#[from] FromStrRadixErr),
+    #[error("ethrex_getBaseFeeVaultAddress request error: {0}")]
+    GetBaseFeeVaultAddressError(#[from] GetBaseFeeVaultAddressError),
+    #[error("ethrex_getOperatorFeeVaultAddress request error: {0}")]
+    GetOperatorFeeVaultAddressError(#[from] GetOperatorFeeVaultAddressError),
+    #[error("ethrex_getOperatorFee request error: {0}")]
+    GetOperatorFeeError(#[from] GetOperatorFeeError),
+    #[error("ethrex_getL1BlobBaseFee request error: {0}")]
+    GetL1BlobBaseFeeError(#[from] GetL1BlobBaseFeeRequestError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -59,7 +96,7 @@ pub enum GetGasPriceError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EstimateGasPriceError {
+pub enum EstimateGasError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
@@ -141,6 +178,24 @@ pub enum GetBlockByNumberError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum GetPeerCountError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetRawBlockError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    RLPDecodeError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum GetLogsError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
@@ -208,4 +263,104 @@ pub enum CalldataEncodeError {
     WrongArgumentLength(String),
     #[error("Internal Calldata encoding error. This is most likely a bug")]
     InternalError,
+}
+
+// TODO: move to L2
+#[derive(Debug, thiserror::Error)]
+pub enum GetMessageProofError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetWitnessError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetMaxPriorityFeeError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TxPoolContentError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetBlobBaseFeeRequestError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+// TODO: move to L2
+#[derive(Debug, thiserror::Error)]
+pub enum GetBatchByNumberError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetEthConfigError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetBaseFeeVaultAddressError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+#[derive(Debug, thiserror::Error)]
+pub enum GetOperatorFeeVaultAddressError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+#[derive(Debug, thiserror::Error)]
+pub enum GetOperatorFeeError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetL1BlobBaseFeeRequestError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }

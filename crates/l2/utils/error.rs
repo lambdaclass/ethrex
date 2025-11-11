@@ -1,7 +1,6 @@
 use ethrex_blockchain::error::ChainError;
+use ethrex_common::H256;
 use ethrex_storage::error::StoreError;
-use ethrex_vm::ExecutionDBError;
-use keccak_hash::H256;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProverInputError {
@@ -13,6 +12,12 @@ pub enum ProverInputError {
     StoreError(#[from] StoreError),
     #[error("Chain error: {0}")]
     ChainError(#[from] ChainError),
-    #[error("ExecutionDB error: {0}")]
-    ExecutionDBError(#[from] ExecutionDBError),
+    #[error("Internal error: {0}")]
+    InternalError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UtilsError {
+    #[error("Unable to parse withdrawal_event_selector: {0}")]
+    WithdrawalSelectorError(String),
 }

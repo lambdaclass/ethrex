@@ -5,6 +5,8 @@ on:
     branches: ["**"]
 
 permissions:
+  contents: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -14,25 +16,39 @@ jobs:
     # Skip the job if the PR is from a fork since it doesn't have permissions to post comments
     if: github.event.pull_request.head.repo.fork == false
     steps:
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.82.0
+      - name: Checkout PR Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Find merge base
+        id: find_merge_base
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --depth=100000 origin $HEAD_REF
+          git fetch --depth=100000 origin $BASE_REF
+          MERGE_BASE=$(git merge-base origin/$HEAD_REF origin/$BASE_REF)
+          echo "merge_base=$MERGE_BASE" >> $GITHUB_OUTPUT
+      
+      - name: Checkout merge base commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.find_merge_base.outputs.merge_base }}
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
 
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Checkout Base
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-
       - name: Run Lines of Code Counter for base
-        run: cd cmd/loc && make loc-detailed
+        run: cd tooling/loc && make loc-detailed
         # This creates current_detailed_loc_report.json for the base branch
 
       - name: Rename base report to previous_detailed_loc_report.json
-        run: mv cmd/loc/current_detailed_loc_report.json cmd/loc/previous_detailed_loc_report.json
+        run: mv tooling/loc/current_detailed_loc_report.json tooling/loc/previous_detailed_loc_report.json
 
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -40,19 +56,24 @@ jobs:
           clean: "false" # Don't clean the workspace, so we can keep the previous report
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy
+
       - name: Run Lines of Code Counter for PR
-        run: cd cmd/loc && make loc-detailed
+        run: cd tooling/loc && make loc-detailed
         # This creates current_detailed_loc_report.json
 
       - name: Compare Detailed Lines of Code Count
-        run: cd cmd/loc && make loc-compare-detailed
+        run: cd tooling/loc && make loc-compare-detailed
         # This reads current_detailed_loc_report.json and previous_detailed_loc_report.json
         # and outputs detailed_loc_report.txt
 
       - name: Check if report exists
         id: check_report
         run: |
-          if [ -s cmd/loc/detailed_loc_report.txt ]; then
+          if [ -s tooling/loc/detailed_loc_report.txt ]; then
             echo "report_exists=true" >> $GITHUB_OUTPUT
           else
             echo "report_exists=false" >> $GITHUB_OUTPUT
@@ -75,5 +96,5 @@ jobs:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: cmd/loc/detailed_loc_report.txt
+          body-path: tooling/loc/detailed_loc_report.txt
           edit-mode: replace

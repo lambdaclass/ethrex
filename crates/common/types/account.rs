@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
 use ethrex_rlp::{
-    constants::RLP_NULL,
     decode::RLPDecode,
     encode::RLPEncode,
     error::RLPDecodeError,
@@ -15,29 +15,72 @@ use ethrex_rlp::{
 };
 
 use super::GenesisAccount;
-use lazy_static::lazy_static;
+use crate::{
+    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    utils::keccak,
+};
 
-lazy_static! {
-    // Keccak256(""), represents the code hash for an account without code
-    pub static ref EMPTY_KECCACK_HASH: H256 = H256::from_slice(&hex::decode("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470").unwrap());
-    // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256::from_slice(
-            Keccak256::new()
-                .chain_update([RLP_NULL])
-                .finalize()
-                .as_slice(),
-        );
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct Code {
+    pub hash: H256,
+    pub bytecode: Bytes,
+    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
+    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
+    // this does not apply to previous forks. This is tested in the EEST tests, which would
+    // panic in debug mode.
+    pub jump_targets: Vec<u32>,
 }
 
-#[allow(unused)]
+impl Code {
+    // TODO: also add `from_hashed_bytecode` to optimize the download pipeline,
+    // where hash is already known and checked.
+    pub fn from_bytecode(code: Bytes) -> Self {
+        let jump_targets = Self::compute_jump_targets(&code);
+        Self {
+            hash: keccak(code.as_ref()),
+            bytecode: code,
+            jump_targets,
+        }
+    }
+
+    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+        debug_assert!(code.len() <= u32::MAX as usize);
+        let mut targets = Vec::new();
+        let mut i = 0;
+        while i < code.len() {
+            // TODO: we don't use the constants from the vm module to avoid a circular dependency
+            match code[i] {
+                // OP_JUMPDEST
+                0x5B => {
+                    targets.push(i as u32);
+                }
+                // OP_PUSH1..32
+                c @ 0x60..0x80 => {
+                    // OP_PUSH0
+                    i += (c - 0x5F) as usize;
+                }
+                _ => (),
+            }
+            i += 1;
+        }
+        targets
+    }
+}
+
+impl AsRef<Bytes> for Code {
+    fn as_ref(&self) -> &Bytes {
+        &self.bytecode
+    }
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub info: AccountInfo,
-    pub code: Bytes,
-    pub storage: HashMap<H256, U256>,
+    pub code: Code,
+    pub storage: FxHashMap<H256, U256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct AccountInfo {
     pub code_hash: H256,
     pub balance: U256,
@@ -73,6 +116,16 @@ impl Default for AccountState {
     }
 }
 
+impl Default for Code {
+    fn default() -> Self {
+        Self {
+            bytecode: Bytes::new(),
+            hash: *EMPTY_KECCACK_HASH,
+            jump_targets: Vec::new(),
+        }
+    }
+}
+
 impl From<GenesisAccount> for Account {
     fn from(genesis: GenesisAccount) -> Self {
         Self {
@@ -81,7 +134,7 @@ impl From<GenesisAccount> for Account {
                 balance: genesis.balance,
                 nonce: genesis.nonce,
             },
-            code: genesis.code,
+            code: Code::from_bytecode(genesis.code),
             storage: genesis
                 .storage
                 .iter()
@@ -92,7 +145,7 @@ impl From<GenesisAccount> for Account {
 }
 
 pub fn code_hash(code: &Bytes) -> H256 {
-    keccak_hash::keccak(code.as_ref())
+    keccak(code.as_ref())
 }
 
 impl RLPEncode for AccountInfo {
@@ -166,6 +219,26 @@ impl From<&GenesisAccount> for AccountState {
             storage_root: compute_storage_root(&value.storage),
             code_hash: code_hash(&value.code),
         }
+    }
+}
+
+impl Account {
+    pub fn new(balance: U256, code: Code, nonce: u64, storage: FxHashMap<H256, U256>) -> Self {
+        Self {
+            info: AccountInfo {
+                balance,
+                code_hash: code.hash,
+                nonce,
+            },
+            code,
+            storage,
+        }
+    }
+}
+
+impl AccountInfo {
+    pub fn is_empty(&self) -> bool {
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
     }
 }
 

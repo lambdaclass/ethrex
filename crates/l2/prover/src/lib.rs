@@ -1,23 +1,54 @@
-pub mod backends;
-pub mod errors;
-pub mod prover_client;
+pub mod backend;
+pub mod prover;
 
-use ethrex_l2::utils::config::prover_client::ProverClientConfig;
+pub mod config;
+use config::ProverConfig;
+use ethrex_l2_common::prover::{BatchProof, ProofFormat};
+use guest_program::input::ProgramInput;
 use tracing::warn;
 
-pub async fn init_client(config: ProverClientConfig) {
-    prover_client::start_proof_data_client(config).await;
+use crate::backend::{Backend, ProveOutput};
+
+pub async fn init_client(config: ProverConfig) {
+    prover::start_prover(config).await;
     warn!("Prover finished!");
 }
 
-#[cfg(feature = "pico")]
-pub use backends::pico::*;
+/// Execute a program using the specified backend.
+pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+    match backend {
+        Backend::Exec => backend::exec::execute(input),
+        #[cfg(feature = "sp1")]
+        Backend::SP1 => backend::sp1::execute(input),
+        #[cfg(feature = "risc0")]
+        Backend::RISC0 => backend::risc0::execute(input),
+    }
+}
 
-#[cfg(feature = "risc0")]
-pub use backends::risc0::*;
+/// Generate a proof using the specified backend.
+pub fn prove(
+    backend: Backend,
+    input: ProgramInput,
+    format: ProofFormat,
+) -> Result<ProveOutput, Box<dyn std::error::Error>> {
+    match backend {
+        Backend::Exec => backend::exec::prove(input, format).map(ProveOutput::Exec),
+        #[cfg(feature = "sp1")]
+        Backend::SP1 => backend::sp1::prove(input, format).map(ProveOutput::SP1),
+        #[cfg(feature = "risc0")]
+        Backend::RISC0 => backend::risc0::prove(input, format).map(ProveOutput::RISC0),
+    }
+}
 
-#[cfg(feature = "sp1")]
-pub use backends::sp1::*;
-
-#[cfg(not(any(feature = "pico", feature = "risc0", feature = "sp1")))]
-pub use backends::exec::*;
+pub fn to_batch_proof(
+    proof: ProveOutput,
+    format: ProofFormat,
+) -> Result<BatchProof, Box<dyn std::error::Error>> {
+    match proof {
+        ProveOutput::Exec(proof) => backend::exec::to_batch_proof(proof, format),
+        #[cfg(feature = "sp1")]
+        ProveOutput::SP1(proof) => backend::sp1::to_batch_proof(proof, format),
+        #[cfg(feature = "risc0")]
+        ProveOutput::RISC0(receipt) => backend::risc0::to_batch_proof(receipt, format),
+    }
+}

@@ -1,6 +1,5 @@
 use crate::{
-    call_frame::CallFrame,
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -10,29 +9,15 @@ use crate::{
 
 impl<'a> VM<'a> {
     // SWAP operation
-    pub fn op_swap(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-        depth: usize,
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_swap<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SWAPN)?;
 
-        let stack_top_index = current_call_frame
-            .stack
-            .len()
-            .checked_sub(1)
-            .ok_or(VMError::StackUnderflow)?;
-
-        if current_call_frame.stack.len() < depth {
-            return Err(VMError::StackUnderflow);
+        if current_call_frame.stack.len() < N {
+            return Err(ExceptionalHalt::StackUnderflow.into());
         }
-        let to_swap_index = stack_top_index
-            .checked_sub(depth)
-            .ok_or(VMError::StackUnderflow)?;
-        current_call_frame
-            .stack
-            .swap(stack_top_index, to_swap_index)?;
+        current_call_frame.stack.swap(N)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }

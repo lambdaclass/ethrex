@@ -1,0 +1,27 @@
+name: 'Setup Rust Environment'
+description: 'Sets up Rust and caches dependencies'
+inputs:
+  components:
+    description: "Rust components to install (e.g., rustfmt, clippy)"
+    required: false
+    type: string
+runs:
+  using: "composite"
+  steps:
+    - name: Extract Rust version from rust-toolchain.toml
+      id: rustver
+      shell: bash
+      run: |
+        rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+                 | sed -E 's/.*"([^"]+)".*/\1/')
+        echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
+        echo "Rust version: ${rust_version}"
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ steps.rustver.outputs.rust_version }}
+        components: ${{ inputs.components }}
+
+    - name: Add Rust Cache
+      uses: Swatinem/rust-cache@v2

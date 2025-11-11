@@ -1,5 +1,5 @@
-use ethrex_common::{serde_utils, Address, H256, U256};
-use serde::{ser::SerializeSeq, Serialize, Serializer};
+use ethrex_common::{Address, H256, U256, serde_utils};
+use serde::{Serialize, Serializer, ser::SerializeSeq};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

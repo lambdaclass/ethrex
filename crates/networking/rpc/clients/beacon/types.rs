@@ -15,7 +15,7 @@ pub struct GetBlockResponseData {
 // Actual response has many more fields, but we only care about `slot` for now
 #[derive(Deserialize, Debug)]
 pub struct GetBlockResponseMessage {
-    #[serde(deserialize_with = "ethrex_common::serde_utils::u256::deser_dec_str")]
+    #[serde(with = "ethrex_common::serde_utils::u256::dec_str")]
     pub slot: U256,
 }
 

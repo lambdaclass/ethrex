@@ -1,15 +1,14 @@
+use crate::H256;
 use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-use k256::sha2::Sha256;
-use keccak_hash::H256;
 use serde::{Deserialize, Serialize};
-use sha3::Digest;
+use sha2::{Digest, Sha256};
 use tracing::error;
 
-use crate::serde_utils;
-
 use super::{Bytes48, Receipt};
+use crate::constants::DEPOSIT_TOPIC;
+use crate::serde_utils;
 
 pub type Bytes32 = [u8; 32];
 pub type Bytes96 = [u8; 96];
@@ -59,7 +58,7 @@ impl RLPDecode for EncodedRequests {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Requests {
     Deposit(Vec<Deposit>),
     Withdrawal(Vec<u8>),
@@ -84,22 +83,26 @@ impl Requests {
         EncodedRequests(Bytes::from(bytes))
     }
 
+    /// Returns None if any of the deposit requests couldn't be parsed
     pub fn from_deposit_receipts(
         deposit_contract_address: Address,
         receipts: &[Receipt],
-    ) -> Requests {
+    ) -> Option<Requests> {
         let mut deposits = vec![];
 
         for r in receipts {
             for log in &r.logs {
-                if log.address == deposit_contract_address {
-                    if let Some(d) = Deposit::from_abi_byte_array(&log.data) {
-                        deposits.push(d);
-                    }
+                if log.address == deposit_contract_address
+                    && log
+                        .topics
+                        .first()
+                        .is_some_and(|topic| topic == &*DEPOSIT_TOPIC)
+                {
+                    deposits.push(Deposit::from_abi_byte_array(&log.data)?);
                 }
             }
         }
-        Self::Deposit(deposits)
+        Some(Self::Deposit(deposits))
     }
 
     pub fn from_withdrawals_data(data: Vec<u8>) -> Requests {
@@ -129,28 +132,79 @@ impl Deposit {
             return None;
         }
 
-        //Encoding scheme:
+        // Encoding scheme:
         //
-        //positional arguments -> 5 parameters with uint256 positional value for each -> 160b
-        //pub_key: 32b of len + 48b padded to 64b
-        //withdrawal_credentials: 32b of len + 32b
-        //amount: 32b of len + 8b padded to 32b
-        //signature: 32b of len + 96b
-        //index: 32b of len + 8b padded to 32b
+        // positional arguments -> 5 parameters with uint256 positional value for each -> 160b
+        // pub_key: 32b of len + 48b padded to 64b
+        // withdrawal_credentials: 32b of len + 32b
+        // amount: 32b of len + 8b padded to 32b
+        // signature: 32b of len + 96b
+        // index: 32b of len + 8b padded to 32b
         //
-        //-> Total len: 576 bytes
+        // -> Total len: 576 bytes
 
-        let mut p = 32 * 5 + 32;
+        const WORD: usize = 32;
+        const U32_TAIL: usize = WORD - 4;
 
-        let pub_key: Bytes48 = fixed_bytes::<48>(data, p);
-        p += 48 + 16 + 32;
-        let withdrawal_credentials: Bytes32 = fixed_bytes::<32>(data, p);
-        p += 32 + 32;
-        let amount: u64 = u64::from_le_bytes(fixed_bytes::<8>(data, p));
-        p += 8 + 24 + 32;
-        let signature: Bytes96 = fixed_bytes::<96>(data, p);
-        p += 96 + 32;
-        let index: u64 = u64::from_le_bytes(fixed_bytes::<8>(data, p));
+        const PUB_KEY_OFFSET: u32 = 160;
+        const WITHDRAWAL_CREDENTIALS_OFFSET: u32 = 256;
+        const AMOUNT_OFFSET: u32 = 320;
+        const SIGNATURE_OFFSET: u32 = 384;
+        const INDEX_OFFSET: u32 = 512;
+
+        const OFFSETS: [u32; 5] = [
+            PUB_KEY_OFFSET,
+            WITHDRAWAL_CREDENTIALS_OFFSET,
+            AMOUNT_OFFSET,
+            SIGNATURE_OFFSET,
+            INDEX_OFFSET,
+        ];
+
+        const PUB_KEY_SIZE: u32 = 48;
+        const WITHDRAWAL_CREDENTIALS_SIZE: u32 = 32;
+        const AMOUNT_SIZE: u32 = 8;
+        const SIGNATURE_SIZE: u32 = 96;
+        const INDEX_SIZE: u32 = 8;
+
+        const SIZES: [u32; 5] = [
+            PUB_KEY_SIZE,
+            WITHDRAWAL_CREDENTIALS_SIZE,
+            AMOUNT_SIZE,
+            SIGNATURE_SIZE,
+            INDEX_SIZE,
+        ];
+
+        // Validate Offsets & Sizes
+        for (i, (expected_offset, expected_size)) in
+            OFFSETS.into_iter().zip(SIZES.into_iter()).enumerate()
+        {
+            let offset = fixed_bytes::<WORD>(data, i * WORD)?;
+            let size = fixed_bytes::<WORD>(data, expected_offset as usize)?;
+            if offset[U32_TAIL..] != expected_offset.to_be_bytes()
+                || size[U32_TAIL..] != expected_size.to_be_bytes()
+            {
+                return None;
+            }
+        }
+
+        // Extract Data
+        let pub_key: Bytes48 =
+            fixed_bytes::<{ PUB_KEY_SIZE as usize }>(data, PUB_KEY_OFFSET as usize + WORD)?;
+        let withdrawal_credentials: Bytes32 =
+            fixed_bytes::<{ WITHDRAWAL_CREDENTIALS_SIZE as usize }>(
+                data,
+                WITHDRAWAL_CREDENTIALS_OFFSET as usize + WORD,
+            )?;
+        let amount: u64 = u64::from_le_bytes(fixed_bytes::<{ AMOUNT_SIZE as usize }>(
+            data,
+            AMOUNT_OFFSET as usize + WORD,
+        )?);
+        let signature: Bytes96 =
+            fixed_bytes::<{ SIGNATURE_SIZE as usize }>(data, SIGNATURE_OFFSET as usize + WORD)?;
+        let index: u64 = u64::from_le_bytes(fixed_bytes::<{ INDEX_SIZE as usize }>(
+            data,
+            INDEX_OFFSET as usize + WORD,
+        )?);
 
         Some(Deposit {
             pub_key,
@@ -179,11 +233,8 @@ impl Deposit {
     }
 }
 
-fn fixed_bytes<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
-    data.get(offset..offset + N)
-        .expect("Couldn't convert to fixed bytes")
-        .try_into()
-        .expect("Couldn't convert to fixed bytes")
+fn fixed_bytes<const N: usize>(data: &[u8], offset: usize) -> Option<[u8; N]> {
+    data.get(offset..offset + N)?.try_into().ok()
 }
 
 // See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.

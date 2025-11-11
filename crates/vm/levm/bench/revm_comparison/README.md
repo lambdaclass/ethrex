@@ -2,9 +2,19 @@
 This README explains how to run benchmarks to compare the performance of `levm` and `revm` when running different contracts. The benchmarking tool used to gather performance metrics is [hyperfine](https://github.com/sharkdp/hyperfine), and the obtained results will be included for reference.
 
 To run the benchmarks (from `levm`'s root):
+
 ```bash
 make revm-comparison
 ```
+
+Note that first you will need to install the solidity compiler
+On mac you can use homebrew:
+
+```bash
+brew install solidity
+```
+
+For other installation methods check out the [official solidity installation guide](https://docs.soliditylang.org/en/latest/installing-solidity.html)
 
 ## Factorial
 This program computes the nth factorial number, with n passed via calldata. We chose 1000 as n and ran the program on a loop 100,000 times.
@@ -27,3 +37,8 @@ These are the obtained results:
 |--------|---------------|---------|---------|-------------|
 | `revm` | 6.213 ± 0.029 |  6.169  |  6.253  |    1.00     |
 | `levm` | 8.303 ± 0.094 |  8.204  |  8.498  | 1.33 ± 0.02 |
+
+
+
+Additional Notes:
+- As it is done now, contracts should have the Benchmark public function that expects a `uint256`.

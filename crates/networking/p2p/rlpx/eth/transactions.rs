@@ -1,29 +1,28 @@
-use bytes::BufMut;
-use bytes::Bytes;
-use ethrex_blockchain::error::MempoolError;
-use ethrex_blockchain::Blockchain;
-use ethrex_common::types::BlobsBundle;
-use ethrex_common::types::P2PTransaction;
-use ethrex_common::types::WrappedEIP4844Transaction;
-use ethrex_common::{types::Transaction, H256};
-use ethrex_rlp::{
-    error::{RLPDecodeError, RLPEncodeError},
-    structs::{Decoder, Encoder},
-};
-use ethrex_storage::error::StoreError;
-
-use crate::rlpx::utils::log_peer_warn;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
 use crate::types::Node;
+use bytes::BufMut;
+use bytes::Bytes;
+use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::error::MempoolError;
+use ethrex_common::types::BlobsBundle;
+use ethrex_common::types::Fork;
+use ethrex_common::types::P2PTransaction;
+use ethrex_common::{H256, types::Transaction};
+use ethrex_rlp::{
+    error::{RLPDecodeError, RLPEncodeError},
+    structs::{Decoder, Encoder},
+};
+use ethrex_storage::error::StoreError;
+use tracing::debug;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
 #[derive(Debug, Clone)]
-pub(crate) struct Transactions {
-    pub(crate) transactions: Vec<Transaction>,
+pub struct Transactions {
+    pub transactions: Vec<Transaction>,
 }
 
 impl Transactions {
@@ -33,6 +32,7 @@ impl Transactions {
 }
 
 impl RLPxMessage for Transactions {
+    const CODE: u8 = 0x02;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let mut encoder = Encoder::new(&mut encoded_data);
@@ -64,11 +64,11 @@ impl RLPxMessage for Transactions {
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x08
 // Broadcast message
-#[derive(Debug)]
-pub(crate) struct NewPooledTransactionHashes {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct NewPooledTransactionHashes {
     transaction_types: Bytes,
     transaction_sizes: Vec<usize>,
-    transaction_hashes: Vec<H256>,
+    pub transaction_hashes: Vec<H256>,
 }
 
 impl NewPooledTransactionHashes {
@@ -83,7 +83,7 @@ impl NewPooledTransactionHashes {
         for transaction in transactions {
             let transaction_type = transaction.tx_type();
             transaction_types.push(transaction_type as u8);
-            let transaction_hash = transaction.compute_hash();
+            let transaction_hash = transaction.hash();
             transaction_hashes.push(transaction_hash);
             // size is defined as the len of the concatenation of tx_type and the tx_data
             // as the tx_type goes from 0x00 to 0xff, the size of tx_type is 1 byte
@@ -120,6 +120,7 @@ impl NewPooledTransactionHashes {
 }
 
 impl RLPxMessage for NewPooledTransactionHashes {
+    const CODE: u8 = 0x08;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -159,12 +160,12 @@ impl RLPxMessage for NewPooledTransactionHashes {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getpooledtransactions-0x09
-#[derive(Debug)]
-pub(crate) struct GetPooledTransactions {
+#[derive(Debug, Clone)]
+pub struct GetPooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    transaction_hashes: Vec<H256>,
+    pub id: u64,
+    pub transaction_hashes: Vec<H256>,
 }
 
 impl GetPooledTransactions {
@@ -180,57 +181,21 @@ impl GetPooledTransactions {
         let txs = self
             .transaction_hashes
             .iter()
-            .map(|hash| Self::get_p2p_transaction(hash, blockchain))
-            // Return an error in case anything failed.
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            // As per the spec, Nones are perfectly acceptable, for example if a transaction was
-            // taken out of the mempool due to payload building after being advertised.
-            .flatten()
-            .collect();
+            // As per the spec, skipping unavailable transactions is perfectly acceptable,
+            // for example if a transaction was taken out of the mempool due to payload
+            // building after being advertised.
+            .filter_map(|hash| blockchain.get_p2p_transaction_by_hash(hash).ok())
+            .collect::<Vec<_>>();
 
         Ok(PooledTransactions {
             id: self.id,
             pooled_transactions: txs,
         })
     }
-
-    /// Gets a p2p transaction given a hash.
-    fn get_p2p_transaction(
-        hash: &H256,
-        blockchain: &Blockchain,
-    ) -> Result<Option<P2PTransaction>, StoreError> {
-        let Some(tx) = blockchain.mempool.get_transaction_by_hash(*hash)? else {
-            return Ok(None);
-        };
-        let result = match tx {
-            Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
-            Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
-            Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
-            Transaction::EIP4844Transaction(itx) => {
-                let Some(bundle) = blockchain.mempool.get_blobs_bundle(*hash)? else {
-                    return Err(StoreError::Custom(format!(
-                        "Blob transaction present without its bundle: hash {}",
-                        hash
-                    )));
-                };
-
-                P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
-                    tx: itx,
-                    blobs_bundle: bundle,
-                })
-            }
-            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
-            Transaction::PrivilegedL2Transaction(itx) => {
-                P2PTransaction::PrivilegedL2Transaction(itx)
-            }
-        };
-
-        Ok(Some(result))
-    }
 }
 
 impl RLPxMessage for GetPooledTransactions {
+    const CODE: u8 = 0x09;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -254,12 +219,12 @@ impl RLPxMessage for GetPooledTransactions {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#pooledtransactions-0x0a
-#[derive(Debug)]
-pub(crate) struct PooledTransactions {
+#[derive(Debug, Clone)]
+pub struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    pooled_transactions: Vec<P2PTransaction>,
+    pub id: u64,
+    pub pooled_transactions: Vec<P2PTransaction>,
 }
 
 impl PooledTransactions {
@@ -270,21 +235,75 @@ impl PooledTransactions {
         }
     }
 
-    /// Saves every incoming pooled transaction to the mempool.
+    /// validates if the received TXs match the request
+    pub async fn validate_requested(
+        &self,
+        requested: &NewPooledTransactionHashes,
+        fork: Fork,
+    ) -> Result<(), MempoolError> {
+        for tx in &self.pooled_transactions {
+            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
+                itx.blobs_bundle.validate(&itx.tx, fork)?;
+            }
+            let tx_hash = tx.compute_hash();
+            let Some(pos) = requested
+                .transaction_hashes
+                .iter()
+                .position(|&hash| hash == tx_hash)
+            else {
+                return Err(MempoolError::RequestedPooledTxNotFound);
+            };
 
-    pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
+            let expected_type = requested.transaction_types[pos];
+            let expected_size = requested.transaction_sizes[pos];
+            if tx.tx_type() as u8 != expected_type {
+                return Err(MempoolError::InvalidPooledTxType(expected_type));
+            }
+            let tx_size = tx.encode_canonical_to_vec().len();
+            if tx_size != expected_size {
+                return Err(MempoolError::InvalidPooledTxSize);
+            }
+        }
+        Ok(())
+    }
+
+    /// Saves every incoming pooled transaction to the mempool.
+    pub async fn handle(
+        self,
+        node: &Node,
+        blockchain: &Blockchain,
+        is_l2_mode: bool,
+    ) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                if let Err(e) = blockchain.add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle) {
-                    log_peer_warn(node, &format!("Error adding transaction: {}", e));
+                if is_l2_mode {
+                    debug!(
+                        peer=%node,
+                        "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
+                    );
+                    continue;
+                }
+                if let Err(e) = blockchain
+                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
+                    .await
+                {
+                    debug!(
+                        peer=%node,
+                        error=%e,
+                        "Error adding transaction"
+                    );
                     continue;
                 }
             } else {
                 let regular_tx = tx
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx) {
-                    log_peer_warn(node, &format!("Error adding transaction: {}", e));
+                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
+                    debug!(
+                        peer=%node,
+                        error=%e,
+                        "Error adding transaction"
+                    );
                     continue;
                 }
             }
@@ -294,6 +313,7 @@ impl PooledTransactions {
 }
 
 impl RLPxMessage for PooledTransactions {
+    const CODE: u8 = 0x0A;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -318,7 +338,7 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_common::{types::P2PTransaction, H256};
+    use ethrex_common::{H256, types::P2PTransaction};
 
     use crate::rlpx::{
         eth::transactions::{GetPooledTransactions, PooledTransactions},

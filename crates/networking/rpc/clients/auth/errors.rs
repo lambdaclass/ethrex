@@ -13,7 +13,7 @@ pub enum EngineClientError {
     #[error("{0}")]
     FailedDuringExchangeCapabilities(#[from] ExchangeCapabilitiesError),
     #[error("{0}")]
-    FailedDuringForkChoiceUpdate(#[from] ForkChoiceUpdateError),
+    FailedDuringForkChoiceUpdate(#[from] ForkChoiceUpdatedError),
     #[error("{0}")]
     FailedDuringGetPayload(#[from] GetPayloadError),
     #[error("{0}")]
@@ -45,7 +45,7 @@ pub enum ExchangeCapabilitiesError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ForkChoiceUpdateError {
+pub enum ForkChoiceUpdatedError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]

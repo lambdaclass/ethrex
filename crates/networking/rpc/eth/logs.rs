@@ -86,7 +86,7 @@ impl RpcHandler for LogsFilter {
         }
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let filtered_logs = fetch_logs_with_filter(self, context.storage)?;
+        let filtered_logs = fetch_logs_with_filter(self, context.storage).await?;
         serde_json::to_value(filtered_logs).map_err(|error| {
             tracing::error!("Log filtering request failed with: {error}");
             RpcErr::Internal("Failed to filter logs".to_string())
@@ -103,17 +103,19 @@ impl RpcHandler for LogsFilter {
 //   then we simply could retrieve each log from the receipt and add the info
 //   needed for the RPCLog struct.
 
-pub(crate) fn fetch_logs_with_filter(
+pub(crate) async fn fetch_logs_with_filter(
     filter: &LogsFilter,
     storage: Store,
 ) -> Result<Vec<RpcLog>, RpcErr> {
     let from = filter
         .from_block
-        .resolve_block_number(&storage)?
+        .resolve_block_number(&storage)
+        .await?
         .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
     let to = filter
         .to_block
-        .resolve_block_number(&storage)?
+        .resolve_block_number(&storage)
+        .await?
         .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
     if (from..=to).is_empty() {
         return Err(RpcErr::BadParams("Empty range".to_string()));
@@ -133,7 +135,8 @@ pub(crate) fn fetch_logs_with_filter(
         // Take the header of the block, we
         // will use it to access the transactions.
         let block_body = storage
-            .get_block_body(block_num)?
+            .get_block_body(block_num)
+            .await?
             .ok_or(RpcErr::Internal(format!(
                 "Could not get body for block {block_num}"
             )))?;
@@ -142,16 +145,17 @@ pub(crate) fn fetch_logs_with_filter(
             .ok_or(RpcErr::Internal(format!(
                 "Could not get header for block {block_num}"
             )))?;
-        let block_hash = block_header.compute_block_hash();
+        let block_hash = block_header.hash();
 
         let mut block_log_index = 0_u64;
 
         // Since transactions share indices with their receipts,
         // we'll use them to fetch their receipts, which have the actual logs.
         for (tx_index, tx) in block_body.transactions.iter().enumerate() {
-            let tx_hash = tx.compute_hash();
+            let tx_hash = tx.hash();
             let receipt = storage
-                .get_receipt(block_num, tx_index as u64)?
+                .get_receipt(block_num, tx_index as u64)
+                .await?
                 .ok_or(RpcErr::Internal("Could not get receipt".to_owned()))?;
 
             if receipt.succeeded {
@@ -187,18 +191,16 @@ pub(crate) fn fetch_logs_with_filter(
                 }
                 for (i, topic_filter) in filter.topics.iter().enumerate() {
                     match topic_filter {
-                        TopicFilter::Topic(t) => {
-                            if let Some(topic) = t {
-                                if rpc_log.log.topics[i] != *topic {
-                                    return false;
-                                }
+                        TopicFilter::Topic(topic) => {
+                            if topic.is_some_and(|topic| rpc_log.log.topics[i] != topic) {
+                                return false;
                             }
                         }
                         TopicFilter::Topics(sub_topics) => {
                             if !sub_topics.is_empty()
                                 && !sub_topics
                                     .iter()
-                                    .any(|st| st.map_or(true, |t| rpc_log.log.topics[i] == t))
+                                    .any(|st| st.is_none_or(|t| rpc_log.log.topics[i] == t))
                             {
                                 return false;
                             }

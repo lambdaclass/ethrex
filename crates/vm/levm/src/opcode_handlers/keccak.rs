@@ -1,27 +1,21 @@
 use crate::{
-    call_frame::CallFrame,
     errors::{OpcodeResult, VMError},
     gas_cost,
-    memory::{self, calculate_memory_size},
+    memory::calculate_memory_size,
+    utils::size_offset_to_usize,
     vm::VM,
 };
-use ethrex_common::U256;
+use ethrex_common::utils::u256_from_big_endian;
 use sha3::{Digest, Keccak256};
 
 // KECCAK256 (1)
 // Opcodes: KECCAK256
 
 impl<'a> VM<'a> {
-    pub fn op_keccak256(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeResult, VMError> {
-        let offset = current_call_frame.stack.pop()?;
-        let size: usize = current_call_frame
-            .stack
-            .pop()?
-            .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+    pub fn op_keccak256(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = &mut self.current_call_frame;
+        let [offset, size] = *current_call_frame.stack.pop()?;
+        let (size, offset) = size_offset_to_usize(size, offset)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
@@ -32,15 +26,11 @@ impl<'a> VM<'a> {
         )?)?;
 
         let mut hasher = Keccak256::new();
-        hasher.update(memory::load_range(
-            &mut current_call_frame.memory,
-            offset,
-            size,
-        )?);
+        hasher.update(current_call_frame.memory.load_range(offset, size)?);
         current_call_frame
             .stack
-            .push(U256::from_big_endian(&hasher.finalize()))?;
+            .push1(u256_from_big_endian(&hasher.finalize()))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }

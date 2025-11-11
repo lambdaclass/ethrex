@@ -1,30 +1,49 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity =0.8.29;
 
-import "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import "../../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
+import "../l2/interfaces/ICommonBridgeL2.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
-contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
+contract CommonBridge is
+    ICommonBridge,
+    Initializable,
+    UUPSUpgradeable,
+    Ownable2StepUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
+{
+    using SafeERC20 for IERC20;
+
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping (a merkle root) for the hash
     /// of the L2 transaction that requested the withdrawal.
     /// @dev The key is the hash of the L2 transaction that requested the
     /// withdrawal.
-    /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
+    /// @dev Deprecated.
     mapping(bytes32 => bool) public claimedWithdrawals;
 
     /// @notice Mapping of merkle roots to the L2 withdrawal transaction logs.
-    /// @dev The key is the L2 block number where the logs were emitted.
+    /// @dev The key is the L2 batch number where the logs were emitted.
     /// @dev The value is the merkle root of the logs.
-    /// @dev If there exist a merkle root for a given block number it means
-    /// that the logs were published on L1, and that that block was committed.
-    mapping(uint256 => bytes32) public blockWithdrawalsLogs;
+    /// @dev If there exist a merkle root for a given batch number it means
+    /// that the logs were published on L1, and that that batch was committed.
+    mapping(uint256 => bytes32) public batchWithdrawalLogsMerkleRoots;
 
-    bytes32[] public depositLogs;
+    /// @notice Array of hashed pending privileged transactions
+    bytes32[] public pendingTxHashes;
 
     address public ON_CHAIN_PROPOSER;
 
@@ -32,9 +51,49 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     /// @dev Used by the L1Watcher to fetch logs starting from this block.
     uint256 public lastFetchedL1Block;
 
-    /// @notice Global deposit identifier, it is incremented each time a new deposit is made.
+    /// @notice Global privileged transaction identifier, it is incremented each time a new privileged transaction is made.
     /// @dev It is used as the nonce of the mint transaction created by the L1Watcher.
-    uint256 public depositId;
+    uint256 public transactionId;
+
+    /// @notice Address of the bridge on the L2
+    /// @dev It's used to validate withdrawals
+    address public constant L2_BRIDGE_ADDRESS = address(0xffff);
+
+    /// @notice How much of each L1 token was deposited to each L2 token.
+    /// @dev Stored as L1 -> L2 -> amount
+    /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
+    /// @dev The token can take the value {NATIVE_TOKEN_L2} to represent the token of the L2
+    mapping(address => mapping(address => uint256)) public deposits;
+
+    /// @notice Token address used to represent the token of the L2
+    address public constant NATIVE_TOKEN_L2 =
+        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+    /// @notice Owner of the L2 system contract proxies
+    address public constant L2_PROXY_ADMIN =
+        0x000000000000000000000000000000000000f000;
+
+    /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
+    /// there is a non-zero value in the mapping for the message id
+    /// of the L2 transaction that requested the withdrawal.
+    /// @dev The key is the message id of the L1Message of the transaction.
+    /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
+    mapping(uint256 => bool) public claimedWithdrawalIDs;
+
+    /// @notice Maximum time the sequencer is allowed to take without processing a privileged transaction
+    /// @notice Specified in seconds.
+    uint256 public PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
+
+    /// @notice Deadline for the sequencer to include the transaction.
+    mapping(bytes32 => uint256) public privilegedTxDeadline;
+
+    /// @notice The L1 token address that is treated as the one to be bridged to the L2.
+    /// @dev If set to address(0), ETH is considered the native token.
+    /// Otherwise, this address is used for native token deposits and withdrawals.
+    address public NATIVE_TOKEN_L1;
+
+    /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
+    uint256 private pendingPrivilegedTxIndex;
 
     modifier onlyOnChainProposer() {
         require(
@@ -44,173 +103,432 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         _;
     }
 
-    constructor(address owner) Ownable(owner) {}
-
-    /// @inheritdoc ICommonBridge
-    function initialize(address onChainProposer) public nonReentrant {
-        require(
-            ON_CHAIN_PROPOSER == address(0),
-            "CommonBridge: contract already initialized"
-        );
+    /// @notice Initializes the contract.
+    /// @dev This method is called only once after the contract is deployed.
+    /// @dev It sets the OnChainProposer address.
+    /// @param owner the address of the owner who can perform upgrades.
+    /// @param onChainProposer the address of the OnChainProposer contract.
+    /// @param inclusionMaxWait the maximum time the sequencer is allowed to take without processing a privileged transaction.
+    /// @param _nativeToken the address of the native token on L1, or address(0) if ETH is the native token.
+    function initialize(
+        address owner,
+        address onChainProposer,
+        uint256 inclusionMaxWait,
+        address _nativeToken
+    ) public initializer {
         require(
             onChainProposer != address(0),
             "CommonBridge: onChainProposer is the zero address"
         );
-        require(
-            onChainProposer != address(this),
-            "CommonBridge: onChainProposer is the contract address"
-        );
         ON_CHAIN_PROPOSER = onChainProposer;
 
         lastFetchedL1Block = block.number;
-        depositId = 0;
+        transactionId = 0;
+        pendingPrivilegedTxIndex = 0;
+
+        PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
+
+        NATIVE_TOKEN_L1 = _nativeToken;
+
+        OwnableUpgradeable.__Ownable_init(owner);
+        ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
     }
 
     /// @inheritdoc ICommonBridge
-    function getDepositLogs() public view returns (bytes32[] memory) {
-        return depositLogs;
+    function getPendingTransactionHashes()
+        public
+        view
+        returns (bytes32[] memory)
+    {
+        bytes32[] memory buffer = new bytes32[](pendingTxHashesLength());
+        for (uint256 i = 0; i < pendingTxHashesLength(); i++) {
+            buffer[i] = pendingTxHashes[i + pendingPrivilegedTxIndex];
+        }
+
+        return buffer;
     }
 
-    /// @inheritdoc ICommonBridge
-    function deposit(address to) public payable {
-        require(msg.value > 0, "CommonBridge: amount to deposit is zero");
+    /// Burns at least {amount} gas
+    function _burnGas(uint256 amount) private view {
+        uint256 startingGas = gasleft();
+        while (startingGas - gasleft() < amount) {}
+    }
 
-        // TODO: Build the tx.
-        bytes32 l2MintTxHash = keccak256(abi.encodePacked("dummyl2MintTxHash"));
-        depositLogs.push(
-            keccak256(
-                bytes.concat(
-                    bytes20(to),
-                    bytes32(msg.value),
-                    bytes32(depositId)
-                )
+    /// EIP-7702 delegated accounts have code beginning with this.
+    bytes3 internal constant EIP7702_PREFIX = 0xef0100;
+    /// Code size in bytes of an EIP-7702 delegated account
+    /// = len(EIP7702_PREFIX) + len(account)
+    uint256 internal constant EIP7702_CODE_LENGTH = 23;
+
+    /// This is intentionally different from the constant Optimism uses, but arbitrary.
+    uint256 internal constant ADDRESS_ALIASING =
+        uint256(uint160(0xEe110000000000000000000000000000000011Ff));
+
+    /// @notice This implements address aliasing, inspired by [Optimism](https://docs.optimism.io/stack/differences#address-aliasing)
+    /// @dev The purpose of this is to prevent L2 contracts from being impersonated by malicious L1 contracts at the same address
+    /// @dev We don't want this to affect users, so we need to detect if the caller is an EOA
+    /// @dev We still want L2 contracts to be able to know who called in on L1
+    /// @dev So we modify the calling address by with a constant
+    function _getSenderAlias() private view returns (address) {
+        // If sender is origin, the account is an EOA
+        if (msg.sender == tx.origin) return msg.sender;
+        // Check for an EIP7702 delegate it account
+        if (msg.sender.code.length == EIP7702_CODE_LENGTH) {
+            if (bytes3(msg.sender.code) == EIP7702_PREFIX) {
+                // And treat it as an EOA
+                return msg.sender;
+            }
+        }
+        return
+            address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
+    }
+
+    function _sendToL2(address from, SendValues memory sendValues) private {
+        _burnGas(sendValues.gasLimit);
+
+        bytes32 l2MintTxHash = keccak256(
+            bytes.concat(
+                bytes20(from),
+                bytes20(sendValues.to),
+                bytes32(transactionId),
+                bytes32(sendValues.value),
+                bytes32(sendValues.gasLimit),
+                bytes32(keccak256(sendValues.data))
             )
         );
-        emit DepositInitiated(msg.value, to, depositId, l2MintTxHash);
-        depositId += 1;
-    }
 
-    receive() external payable {
-        deposit(msg.sender);
+        pendingTxHashes.push(l2MintTxHash);
+
+        emit PrivilegedTxSent(
+            msg.sender,
+            from,
+            sendValues.to,
+            transactionId,
+            sendValues.value,
+            sendValues.gasLimit,
+            sendValues.data
+        );
+        transactionId += 1;
+        privilegedTxDeadline[l2MintTxHash] =
+            block.timestamp +
+            PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
     }
 
     /// @inheritdoc ICommonBridge
-    function getDepositLogsVersionedHash(
+    function sendToL2(
+        SendValues calldata sendValues
+    ) public override whenNotPaused {
+        _sendToL2(_getSenderAlias(), sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function deposit(
+        uint256 _amount,
+        address l2Recipient
+    ) public payable override whenNotPaused {
+        uint256 value;
+
+        // Here we define value depending on whether the native token is ETH or an ERC20
+        if (NATIVE_TOKEN_L1 == address(0)) {
+            require(
+                msg.value > 0,
+                "CommonBridge: the native token is ETH, msg.value must be greater than zero"
+            );
+
+            require(
+                _amount == 0,
+                "CommonBridge: the native token is ETH, _amount must be zero"
+            );
+
+            value = msg.value;
+        } else {
+            require(
+                msg.value == 0,
+                "CommonBridge: the native token is an ERC20, msg.value must be zero"
+            );
+
+            require(
+                _amount > 0,
+                "CommonBridge: the native token is an ERC20, _amount must be greater than zero"
+            );
+
+            value = _amount;
+
+            // We lock the tokens in the bridge contract
+            IERC20(NATIVE_TOKEN_L1).transferFrom(
+                msg.sender,
+                address(this),
+                value
+            );
+        }
+
+        deposits[NATIVE_TOKEN_L2][NATIVE_TOKEN_L2] += value;
+
+        bytes memory callData = abi.encodeCall(
+            ICommonBridgeL2.mintETH,
+            (l2Recipient)
+        );
+
+        SendValues memory sendValues = SendValues({
+            to: L2_BRIDGE_ADDRESS,
+            gasLimit: 21000 * 5,
+            value: value,
+            data: callData
+        });
+
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    receive() external payable whenNotPaused {
+        deposit(0, msg.sender);
+    }
+
+    function depositERC20(
+        address tokenL1,
+        address tokenL2,
+        address destination,
+        uint256 amount
+    ) external whenNotPaused {
+        require(amount > 0, "CommonBridge: amount to deposit is zero");
+        require(
+            tokenL1 != NATIVE_TOKEN_L1,
+            "CommonBridge: tokenL1 is the native token address, use deposit() instead"
+        );
+        deposits[tokenL1][tokenL2] += amount;
+        IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
+
+        bytes memory callData = abi.encodeCall(
+            ICommonBridgeL2.mintERC20,
+            (tokenL1, tokenL2, destination, amount)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_BRIDGE_ADDRESS,
+            gasLimit: 21000 * 5,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function getPendingTransactionsVersionedHash(
         uint16 number
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= depositLogs.length,
-            "CommonBridge: number is greater than the length of depositLogs (get)"
+            uint256(number) <= pendingTxHashesLength(),
+            "CommonBridge: number is greater than the length of pendingTxHashes (get)"
         );
 
-        bytes memory logs;
+        bytes memory hashes;
         for (uint i = 0; i < number; i++) {
-            logs = bytes.concat(logs, depositLogs[i]);
+            hashes = bytes.concat(hashes, pendingTxHashes[i + pendingPrivilegedTxIndex]);
         }
 
         return
             bytes32(bytes2(number)) |
-            bytes32(uint256(uint240(uint256(keccak256(logs)))));
+            bytes32(uint256(uint240(uint256(keccak256(hashes)))));
     }
 
     /// @inheritdoc ICommonBridge
-    function removeDepositLogs(uint16 number) public onlyOnChainProposer {
+    function removePendingTransactionHashes(
+        uint16 number
+    ) public onlyOnChainProposer {
         require(
-            number <= depositLogs.length,
-            "CommonBridge: number is greater than the length of depositLogs (remove)"
+            number <= pendingTxHashesLength(),
+            "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
         );
 
-        for (uint i = 0; i < depositLogs.length - number; i++) {
-            depositLogs[i] = depositLogs[i + number];
-        }
+        pendingPrivilegedTxIndex += number;
+    }
 
-        for (uint _i = 0; _i < number; _i++) {
-            depositLogs.pop();
+    /// @inheritdoc ICommonBridge
+    function hasExpiredPrivilegedTransactions() public view returns (bool) {
+        if (pendingTxHashesLength() == 0) {
+            return false;
         }
+        return block.timestamp > privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]];
+    }
+
+    /// @inheritdoc ICommonBridge
+    function getWithdrawalLogsMerkleRoot(
+        uint256 blockNumber
+    ) public view returns (bytes32) {
+        return batchWithdrawalLogsMerkleRoots[blockNumber];
     }
 
     /// @inheritdoc ICommonBridge
     function publishWithdrawals(
-        uint256 withdrawalLogsBlockNumber,
+        uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
     ) public onlyOnChainProposer {
         require(
-            blockWithdrawalsLogs[withdrawalLogsBlockNumber] == bytes32(0),
+            batchWithdrawalLogsMerkleRoots[withdrawalLogsBatchNumber] ==
+                bytes32(0),
             "CommonBridge: withdrawal logs already published"
         );
-        blockWithdrawalsLogs[
-            withdrawalLogsBlockNumber
+        batchWithdrawalLogsMerkleRoots[
+            withdrawalLogsBatchNumber
         ] = withdrawalsLogsMerkleRoot;
         emit WithdrawalsPublished(
-            withdrawalLogsBlockNumber,
+            withdrawalLogsBatchNumber,
             withdrawalsLogsMerkleRoot
         );
     }
 
     /// @inheritdoc ICommonBridge
     function claimWithdrawal(
-        bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
-        uint256 withdrawalBlockNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalBatchNumber,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public nonReentrant {
-        require(
-            blockWithdrawalsLogs[withdrawalBlockNumber] != bytes32(0),
-            "CommonBridge: the block that emitted the withdrawal logs was not committed"
-        );
-        require(
-            withdrawalBlockNumber <=
-                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBlock(),
-            "CommonBridge: the block that emitted the withdrawal logs was not verified"
-        );
-        require(
-            claimedWithdrawals[l2WithdrawalTxHash] == false,
-            "CommonBridge: the withdrawal was already claimed"
-        );
-        require(
-            _verifyWithdrawProof(
-                l2WithdrawalTxHash,
-                claimedAmount,
-                withdrawalBlockNumber,
-                withdrawalLogIndex,
-                withdrawalProof
-            ),
-            "CommonBridge: invalid withdrawal proof"
+    ) public override whenNotPaused {
+        _claimWithdrawal(
+            NATIVE_TOKEN_L2,
+            NATIVE_TOKEN_L2,
+            claimedAmount,
+            withdrawalBatchNumber,
+            withdrawalMessageId,
+            withdrawalProof
         );
 
-        (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
+        if (NATIVE_TOKEN_L1 == address(0)) {
+            (bool success, ) = payable(msg.sender).call{value: claimedAmount}(
+                ""
+            );
 
-        require(success, "CommonBridge: failed to send the claimed amount");
-
-        claimedWithdrawals[l2WithdrawalTxHash] = true;
-
-        emit WithdrawalClaimed(l2WithdrawalTxHash, msg.sender, claimedAmount);
+            require(success, "CommonBridge: failed to send the claimed amount");
+        } else {
+            IERC20(NATIVE_TOKEN_L1).safeTransfer(msg.sender, claimedAmount);
+        }
     }
 
-    function _verifyWithdrawProof(
-        bytes32 l2WithdrawalTxHash,
+    /// @inheritdoc ICommonBridge
+    function claimWithdrawalERC20(
+        address tokenL1,
+        address tokenL2,
         uint256 claimedAmount,
-        uint256 withdrawalBlockNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalBatchNumber,
+        uint256 withdrawalMessageId,
+        bytes32[] calldata withdrawalProof
+    ) public override nonReentrant whenNotPaused {
+        require(
+            tokenL1 != NATIVE_TOKEN_L2,
+            "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
+        );
+
+        require(
+            tokenL1 != NATIVE_TOKEN_L1,
+            "CommonBridge: attempted to withdraw the native token as if it were ERC20, use claimWithdrawal() instead"
+        );
+
+        _claimWithdrawal(
+            tokenL1,
+            tokenL2,
+            claimedAmount,
+            withdrawalBatchNumber,
+            withdrawalMessageId,
+            withdrawalProof
+        );
+
+        IERC20(tokenL1).safeTransfer(msg.sender, claimedAmount);
+    }
+
+    function _claimWithdrawal(
+        address tokenL1,
+        address tokenL2,
+        uint256 claimedAmount,
+        uint256 withdrawalBatchNumber,
+        uint256 withdrawalMessageId,
+        bytes32[] calldata withdrawalProof
+    ) private {
+        require(
+            deposits[tokenL1][tokenL2] >= claimedAmount,
+            "CommonBridge: trying to withdraw more tokens/ETH than were deposited"
+        );
+        deposits[tokenL1][tokenL2] -= claimedAmount;
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount)
+        );
+        require(
+            batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
+            "CommonBridge: the batch that emitted the withdrawal logs was not committed"
+        );
+        require(
+            withdrawalBatchNumber <=
+                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
+            "CommonBridge: the batch that emitted the withdrawal logs was not verified"
+        );
+        require(
+            claimedWithdrawalIDs[withdrawalMessageId] == false,
+            "CommonBridge: the withdrawal was already claimed"
+        );
+        claimedWithdrawalIDs[withdrawalMessageId] = true;
+        emit WithdrawalClaimed(withdrawalMessageId);
+        require(
+            _verifyMessageProof(
+                msgHash,
+                withdrawalBatchNumber,
+                withdrawalMessageId,
+                withdrawalProof
+            ),
+            "CommonBridge: Invalid proof"
+        );
+    }
+
+    function _verifyMessageProof(
+        bytes32 msgHash,
+        uint256 withdrawalBatchNumber,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
         bytes32 withdrawalLeaf = keccak256(
-            abi.encodePacked(msg.sender, claimedAmount, l2WithdrawalTxHash)
+            abi.encodePacked(L2_BRIDGE_ADDRESS, msgHash, withdrawalMessageId)
         );
-        for (uint256 i = 0; i < withdrawalProof.length; i++) {
-            if (withdrawalLogIndex % 2 == 0) {
-                withdrawalLeaf = keccak256(
-                    abi.encodePacked(withdrawalLeaf, withdrawalProof[i])
-                );
-            } else {
-                withdrawalLeaf = keccak256(
-                    abi.encodePacked(withdrawalProof[i], withdrawalLeaf)
-                );
-            }
-            withdrawalLogIndex /= 2;
-        }
-        return withdrawalLeaf == blockWithdrawalsLogs[withdrawalBlockNumber];
+        return
+            MerkleProof.verify(
+                withdrawalProof,
+                batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber],
+                withdrawalLeaf
+            );
+    }
+
+    function pendingTxHashesLength() private view returns (uint256) {
+        return pendingTxHashes.length - pendingPrivilegedTxIndex;
+    }
+
+    function upgradeL2Contract(
+        address l2Contract,
+        address newImplementation,
+        uint256 gasLimit,
+        bytes calldata data
+    ) public onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            ITransparentUpgradeableProxy.upgradeToAndCall,
+            (newImplementation, data)
+        );
+        SendValues memory sendValues = SendValues({
+            to: l2Contract,
+            gasLimit: gasLimit,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_PROXY_ADMIN, sendValues);
+    }
+
+    /// @notice Allow owner to upgrade the contract.
+    /// @param newImplementation the address of the new implementation
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyOwner {}
+
+    /// @inheritdoc ICommonBridge
+    function pause() external override onlyOwner {
+        _pause();
+    }
+
+    /// @inheritdoc ICommonBridge
+    function unpause() external override onlyOwner {
+        _unpause();
     }
 }

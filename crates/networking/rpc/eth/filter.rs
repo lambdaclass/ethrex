@@ -14,11 +14,11 @@ use tracing::error;
 use crate::rpc::RpcHandler;
 use crate::{
     types::block_identifier::{BlockIdentifier, BlockTag},
-    utils::{parse_json_hex, RpcErr, RpcRequest},
+    utils::{RpcErr, RpcRequest, parse_json_hex},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::logs::{fetch_logs_with_filter, LogsFilter};
+use super::logs::{LogsFilter, fetch_logs_with_filter};
 
 #[derive(Debug, Clone)]
 pub struct NewFilterRequest {
@@ -64,7 +64,7 @@ impl NewFilterRequest {
         })
     }
 
-    pub fn handle(
+    pub async fn handle(
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
@@ -72,19 +72,21 @@ impl NewFilterRequest {
         let from = self
             .request_data
             .from_block
-            .resolve_block_number(&storage)?
+            .resolve_block_number(&storage)
+            .await?
             .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
         let to = self
             .request_data
             .to_block
-            .resolve_block_number(&storage)?
+            .resolve_block_number(&storage)
+            .await?
             .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
 
         if (from..=to).is_empty() {
             return Err(RpcErr::BadParams("Invalid block range".to_string()));
         }
 
-        let last_block_number = storage.get_latest_block_number()?;
+        let last_block_number = storage.get_latest_block_number().await?;
         let id: u64 = rand::random();
         let timestamp = Instant::now();
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
@@ -107,13 +109,13 @@ impl NewFilterRequest {
         Ok(as_hex)
     }
 
-    pub fn stateful_call(
+    pub async fn stateful_call(
         req: &RpcRequest,
         storage: Store,
         state: ActiveFilters,
     ) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(storage, state)
+        request.handle(storage, state).await
     }
 }
 
@@ -179,18 +181,21 @@ impl FilterChangesRequest {
             None => Err(RpcErr::MissingParam("0".to_string())),
         }
     }
-    pub fn handle(
+    pub async fn handle(
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let latest_block_num = storage.get_latest_block_number()?;
-        let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
-            error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
-            **poisoned_guard.get_mut() = HashMap::new();
-            filters.clear_poison();
-            poisoned_guard.into_inner()
-        });
+        let latest_block_num = storage.get_latest_block_number().await?;
+        // Box needed to keep the future Sync
+        // https://github.com/rust-lang/rust/issues/128095
+        let mut active_filters_guard =
+            Box::new(filters.lock().unwrap_or_else(|mut poisoned_guard| {
+                error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
+                **poisoned_guard.get_mut() = HashMap::new();
+                filters.clear_poison();
+                poisoned_guard.into_inner()
+            }));
         if let Some((timestamp, filter)) = active_filters_guard.get_mut(&self.id) {
             // We'll only get changes for a filter that either has a block
             // range for upcoming blocks, or for the 'latest' tag.
@@ -216,7 +221,7 @@ impl FilterChangesRequest {
                 // Drop the lock early to process this filter's query
                 // and not keep the lock more than we should.
                 drop(active_filters_guard);
-                let logs = fetch_logs_with_filter(&filter.filter_data, storage)?;
+                let logs = fetch_logs_with_filter(&filter.filter_data, storage).await?;
                 serde_json::to_value(logs).map_err(|error| {
                     tracing::error!("Log filtering request failed with: {error}");
                     RpcErr::Internal("Failed to filter logs".to_string())
@@ -233,19 +238,18 @@ impl FilterChangesRequest {
             ))
         }
     }
-    pub fn stateful_call(
+    pub async fn stateful_call(
         req: &RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(storage, filters)
+        request.handle(storage, filters).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ethrex_blockchain::Blockchain;
     use std::{
         collections::HashMap,
         sync::{Arc, Mutex},
@@ -258,25 +262,14 @@ mod tests {
             filter::PollableFilter,
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
-        rpc::{map_http_requests, RpcApiContext, FILTER_DURATION},
-        utils::test_utils::{self, example_local_node_record, start_test_api},
+        rpc::{FILTER_DURATION, map_http_requests},
+        test_utils::{TEST_GENESIS, default_context_with_storage, start_test_api},
     };
-    use crate::{
-        types::block_identifier::BlockIdentifier,
-        utils::{test_utils::example_p2p_node, RpcRequest},
-    };
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
+    use crate::{types::block_identifier::BlockIdentifier, utils::RpcRequest};
     use ethrex_common::types::Genesis;
-    use ethrex_p2p::sync_manager::SyncManager;
     use ethrex_storage::{EngineType, Store};
-    #[cfg(feature = "l2")]
-    use secp256k1::{rand, SecretKey};
 
-    use serde_json::{json, Value};
-    use test_utils::TEST_GENESIS;
+    use serde_json::{Value, json};
 
     #[tokio::test]
     async fn filter_request_smoke_test_valid_params() {
@@ -438,26 +431,9 @@ mod tests {
     ) -> u64 {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: filters_pointer.clone(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let mut context = default_context_with_storage(storage).await;
+        context.active_filters = filters_pointer.clone();
+
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
             serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
@@ -511,33 +487,16 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            jwt_secret: Default::default(),
-            active_filters: active_filters.clone(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+
+        let mut context = default_context_with_storage(storage).await;
+        context.active_filters = active_filters.clone();
 
         map_http_requests(&uninstall_filter_req, context)
             .await
             .unwrap();
 
         assert!(
-            active_filters.clone().lock().unwrap().len() == 0,
+            active_filters.clone().lock().unwrap().is_empty(),
             "Expected filter map to be empty after request"
         );
     }
@@ -548,26 +507,9 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: active_filters.clone(),
-            jwt_secret: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let mut context = default_context_with_storage(storage).await;
+        context.active_filters = active_filters.clone();
+
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
             "jsonrpc":"2.0",
@@ -589,7 +531,7 @@ mod tests {
     async fn background_job_removes_filter_smoke_test() {
         // Start a test server to start the cleanup
         // task in the background
-        let server_handle = tokio::spawn(async move { start_test_api().await });
+        let server_handle = start_test_api().await;
 
         // Give the server some time to start
         tokio::time::sleep(Duration::from_secs(1)).await;

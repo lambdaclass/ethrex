@@ -1,16 +1,18 @@
 [package]
 name = "ethrex-rpc"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum.workspace = true
-tower-http = { version = "0.6.2", features = ["cors"] }
-serde = { version = "1.0.203", features = ["derive"] }
+axum = { features = ["ws"], workspace = true }
+tower-http.workspace = true
+serde.workspace = true
 serde_json = "1.0.117"
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 bytes.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -18,32 +20,33 @@ ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-blockchain.workspace = true
-ethrex-p2p.workspace = true
+ethrex-p2p = { workspace = true, features = ["test-utils"] }
 ethrex-rlp.workspace = true
+ethrex-trie.workspace = true
+ethrex-storage-rollup = { workspace = true, optional = true }
+ethrex-l2-common = { workspace = true, optional = true }
+ethereum-types.workspace = true
 hex.workspace = true
 axum-extra = { version = "0.10.0", features = ["typed-header"] }
 jsonwebtoken.workspace = true
 rand.workspace = true
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["codec"] }
 reqwest.workspace = true
-k256 = { version = "0.13.3", features = ["ecdh"] }
-libsecp256k1.workspace = true
-sha3 = "0.10.8"
+sha3.workspace = true
 sha2.workspace = true
+jemalloc_pprof = { version = "0.8.0", optional = true, features = [
+    "flamegraph",
+    "symbolize",
+] }
+spawned-rt.workspace = true
+spawned-concurrency.workspace = true
 
 # Clients
 envy = "0.4.2"
 thiserror.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
-
-cfg-if.workspace = true
-
-# Based
-ssz_types = { version = "0.10", optional = true}
-tree_hash = { version = "0.9.1", optional = true}
-tree_hash_derive = { version = "0.9.1", optional = true}
-strum_macros = { version = "0.24", optional = true }
+uuid.workspace = true
+hex-literal = "0.4.1"
 
 [dev-dependencies]
 hex-literal = "0.4.1"
@@ -51,6 +54,9 @@ hex-literal = "0.4.1"
 [lib]
 path = "./lib.rs"
 
+[lints.clippy]
+unwrap_used = "deny"
+redundant_clone = "warn"
+
 [features]
-based = ["l2", "dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]
-l2 = []
+jemalloc_profiling = ["dep:jemalloc_pprof"]

@@ -1,9 +1,12 @@
 mod account;
+mod account_update;
 pub mod blobs_bundle;
 mod block;
+pub mod block_execution_witness;
 mod constants;
 mod fork_id;
 mod genesis;
+pub mod l2;
 pub mod payload;
 mod receipt;
 pub mod requests;
@@ -11,11 +14,13 @@ pub mod transaction;
 pub mod tx_fields;
 
 pub use account::*;
+pub use account_update::*;
 pub use blobs_bundle::*;
 pub use block::*;
 pub use constants::*;
 pub use fork_id::*;
 pub use genesis::*;
+pub use l2::*;
 pub use receipt::*;
 pub use transaction::*;
 pub use tx_fields::*;

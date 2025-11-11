@@ -1,9 +1,11 @@
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 
-#[cfg(feature = "l2")]
-use crate::metrics_l2::METRICS_L2;
+use crate::profiling::gather_profiling_metrics;
 
-use crate::{metrics_transactions::METRICS_TX, MetricsApiError};
+use crate::{
+    MetricsApiError, metrics_blocks::METRICS_BLOCKS, metrics_process::METRICS_PROCESS,
+    metrics_transactions::METRICS_TX,
+};
 
 pub async fn start_prometheus_metrics_api(
     address: String,
@@ -21,7 +23,7 @@ pub async fn start_prometheus_metrics_api(
 }
 
 #[allow(unused_mut)]
-async fn get_metrics() -> String {
+pub(crate) async fn get_metrics() -> String {
     let mut ret_string = match METRICS_TX.gather_metrics() {
         Ok(string) => string,
         Err(_) => {
@@ -30,17 +32,29 @@ async fn get_metrics() -> String {
         }
     };
 
-    #[cfg(feature = "l2")]
-    {
-        ret_string.push('\n');
-        match METRICS_L2.gather_metrics() {
-            Ok(string) => ret_string.push_str(&string),
-            Err(_) => {
-                tracing::error!("Failed to register METRICS_L2");
-                return String::new();
-            }
+    ret_string.push('\n');
+    match gather_profiling_metrics() {
+        Ok(string) => ret_string.push_str(&string),
+        Err(_) => {
+            tracing::error!("Failed to register METRICS_PROFILING");
+            return String::new();
+        }
+    };
+
+    ret_string.push('\n');
+    match METRICS_BLOCKS.gather_metrics() {
+        Ok(string) => ret_string.push_str(&string),
+        Err(_) => {
+            tracing::error!("Failed to register METRICS_BLOCKS");
+            return String::new();
         }
     }
+
+    ret_string.push('\n');
+    match METRICS_PROCESS.gather_metrics() {
+        Ok(s) => ret_string.push_str(&s),
+        Err(_) => tracing::error!("Failed to register METRICS_PROCESS"),
+    };
 
     ret_string
 }

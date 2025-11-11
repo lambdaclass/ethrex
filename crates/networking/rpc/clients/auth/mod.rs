@@ -1,8 +1,8 @@
 use crate::{
     engine::{
-        fork_choice::ForkChoiceUpdatedV3,
-        payload::{GetPayloadV3Request, NewPayloadV3Request},
         ExchangeCapabilitiesRequest,
+        fork_choice::ForkChoiceUpdatedV3,
+        payload::{GetPayloadV5Request, NewPayloadV4Request},
     },
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
@@ -12,7 +12,7 @@ use crate::{
 };
 use bytes::Bytes;
 use errors::{
-    EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdateError, GetPayloadError,
+    EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdatedError, GetPayloadError,
     NewPayloadError,
 };
 use ethrex_common::H256;
@@ -64,18 +64,18 @@ impl EngineClient {
     pub async fn engine_exchange_capabilities(&self) -> Result<Vec<String>, EngineClientError> {
         let request = ExchangeCapabilitiesRequest::from(Self::capabilities()).into();
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(ExchangeCapabilitiesError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
-                Err(ExchangeCapabilitiesError::RPCError(format!(
-                    "{}: {:?}",
-                    error_response.error.message, error_response.error.data
-                ))
-                .into())
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(ExchangeCapabilitiesError::RPCError(error_message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -89,63 +89,68 @@ impl EngineClient {
             payload_attributes,
         });
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
-                .map_err(ForkChoiceUpdateError::SerdeJSONError)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(ForkChoiceUpdatedError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
-                Err(ForkChoiceUpdateError::RPCError(format!(
-                    "{}: {:?}",
-                    error_response.error.message, error_response.error.data
-                ))
-                .into())
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(ForkChoiceUpdatedError::RPCError(error_message).into())
             }
-            Err(error) => Err(error),
         }
     }
 
-    pub async fn engine_get_payload_v3(
+    pub async fn engine_get_payload_v5(
         &self,
         payload_id: u64,
     ) -> Result<ExecutionPayloadResponse, EngineClientError> {
-        let request = GetPayloadV3Request { payload_id }.into();
+        let request = GetPayloadV5Request { payload_id }.into();
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetPayloadError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => Err(GetPayloadError::RPCError(format!(
-                "{}: {:?}",
-                error_response.error.message, error_response.error.data
-            ))
-            .into()),
-            Err(error) => Err(error),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(GetPayloadError::RPCError(error_message).into())
+            }
         }
     }
 
-    pub async fn engine_new_payload_v3(
+    pub async fn engine_new_payload_v4(
         &self,
         execution_payload: ExecutionPayload,
         expected_blob_versioned_hashes: Vec<H256>,
         parent_beacon_block_root: H256,
     ) -> Result<PayloadStatus, EngineClientError> {
-        let request = NewPayloadV3Request {
+        let request = NewPayloadV4Request {
             payload: execution_payload,
             expected_blob_versioned_hashes,
             parent_beacon_block_root,
+            execution_requests: vec![],
         }
         .into();
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(NewPayloadError::SerdeJSONError)
                 .map_err(EngineClientError::from),
-            Ok(RpcResponse::Error(error_response)) => Err(NewPayloadError::RPCError(format!(
-                "{}: {:?}",
-                error_response.error.message, error_response.error.data
-            ))
-            .into()),
-            Err(error) => Err(error),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(NewPayloadError::RPCError(error_message).into())
+            }
         }
     }
 
@@ -153,7 +158,7 @@ impl EngineClient {
         // Header
         let header = jsonwebtoken::Header::default();
         // Claims
-        let valid_iat = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as usize;
+        let valid_iat = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let claims = json!({"iat": valid_iat});
         let encoding_key = jsonwebtoken::EncodingKey::from_secret(&self.secret);
         // JWT Token
@@ -165,7 +170,8 @@ impl EngineClient {
             "engine_exchangeCapabilities".to_owned(),
             "engine_forkchoiceUpdatedV3".to_owned(),
             "engine_getPayloadV4".to_owned(),
-            "engine_newPayloadV3".to_owned(),
+            "engine_getPayloadV5".to_owned(),
+            "engine_newPayloadV4".to_owned(),
         ]
     }
 }

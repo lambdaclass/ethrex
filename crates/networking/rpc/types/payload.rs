@@ -3,13 +3,13 @@ use ethrex_rlp::error::RLPDecodeError;
 use serde::{Deserialize, Serialize};
 
 use ethrex_common::{
+    Address, Bloom, H256, U256,
+    constants::DEFAULT_OMMERS_HASH,
     serde_utils,
     types::{
-        compute_transactions_root, compute_withdrawals_root, requests::EncodedRequests,
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        DEFAULT_OMMERS_HASH,
+        compute_transactions_root, compute_withdrawals_root, requests::EncodedRequests,
     },
-    Address, Bloom, H256, U256,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -22,7 +22,7 @@ pub struct ExecutionPayload {
     logs_bloom: Bloom,
     prev_randao: H256,
     #[serde(with = "serde_utils::u64::hex_str")]
-    block_number: u64,
+    pub block_number: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
     gas_limit: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
@@ -125,13 +125,14 @@ impl ExecutionPayload {
             base_fee_per_gas: Some(self.base_fee_per_gas),
             withdrawals_root: body
                 .withdrawals
-                .clone()
-                .map(|w| compute_withdrawals_root(&w)),
+                .as_ref()
+                .map(|w| compute_withdrawals_root(w)),
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,
             // TODO: set the value properly
             requests_hash,
+            ..Default::default()
         };
 
         Ok(Block::new(header, body))
@@ -173,7 +174,7 @@ pub struct PayloadStatus {
     pub validation_error: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum PayloadValidationStatus {
     Valid,

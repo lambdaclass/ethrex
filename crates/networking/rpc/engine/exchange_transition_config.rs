@@ -1,7 +1,7 @@
-use ethrex_common::{serde_utils, H256};
+use ethrex_common::{H256, serde_utils};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -48,10 +48,10 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Received new engine request: {self}");
+        debug!("Requested new engine request: {self}");
         let payload = &self.payload;
 
-        let chain_config = context.storage.get_chain_config()?;
+        let chain_config = context.storage.get_chain_config();
         let terminal_total_difficulty = chain_config.terminal_total_difficulty;
 
         if terminal_total_difficulty.unwrap_or_default() != payload.terminal_total_difficulty {
@@ -64,7 +64,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
         let block = context
             .storage
             .get_block_header(payload.terminal_block_number)?;
-        let terminal_block_hash = block.map_or(H256::zero(), |block| block.compute_block_hash());
+        let terminal_block_hash = block.map_or(H256::zero(), |block| block.hash());
 
         serde_json::to_value(ExchangeTransitionConfigPayload {
             terminal_block_hash,

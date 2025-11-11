@@ -1,4 +1,7 @@
-use ethrex_common::types::{BlobsBundleError, BlockHash, InvalidBlockHeaderError};
+use ethrex_common::{
+    H256,
+    types::{BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError},
+};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 
@@ -15,9 +18,46 @@ pub enum ChainError {
     #[error("DB error: {0}")]
     StoreError(#[from] StoreError),
     #[error("EVM error: {0}")]
-    EvmError(#[from] EvmError),
+    EvmError(EvmError),
+    #[error("Invalid Transaction: {0}")]
+    InvalidTransaction(String),
+    #[error("Failed to generate witness: {0}")]
+    WitnessGeneration(String),
     #[error("{0}")]
     Custom(String),
+    #[error("Unknown Payload")]
+    UnknownPayload,
+}
+
+impl From<EvmError> for ChainError {
+    fn from(value: EvmError) -> Self {
+        match value {
+            EvmError::Transaction(err) => {
+                ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(err))
+            }
+            EvmError::InvalidDepositRequest => ChainError::InvalidBlock(
+                InvalidBlockError::InvalidTransaction("Invalid deposit request layout".to_string()),
+            ),
+            other_errors => ChainError::EvmError(other_errors),
+        }
+    }
+}
+
+#[cfg(feature = "metrics")]
+impl ChainError {
+    pub fn to_metric(&self) -> &str {
+        match self {
+            ChainError::InvalidBlock(_) => "invalid_block",
+            ChainError::ParentNotFound => "parent_not_found",
+            ChainError::ParentStateNotFound => "parent_state_not_found",
+            ChainError::StoreError(_) => "store_error",
+            ChainError::EvmError(_) => "evm_error",
+            ChainError::InvalidTransaction(_) => "invalid_transaction",
+            ChainError::WitnessGeneration(_) => "witness_generation",
+            ChainError::Custom(_) => "custom_error",
+            ChainError::UnknownPayload => "unknown_payload",
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -30,16 +70,20 @@ pub enum InvalidBlockError {
     ReceiptsRootMismatch,
     #[error("Invalid Header, validation failed pre-execution: {0}")]
     InvalidHeader(#[from] InvalidBlockHeaderError),
+    #[error("Invalid Body, validation failed pre-execution: {0}")]
+    InvalidBody(#[from] InvalidBlockBodyError),
     #[error("Exceeded MAX_BLOB_GAS_PER_BLOCK")]
     ExceededMaxBlobGasPerBlock,
     #[error("Exceeded MAX_BLOB_NUMBER_PER_BLOCK")]
     ExceededMaxBlobNumberPerBlock,
-    #[error("Gas used doesn't match value in header")]
-    GasUsedMismatch,
+    #[error("Gas used doesn't match value in header. Used: {0}, Expected: {1}")]
+    GasUsedMismatch(u64, u64),
     #[error("Blob gas used doesn't match value in header")]
     BlobGasUsedMismatch,
     #[error("Invalid transaction: {0}")]
     InvalidTransaction(String),
+    #[error("Maximum block size exceeded: Maximum is {0} MiB, but block was {1} MiB")]
+    MaximumRlpSizeExceeded(u64, u64),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -52,8 +96,14 @@ pub enum MempoolError {
     BlobsBundleError(#[from] BlobsBundleError),
     #[error("Transaction max init code size exceeded")]
     TxMaxInitCodeSizeError,
+    #[error("Transaction max data size exceeded")]
+    TxMaxDataSizeError,
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
+    #[error(
+        "Transaction gas limit exceeds maximum. Transaction hash: {0}, transaction gas limit: {1}"
+    )]
+    TxMaxGasLimitExceededError(H256, u64),
     #[error("Transaction priority fee above gas fee")]
     TxGasOverflowError,
     #[error("Transaction intrinsic gas overflow")]
@@ -65,6 +115,8 @@ pub enum MempoolError {
     #[error("Blob transaction submited without blobs bundle")]
     BlobTxNoBlobsBundle,
     #[error("Nonce for account too low")]
+    NonceTooLow,
+    #[error("Nonce already used")]
     InvalidNonce,
     #[error("Transaction chain id mismatch, expected chain id: {0}")]
     InvalidChainId(u64),
@@ -72,6 +124,16 @@ pub enum MempoolError {
     NotEnoughBalance,
     #[error("Transaction gas fields are invalid")]
     InvalidTxGasvalues,
+    #[error("Invalid pooled TxType, expected: {0}")]
+    InvalidPooledTxType(u8),
+    #[error("Invalid pooled transaction size, differs from expected")]
+    InvalidPooledTxSize,
+    #[error("Requested pooled transaction was not received")]
+    RequestedPooledTxNotFound,
+    #[error("Transaction sender is invalid {0}")]
+    InvalidTxSender(#[from] secp256k1::Error),
+    #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
+    UnderpricedReplacement,
 }
 
 #[derive(Debug)]
@@ -103,4 +165,6 @@ pub enum InvalidForkChoice {
     InvalidHead,
     #[error("Previously rejected block.")]
     InvalidAncestor(BlockHash),
+    #[error("Cannot find link between Head and the canonical chain")]
+    UnlinkedHead,
 }

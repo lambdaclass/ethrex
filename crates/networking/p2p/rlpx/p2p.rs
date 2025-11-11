@@ -1,74 +1,141 @@
-use bytes::BufMut;
-use ethrex_common::H512;
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::{RLPDecodeError, RLPEncodeError},
-    structs::{Decoder, Encoder},
-};
-use k256::PublicKey;
-
-use crate::rlpx::utils::{id2pubkey, snappy_decompress};
-
 use super::{
     message::RLPxMessage,
-    utils::{pubkey2id, snappy_compress},
+    utils::{decompress_pubkey, snappy_compress},
 };
+use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
+use bytes::BufMut;
+use ethrex_common::H512;
+use ethrex_rlp::structs::{Decoder, Encoder};
+use ethrex_rlp::{
+    decode::{RLPDecode, decode_rlp_item},
+    encode::RLPEncode,
+    error::{RLPDecodeError, RLPEncodeError},
+};
+use secp256k1::PublicKey;
+use serde::Serialize;
+
+pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 2] = [Capability::eth(68), Capability::eth(69)];
+pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
+
+/// The version of the base P2P protocol we support.
+/// This is sent at the start of the Hello message instead of the capabilities list.
+pub const SUPPORTED_P2P_CAPABILITY_VERSION: u8 = 5;
+
+const CAPABILITY_NAME_MAX_LENGTH: usize = 8;
+
+// Pads the input array to the right with zeros to ensure it is 8 bytes long.
+// Panics if the input is longer than 8 bytes.
+const fn pad_right<const N: usize>(input: &[u8; N]) -> [u8; 8] {
+    assert!(
+        N <= CAPABILITY_NAME_MAX_LENGTH,
+        "Input array must be 8 bytes or less"
+    );
+
+    let mut padded = [0_u8; CAPABILITY_NAME_MAX_LENGTH];
+    let mut i = 0;
+    while i < input.len() {
+        padded[i] = input[i];
+        i += 1;
+    }
+    padded
+}
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Capability {
-    P2p,
-    Eth,
-    Snap,
-    UnsupportedCapability(String),
+/// A capability is identified by a short ASCII name (max eight characters) and version number
+pub struct Capability {
+    protocol: [u8; CAPABILITY_NAME_MAX_LENGTH],
+    pub version: u8,
+}
+
+impl Capability {
+    pub const fn eth(version: u8) -> Self {
+        Capability {
+            protocol: pad_right(b"eth"),
+            version,
+        }
+    }
+
+    pub const fn snap(version: u8) -> Self {
+        Capability {
+            protocol: pad_right(b"snap"),
+            version,
+        }
+    }
+
+    pub const fn based(version: u8) -> Self {
+        Capability {
+            protocol: pad_right(b"based"),
+            version,
+        }
+    }
+
+    pub fn protocol(&self) -> &str {
+        let len = self
+            .protocol
+            .iter()
+            .position(|c| c == &b'\0')
+            .unwrap_or(CAPABILITY_NAME_MAX_LENGTH);
+        str::from_utf8(&self.protocol[..len]).expect("value parsed as utf8 in RLPDecode")
+    }
 }
 
 impl RLPEncode for Capability {
     fn encode(&self, buf: &mut dyn BufMut) {
-        match self {
-            Self::P2p => "p2p".encode(buf),
-            Self::Eth => "eth".encode(buf),
-            Self::Snap => "snap".encode(buf),
-            Self::UnsupportedCapability(name) => name.encode(buf),
-        }
+        Encoder::new(buf)
+            .encode_field(&self.protocol())
+            .encode_field(&self.version)
+            .finish();
     }
 }
 
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (cap_string, rest) = String::decode_unfinished(rlp)?;
-        match cap_string.as_str() {
-            "p2p" => Ok((Capability::P2p, rest)),
-            "eth" => Ok((Capability::Eth, rest)),
-            "snap" => Ok((Capability::Snap, rest)),
-            other => Ok((Capability::UnsupportedCapability(other.to_string()), rest)),
+        let (protocol_name, rest) = String::decode_unfinished(&rlp[1..])?;
+        if protocol_name.len() > CAPABILITY_NAME_MAX_LENGTH {
+            return Err(RLPDecodeError::InvalidLength);
         }
+        let (version, rest) = u8::decode_unfinished(rest)?;
+        let mut protocol = [0; CAPABILITY_NAME_MAX_LENGTH];
+        protocol[..protocol_name.len()].copy_from_slice(protocol_name.as_bytes());
+        Ok((Capability { protocol, version }, rest))
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct HelloMessage {
-    pub(crate) capabilities: Vec<(Capability, u8)>,
-    pub(crate) node_id: PublicKey,
+impl Serialize for Capability {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{}/{}", self.protocol(), self.version))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HelloMessage {
+    pub capabilities: Vec<Capability>,
+    pub node_id: PublicKey,
+    pub client_id: String,
 }
 
 impl HelloMessage {
-    pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey) -> Self {
+    pub fn new(capabilities: Vec<Capability>, node_id: PublicKey, client_id: String) -> Self {
         Self {
             capabilities,
             node_id,
+            client_id,
         }
     }
 }
 
 impl RLPxMessage for HelloMessage {
+    const CODE: u8 = 0x00;
     fn encode(&self, mut buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         Encoder::new(&mut buf)
-            .encode_field(&5_u8) // protocolVersion
-            .encode_field(&"Ethrex/0.1.0") // clientId
+            .encode_field(&SUPPORTED_P2P_CAPABILITY_VERSION) // protocolVersion
+            .encode_field(&self.client_id) // clientId
             .encode_field(&self.capabilities) // capabilities
             .encode_field(&0u8) // listenPort (ignored)
-            .encode_field(&pubkey2id(&self.node_id)) // nodeKey
+            .encode_field(&decompress_pubkey(&self.node_id)) // nodeKey
             .finish();
         Ok(())
     }
@@ -78,14 +145,17 @@ impl RLPxMessage for HelloMessage {
         let decoder = Decoder::new(msg_data)?;
         let (protocol_version, decoder): (u64, _) = decoder.decode_field("protocolVersion")?;
 
-        assert_eq!(protocol_version, 5, "only protocol version 5 is supported");
+        if protocol_version != SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
+            return Err(RLPDecodeError::IncompatibleProtocol(format!(
+                "Received message is encoded in p2p version {} when negotiated p2p version was {} ",
+                protocol_version, SUPPORTED_P2P_CAPABILITY_VERSION
+            )));
+        }
 
-        let (_client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
-        // TODO: store client id for debugging purposes
+        let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
 
         // [[cap1, capVersion1], [cap2, capVersion2], ...]
-        let (capabilities, decoder): (Vec<(Capability, u8)>, _) =
-            decoder.decode_field("capabilities")?;
+        let (capabilities, decoder): (Vec<Capability>, _) = decoder.decode_field("capabilities")?;
 
         // This field should be ignored
         let (_listen_port, decoder): (u16, _) = decoder.decode_field("listenPort")?;
@@ -97,7 +167,8 @@ impl RLPxMessage for HelloMessage {
 
         Ok(Self::new(
             capabilities,
-            id2pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
+            compress_pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
+            client_id,
         ))
     }
 }
@@ -177,9 +248,9 @@ impl From<DisconnectReason> for u8 {
         val as u8
     }
 }
-#[derive(Debug)]
-pub(crate) struct DisconnectMessage {
-    pub(crate) reason: Option<DisconnectReason>,
+#[derive(Debug, Clone)]
+pub struct DisconnectMessage {
+    pub reason: Option<DisconnectReason>,
 }
 
 impl DisconnectMessage {
@@ -195,6 +266,7 @@ impl DisconnectMessage {
 }
 
 impl RLPxMessage for DisconnectMessage {
+    const CODE: u8 = 0x01;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Disconnect msg_data is reason or none
@@ -234,16 +306,11 @@ impl RLPxMessage for DisconnectMessage {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct PingMessage {}
-
-impl PingMessage {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+#[derive(Debug, Clone, Copy)]
+pub struct PingMessage {}
 
 impl RLPxMessage for PingMessage {
+    const CODE: u8 = 0x02;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Ping msg_data is only []
@@ -254,26 +321,22 @@ impl RLPxMessage for PingMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        // decode ping message: data is empty list [] but it is snappy compressed
+        // decode ping message: data is empty list [] or string but it is snappy compressed
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let result = decoder.finish_unchecked();
+        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
+
         let empty: &[u8] = &[];
-        assert_eq!(result, empty, "Ping msg_data should be &[]");
-        Ok(Self::new())
+        assert_eq!(payload, empty, "Ping payload should be &[]");
+        assert_eq!(remaining, empty, "Ping remaining should be &[]");
+        Ok(Self {})
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct PongMessage {}
-
-impl PongMessage {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+#[derive(Debug, Clone, Copy)]
+pub struct PongMessage {}
 
 impl RLPxMessage for PongMessage {
+    const CODE: u8 = 0x03;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Pong msg_data is only []
@@ -284,12 +347,43 @@ impl RLPxMessage for PongMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        // decode pong message: data is empty list [] but it is snappy compressed
+        // decode pong message: data is empty list [] or string but it is snappy compressed
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let result = decoder.finish_unchecked();
+        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
+
         let empty: &[u8] = &[];
-        assert_eq!(result, empty, "Pong msg_data should be &[]");
-        Ok(Self::new())
+        assert_eq!(payload, empty, "Pong payload should be &[]");
+        assert_eq!(remaining, empty, "Pong remaining should be &[]");
+        Ok(Self {})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+
+    use crate::rlpx::p2p::Capability;
+
+    #[test]
+    fn test_encode_capability() {
+        let capability = Capability::eth(8);
+        let encoded = capability.encode_to_vec();
+
+        assert_eq!(&encoded, &[197_u8, 131, b'e', b't', b'h', 8]);
+    }
+
+    #[test]
+    fn test_decode_capability() {
+        let encoded_bytes = &[197_u8, 131, b'e', b't', b'h', 8];
+        let decoded = Capability::decode(encoded_bytes).unwrap();
+
+        assert_eq!(decoded, Capability::eth(8));
+    }
+
+    #[test]
+    fn test_protocol() {
+        let capability = Capability::eth(68);
+
+        assert_eq!(capability.protocol(), "eth");
     }
 }

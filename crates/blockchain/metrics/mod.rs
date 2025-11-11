@@ -1,9 +1,15 @@
 #[cfg(feature = "api")]
 pub mod api;
-#[cfg(any(feature = "api", feature = "l2"))]
-pub mod metrics_l2;
+#[cfg(feature = "api")]
+pub mod l2;
+#[cfg(any(feature = "api", feature = "metrics"))]
+pub mod metrics_blocks;
+#[cfg(any(feature = "api", feature = "metrics"))]
+pub mod metrics_process;
 #[cfg(any(feature = "api", feature = "transactions"))]
 pub mod metrics_transactions;
+#[cfg(feature = "api")]
+pub mod profiling;
 
 /// A macro to conditionally enable metrics-related code.
 ///
@@ -57,8 +63,6 @@ pub enum MetricsApiError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum MetricsError {
-    #[error("MetricsL2Error: {0}")]
-    MutexLockError(String),
     #[error("MetricsL2Error: {0}")]
     PrometheusErr(String),
     #[error("MetricsL2Error {0}")]

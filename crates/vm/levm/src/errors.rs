@@ -1,13 +1,59 @@
 use bytes::Bytes;
-use ethrex_common::types::Log;
+use derive_more::derive::Display;
+use ethrex_common::{
+    Address, H256, U256,
+    types::{FakeExponentialError, Log},
+};
 use serde::{Deserialize, Serialize};
 use thiserror;
 
-use crate::db::error::DatabaseError;
-
-/// Errors that halt the program
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize, Display)]
 pub enum VMError {
+    /// Errors that break execution, they shouldn't ever happen. Contains subcategory `DatabaseError`.
+    Internal(#[from] InternalError),
+    /// Returned when a transaction doesn't pass all validations before executing.
+    TxValidation(#[from] TxValidationError),
+    /// Errors contemplated by the EVM, they revert and consume all gas of the current context.
+    ExceptionalHalt(#[from] ExceptionalHalt),
+    /// Revert Opcode called. It behaves like ExceptionalHalt, except it doesn't consume all gas left.
+    RevertOpcode,
+}
+
+impl VMError {
+    /// These errors are unexpected and indicate critical issues.
+    /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
+    pub fn should_propagate(&self) -> bool {
+        matches!(self, VMError::Internal(_))
+    }
+
+    /// Error triggered by revert opcode. This error doesn't consume all gas left in context.
+    pub fn is_revert_opcode(&self) -> bool {
+        matches!(self, VMError::RevertOpcode)
+    }
+}
+
+impl From<DatabaseError> for VMError {
+    fn from(err: DatabaseError) -> Self {
+        VMError::Internal(InternalError::Database(err))
+    }
+}
+
+impl From<PrecompileError> for VMError {
+    fn from(err: PrecompileError) -> Self {
+        VMError::ExceptionalHalt(ExceptionalHalt::Precompile(err))
+    }
+}
+
+/// Useful to use ? in try_into, specially when slicing with known bounds to fixed size arrays,
+/// which is a error that never really happens.
+impl From<std::array::TryFromSliceError> for VMError {
+    fn from(_: std::array::TryFromSliceError) -> Self {
+        VMError::Internal(InternalError::TypeConversion)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+pub enum ExceptionalHalt {
     #[error("Stack Underflow")]
     StackUnderflow,
     #[error("Stack Overflow")]
@@ -16,212 +62,170 @@ pub enum VMError {
     InvalidJump,
     #[error("Opcode Not Allowed In Static Context")]
     OpcodeNotAllowedInStaticContext,
-    #[error("Opcode Not Found")]
-    OpcodeNotFound,
-    #[error("Invalid Bytecode")]
-    InvalidBytecode,
     #[error("Invalid Contract Prefix")]
     InvalidContractPrefix,
     #[error("Very Large Number")]
     VeryLargeNumber,
-    #[error("Fatal Error")]
-    FatalError,
-    #[error("Invalid Transaction")]
-    InvalidTransaction,
-    #[error("Revert Opcode")]
-    RevertOpcode,
     #[error("Invalid Opcode")]
     InvalidOpcode,
-    #[error("Missing Blob Hashes")]
-    MissingBlobHashes,
-    #[error("Blob Hash Index Out Of Bounds")]
-    BlobHashIndexOutOfBounds,
-    #[error("Sender Account Does Not Exist")]
-    SenderAccountDoesNotExist,
-    #[error("Address Does Not Match An Account")]
-    AddressDoesNotMatchAnAccount,
-    #[error("Gas price is lower than base fee")]
-    GasPriceIsLowerThanBaseFee,
     #[error("Address Already Occupied")]
     AddressAlreadyOccupied,
     #[error("Contract Output Too Big")]
     ContractOutputTooBig,
-    #[error("Gas limit price product overflow")]
-    GasLimitPriceProductOverflow,
-    #[error("Balance Overflow")]
-    BalanceOverflow,
-    #[error("Balance Underflow")]
-    BalanceUnderflow,
-    #[error("Gas refunds underflow")]
-    GasRefundsUnderflow,
-    #[error("Gas refunds overflow")]
-    GasRefundsOverflow,
-    #[error("Memory size overflows")]
-    MemorySizeOverflow,
-    #[error("Nonce overflowed")]
-    NonceOverflow,
-    #[error("Nonce underflowed")]
-    NonceUnderflow,
-    // OutOfGas
-    #[error("Out Of Gas")]
-    OutOfGas(#[from] OutOfGasError),
-    // Internal
-    #[error("Internal error: {0}")]
-    Internal(#[from] InternalError),
-    #[error("Transaction validation error: {0}")]
-    TxValidation(#[from] TxValidationError),
     #[error("Offset out of bounds")]
     OutOfBounds,
+    #[error("Out Of Gas")]
+    OutOfGas,
     #[error("Precompile execution error: {0}")]
-    PrecompileError(#[from] PrecompileError),
-    #[error("Database access error: {0}")]
-    DatabaseError(#[from] DatabaseError),
+    Precompile(#[from] PrecompileError),
 }
 
-impl VMError {
-    pub fn is_internal(&self) -> bool {
-        matches!(self, VMError::Internal(_))
-    }
-}
-
+// Error strings are attached to execution-spec-tests mapping https://github.com/ethereum/execution-spec-tests
+// If any change is made here without changing the mapper it will break some hive tests.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum TxValidationError {
-    #[error("Sender account should not have bytecode")]
-    SenderNotEOA,
-    #[error("Insufficient account founds")]
+    #[error("Sender account {0} shouldn't be a contract")]
+    SenderNotEOA(Address),
+    #[error("Insufficient account funds")]
     InsufficientAccountFunds,
-    #[error("Nonce is max (overflow)")]
+    #[error("Nonce is max")]
     NonceIsMax,
-    #[error("Nonce mismatch")]
-    NonceMismatch,
-    #[error("Initcode size exceeded")]
-    InitcodeSizeExceeded,
-    #[error("Priority fee greater than max fee per gas")]
-    PriorityGreaterThanMaxFeePerGas,
-    #[error("Intrinsic gas too low")]
+    #[error("Nonce mismatch: expected {expected}, got {actual}")]
+    NonceMismatch { expected: u64, actual: u64 },
+    #[error("Initcode size exceeded, max size: {max_size}, actual size: {actual_size}")]
+    InitcodeSizeExceeded { max_size: usize, actual_size: usize },
+    #[error("Priority fee {priority_fee} is greater than max fee per gas {max_fee_per_gas}")]
+    PriorityGreaterThanMaxFeePerGas {
+        priority_fee: U256,
+        max_fee_per_gas: U256,
+    },
+    #[error("Transaction gas limit lower than the minimum gas cost to execute the transaction")]
     IntrinsicGasTooLow,
-    #[error("Gas allowance exceeded")]
-    GasAllowanceExceeded,
+    #[error("Transaction gas limit lower than the gas cost floor for calldata tokens")]
+    IntrinsicGasBelowFloorGasCost,
+    #[error(
+        "Gas allowance exceeded. Block gas limit: {block_gas_limit}, transaction gas limit: {tx_gas_limit}"
+    )]
+    GasAllowanceExceeded {
+        block_gas_limit: u64,
+        tx_gas_limit: u64,
+    },
     #[error("Insufficient max fee per gas")]
     InsufficientMaxFeePerGas,
-    #[error("Insufficient max fee per blob gas")]
-    InsufficientMaxFeePerBlobGas,
+    #[error(
+        "Insufficient max fee per blob gas. Expected at least {base_fee_per_blob_gas}, got: {tx_max_fee_per_blob_gas}"
+    )]
+    InsufficientMaxFeePerBlobGas {
+        base_fee_per_blob_gas: U256,
+        tx_max_fee_per_blob_gas: U256,
+    },
     #[error("Type 3 transactions are not supported before the Cancun fork")]
     Type3TxPreFork,
-    #[error("Type3TxZeroBlobs")]
+    #[error("Type 3 transaction without blobs")]
     Type3TxZeroBlobs,
-    #[error("Type3TxInvalidBlobVersionedHash")]
+    #[error("Invalid blob versioned hash")]
     Type3TxInvalidBlobVersionedHash,
-    #[error("Type3TxBlobCountExceeded")]
-    Type3TxBlobCountExceeded,
-    #[error("Type3TxContractCreation")]
+    #[error(
+        "Blob count exceeded. Max blob count: {max_blob_count}, actual blob count: {actual_blob_count}"
+    )]
+    Type3TxBlobCountExceeded {
+        max_blob_count: usize,
+        actual_blob_count: usize,
+    },
+    #[error("Contract creation in blob transaction")]
     Type3TxContractCreation,
     #[error("Type 4 transactions are not supported before the Prague fork")]
     Type4TxPreFork,
-    #[error("Type4TxAuthorizationListIsEmpty")]
+    #[error("Empty authorization list in type 4 transaction")]
     Type4TxAuthorizationListIsEmpty,
-    #[error("Type4TxContractCreation")]
+    #[error("Contract creation in type 4 transaction")]
     Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
-    #[error("Gas limit is too low")]
-    GasLimitTooLow,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error, Serialize, Deserialize)]
-pub enum OutOfGasError {
-    #[error("Gas Cost Overflow")]
-    GasCostOverflow,
-    #[error("Gas Used Overflow")]
-    GasUsedOverflow,
-    #[error("Creation Cost Is Too High")]
-    CreationCostIsTooHigh,
-    #[error("Consumed Gas Overflow")]
-    ConsumedGasOverflow,
-    #[error("Max Gas Limit Exceeded")]
-    MaxGasLimitExceeded,
-    #[error("Arithmetic operation divided by zero in gas calculation")]
-    ArithmeticOperationDividedByZero,
-    #[error("Memory Expansion Cost Overflow")]
-    MemoryExpansionCostOverflow,
+    #[error(
+        "Transaction gas limit exceeds maximum. Transaction hash: {tx_hash}, transaction gas limit: {tx_gas_limit}"
+    )]
+    TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum InternalError {
-    #[error("Overflowed when incrementing program counter")]
-    PCOverflowed,
-    #[error("Underflowed when decrementing program counter")]
-    PCUnderflowed,
     #[error("Arithmetic operation overflowed")]
-    ArithmeticOperationOverflow,
+    Overflow,
     #[error("Arithmetic operation underflowed")]
-    ArithmeticOperationUnderflow,
-    #[error("Arithmetic operation divided by zero")]
-    ArithmeticOperationDividedByZero,
-    #[error("Account should have been cached")]
-    AccountShouldHaveBeenCached,
+    Underflow,
+    #[error("Cannot divide by zero")]
+    DivisionByZero,
     #[error("Tried to convert one type to another")]
-    ConversionError,
-    #[error("Division error")]
-    DivisionError,
-    #[error("Tried to access last call frame but found none")]
-    CouldNotAccessLastCallframe, // Last callframe before execution is the same as the first, but after execution the last callframe is actually the initial CF
-    #[error("Tried to access blobhash but was out of range")]
-    BlobHashOutOfRange,
-    #[error("Tried to read from empty code")]
-    TriedToIndexEmptyCode,
-    #[error("Failed computing CREATE address")]
-    CouldNotComputeCreateAddress,
-    #[error("Failed computing CREATE2 address")]
-    CouldNotComputeCreate2Address,
+    TypeConversion,
+    #[error("CallFrame not found")]
+    CallFrame,
     #[error("Tried to slice non-existing data")]
-    SlicingError,
-    #[error("Could not pop callframe")]
-    CouldNotPopCallframe,
-    #[error("Account not found")]
+    Slicing,
+    #[error("Account not found when it should've been in the cache.")]
     AccountNotFound,
-    #[error("ExcessBlobGas should not be None")]
-    ExcessBlobGasShouldNotBeNone,
-    #[error("Error in utils file")]
-    UtilsError,
-    #[error("PC out of bounds")]
-    PCOutOfBounds,
-    #[error("Unexpected overflow in gas operation")]
-    GasOverflow,
-    #[error("Undefined state: {0}")]
-    UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
     #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
     InvalidPrecompileAddress,
-    #[error("Spec Id doesn't match to any fork")]
-    InvalidSpecId,
+    #[error("Invalid Fork")]
+    InvalidFork,
     #[error("Account should had been delegated")]
     AccountNotDelegated,
+    #[error("No recipient found for privileged transaction")]
+    RecipientNotFoundForPrivilegedTransaction,
+    #[error("Memory Size Sverflow")]
+    MemorySizeOverflow,
+    #[error("Custom error: {0}")]
+    Custom(String),
+    /// Unexpected error when accessing the database, used in trait `Database`.
+    #[error("Database access error: {0}")]
+    Database(#[from] DatabaseError),
+    #[error("{0}")]
+    FakeExponentialError(#[from] FakeExponentialError),
+}
+
+impl InternalError {
+    pub fn msg(msg: &'static str) -> Self {
+        Self::Custom(msg.to_owned())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum PrecompileError {
     #[error("Error while parsing the calldata")]
     ParsingInputError,
-    #[error("Error while increasing consumed gas")]
-    GasConsumedOverflow,
     #[error("There is not enough gas to execute precompiled contract")]
     NotEnoughGas,
-    #[error("There was an error evaluating the point")]
-    EvaluationError,
-    #[error("This is a default error")]
-    DefaultError,
+    #[error("Kzg error: {0}")]
+    KzgError(String),
+    #[error("Invalid point")]
+    InvalidPoint,
+    #[error("The point is not in the curve")]
+    PointNotInTheCurve,
+    #[error("The point is not in the subgroup")]
+    PointNotInSubgroup,
     #[error("The G1 point is not in the curve")]
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
     BLS12381G2PointNotInCurve,
+    #[error("Mod-exp base length is too large")]
+    ModExpBaseTooLarge,
+    #[error("Mod-exp exponent length is too large")]
+    ModExpExpTooLarge,
+    #[error("Mod-exp modulus length is too large")]
+    ModExpModulusTooLarge,
+    #[error("Coordinate Exceeds Field Modulus")]
+    CoordinateExceedsFieldModulus,
 }
 
-#[derive(Debug, Clone)]
-/// Note: "Halt" does not mean "Error during execution" it simply
-/// means that the execution stopped. It's not called "Stop" because
-/// "Stop" is an Opcode
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+pub enum DatabaseError {
+    #[error("{0}")]
+    Custom(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OpcodeResult {
-    Continue { pc_increment: usize },
+    Continue,
     Halt,
 }
 
@@ -241,21 +245,19 @@ pub struct ExecutionReport {
 }
 
 impl ExecutionReport {
-    /// Function to add gas to report without exceeding the maximum gas limit
-    pub fn add_gas_with_max(&mut self, gas: u64, max: u64) -> Result<(), VMError> {
-        let new_gas_used = self
-            .gas_used
-            .checked_add(gas)
-            .ok_or(OutOfGasError::MaxGasLimitExceeded)?;
-
-        if new_gas_used > max {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-        }
-
-        self.gas_used = new_gas_used;
-        Ok(())
+    pub fn is_success(&self) -> bool {
+        matches!(self.result, TxResult::Success)
     }
+}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextResult {
+    pub result: TxResult,
+    pub gas_used: u64,
+    pub output: Bytes,
+}
+
+impl ContextResult {
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
     }

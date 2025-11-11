@@ -1,5 +1,7 @@
-use super::helpers::current_unix_time;
-use crate::types::{Endpoint, Node, NodeRecord};
+use crate::{
+    types::{Endpoint, Node, NodeRecord},
+    utils::{current_unix_time, node_id},
+};
 use bytes::BufMut;
 use ethrex_common::{H256, H512, H520};
 use ethrex_rlp::{
@@ -8,24 +10,41 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
-use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
+use secp256k1::{
+    SecretKey,
+    ecdsa::{RecoverableSignature, RecoveryId},
+};
 use sha3::{Digest, Keccak256};
+use std::{convert::Into, io::ErrorKind};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, thiserror::Error)]
 pub enum PacketDecodeErr {
-    #[allow(unused)]
-    RLPDecodeError(RLPDecodeError),
+    #[error("RLP decoding error")]
+    RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Invalid packet size")]
     InvalidSize,
+    #[error("Hash mismatch")]
     HashMismatch,
+    #[error("Invalid signature")]
     InvalidSignature,
+    #[error("Discv4 decoding error: {0}")]
+    Discv4DecodingError(String),
+    #[error("Io Error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
-#[derive(Debug)]
+impl From<PacketDecodeErr> for std::io::Error {
+    fn from(error: PacketDecodeErr) -> Self {
+        std::io::Error::new(ErrorKind::InvalidData, error.to_string())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Packet {
     hash: H256,
     signature: H520,
     message: Message,
-    node_id: H512,
+    public_key: H512,
 }
 
 impl Packet {
@@ -52,17 +71,22 @@ impl Packet {
             return Err(PacketDecodeErr::HashMismatch);
         }
 
-        let digest = Keccak256::digest(encoded_msg);
-        let signature = &Signature::from_slice(&signature_bytes[0..64])
-            .map_err(|_| PacketDecodeErr::InvalidSignature)?;
-        let rid =
-            RecoveryId::from_byte(signature_bytes[64]).ok_or(PacketDecodeErr::InvalidSignature)?;
+        let digest: [u8; 32] = Keccak256::digest(encoded_msg).into();
 
-        let peer_pk = VerifyingKey::recover_from_prehash(&digest, signature, rid)
+        let rid = RecoveryId::try_from(Into::<i32>::into(signature_bytes[64]))
             .map_err(|_| PacketDecodeErr::InvalidSignature)?;
-        let encoded = peer_pk.to_encoded_point(false);
 
-        let node_id = H512::from_slice(&encoded.as_bytes()[1..]);
+        let peer_pk = secp256k1::SECP256K1
+            .recover_ecdsa(
+                &secp256k1::Message::from_digest(digest),
+                &RecoverableSignature::from_compact(&signature_bytes[0..64], rid)
+                    .map_err(|_| PacketDecodeErr::InvalidSignature)?,
+            )
+            .map_err(|_| PacketDecodeErr::InvalidSignature)?;
+
+        let encoded = peer_pk.serialize_uncompressed();
+
+        let public_key = H512::from_slice(&encoded[1..]);
         let signature = H520::from_slice(signature_bytes);
         let message = Message::decode_with_type(packet_type, &encoded_msg[1..])
             .map_err(PacketDecodeErr::RLPDecodeError)?;
@@ -71,7 +95,7 @@ impl Packet {
             hash,
             signature,
             message,
-            node_id,
+            public_key,
         })
     }
 
@@ -88,13 +112,17 @@ impl Packet {
         self.signature
     }
 
-    pub fn get_node_id(&self) -> H512 {
-        self.node_id
+    pub fn get_public_key(&self) -> H512 {
+        self.public_key
+    }
+
+    pub fn get_node_id(&self) -> H256 {
+        node_id(&self.public_key)
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum Message {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum Message {
     Ping(PingMessage),
     Pong(PongMessage),
     FindNode(FindNodeMessage),
@@ -113,27 +141,26 @@ impl std::fmt::Display for Message {
             Message::ENRRequest(_) => "ENRRequest",
             Message::ENRResponse(_) => "ENRResponse",
         };
-        write!(f, "{}", variant)
+        write!(f, "{variant}")
     }
 }
 
 impl Message {
-    pub fn encode_with_header(&self, buf: &mut dyn BufMut, node_signer: &SigningKey) {
+    pub fn encode_with_header(&self, buf: &mut dyn BufMut, node_signer: &SecretKey) {
         let signature_size = 65_usize;
         let mut data: Vec<u8> = Vec::with_capacity(signature_size.next_power_of_two());
         data.resize(signature_size, 0);
 
         self.encode_with_type(&mut data);
 
-        let digest = Keccak256::digest(&data[signature_size..]);
+        let digest: [u8; 32] = Keccak256::digest(&data[signature_size..]).into();
 
-        let (signature, recovery_id) = node_signer
-            .sign_prehash_recoverable(&digest)
-            .expect("failed to sign");
-        let b = signature.to_bytes();
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&secp256k1::Message::from_digest(digest), node_signer)
+            .serialize_compact();
 
-        data[..signature_size - 1].copy_from_slice(&b);
-        data[signature_size - 1] = recovery_id.to_byte();
+        data[..signature_size - 1].copy_from_slice(&signature);
+        data[signature_size - 1] = Into::<i32>::into(recovery_id) as u8;
 
         let hash = Keccak256::digest(&data[..]);
         buf.put_slice(&hash);
@@ -196,10 +223,10 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PingMessage {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PingMessage {
     /// The Ping message version. Should be set to 4, but mustn't be enforced.
-    version: u8,
+    pub version: u8,
     /// The endpoint of the sender.
     pub from: Endpoint,
     /// The endpoint of the receiver.
@@ -244,8 +271,8 @@ impl RLPEncode for PingMessage {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct FindNodeMessage {
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct FindNodeMessage {
     /// The target is a 64-byte secp256k1 public key.
     pub target: H512,
     /// The expiration time of the message. If the message is older than this time,
@@ -284,7 +311,7 @@ impl RLPDecode for FindNodeMessage {
 pub struct FindNodeRequest {
     /// the number of nodes sent
     /// we keep track of this number since we will accept neighbor messages until the max_per_bucket
-    pub nodes_sent: usize,
+    pub nodes_sent: u64,
     /// unix timestamp tracking when we have sent the request
     pub sent_at: u64,
     /// if present, server will send the nodes through this channel when receiving neighbors
@@ -334,7 +361,7 @@ impl RLPDecode for PingMessage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PongMessage {
+pub struct PongMessage {
     /// The endpoint of the receiver.
     pub to: Endpoint,
     /// The hash of the corresponding ping packet.
@@ -397,7 +424,7 @@ impl RLPDecode for PongMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NeighborsMessage {
+pub struct NeighborsMessage {
     // nodes is the list of neighbors
     pub nodes: Vec<Node>,
     pub expiration: u64,
@@ -430,7 +457,7 @@ impl RLPEncode for NeighborsMessage {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ENRResponseMessage {
     pub request_hash: H256,
     pub node_record: NodeRecord,
@@ -460,7 +487,7 @@ impl RLPDecode for ENRResponseMessage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ENRRequestMessage {
+pub struct ENRRequestMessage {
     pub expiration: u64,
 }
 
@@ -534,7 +561,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -565,7 +592,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -595,7 +622,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -619,7 +646,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -637,25 +664,20 @@ mod tests {
     #[test]
     fn test_encode_neighbors_message() {
         let expiration: u64 = 17195043770;
-        let node_id_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        let node_1 = Node {
-            ip: "127.0.0.1".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            node_id: node_id_1,
-        };
+        let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
+        let node_1 = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
 
-        let node_id_2 = H512::from_str("11f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f50").unwrap();
-        let node_2 = Node {
-            ip: "190.191.188.57".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            node_id: node_id_2,
-        };
+        let public_key_2 = H512::from_str("11f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f50").unwrap();
+        let node_2 = Node::new(
+            "190.191.188.57".parse().unwrap(),
+            30303,
+            30303,
+            public_key_2,
+        );
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
         let msg = Message::Neighbors(NeighborsMessage::new(vec![node_1, node_2], expiration));
@@ -678,7 +700,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &signer);
         let result = to_hex(&buf);
@@ -751,7 +773,7 @@ mod tests {
         let key_bytes =
             H256::from_str("2e6a09427ba14acc853cbbff291c75c3cb57754ac1e3df8df9cac086b3a83aa4")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &signer);
         let result = to_hex(&buf);
@@ -904,7 +926,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -935,7 +957,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -954,7 +976,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -969,14 +991,8 @@ mod tests {
         let encoded = "f857f84ff84d847f00000182765f82765fb840d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666850400e78bba";
         let decoded = Message::decode_with_type(0x04, &decode_hex(encoded).unwrap()).unwrap();
         let expiration: u64 = 17195043770;
-        let node_id = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        let node = Node {
-            ip: "127.0.0.1".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            node_id,
-        };
-
+        let public_key = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
+        let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key);
         let expected = Message::Neighbors(NeighborsMessage::new(vec![node], expiration));
         assert_eq!(decoded, expected);
     }
@@ -1025,7 +1041,7 @@ mod tests {
         let key_bytes =
             H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &signer);
         // corrupt signature first byte
@@ -1039,7 +1055,10 @@ mod tests {
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());
-        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
+        assert!(matches!(
+            decoded_packet.err().unwrap(),
+            PacketDecodeErr::InvalidSignature
+        ));
     }
 
     #[test]
@@ -1060,7 +1079,7 @@ mod tests {
         let key_bytes =
             H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &signer);
         // byte 96 (first 32 are the msg digest) corresponds to the recover_id
@@ -1075,6 +1094,9 @@ mod tests {
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());
-        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
+        assert!(matches!(
+            decoded_packet.err().unwrap(),
+            PacketDecodeErr::InvalidSignature
+        ));
     }
 }
