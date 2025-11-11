@@ -20,6 +20,14 @@ thiserror.workspace = true
 #[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
+[dev-dependencies]
+criterion = "*"
+
+[[bench]]
+name = "keccak_bench"
+path = "keccak/bench.rs"
+harness = false
+
 [features]
 default = []
 c-kzg = ["dep:c-kzg"]

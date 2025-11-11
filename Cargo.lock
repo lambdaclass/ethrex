@@ -3408,6 +3408,7 @@ name = "ethrex-crypto"
 version = "6.0.0"
 dependencies = [
  "c-kzg",
+ "criterion",
  "kzg-rs",
  "thiserror 2.0.17",
  "tiny-keccak",
