@@ -354,13 +354,12 @@ impl GuestProgramState {
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, GuestProgramStateError> {
-        let storage_root = self
+        let Some(storage_root) = self
             .get_account_state(address)?
             .map(|account| account.storage_root)
-            .unwrap_or(*EMPTY_TRIE_HASH);
-        if storage_root == *EMPTY_TRIE_HASH {
+        else {
             return Ok(None);
-        }
+        };
         let Some(storage_trie) = self.storage_tries.get(&storage_root) else {
             return Err(GuestProgramStateError::Database(format!(
                 "non empty storage trie not found for root {storage_root}"
