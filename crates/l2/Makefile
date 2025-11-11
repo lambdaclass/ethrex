@@ -14,6 +14,7 @@ help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 init: init-l1-docker deploy-l1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+init-sp1: init-l1-docker deploy-l1-sp1 init-metrics init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
 down: down-l1-docker down-l2 down-metrics ## 🛑 Shuts down the localnet
 	@echo "✅ localnet successfully stopped"
@@ -102,10 +103,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.deploy-verifier \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
+	--sp1 \
 	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deposit-rich \
