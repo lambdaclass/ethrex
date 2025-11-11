@@ -13,7 +13,7 @@ use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1Mes
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_common::l1_messages::L1MessageProof;
+use ethrex_l2_common::messages::L1MessageProof;
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_l2_rpc::clients::get_l1_blob_base_fee_per_gas;
 use ethrex_l2_rpc::clients::get_operator_fee;
@@ -26,7 +26,7 @@ use ethrex_l2_sdk::{
 };
 use ethrex_l2_sdk::{
     L2_WITHDRAW_SIGNATURE, build_generic_tx, get_last_verified_batch, send_generic_transaction,
-    wait_for_message_proof,
+    wait_for_l1_message_proof,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
