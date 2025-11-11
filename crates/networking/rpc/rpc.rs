@@ -303,8 +303,7 @@ pub async fn start_api(
         loop {
             let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
             if result.is_err() {
-                warn!("No messages from the consensus layer. Is the consensus client running?
-                 Check the auth JWT coincides with the one used by the CL and the auth RPC address and port used by it and Ethrex match."
+                warn!("No messages from the consensus layer. Is the consensus client running?"
                 );
             }
         }
