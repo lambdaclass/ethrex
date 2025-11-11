@@ -7,15 +7,13 @@ use std::path::Path;
 use ethrex_sdk_contract_utils::git_clone;
 
 fn main() {
-    println!("cargo::rerun-if-env-changed=COMPILE_CONTRACTS");
     println!("cargo::rerun-if-changed=build.rs");
 
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let contracts_path = Path::new(&out_dir).join("contracts");
     std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
 
-    // If COMPILE_CONTRACTS is not set, skip the compilation step.
-    if env::var_os("COMPILE_CONTRACTS").is_none() {
+    if cfg!(not(feature = "l2")) {
         // Write an empty bytecode file to indicate that contracts are not compiled.
         std::fs::create_dir_all(contracts_path.join("solc_out"))
             .expect("failed to create contracts output directory");

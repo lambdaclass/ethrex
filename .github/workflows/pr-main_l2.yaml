@@ -268,7 +268,6 @@ jobs:
           fi
           if  [ "${{ matrix.based }}" = true ]; then
             export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
-            export COMPILE_CONTRACTS=true
           fi
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
@@ -492,7 +491,6 @@ jobs:
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          COMPILE_CONTRACTS=true \
           docker compose up contract_deployer
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
