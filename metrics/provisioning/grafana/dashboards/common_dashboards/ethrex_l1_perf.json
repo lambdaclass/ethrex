@@ -1659,13 +1659,13 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__range]))",
+              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__range])) / sum by (function_name) (increase(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__range]))",
               "legendFormat": "{{function_name}}",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Engine API Time Breakdown (Total Time per Method)",
+          "title": "Engine API Average Time per Method",
           "type": "piechart"
         },
         {
@@ -2090,13 +2090,13 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]))",
+              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range])) / sum by (function_name) (increase(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]))",
               "legendFormat": "{{function_name}}",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "RPC Time Breakdown (Total Time per Method)",
+          "title": "RPC Average Time per Method",
           "type": "piechart"
         },
         {
