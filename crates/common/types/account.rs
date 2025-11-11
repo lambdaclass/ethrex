@@ -25,6 +25,9 @@ pub struct Code {
     pub hash: H256,
     pub bytecode: Bytes,
     // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
+    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
+    // this does not apply to previous forks. This is tested in the EEST tests, which would
+    // panic in debug mode.
     pub jump_targets: Vec<u32>,
 }
 
