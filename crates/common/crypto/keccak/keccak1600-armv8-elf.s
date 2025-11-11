@@ -271,10 +271,10 @@ KeccakF1600:
 	ret
 // .size	KeccakF1600,.-KeccakF1600
 
-.globl	_SHA3_absorb
+.globl	SHA3_absorb
 // .type	SHA3_absorb,%function
 .align	5
-_SHA3_absorb:
+SHA3_absorb:
 .inst	0xd503233f			// paciasp
 	stp	x29,x30,[sp,#-16*8]!
 	add	x29,sp,#0
@@ -469,10 +469,10 @@ Labsorbed:
 .inst	0xd50323bf			// autiasp
 	ret
 // .size	SHA3_absorb,.-SHA3_absorb
-.globl	_SHA3_squeeze
+.globl	SHA3_squeeze
 // .type	SHA3_squeeze,%function
 .align	5
-_SHA3_squeeze:
+SHA3_squeeze:
 .inst	0xd503233f			// paciasp
 	stp	x29,x30,[sp,#-6*8]!
 	add	x29,sp,#0
