@@ -5,6 +5,7 @@
 ### 2025-11-12
 
 - Separate Account and storage Column families in rocksdb [#5055](https://github.com/lambdaclass/ethrex/pull/5055)
+- Cache `BLOBBASEFEE` opcode value [#5288](https://github.com/lambdaclass/ethrex/pull/5288)
 
 ### 2025-11-11
 
@@ -21,6 +22,7 @@
 - Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
 
 ### 2025-11-05
+
 - Merkelization backpressure and batching [#5200](https://github.com/lambdaclass/ethrex/pull/5200)
 
 ### 2025-11-03
