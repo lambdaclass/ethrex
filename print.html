@@ -2535,6 +2535,15 @@ cd ethrex/metrics
 <li>To keep the batch commitment (i.e. the value attesting to the entire state of the chain) a 32 byte value, we hash the different public inputs into one. The L1 contract is given all the public inputs on <code>commit</code>, checks their validity and then squashes them into one through hashing.</li>
 </ul>
 <h2 id="reconstructing-statedata-availability"><a class="header" href="#reconstructing-statedata-availability">Reconstructing state/Data Availability</a></h2>
+<div class="mdbook-alerts mdbook-alerts-warning">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  warning
+</p>
+<p>The <strong>state diff</strong> mechanism is retained here for historical and conceptual reference.<br />
+Ethrex now publishes <strong>RLP-encoded blocks</strong> (with fee configs) in blobs.<br />
+The principles of verification and compression described below still apply conceptually to this new model.</p>
+</div>
 <p>While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the chain. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the chain or some of their funds.</p>
 <p>This is called the <strong>Data Availability</strong> problem. As discussed before, sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:</p>
 <ul>
@@ -2551,6 +2560,13 @@ cd ethrex/metrics
 <h3 id="compression"><a class="header" href="#compression">Compression</a></h3>
 <p>Because state diffs are compressed to save space on L1, this compression needs to be proven as well. Otherwise, once again, the sequencer could send the wrong (compressed) state diffs. This is easy though, we just make the prover run the compression and we're done.</p>
 <h2 id="eip-4844-aka-blobs"><a class="header" href="#eip-4844-aka-blobs">EIP 4844 (a.k.a. Blobs)</a></h2>
+<div class="mdbook-alerts mdbook-alerts-warning">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  warning
+</p>
+<p>The explanations below originally refer to <em>state diffs</em>, but the same blob-based mechanism now carries <strong>RLP-encoded block data</strong> and their associated <strong>fee configs</strong>.</p>
+</div>
 <p>While we could send state diffs through calldata, there is a (hopefully) cheaper way to do it: blobs. The Ethereum Cancun upgrade introduced a new type of transaction where users can submit a list of opaque blobs of data, each one of size at most 128 KB. The main purpose of this new type of transaction is precisely to be used by rollups for data availability; they are priced separately through a <code>blob_gas</code> market instead of the regular <code>gas</code> one and for all intents and purposes should be much cheaper than calldata.</p>
 <p>Using EIP 4844, our state diffs would now be sent through blobs. While this is cheaper, there's a new problem to address with it. The whole point of blobs is that they're cheaper because they are only kept around for approximately two weeks and ONLY in the beacon chain, i.e. the consensus side. The execution side (and thus the EVM when running contracts) does not have access to the contents of a blob. Instead, the only thing it has access to is a <strong>KZG commitment</strong> of it.</p>
 <p>This is important. If you recall, the way the L1 ensured that the state diff published by the sequencer was correct was by hashing its contents and ensuring that the hash matched the given state diff hash. With the contents of the state diff now no longer accesible by the contract, we can't do that anymore, so we need another way to ensure the correct contents of the state diff (i.e. the blob).</p>
@@ -2586,6 +2602,9 @@ cd ethrex/metrics
 </ul>
 </li>
 </ul>
+<h2 id="transition-to-rlp-encoded-blocks"><a class="header" href="#transition-to-rlp-encoded-blocks">Transition to RLP-encoded Blocks</a></h2>
+<p>The state diff approach has been deprecated. While it provided a more compact representation, it only guaranteed the availability of the modified state, not the original transactions themselves. To ensure that transactions are also publicly available, Ethrex now publishes <strong>RLP-encoded blocks</strong>, together with their corresponding <strong>fee configurations</strong>, directly in blobs (see <a href="l2/architecture/../fundamentals/transaction_fees.html">Transaction fees</a>).</p>
+<p>This new approach guarantees both transaction and state availability, at the cost of higher data size. According to our internal measurements (<a href="l2/architecture/../fundamentals/block_vs_state_diff_measurements.html"><code>block_vs_state_diff_measurements.md</code></a>), sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately <strong>2× for ETH transfers</strong> and <strong>3× for ERC20 transfers</strong>.</p>
 <h2 id="l1-l2-communication"><a class="header" href="#l1-l2-communication">L1&lt;-&gt;L2 communication</a></h2>
 <p>To communicate between L1 and L2, we use two mechanisms called <em>Privileged transactions</em>, and <em>L1 messages</em>.
 In this section we talk a bit about them, first going through the more specific use cases for <em>Deposits</em> and <em>Withdrawals</em>.</p>
@@ -4236,6 +4255,14 @@ rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; 0xbcdf20249abf0ed6d944c0288f
 
 </style>
 <h1 id="state-diffs"><a class="header" href="#state-diffs">State diffs</a></h1>
+<div class="mdbook-alerts mdbook-alerts-warning">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  warning
+</p>
+<p>Data availability through <code>state diffs</code> has been deprecated in #5135.<br />
+See the <code>Transition to RLP encoded blocks</code> section <a href="l2/fundamentals/../architecture/overview.html">here</a> for more details.</p>
+</div>
 <p>This architecture was inspired by <a href="https://github.com/matter-labs/zksync-era/blob/main/docs/src/specs/contracts/settlement_contracts/data_availability/pubdata.md">MatterLabs' ZKsync pubdata architecture</a>.</p>
 <p>To provide data availability for our blockchain, we need to publish enough information on every commit transaction to be able to reconstruct the entire state of the L2 from the beginning by querying the L1.</p>
 <p>The data needed is:</p>
@@ -4326,6 +4353,519 @@ number_of_privileged_transaction_logs_u16 ||
 </p>
 <p>As the blob is encoded as 4096 BLS12-381 field elements, every 32-bytes chunk cannot be greater than the subgroup <code>r</code> size: <code>0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001</code>. <em>i.e.</em>, the most significant byte must be less than <code>0x73</code>. To avoid conflicts, we insert a <code>0x00</code> byte before every 31-bytes chunk to ensure this condition is met.</p>
 </div>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="comparative-analysis-transaction-volume-in-blobs-using-state-diffs-and-transaction-lists"><a class="header" href="#comparative-analysis-transaction-volume-in-blobs-using-state-diffs-and-transaction-lists">Comparative Analysis: Transaction Volume in Blobs Using State Diffs and Transaction Lists</a></h1>
+<p>The following are results from measurements conducted to understand the efficiency of blob utilization in an ethrex L2 network through the simulation of different scenarios with varying transaction complexities (e.g., ETH transfers, ERC20 transfers, and other complex smart contract interactions) and data encoding strategies, with the final goal of estimating the approximate number of transactions that can be packed into a single blob using state diffs versus full transaction lists, thereby optimizing calldata costs and achieving greater scalability.</p>
+<h2 id="measurements-amount-of-transactions-per-batch"><a class="header" href="#measurements-amount-of-transactions-per-batch">Measurements (Amount of transactions per batch)</a></h2>
+<h3 id="eth-transfers"><a class="header" href="#eth-transfers">ETH Transfers</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Blob Payload</th><th>Batch 2</th><th>Batch 3</th><th>Batch 4</th><th>Batch 5</th><th>Batch 6</th><th>Batch 7</th><th>Batch 8</th><th>Batch 9</th><th>Batch 10</th><th>Batch 11</th></tr></thead><tbody>
+<tr><td>State Diff</td><td>2373</td><td>2134</td><td>2367</td><td>2141</td><td>2191</td><td>2370</td><td>2309</td><td>2361</td><td>2375</td><td>2367</td></tr>
+<tr><td>Block List</td><td>913</td><td>871</td><td>886</td><td>935</td><td>1019</td><td>994</td><td>1002</td><td>1011</td><td>1012</td><td>1015</td></tr>
+</tbody></table>
+</div>
+<h3 id="erc20-transfers"><a class="header" href="#erc20-transfers">ERC20 Transfers</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Blob Payload</th><th>Batch 2</th><th>Batch 3</th><th>Batch 4</th><th>Batch 5</th><th>Batch 6</th><th>Batch 7</th><th>Batch 8</th><th>Batch 9</th><th>Batch 10</th><th>Batch 11</th></tr></thead><tbody>
+<tr><td>State Diff</td><td>1942</td><td>1897</td><td>1890</td><td>1900</td><td>1915</td><td>1873</td><td>1791</td><td>1773</td><td>1867</td><td>1858</td></tr>
+<tr><td>Block List</td><td>655</td><td>661</td><td>638</td><td>638</td><td>645</td><td>644</td><td>615</td><td>530</td><td>532</td><td>532</td></tr>
+</tbody></table>
+</div>
+<h3 id="summary"><a class="header" href="#summary">Summary</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Blob Payload</th><th>Avg. ETH Transfers per Batch</th><th>Avg. ERC20 Transfers per Batch</th></tr></thead><tbody>
+<tr><td>State Diff</td><td>2298</td><td>1870</td></tr>
+<tr><td>Block List</td><td>965</td><td>609</td></tr>
+</tbody></table>
+</div>
+<h2 id="conclusion"><a class="header" href="#conclusion">Conclusion</a></h2>
+<p>Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately 2x for ETH transfers and 3x for ERC20 transfers.</p>
+<h2 id="how-this-measurements-were-done"><a class="header" href="#how-this-measurements-were-done">How this measurements were done</a></h2>
+<h3 id="prerequisites-4"><a class="header" href="#prerequisites-4">Prerequisites</a></h3>
+<ul>
+<li>Fresh cloned ethrex repository</li>
+<li>The spammer and measurer code provided in the appendix set up for running (you can create a new cargo project and copy the code there)</li>
+</ul>
+<h3 id="steps"><a class="header" href="#steps">Steps</a></h3>
+<h4 id="1-run-an-l2-ethrex"><a class="header" href="#1-run-an-l2-ethrex">1. Run an L2 ethrex:</a></h4>
+<p>For running the measurements, we need to run an ethrex L2 node. For doing that, change your current directory to <code>ethrex/crates/l2</code> in your fresh-cloned ethrex and run the following in a terminal:</p>
+<pre><code class="language-shell">ETHREX_COMMITTER_COMMIT_TIME=120000 MEMPOOL_MAX_SIZE=1000000 make init-l2-dev
+</code></pre>
+<p>This will set up and run an ethrex L2 node in dev mode with a mempool size big-enough to be able to handle the spammer transactions. And after this you should see the ethrex L2 monitor running.</p>
+<h4 id="2-run-the-desired-transactions-spammer"><a class="header" href="#2-run-the-desired-transactions-spammer">2. Run the desired transactions spammer</a></h4>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>Wait a few seconds after running the L2 node to make sure it's fully up and running before starting the spammer, and to ensure that the rich account used by the spammer has funds.</p>
+</div>
+<p>In another terminal, change your current directory to the spammer code you want to run (either ETH or ERC20) and run:</p>
+<pre><code class="language-shell">cargo run
+</code></pre>
+<p>It's ok not to see any logs or prints as output, since the spammer code doesn't print anything.</p>
+<p>If you go back to the terminal where the L2 node is running, you should start seeing the following:</p>
+<ol>
+<li>The mempool table growing in size as transactions are being sent to the L2 node.</li>
+<li>In the L2 Blocks table, new blocks with <code>#Txs</code> greater than 0 being created as the spammer transactions are included in blocks.</li>
+<li>Every 2 minutes (or the time you set in <code>ETHREX_COMMITTER_COMMIT_TIME</code>), new batches being created in the L2 Batches table.</li>
+</ol>
+<h4 id="3-run-the-measurer"><a class="header" href="#3-run-the-measurer">3. Run the measurer</a></h4>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<ul>
+<li>Wait until enough batches are created before running the measurer.</li>
+<li>Ignore the results of the first 2/3 batches, since they contain other transactions created during the L2 node initialization.</li>
+</ul>
+</div>
+<p>In another terminal, change your current directory to the measurer code and run:</p>
+<pre><code class="language-shell">cargo run
+</code></pre>
+<p>This will start printing the total number of transactions included in each batch until the last committed one.</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<ul>
+<li>The measurer will query batches starting from batch 1 and will continue indefinitely until it fails to find a batch (e.g. because the L2 node hasn't created it yet), so it is ok to see an error at the end of the output once the measurer reaches a batch that hasn't been created yet.</li>
+</ul>
+</div>
+<h2 id="appendix"><a class="header" href="#appendix">Appendix</a></h2>
+<ul>
+<li><a href="l2/fundamentals/block_vs_state_diff_measurements.html#eth-transactions-spammer">ETH Transactions Spammer</a>
+<ul>
+<li><a href="l2/fundamentals/block_vs_state_diff_measurements.html#mainrs"><code>main.rs</code></a></li>
+<li><a href="l2/fundamentals/block_vs_state_diff_measurements.html#cargotoml"><code>Cargo.toml</code></a></li>
+</ul>
+</li>
+<li><a href="l2/fundamentals/block_vs_state_diff_measurements.html#measurer">Measurer</a>
+<ul>
+<li><a href="l2/fundamentals/block_vs_state_diff_measurements.html#mainrs-1"><code>main.rs</code></a></li>
+<li><a href="l2/fundamentals/block_vs_state_diff_measurements.html#cargotoml-1"><code>Cargo.toml</code></a></li>
+</ul>
+</li>
+<li><a href="l2/fundamentals/block_vs_state_diff_measurements.html#erc20-transactions-spammer">ERC20 Transactions Spammer</a>
+<ul>
+<li><a href="l2/fundamentals/block_vs_state_diff_measurements.html#mainrs-2"><code>main.rs</code></a></li>
+<li><a href="l2/fundamentals/block_vs_state_diff_measurements.html#cargotoml-2"><code>Cargo.toml</code></a></li>
+</ul>
+</li>
+</ul>
+<h3 id="eth-transactions-spammer"><a class="header" href="#eth-transactions-spammer">ETH Transactions Spammer</a></h3>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>This is using ethrex v6.0.0</p>
+</div>
+<h4 id="mainrs"><a class="header" href="#mainrs"><code>main.rs</code></a></h4>
+<pre><code class="language-rs">use ethrex_common::{
+    Address, U256,
+    types::{EIP1559Transaction, Transaction, TxKind},
+};
+use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
+use ethrex_l2_sdk::send_generic_transaction;
+use ethrex_rpc::EthClient;
+use tokio::time::sleep;
+use url::Url;
+
+#[tokio::main]
+async fn main() {
+    let chain_id = 65536999;
+    let senders = vec![
+        "7a738a3a8ee9cdbb5ee8dfc1fc5d97847eaba4d31fd94f89e57880f8901fa029",
+        "8cfe380955165dd01f4e33a3c68f4e08881f238fbbea71a2ab407f4a3759705b",
+        "5bb463c0e64039550de4f95b873397b36d76b2f1af62454bb02cf6024d1ea703",
+        "3c0924743b33b5f06b056bed8170924ca12b0d52671fb85de1bb391201709aaf",
+        "6aeeda1e7eda6d618de89496fce01fb6ec685c38f1c5fccaa129ec339d33ff87",
+    ]
+    .iter()
+    .map(|s| Signer::Local(LocalSigner::new(s.parse().expect("invalid private key"))))
+    .collect::&lt;Vec&lt;Signer&gt;&gt;();
+    let eth_client: EthClient =
+        EthClient::new(Url::parse("http://localhost:1729").expect("Invalid URL"))
+            .expect("Failed to create EthClient");
+    let mut nonce = 0;
+    loop {
+        for sender in senders.clone() {
+            let signed_tx = generate_signed_transaction(nonce, chain_id, &amp;sender).await;
+            send_generic_transaction(&amp;eth_client, signed_tx.into(), &amp;sender)
+                .await
+                .expect("Failed to send transaction");
+            sleep(std::time::Duration::from_millis(10)).await;
+        }
+        nonce += 1;
+    }
+}
+
+async fn generate_signed_transaction(nonce: u64, chain_id: u64, signer: &amp;Signer) -&gt; Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce,
+        value: U256::one(),
+        gas_limit: 250000,
+        max_fee_per_gas: u64::MAX,
+        max_priority_fee_per_gas: 10,
+        chain_id,
+        to: TxKind::Call(Address::random()),
+        ..Default::default()
+    })
+    .sign(&amp;signer)
+    .await
+    .expect("failed to sign transaction")
+}
+</code></pre>
+<h4 id="cargotoml"><a class="header" href="#cargotoml"><code>Cargo.toml</code></a></h4>
+<pre><code class="language-toml">[package]
+name = "tx_spammer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ethrex-sdk = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-common = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-l2-rpc = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-rpc = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+
+tokio = { version = "1", features = ["full"] }
+url = "2"
+hex = "0.4"
+</code></pre>
+<h3 id="measurer"><a class="header" href="#measurer">Measurer</a></h3>
+<p>A simple program that queries the L2 node for batches and blocks, counting the number of transactions in each block, and summing them up per batch.</p>
+<h4 id="mainrs-1"><a class="header" href="#mainrs-1"><code>main.rs</code></a></h4>
+<pre><code class="language-rs">use reqwest::Client;
+use serde_json::{Value, json};
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let mut batch = 1;
+
+    loop {
+        let (first, last) = fetch_batch(batch).await;
+        let mut txs = 0u64;
+        for number in first as u64..=last as u64 {
+            txs += fetch_block(number).await;
+        }
+        println!("Total transactions in batch {}: {}", batch, txs);
+
+        batch += 1;
+    }
+}
+
+async fn fetch_batch(number: u64) -&gt; (i64, i64) {
+    // Create the JSON body equivalent to the --data in curl
+    let body = json!({
+        "method": "ethrex_getBatchByNumber",
+        "params": [format!("0x{:x}", number), false],
+        "id": 1,
+        "jsonrpc": "2.0"
+    });
+
+    // Create a blocking HTTP client
+    let client = Client::new();
+
+    // Send the POST request
+    let response = client
+        .post("http://localhost:1729")
+        .header("Content-Type", "application/json")
+        .json(&amp;body)
+        .send()
+        .await
+        .expect("Failed to send request")
+        .json::&lt;Value&gt;()
+        .await
+        .unwrap();
+
+    let result = &amp;response["result"];
+    let first_block = &amp;result["first_block"].as_i64().unwrap();
+    let last_block = &amp;result["last_block"].as_i64().unwrap();
+    (*first_block, *last_block)
+}
+
+async fn fetch_block(number: u64) -&gt; u64 {
+    // Create the JSON body equivalent to the --data in curl
+    let body = json!({
+        "method": "eth_getBlockByNumber",
+        "params": [format!("0x{:x}", number), false],
+        "id": 1,
+        "jsonrpc": "2.0"
+    });
+
+    // Create a blocking HTTP client
+    let client = Client::new();
+
+    // Send the POST request
+    let response = client
+        .post("http://localhost:1729")
+        .header("Content-Type", "application/json")
+        .json(&amp;body)
+        .send()
+        .await
+        .expect("Failed to send request")
+        .json::&lt;Value&gt;()
+        .await
+        .unwrap();
+
+    let result = &amp;response["result"];
+    let transactions = &amp;result["transactions"];
+    transactions.as_array().unwrap().len() as u64
+}
+</code></pre>
+<h4 id="cargotoml-1"><a class="header" href="#cargotoml-1"><code>Cargo.toml</code></a></h4>
+<pre><code class="language-toml">[package]
+name = "measurer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+</code></pre>
+<h3 id="erc20-transactions-spammer"><a class="header" href="#erc20-transactions-spammer">ERC20 Transactions Spammer</a></h3>
+<h4 id="mainrs-2"><a class="header" href="#mainrs-2"><code>main.rs</code></a></h4>
+<pre><code class="language-rs">use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::{
+    Address, U256,
+    types::{EIP1559Transaction, GenericTransaction, Transaction, TxKind, TxType},
+};
+use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
+use ethrex_l2_sdk::{
+    build_generic_tx, calldata::encode_calldata, create_deploy, send_generic_transaction,
+    wait_for_transaction_receipt,
+};
+use ethrex_rpc::{EthClient, clients::Overrides};
+use tokio::time::sleep;
+use url::Url;
+
+// ERC20 compiled artifact generated from this tutorial:
+// https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
+// If you want to modify the behaviour of the contract, edit the ERC20.sol file,
+// and compile it with solc.
+const ERC20: &amp;str = include_str!("./TestToken.bin").trim_ascii();
+
+#[tokio::main]
+async fn main() {
+    let chain_id = 65536999;
+    let signer = Signer::Local(LocalSigner::new(
+        "39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
+            .parse()
+            .expect("invalid private key"),
+    ));
+    let eth_client: EthClient =
+        EthClient::new(Url::parse("http://localhost:1729").expect("Invalid URL"))
+            .expect("Failed to create EthClient");
+    let contract_address = erc20_deploy(eth_client.clone(), &amp;signer)
+        .await
+        .expect("Failed to deploy ERC20 contract");
+
+    let senders = vec![
+        "7a738a3a8ee9cdbb5ee8dfc1fc5d97847eaba4d31fd94f89e57880f8901fa029",
+        "8cfe380955165dd01f4e33a3c68f4e08881f238fbbea71a2ab407f4a3759705b",
+        "5bb463c0e64039550de4f95b873397b36d76b2f1af62454bb02cf6024d1ea703",
+        "3c0924743b33b5f06b056bed8170924ca12b0d52671fb85de1bb391201709aaf",
+        "6aeeda1e7eda6d618de89496fce01fb6ec685c38f1c5fccaa129ec339d33ff87",
+    ]
+    .iter()
+    .map(|s| Signer::Local(LocalSigner::new(s.parse().expect("invalid private key"))))
+    .collect::&lt;Vec&lt;Signer&gt;&gt;();
+    claim_erc20_balances(contract_address, eth_client.clone(), senders.clone())
+        .await
+        .expect("Failed to claim ERC20 balances");
+    let mut nonce = 1;
+    loop {
+        for sender in senders.clone() {
+            let signed_tx =
+                generate_erc20_transaction(nonce, chain_id, &amp;sender, &amp;eth_client, contract_address)
+                    .await;
+            send_generic_transaction(&amp;eth_client, signed_tx.into(), &amp;sender)
+                .await
+                .expect("Failed to send transaction");
+            println!(
+                "Sent transaction with nonce {} for address {}",
+                nonce,
+                sender.address()
+            );
+            sleep(std::time::Duration::from_millis(10)).await;
+        }
+        nonce += 1;
+    }
+}
+
+// Given an account vector and the erc20 contract address, claim balance for all accounts.
+async fn claim_erc20_balances(
+    contract_address: Address,
+    client: EthClient,
+    accounts: Vec&lt;Signer&gt;,
+) -&gt; eyre::Result&lt;()&gt; {
+    for account in accounts {
+        let claim_balance_calldata = encode_calldata("freeMint()", &amp;[]).unwrap();
+
+        let claim_tx = build_generic_tx(
+            &amp;client,
+            TxType::EIP1559,
+            contract_address,
+            account.address(),
+            claim_balance_calldata.into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        let tx_hash = send_generic_transaction(&amp;client, claim_tx, &amp;account)
+            .await
+            .unwrap();
+        wait_for_transaction_receipt(tx_hash, &amp;client, 1000)
+            .await
+            .unwrap();
+    }
+
+    Ok(())
+}
+
+async fn deploy_contract(
+    client: EthClient,
+    deployer: &amp;Signer,
+    contract: Vec&lt;u8&gt;,
+) -&gt; eyre::Result&lt;Address&gt; {
+    let (_, contract_address) =
+        create_deploy(&amp;client, deployer, contract.into(), Overrides::default()).await?;
+
+    eyre::Ok(contract_address)
+}
+
+async fn erc20_deploy(client: EthClient, deployer: &amp;Signer) -&gt; eyre::Result&lt;Address&gt; {
+    let erc20_bytecode = hex::decode(ERC20).expect("Failed to decode ERC20 bytecode");
+    deploy_contract(client, deployer, erc20_bytecode).await
+}
+
+async fn generate_erc20_transaction(
+    nonce: u64,
+    chain_id: u64,
+    signer: &amp;Signer,
+    client: &amp;EthClient,
+    contract_address: Address,
+) -&gt; GenericTransaction {
+    let send_calldata = encode_calldata(
+        "transfer(address,uint256)",
+        &amp;[
+            ethrex_l2_common::calldata::Value::Address(Address::random()),
+            ethrex_l2_common::calldata::Value::Uint(U256::one()),
+        ],
+    )
+    .unwrap();
+
+    let tx = build_generic_tx(
+        client,
+        TxType::EIP1559,
+        contract_address,
+        signer.address(),
+        send_calldata.into(),
+        Overrides {
+            chain_id: Some(chain_id),
+            value: None,
+            nonce: Some(nonce),
+            max_fee_per_gas: Some(i64::MAX as u64),
+            max_priority_fee_per_gas: Some(10_u64),
+            gas_limit: Some(TX_GAS_COST * 100),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    tx
+}
+</code></pre>
+<h4 id="cargotoml-2"><a class="header" href="#cargotoml-2"><code>Cargo.toml</code></a></h4>
+<pre><code class="language-toml">[package]
+name = "tx_spammer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ethrex-sdk = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-common = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-l2-rpc = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-rpc = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+tokio = { version = "1", features = ["full"] }
+ethrex-l2-common = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+ethrex-blockchain = { git = "https://github.com/lambdaclass/ethrex.git", tag = "v6.0.0" }
+url = "2"
+hex = "0.4"
+eyre = "0.6"
+</code></pre>
+<h4 id="testtokenbin"><a class="header" href="#testtokenbin"><code>TestToken.bin</code></a></h4>
+<pre><code>608060405234801561000f575f5ffd5b506040518060400160405280600881526020017f46756e546f6b656e0000000000000000000000000000000000000000000000008152506040518060400160405280600381526020017f46554e0000000000000000000000000000000000000000000000000000000000815250816003908161008b9190610598565b50806004908161009b9190610598565b5050506100b83369d3c21bcecceda10000006100bd60201b60201c565b61077c565b5f73ffffffffffffffffffffffffffffffffffffffff168273ffffffffffffffffffffffffffffffffffffffff160361012d575f6040517fec442f0500000000000000000000000000000000000000000000000000000000815260040161012491906106a6565b60405180910390fd5b61013e5f838361014260201b60201c565b5050565b5f73ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff1603610192578060025f82825461018691906106ec565b92505081905550610260565b5f5f5f8573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f205490508181101561021b578381836040517fe450d38c0000000000000000000000000000000000000000000000000000000081526004016102129392919061072e565b60405180910390fd5b8181035f5f8673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f2081905550505b5f73ffffffffffffffffffffffffffffffffffffffff168273ffffffffffffffffffffffffffffffffffffffff16036102a7578060025f82825403925050819055506102f1565b805f5f8473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f205f82825401925050819055505b8173ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef8360405161034e9190610763565b60405180910390a3505050565b5f81519050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b7f4e487b71000000000000000000000000000000000000000000000000000000005f52602260045260245ffd5b5f60028204905060018216806103d657607f821691505b6020821081036103e9576103e8610392565b5b50919050565b5f819050815f5260205f209050919050565b5f6020601f8301049050919050565b5f82821b905092915050565b5f6008830261044b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82610410565b6104558683610410565b95508019841693508086168417925050509392505050565b5f819050919050565b5f819050919050565b5f61049961049461048f8461046d565b610476565b61046d565b9050919050565b5f819050919050565b6104b28361047f565b6104c66104be826104a0565b84845461041c565b825550505050565b5f5f905090565b6104dd6104ce565b6104e88184846104a9565b505050565b5b8181101561050b576105005f826104d5565b6001810190506104ee565b5050565b601f82111561055057610521816103ef565b61052a84610401565b81016020851015610539578190505b61054d61054585610401565b8301826104ed565b50505b505050565b5f82821c905092915050565b5f6105705f1984600802610555565b1980831691505092915050565b5f6105888383610561565b9150826002028217905092915050565b6105a18261035b565b67ffffffffffffffff8111156105ba576105b9610365565b5b6105c482546103bf565b6105cf82828561050f565b5f60209050601f831160018114610600575f84156105ee578287015190505b6105f8858261057d565b86555061065f565b601f19841661060e866103ef565b5f5b8281101561063557848901518255600182019150602085019450602081019050610610565b86831015610652578489015161064e601f891682610561565b8355505b6001600288020188555050505b505050505050565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f61069082610667565b9050919050565b6106a081610686565b82525050565b5f6020820190506106b95f830184610697565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6106f68261046d565b91506107018361046d565b9250828201905080821115610719576107186106bf565b5b92915050565b6107288161046d565b82525050565b5f6060820190506107415f830186610697565b61074e602083018561071f565b61075b604083018461071f565b949350505050565b5f6020820190506107765f83018461071f565b92915050565b610e8c806107895f395ff3fe608060405234801561000f575f5ffd5b506004361061009c575f3560e01c80635b70ea9f116100645780635b70ea9f1461015a57806370a082311461016457806395d89b4114610194578063a9059cbb146101b2578063dd62ed3e146101e25761009c565b806306fdde03146100a0578063095ea7b3146100be57806318160ddd146100ee57806323b872dd1461010c578063313ce5671461013c575b5f5ffd5b6100a8610212565b6040516100b59190610b05565b60405180910390f35b6100d860048036038101906100d39190610bb6565b6102a2565b6040516100e59190610c0e565b60405180910390f35b6100f66102c4565b6040516101039190610c36565b60405180910390f35b61012660048036038101906101219190610c4f565b6102cd565b6040516101339190610c0e565b60405180910390f35b6101446102fb565b6040516101519190610cba565b60405180910390f35b610162610303565b005b61017e60048036038101906101799190610cd3565b610319565b60405161018b9190610c36565b60405180910390f35b61019c61035e565b6040516101a99190610b05565b60405180910390f35b6101cc60048036038101906101c79190610bb6565b6103ee565b6040516101d99190610c0e565b60405180910390f35b6101fc60048036038101906101f79190610cfe565b610410565b6040516102099190610c36565b60405180910390f35b60606003805461022190610d69565b80601f016020809104026020016040519081016040528092919081815260200182805461024d90610d69565b80156102985780601f1061026f57610100808354040283529160200191610298565b820191905f5260205f20905b81548152906001019060200180831161027b57829003601f168201915b5050505050905090565b5f5f6102ac610492565b90506102b9818585610499565b600191505092915050565b5f600254905090565b5f5f6102d7610492565b90506102e48582856104ab565b6102ef85858561053e565b60019150509392505050565b5f6012905090565b6103173369d3c21bcecceda100000061062e565b565b5f5f5f8373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f20549050919050565b60606004805461036d90610d69565b80601f016020809104026020016040519081016040528092919081815260200182805461039990610d69565b80156103e45780601f106103bb576101008083540402835291602001916103e4565b820191905f5260205f20905b8154815290600101906020018083116103c757829003601f168201915b5050505050905090565b5f5f6103f8610492565b905061040581858561053e565b600191505092915050565b5f60015f8473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f205f8373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f2054905092915050565b5f33905090565b6104a683838360016106ad565b505050565b5f6104b68484610410565b90507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8110156105385781811015610529578281836040517ffb8f41b200000000000000000000000000000000000000000000000000000000815260040161052093929190610da8565b60405180910390fd5b61053784848484035f6106ad565b5b50505050565b5f73ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff16036105ae575f6040517f96c6fd1e0000000000000000000000000000000000000000000000000000000081526004016105a59190610ddd565b60405180910390fd5b5f73ffffffffffffffffffffffffffffffffffffffff168273ffffffffffffffffffffffffffffffffffffffff160361061e575f6040517fec442f050000000000000000000000000000000000000000000000000000000081526004016106159190610ddd565b60405180910390fd5b61062983838361087c565b505050565b5f73ffffffffffffffffffffffffffffffffffffffff168273ffffffffffffffffffffffffffffffffffffffff160361069e575f6040517fec442f050000000000000000000000000000000000000000000000000000000081526004016106959190610ddd565b60405180910390fd5b6106a95f838361087c565b5050565b5f73ffffffffffffffffffffffffffffffffffffffff168473ffffffffffffffffffffffffffffffffffffffff160361071d575f6040517fe602df050000000000000000000000000000000000000000000000000000000081526004016107149190610ddd565b60405180910390fd5b5f73ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff160361078d575f6040517f94280d620000000000000000000000000000000000000000000000000000000081526004016107849190610ddd565b60405180910390fd5b8160015f8673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f205f8573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f20819055508015610876578273ffffffffffffffffffffffffffffffffffffffff168473ffffffffffffffffffffffffffffffffffffffff167f8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b9258460405161086d9190610c36565b60405180910390a35b50505050565b5f73ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff16036108cc578060025f8282546108c09190610e23565b9250508190555061099a565b5f5f5f8573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f2054905081811015610955578381836040517fe450d38c00000000000000000000000000000000000000000000000000000000815260040161094c93929190610da8565b60405180910390fd5b8181035f5f8673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f2081905550505b5f73ffffffffffffffffffffffffffffffffffffffff168273ffffffffffffffffffffffffffffffffffffffff16036109e1578060025f8282540392505081905550610a2b565b805f5f8473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020015f205f82825401925050819055505b8173ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef83604051610a889190610c36565b60405180910390a3505050565b5f81519050919050565b5f82825260208201905092915050565b8281835e5f83830152505050565b5f601f19601f8301169050919050565b5f610ad782610a95565b610ae18185610a9f565b9350610af1818560208601610aaf565b610afa81610abd565b840191505092915050565b5f6020820190508181035f830152610b1d8184610acd565b905092915050565b5f5ffd5b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f610b5282610b29565b9050919050565b610b6281610b48565b8114610b6c575f5ffd5b50565b5f81359050610b7d81610b59565b92915050565b5f819050919050565b610b9581610b83565b8114610b9f575f5ffd5b50565b5f81359050610bb081610b8c565b92915050565b5f5f60408385031215610bcc57610bcb610b25565b5b5f610bd985828601610b6f565b9250506020610bea85828601610ba2565b9150509250929050565b5f8115159050919050565b610c0881610bf4565b82525050565b5f602082019050610c215f830184610bff565b92915050565b610c3081610b83565b82525050565b5f602082019050610c495f830184610c27565b92915050565b5f5f5f60608486031215610c6657610c65610b25565b5b5f610c7386828701610b6f565b9350506020610c8486828701610b6f565b9250506040610c9586828701610ba2565b9150509250925092565b5f60ff82169050919050565b610cb481610c9f565b82525050565b5f602082019050610ccd5f830184610cab565b92915050565b5f60208284031215610ce857610ce7610b25565b5b5f610cf584828501610b6f565b91505092915050565b5f5f60408385031215610d1457610d13610b25565b5b5f610d2185828601610b6f565b9250506020610d3285828601610b6f565b9150509250929050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52602260045260245ffd5b5f6002820490506001821680610d8057607f821691505b602082108103610d9357610d92610d3c565b5b50919050565b610da281610b48565b82525050565b5f606082019050610dbb5f830186610d99565b610dc86020830185610c27565b610dd56040830184610c27565b949350505050565b5f602082019050610df05f830184610d99565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f610e2d82610b83565b9150610e3883610b83565b9250828201905080821115610e5057610e4f610df6565b5b9291505056fea2646970667358221220c2ace90351a6254148d1d6fc391d67d42f65e41f9290478674caf67a0ec34ec964736f6c634300081b0033
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -5654,7 +6194,7 @@ TODO: add updated graph with L1 block time distribution
 <li><strong>Front-running and Sandwiching Attacks:</strong> Lead Sequencers have the right to reorder transactions as they like and we expect they'll use this to extract MEV, including front-running and sandwiching attacks, which impact user experience. We don't have plans to address this at the protocol level, but we expect solutions to appear at the application level, same as in L1.</li>
 <li><strong>No Sequencers Scenario:</strong> If a sequencing period has no elected Lead Sequencer, we establish Full Anarchy during that period, so anyone can advance the chain. This is a last resort, and we don't expect this happening in practice.</li>
 </ul>
-<h2 id="conclusion"><a class="header" href="#conclusion">Conclusion</a></h2>
+<h2 id="conclusion-1"><a class="header" href="#conclusion-1">Conclusion</a></h2>
 <p>To preserve decentralization and permissionlessness, we chose ticket auctions for leader election, at the expense of preconfirmations and composability.</p>
 <p>As mentioned at the beginning, this approach does not fully align with <a href="https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016">Justin Drake's definition</a> of "based" rollups but is "based enough" to serve as a starting point. Although the current design cannot guarantee that sequencing rights are assigned exclusively to the L1 proposer for each slot, we're interested in achieving this, and will do so once the conditions are met, namely, that L1 proposer lookahead is available.</p>
 <p>So what about "based" Ethrex tomorrow? Eventually, there will be enough incentives for L1 proposers to either run their own L2 Sequencers or delegate their L1 rights to an external one. At that stage, the auction and assignment of L2 sequencing rights will be linked to the current L1 proposer or their delegated Sequencer. Periods may also adjust as lookahead tables, such as the <a href="https://eips.ethereum.org/EIPS/eip-7917">Deterministic Lookahead Proposal</a> or <a href="https://eth-fabric.github.io/website/research/raid">RAID</a>, become viable.</p>
@@ -5877,10 +6417,10 @@ This means that the value returned by <code>eth_gasPrice</code> corresponds to <
 </div>
 <h2 id="l1-fees"><a class="header" href="#l1-fees">L1 Fees</a></h2>
 <p>L1 fees represent the cost of posting data from the L2 to the L1.<br />
-Each transaction is charged based on the amount of <strong>L1 Blob space</strong> it occupies (the size of the transaction’s <strong>stateDiff</strong>).</p>
-<p>After each transaction is executed, the sequencer calculates the <code>stateDiff</code> generated by that transaction.<br />
-The L1 fee for that transaction is computed as:</p>
-<pre><code>l1_fee = blob_base_fee_per_byte * tx_state_diff_size
+Each transaction is charged based on the amount of <strong>L1 Blob space</strong> it occupies (the size of the transaction when RLP-encoded).</p>
+<p>Each time a transaction is executed, the sequencer calculates its RLP-encoded size.
+Then, the L1 fee for that transaction is computed as:</p>
+<pre><code>l1_fee = blob_base_fee_per_byte * tx_encoded_size
 </code></pre>
 <p>An additional amount of gas (<code>l1_gas</code>) is added to the transaction execution so that:</p>
 <pre><code>l1_gas * gas_price = l1_fee
@@ -5893,7 +6433,7 @@ Calls to <code>eth_estimateGas</code> already inherit this behavior and will inc
 The <code>L1Watcher</code> periodically fetches the <code>BlobBaseFee</code> from L1 (at a configured interval) and uses it to compute:</p>
 <pre><code>blob_base_fee_per_byte = (l1_fee_per_blob_gas * GAS_PER_BLOB) / SAFE_BYTES_PER_BLOB
 </code></pre>
-<p>See <a href="l2/fundamentals/./state_diffs.html">State Diffs</a> for more information about how <code>stateDiffs</code> works.</p>
+<p>See the <code>Data availability</code> section <a href="l2/fundamentals/../architecture/overview.html">here</a> for more information about how data availability works.</p>
 <p>L1 fee is deactivated by default. To activate it, configure the <strong>L1 fee vault address</strong>:</p>
 <pre><code class="language-sh">ethrex l2 --block-producer.l1-fee-vault-address &lt;l1-fee-vault-address&gt;
 </code></pre>
@@ -6057,7 +6597,7 @@ Each method accepts a single argument: the <strong><code>block_number</code></st
 
 </style>
 <h1 id="setting-up-a-development-environment-for-ethrex"><a class="header" href="#setting-up-a-development-environment-for-ethrex">Setting up a development environment for ethrex</a></h1>
-<h2 id="prerequisites-4"><a class="header" href="#prerequisites-4">Prerequisites</a></h2>
+<h2 id="prerequisites-5"><a class="header" href="#prerequisites-5">Prerequisites</a></h2>
 <ul>
 <li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
 <li><a href="https://git-scm.com/downloads">Git</a></li>
@@ -6244,7 +6784,7 @@ Each method accepts a single argument: the <strong><code>block_number</code></st
 
 </style>
 <h1 id="ethrex-as-a-local-development-node"><a class="header" href="#ethrex-as-a-local-development-node">Ethrex as a local development node</a></h1>
-<h2 id="prerequisites-5"><a class="header" href="#prerequisites-5">Prerequisites</a></h2>
+<h2 id="prerequisites-6"><a class="header" href="#prerequisites-6">Prerequisites</a></h2>
 <p>This guide assumes you've read the dev <a href="developers/l1/../installing.html">installation guide</a></p>
 <h2 id="dev-mode-1"><a class="header" href="#dev-mode-1">Dev mode</a></h2>
 <p>In dev mode ethrex acts as a local Ethereum development node it can be run with the following command</p>
@@ -6324,7 +6864,7 @@ Each method accepts a single argument: the <strong><code>block_number</code></st
 </style>
 <h2 id="importing-blocks"><a class="header" href="#importing-blocks">Importing blocks</a></h2>
 <p>The simplest task a node can do is import blocks offline. We would do so like this:</p>
-<h2 id="prerequisites-6"><a class="header" href="#prerequisites-6">Prerequisites</a></h2>
+<h2 id="prerequisites-7"><a class="header" href="#prerequisites-7">Prerequisites</a></h2>
 <p>This guide assumes you've read the dev <a href="developers/l1/../installing.html">installation guide</a></p>
 <h2 id="import-blocks"><a class="header" href="#import-blocks">Import blocks</a></h2>
 <pre><code class="language-bash"># Execute the import
@@ -6539,7 +7079,7 @@ fn get_account_code(&amp;self, code_hash: H256) -&gt; Result&lt;Bytes, EvmError&
 </style>
 <h1 id="quick-start-l1-localnet"><a class="header" href="#quick-start-l1-localnet">Quick Start (L1 localnet)</a></h1>
 <p>This page will show you how to quickly spin up a local development network with ethrex.</p>
-<h2 id="prerequisites-7"><a class="header" href="#prerequisites-7">Prerequisites</a></h2>
+<h2 id="prerequisites-8"><a class="header" href="#prerequisites-8">Prerequisites</a></h2>
 <ul>
 <li><a href="https://docs.kurtosis.com/install/#ii-install-the-cli">Kurtosis</a></li>
 <li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
@@ -7485,7 +8025,7 @@ make load-test-io
 
 </style>
 <h1 id="ethrex-as-a-local-l2-development-node"><a class="header" href="#ethrex-as-a-local-l2-development-node">Ethrex as a local L2 development node</a></h1>
-<h2 id="prerequisites-8"><a class="header" href="#prerequisites-8">Prerequisites</a></h2>
+<h2 id="prerequisites-9"><a class="header" href="#prerequisites-9">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes you've read the dev <a href="developers/l2/../installing.html">installation guide</a></li>
 <li>An Ethereum utility tool like <a href="https://github.com/lambdaclass/rex">rex</a></li>
@@ -7573,7 +8113,7 @@ make load-test-io
 </style>
 <h1 id="running-integration-tests"><a class="header" href="#running-integration-tests">Running integration tests</a></h1>
 <p>In this section, we will explain how to run integration tests for ethrex L2 with the objective of validating the correct functioning of our stack in our releases. For this, we will use ethrex as a local L2 dev node.</p>
-<h2 id="prerequisites-9"><a class="header" href="#prerequisites-9">Prerequisites</a></h2>
+<h2 id="prerequisites-10"><a class="header" href="#prerequisites-10">Prerequisites</a></h2>
 <ul>
 <li>Install the latest ethrex release or pre-release binary following the instructions in the <a href="https://docs.ethrex.xyz/getting-started/installation/binary_distribution.html">Install ethrex (binary distribution)</a> section.</li>
 <li>For running the tests, you'll need a fresh clone of <a href="https://github.com/lambdaclass/ethrex/">ethrex</a>.</li>
@@ -8798,7 +9338,7 @@ Admin server options:
 
 L2 options:
       --validium
-          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.
+          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1.
 
           [env: ETHREX_L2_VALIDIUM=]
 

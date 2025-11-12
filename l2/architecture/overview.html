@@ -277,6 +277,15 @@
 <li>To keep the batch commitment (i.e. the value attesting to the entire state of the chain) a 32 byte value, we hash the different public inputs into one. The L1 contract is given all the public inputs on <code>commit</code>, checks their validity and then squashes them into one through hashing.</li>
 </ul>
 <h2 id="reconstructing-statedata-availability"><a class="header" href="#reconstructing-statedata-availability">Reconstructing state/Data Availability</a></h2>
+<div class="mdbook-alerts mdbook-alerts-warning">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  warning
+</p>
+<p>The <strong>state diff</strong> mechanism is retained here for historical and conceptual reference.<br />
+Ethrex now publishes <strong>RLP-encoded blocks</strong> (with fee configs) in blobs.<br />
+The principles of verification and compression described below still apply conceptually to this new model.</p>
+</div>
 <p>While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the chain. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the chain or some of their funds.</p>
 <p>This is called the <strong>Data Availability</strong> problem. As discussed before, sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:</p>
 <ul>
@@ -293,6 +302,13 @@
 <h3 id="compression"><a class="header" href="#compression">Compression</a></h3>
 <p>Because state diffs are compressed to save space on L1, this compression needs to be proven as well. Otherwise, once again, the sequencer could send the wrong (compressed) state diffs. This is easy though, we just make the prover run the compression and we're done.</p>
 <h2 id="eip-4844-aka-blobs"><a class="header" href="#eip-4844-aka-blobs">EIP 4844 (a.k.a. Blobs)</a></h2>
+<div class="mdbook-alerts mdbook-alerts-warning">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  warning
+</p>
+<p>The explanations below originally refer to <em>state diffs</em>, but the same blob-based mechanism now carries <strong>RLP-encoded block data</strong> and their associated <strong>fee configs</strong>.</p>
+</div>
 <p>While we could send state diffs through calldata, there is a (hopefully) cheaper way to do it: blobs. The Ethereum Cancun upgrade introduced a new type of transaction where users can submit a list of opaque blobs of data, each one of size at most 128 KB. The main purpose of this new type of transaction is precisely to be used by rollups for data availability; they are priced separately through a <code>blob_gas</code> market instead of the regular <code>gas</code> one and for all intents and purposes should be much cheaper than calldata.</p>
 <p>Using EIP 4844, our state diffs would now be sent through blobs. While this is cheaper, there's a new problem to address with it. The whole point of blobs is that they're cheaper because they are only kept around for approximately two weeks and ONLY in the beacon chain, i.e. the consensus side. The execution side (and thus the EVM when running contracts) does not have access to the contents of a blob. Instead, the only thing it has access to is a <strong>KZG commitment</strong> of it.</p>
 <p>This is important. If you recall, the way the L1 ensured that the state diff published by the sequencer was correct was by hashing its contents and ensuring that the hash matched the given state diff hash. With the contents of the state diff now no longer accesible by the contract, we can't do that anymore, so we need another way to ensure the correct contents of the state diff (i.e. the blob).</p>
@@ -328,6 +344,9 @@
 </ul>
 </li>
 </ul>
+<h2 id="transition-to-rlp-encoded-blocks"><a class="header" href="#transition-to-rlp-encoded-blocks">Transition to RLP-encoded Blocks</a></h2>
+<p>The state diff approach has been deprecated. While it provided a more compact representation, it only guaranteed the availability of the modified state, not the original transactions themselves. To ensure that transactions are also publicly available, Ethrex now publishes <strong>RLP-encoded blocks</strong>, together with their corresponding <strong>fee configurations</strong>, directly in blobs (see <a href="../fundamentals/transaction_fees.html">Transaction fees</a>).</p>
+<p>This new approach guarantees both transaction and state availability, at the cost of higher data size. According to our internal measurements (<a href="../fundamentals/block_vs_state_diff_measurements.html"><code>block_vs_state_diff_measurements.md</code></a>), sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately <strong>2× for ETH transfers</strong> and <strong>3× for ERC20 transfers</strong>.</p>
 <h2 id="l1-l2-communication"><a class="header" href="#l1-l2-communication">L1&lt;-&gt;L2 communication</a></h2>
 <p>To communicate between L1 and L2, we use two mechanisms called <em>Privileged transactions</em>, and <em>L1 messages</em>.
 In this section we talk a bit about them, first going through the more specific use cases for <em>Deposits</em> and <em>Withdrawals</em>.</p>

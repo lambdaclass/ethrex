@@ -238,6 +238,14 @@
 
 </style>
 <h1 id="state-diffs"><a class="header" href="#state-diffs">State diffs</a></h1>
+<div class="mdbook-alerts mdbook-alerts-warning">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  warning
+</p>
+<p>Data availability through <code>state diffs</code> has been deprecated in #5135.<br />
+See the <code>Transition to RLP encoded blocks</code> section <a href="../architecture/overview.html">here</a> for more details.</p>
+</div>
 <p>This architecture was inspired by <a href="https://github.com/matter-labs/zksync-era/blob/main/docs/src/specs/contracts/settlement_contracts/data_availability/pubdata.md">MatterLabs' ZKsync pubdata architecture</a>.</p>
 <p>To provide data availability for our blockchain, we need to publish enough information on every commit transaction to be able to reconstruct the entire state of the L2 from the beginning by querying the L1.</p>
 <p>The data needed is:</p>
@@ -337,7 +345,7 @@ number_of_privileged_transaction_logs_u16 ||
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/fundamentals/deposits.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/fundamentals/block_vs_state_diff_measurements.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -351,7 +359,7 @@ number_of_privileged_transaction_logs_u16 ||
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/fundamentals/deposits.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/fundamentals/block_vs_state_diff_measurements.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
