@@ -217,10 +217,6 @@ contract OnChainProposer is
                     processedPrivilegedTransactionsRollingHash,
                 "OnChainProposer: invalid privileged transaction logs"
             );
-            // Remove the processed transactions from the pending queue
-            ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                uint16(bytes2(processedPrivilegedTransactionsRollingHash))
-            );
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
