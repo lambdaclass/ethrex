@@ -356,7 +356,7 @@ impl GuestProgramState {
     ) -> Result<Option<U256>, GuestProgramStateError> {
         let hashed_key = hash_key(&key);
         let Some(storage_trie) = self.get_valid_storage_trie(address)? else {
-            return Ok(None)
+            return Ok(None);
         };
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)
