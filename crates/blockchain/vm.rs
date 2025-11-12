@@ -46,9 +46,9 @@ impl StoreVmDatabase {
 impl VmDatabase for StoreVmDatabase {
     #[instrument(
         level = "trace",
-        namespace = "block_execution",
         name = "Account read",
-        skip_all
+        skip_all,
+        fields(namespace = "block_execution")
     )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.store
@@ -58,9 +58,9 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(
         level = "trace",
-        namespace = "block_execution",
         name = "Storage read",
-        skip_all
+        skip_all,
+        fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
@@ -70,9 +70,9 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(
         level = "trace",
-        namespace = "block_execution",
         name = "Block hash read",
-        skip_all
+        skip_all,
+        fields(namespace = "block_execution")
     )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         // Check if we have it cached
@@ -120,9 +120,9 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(
         level = "trace",
-        namespace = "block_execution",
         name = "Account code read",
-        skip_all
+        skip_all,
+        fields(namespace = "block_execution")
     )]
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {

@@ -79,9 +79,9 @@ impl Evm {
 
     #[instrument(
         level = "trace",
-        namespace = "block_execution",
         name = "Block execution",
-        skip_all
+        skip_all,
+        fields(namespace = "block_execution")
     )]
     pub fn execute_block_pipeline(
         &mut self,

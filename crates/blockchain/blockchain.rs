@@ -182,9 +182,9 @@ impl Blockchain {
     /// Executes a block withing a new vm instance and state
     #[instrument(
         level = "trace",
-        namespace = "block_execution",
         name = "Execute Block",
-        skip_all
+        skip_all,
+        fields(namespace = "block_execution")
     )]
     fn execute_block_pipeline(
         &self,
@@ -287,9 +287,9 @@ impl Blockchain {
 
     #[instrument(
         level = "trace",
-        namespace = "block_execution",
         name = "Trie update",
-        skip_all
+        skip_all,
+        fields(namespace = "block_execution")
     )]
     fn handle_merkleization(
         &self,
@@ -784,9 +784,9 @@ impl Blockchain {
 
     #[instrument(
         level = "trace",
-        namespace = "block_execution",
         name = "Block DB update",
-        skip_all
+        skip_all,
+        fields(namespace = "block_execution")
     )]
     pub fn store_block(
         &self,
