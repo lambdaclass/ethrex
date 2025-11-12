@@ -4,11 +4,11 @@
 //     Rust.
 //   - Removed dots from all local labels for correct detection in the frontend.
 //     Reason: `.L` local labels are ELF-specific.
-//   - Replaced instance of `adr x??,label` by `adrp x??,label@PAGE` followed by
-//     `add x??,x??,label@PAGEOFF`.
-//
-// TODO: this is probably a matter of selecting the right parameter
-// for the translator.
+//   - Replaced instance of `adr x??,label` by a macro constructing calls to `adrp x??,label@PAGE` followed by
+//     `add x??,x??,label@PAGEOFF` or `adrp x??,label` followed by `add x??,x??,:lo12:label` depending on the target
+//     OS.
+//   - Replaced existing instances of curly braces by pairs of them, to avoid confusing with Rust's templates.
+//   - Replaced exported symbols by parameters representing their name mangled versions.
 
 .macro adr reg, label
 .if {elf}
