@@ -62,6 +62,7 @@ use ethrex_p2p::types::NodeRecord;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
+use std::fs::File;
 use std::{
     collections::HashMap,
     future::IntoFuture,
@@ -214,9 +215,14 @@ pub fn start_block_executor(
         .name("block_executor".to_string())
         .spawn(move || {
             while let Some((notify, block)) = block_receiver.blocking_recv() {
+                let guard = pprof::ProfilerGuardBuilder::default().build().unwrap();
                 let _ = notify
                     .send(blockchain.add_block_pipeline(block))
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
+                if let Ok(report) = guard.report().build() {
+                    let file = File::create("flamegraph.svg").unwrap();
+                    report.flamegraph(file).unwrap();
+                };
             }
         })
         .expect("Falied to spawn block_executor thread");

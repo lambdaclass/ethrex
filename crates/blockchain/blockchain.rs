@@ -834,7 +834,6 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
-        let guard = pprof::ProfilerGuardBuilder::default().build().unwrap();
         let (res, account_updates_list, merkle_queue_length, instants) =
             self.execute_block_pipeline(&block)?;
 
@@ -865,10 +864,6 @@ impl Blockchain {
                 instants,
             );
         }
-        if let Ok(report) = guard.report().build() {
-            let file = File::create("flamegraph.svg").unwrap();
-            report.flamegraph(file).unwrap();
-        };
 
         result
     }
