@@ -16,6 +16,7 @@ use ethrex_p2p::{
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rpc::types::payload::ExecutionPayload;
 use ethrex_storage::error::StoreError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, info, warn};
@@ -795,7 +796,7 @@ pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
-    let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
+    let chain: Vec<Block> = if path_metadata.is_dir() {
         info!(path = %path, "Importing blocks from directory");
         let mut entries: Vec<_> = read_dir(path)
             .expect("Failed to read blocks directory")
@@ -807,7 +808,7 @@ pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
 
         entries
             .iter()
-            .map(|entry| {
+            .flat_map(|entry| {
                 let path_str = entry.to_str().expect("Couldn't convert path to string");
                 info!(path = %path_str, "Importing blocks from file");
                 utils::read_chain_file(path_str)
@@ -815,9 +816,40 @@ pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
             .collect()
     } else {
         info!(path = %path, "Importing blocks from file");
-        vec![utils::read_chain_file(path)]
+        utils::read_chain_file(path)
     };
+    let total_blocks_imported = chain.len();
 
+    /*     let mut payload: ExecutionPayload = ExecutionPayload {
+        parent_hash: todo!(),
+        fee_recipient: todo!(),
+        state_root: todo!(),
+        receipts_root: todo!(),
+        logs_bloom: todo!(),
+        prev_randao: todo!(),
+        block_number: todo!(),
+        gas_limit: todo!(),
+        gas_used: todo!(),
+        timestamp: todo!(),
+        extra_data: todo!(),
+        base_fee_per_gas: todo!(),
+        block_hash: todo!(),
+        transactions: todo!(),
+        withdrawals: todo!(),
+        blob_gas_used: todo!(),
+        excess_blob_gas: todo!(),
+    }; */
+
+    for block in chain {
+        info!(block_count = block.body.transactions.len(), "")
+    }
+
+    let total_duration = start_time.elapsed();
+    info!(
+        blocks = total_blocks_imported,
+        seconds = total_duration.as_secs_f64(),
+        "Big Block generation completed"
+    );
     Ok(())
 }
 
