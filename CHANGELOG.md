@@ -2,6 +2,11 @@
 
 ## Perf
 
+### 2025-11-12
+
+- Avoid copying while reading account code [#5289](https://github.com/lambdaclass/ethrex/pull/5289)
+- Cache `BLOBBASEFEE` opcode value [#5288](https://github.com/lambdaclass/ethrex/pull/5288)
+
 ### 2025-11-11
 
 - Insert instead of merge for bloom rebuilds [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
@@ -17,6 +22,7 @@
 - Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
 
 ### 2025-11-05
+
 - Merkelization backpressure and batching [#5200](https://github.com/lambdaclass/ethrex/pull/5200)
 
 ### 2025-11-03
