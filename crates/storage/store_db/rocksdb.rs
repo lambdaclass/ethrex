@@ -1306,11 +1306,14 @@ impl StoreEngine for Store {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
-        let hash_key = code_hash.as_bytes().to_vec();
-        let Some(bytes) = self.read_sync(CF_ACCOUNT_CODES, hash_key)? else {
+        let cf = self.cf_handle(CF_ACCOUNT_CODES)?;
+        let Some(bytes) = self
+            .db
+            .get_pinned_cf(&cf, code_hash.as_bytes())
+            .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))?
+        else {
             return Ok(None);
         };
-        let bytes = Bytes::from_owner(bytes);
         let (bytecode, targets) = decode_bytes(&bytes)?;
         let code = Code {
             hash: code_hash,
