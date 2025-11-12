@@ -15,8 +15,8 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
-    Options, WriteBatch, checkpoint::Checkpoint,
+    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode,
+    MultiThreaded, Options, WriteBatch, checkpoint::Checkpoint,
 };
 use std::{
     collections::HashSet,
@@ -283,6 +283,7 @@ impl Store {
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_cache(&Cache::new_lru_cache(1024 * 1024 * 1024));
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
