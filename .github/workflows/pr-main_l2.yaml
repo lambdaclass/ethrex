@@ -138,7 +138,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
-          build_args: BUILD_FLAGS=--features l2
+          build_args: BUILD_FLAGS=--features l2,l2-sql
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -157,32 +157,22 @@ jobs:
           - name: "Validium"
             validium: true
             web3signer: false
-            use_native_token: false
             based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla"
             validium: false
             web3signer: false
-            use_native_token: false
             based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla with Web3signer"
             validium: false
             web3signer: true
-            use_native_token: false
             based: false
             compose_targets:
               [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
-          - name: "ERC20 as Native Token"
-            validium: false
-            web3signer: false
-            use_native_token: true
-            based: false
-            compose_targets: [docker-compose.yaml]
           - name: "Based"
             validium: false
             web3signer: false
-            use_native_token: false
             based: true
             compose_targets: [docker-compose.yaml]
     steps:
@@ -239,7 +229,7 @@ jobs:
           docker compose up --detach ethrex_l1
 
       - name: Install rex
-        if: ${{ matrix.use_native_token || matrix.based }}
+        if: ${{ matrix.based }}
         run: |
           cd ..
           git clone https://github.com/lambdaclass/rex.git
@@ -247,11 +237,6 @@ jobs:
           git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
           make cli
           echo "rex install successfully at $(which rex)"
-
-      - name: Deploy native token
-        if: matrix.use_native_token
-        run: |
-          rex deploy $(cat fixtures/contracts/ERC20/NativeTokenTest.bin) 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 
       - name: Deploy contracts
         run: |
@@ -261,11 +246,6 @@ jobs:
           #
           touch cmd/.env
           cd crates/l2
-          if [ "${{ matrix.use_native_token }}" = true ]; then
-            export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0xb4b46bdaa835f8e4b4d8e208b6559cd267851051
-          else
-            export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0x0000000000000000000000000000000000000000
-          fi
           if  [ "${{ matrix.based }}" = true ]; then
             export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
             export COMPILE_CONTRACTS=true
@@ -273,7 +253,6 @@ jobs:
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          ETHREX_NATIVE_TOKEN_L1_ADDRESS=$ETHREX_NATIVE_TOKEN_L1_ADDRESS \
           docker compose up contract_deployer
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
@@ -326,9 +305,6 @@ jobs:
 
       - name: Run test
         run: |
-          if  [ "${{ matrix.based }}" = true ]; then
-            export INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true
-          fi
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
