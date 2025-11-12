@@ -561,7 +561,14 @@ pub async fn deploy_l1_contracts(
 
     info!("Initializing contracts");
 
-    initialize_contracts(contract_addresses.clone(), &eth_client, &opts, &genesis, &signer).await?;
+    initialize_contracts(
+        contract_addresses.clone(),
+        &eth_client,
+        &opts,
+        &genesis,
+        &signer,
+    )
+    .await?;
 
     if contract_addresses.router.is_some() {
         let _ = register_chain(
