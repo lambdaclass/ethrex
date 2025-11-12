@@ -428,7 +428,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
     let gaslimit_price_product = vm
         .env
-        .gas_price // TODO: here we should ensure that the gas price is the correct ratio from the token erc20 to ETH
+        .gas_price
         .checked_mul(vm.env.gas_limit.into())
         .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
