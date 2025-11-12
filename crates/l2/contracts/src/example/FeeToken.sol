@@ -5,15 +5,12 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "../l2/interfaces/IFeeToken.sol";
 
 contract FeeToken is ERC20, IFeeToken {
+    /// @dev Amount minted on construction and via `freeMint`.
     uint256 public constant DEFAULT_MINT = 1_000_000 * (10 ** 18);
+    /// @dev Canonical L1 counterpart so the bridge can validate cross-chain state.
     address public immutable L1_TOKEN;
+    /// @dev Hardcoded bridge contract allowed to mint/burn/lock fees on L2.
     address public constant BRIDGE = 0x000000000000000000000000000000000000FFff;
-    address public constant FEE_COLLECTOR = address(0xffff);
-
-    modifier onlyFeeCollector() {
-        require(msg.sender == FEE_COLLECTOR, "Only fee collector");
-        _;
-    }
 
     modifier onlyBridge() {
         require(msg.sender == BRIDGE, "FeeToken: not authorized");
@@ -35,39 +32,35 @@ contract FeeToken is ERC20, IFeeToken {
         return L1_TOKEN;
     }
 
-    function crosschainMint(address destination, uint256 amount)
-        external
-        override(IERC20L2)
-        onlyBridge
-    {
+    function crosschainMint(
+        address destination,
+        uint256 amount
+    ) external override(IERC20L2) onlyBridge {
         _mint(destination, amount);
     }
 
-    function crosschainBurn(address from, uint256 value)
-        external
-        override(IERC20L2)
-        onlyBridge
-    {
+    function crosschainBurn(
+        address from,
+        uint256 value
+    ) external override(IERC20L2) onlyBridge {
         _burn(from, value);
     }
 
-    function lockFee(address payer, uint256 amount)
-        external
-        override(IFeeToken)
-        onlyFeeCollector
-    {
-        _transfer(payer, FEE_COLLECTOR, amount);
+    function lockFee(
+        address payer,
+        uint256 amount
+    ) external override(IFeeToken) onlyBridge {
+        _transfer(payer, BRIDGE, amount);
     }
 
-    function payFee(address receiver, uint256 amount)
-        external
-        override(IFeeToken)
-        onlyFeeCollector
-    {
+    function payFee(
+        address receiver,
+        uint256 amount
+    ) external override(IFeeToken) onlyBridge {
         if (receiver == address(0)) {
-            _burn(FEE_COLLECTOR, amount);
+            _burn(BRIDGE, amount);
         } else {
-            _transfer(FEE_COLLECTOR, receiver, amount);
+            _transfer(BRIDGE, receiver, amount);
         }
     }
 }

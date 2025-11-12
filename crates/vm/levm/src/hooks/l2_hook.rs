@@ -33,9 +33,9 @@ pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xfc,
 ]);
 
-// lockFee(address payer, uint256 amount) public onlyFeeCollector
+// lockFee(address payer, uint256 amount) public onlyBridge
 const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
-// payFee(address receiver, uint256 amount) public onlyFeeCollector
+// payFee(address receiver, uint256 amount) public onlyBridge
 const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
 // isFeeToken(address token) external view override returns (bool)
 const IS_FEE_TOKEN_SELECTOR: [u8; 4] = [0x16, 0xad, 0x82, 0xd7];
@@ -452,7 +452,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
     let gaslimit_price_product = vm
         .env
-        .gas_price // TODO: here we should ensure that the gas price is the correct ratio from the token erc20 to ETH
+        .gas_price
         .checked_mul(vm.env.gas_limit.into())
         .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
@@ -533,7 +533,7 @@ pub fn deduct_caller_fee_token(
     vm.decrease_account_balance(sender_address, value)
         .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
-    // Then, deduct the gas cost in the fee token by locking it in the fee collector
+    // Then, deduct the gas cost in the fee token by locking it in the l2 bridge
     lock_fee_token(vm, sender_address, gas_limit_price_product)?;
 
     Ok(())
