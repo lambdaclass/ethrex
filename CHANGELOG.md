@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-12
+
+- Removed trie layer cache lock [#5278](https://github.com/lambdaclass/ethrex/pull/5223)
+
 ### 2025-11-11
 
 - Insert instead of merge for bloom rebuilds [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
