@@ -3157,6 +3157,6 @@ mod tests {
     #[test]
     fn test_eip1559_simple_transfer_size() {
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
-        assert_eq!(tx.encode_to_vec().len(), 15);
+        assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
     }
 }
