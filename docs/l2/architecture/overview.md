@@ -120,7 +120,7 @@ Our proof of equivalence implementation follows Method 1 [here](https://notes.et
 
 The state diff approach has been deprecated. While it provided a more compact representation, it only guaranteed the availability of the modified state, not the original transactions themselves. To ensure that transactions are also publicly available, Ethrex now publishes **RLP-encoded blocks**, together with their corresponding **fee configurations**, directly in blobs (see [Transaction fees](../fundamentals/transaction_fees.md)).
 
-This new approach guarantees both transaction and state availability, at the cost of higher data size. According to our internal measurements ([`block_vs_state_diff_measurements.md`](../fundamentals/block_vs_state_diff_measurements.md)), sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately **2.38× for ETH transfers** and **3.07× for ERC20 transfers**.
+This new approach guarantees both transaction and state availability, at the cost of higher data size. According to our internal measurements ([`block_vs_state_diff_measurements.md`](../fundamentals/block_vs_state_diff_measurements.md)), sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately **2× for ETH transfers** and **3× for ERC20 transfers**.
 
 ## L1<->L2 communication
 
