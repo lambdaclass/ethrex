@@ -350,6 +350,7 @@ impl Store {
                 }
             }
         }
+        db.delete_range_cf(&db.cf_handle(CF_INVALID_ANCESTORS).unwrap(), vec![], vec![0xff]).unwrap();
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
 
