@@ -34,7 +34,7 @@ pub struct ExecutionPayload {
     #[serde(with = "serde_utils::u64::hex_str")]
     base_fee_per_gas: u64,
     pub block_hash: H256,
-    transactions: Vec<EncodedTransaction>,
+    pub transactions: Vec<EncodedTransaction>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub withdrawals: Option<Vec<Withdrawal>>,
     // ExecutionPayloadV3 fields. Optional since we support V2 too
@@ -80,11 +80,11 @@ impl EncodedTransaction {
     /// Transactions can be encoded in the following formats:
     /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
     /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
-    fn decode(&self) -> Result<Transaction, RLPDecodeError> {
+    pub fn decode(&self) -> Result<Transaction, RLPDecodeError> {
         Transaction::decode_canonical(self.0.as_ref())
     }
 
-    fn encode(tx: &Transaction) -> Self {
+    pub fn encode(tx: &Transaction) -> Self {
         Self(Bytes::from(tx.encode_canonical_to_vec()))
     }
 }

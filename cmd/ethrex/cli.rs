@@ -16,7 +16,7 @@ use ethrex_p2p::{
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::types::payload::ExecutionPayload;
+use ethrex_rpc::types::payload::{EncodedTransaction, ExecutionPayload};
 use ethrex_storage::error::StoreError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, info, warn};
@@ -796,7 +796,7 @@ pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
-    let chain: Vec<Block> = if path_metadata.is_dir() {
+    let mut chain: Vec<Block> = if path_metadata.is_dir() {
         info!(path = %path, "Importing blocks from directory");
         let mut entries: Vec<_> = read_dir(path)
             .expect("Failed to read blocks directory")
@@ -820,27 +820,22 @@ pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
     };
     let total_blocks_imported = chain.len();
 
-    /*     let mut payload: ExecutionPayload = ExecutionPayload {
-        parent_hash: todo!(),
-        fee_recipient: todo!(),
-        state_root: todo!(),
-        receipts_root: todo!(),
-        logs_bloom: todo!(),
-        prev_randao: todo!(),
-        block_number: todo!(),
-        gas_limit: todo!(),
-        gas_used: todo!(),
-        timestamp: todo!(),
-        extra_data: todo!(),
-        base_fee_per_gas: todo!(),
-        block_hash: todo!(),
-        transactions: todo!(),
-        withdrawals: todo!(),
-        blob_gas_used: todo!(),
-        excess_blob_gas: todo!(),
-    }; */
+    let mut payload = {
+        let first_block = chain
+            .pop()
+            .expect("We should have at least the first block");
+
+        ExecutionPayload::from_block(first_block)
+    };
 
     for block in chain {
+        payload.transactions.extend(
+            block
+                .body
+                .transactions
+                .iter()
+                .map(EncodedTransaction::encode),
+        );
         info!(block_count = block.body.transactions.len(), "")
     }
 
