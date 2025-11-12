@@ -8,14 +8,14 @@ use std::{
 };
 
 use ethrex_common::{
-    Address, Bloom, Bytes, H256, U256,
+    Address, Bloom, Bytes, H160, H256, U256,
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, GenericTransaction, MempoolTransaction, PrivilegedL2Transaction, Receipt,
-        Transaction, TxType, Withdrawal, bloom_from_logs, calc_excess_blob_gas,
-        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_transactions_root, compute_withdrawals_root,
+        ChainConfig, MempoolTransaction, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+        TxType, Withdrawal, bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -33,6 +33,7 @@ use ethrex_metrics::metrics;
 use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
+use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -46,6 +47,12 @@ use crate::{
 
 use thiserror::Error;
 use tracing::{debug, warn};
+
+// 0x3e141f8f9f083024c6e1ec3de2509de5da47c354
+const ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
+    0x3e, 0x14, 0x1f, 0x8f, 0x9f, 0x08, 0x30, 0x24, 0xc6, 0xe1, 0xec, 0x3d, 0xe2, 0x50, 0x9d, 0xe5,
+    0xda, 0x47, 0xc3, 0x54,
+]);
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -523,7 +530,37 @@ impl Blockchain {
         // Fetch mempool transactions
         let (mut plain_txs, mut blob_txs) = self.fetch_mempool_transactions(context)?;
         // Execute and add transactions to payload (if suitable)
+        let mut deposits = false;
         loop {
+            if deposits {
+                let mut new_plain_txs = self
+                    .mempool
+                    .filter_transactions_with_filter_fn(&|tx: &Transaction| -> bool {
+                        tx.to() == TxKind::Call(ON_CHAIN_PROPOSER_ADDRESS)
+                            && tx.tx_type() == TxType::EIP1559
+                    })
+                    .unwrap();
+                let mut new_blob_txs = self
+                    .mempool
+                    .filter_transactions_with_filter_fn(&|tx: &Transaction| -> bool {
+                        tx.to() == TxKind::Call(ON_CHAIN_PROPOSER_ADDRESS)
+                            && tx.tx_type() == TxType::EIP4844
+                    })
+                    .unwrap();
+
+                if !new_plain_txs.is_empty() {
+                    new_plain_txs.extend(plain_txs.txs);
+                    plain_txs = TransactionQueue::new(new_plain_txs, None).unwrap();
+                    deposits = false;
+                }
+
+                if !new_blob_txs.is_empty() {
+                    new_blob_txs.extend(blob_txs.txs);
+                    blob_txs = TransactionQueue::new(new_blob_txs, None).unwrap();
+                    deposits = false;
+                }
+            }
+
             // Check if we have enough gas to run more transactions
             if context.remaining_gas < TX_GAS_COST {
                 debug!("No more gas to run transactions");
@@ -536,7 +573,16 @@ impl Blockchain {
             }
             // Fetch the next transactions
             let (head_tx, is_blob) = match (plain_txs.peek(), blob_txs.peek()) {
-                (None, None) => break,
+                (None, None) => {
+                    if deposits {
+                        // If there's no more transactions but there were deposits, wait
+                        // for the settlement transaction instead of finish the block
+                        sleep(Duration::from_millis(100)).await;
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
                 (None, Some(tx)) => (tx, true),
                 (Some(tx), None) => (tx, false),
                 (Some(a), Some(b)) if b < a => (b, true),
@@ -614,6 +660,7 @@ impl Blockchain {
                             from: from,
                             inner_hash: Default::default(),
                         })).await.unwrap();
+                        deposits = true;
                     }
 
                     txs.shift()?;
@@ -857,6 +904,8 @@ impl TransactionQueue {
                     Err(index) => index,
                 };
                 self.heads.insert(index, head);
+            } else {
+                self.txs.remove(&tx.tx.sender());
             }
         }
         Ok(())
@@ -870,6 +919,11 @@ impl Ord for HeadTransaction {
             (TxType::Privileged, TxType::Privileged) => return self.nonce().cmp(&other.nonce()),
             (TxType::Privileged, _) => return Ordering::Less,
             (_, TxType::Privileged) => return Ordering::Greater,
+            _ => (),
+        };
+        match (self.to(), other.to()) {
+            (TxKind::Call(to), _) if to == ON_CHAIN_PROPOSER_ADDRESS => return Ordering::Less,
+            (_, TxKind::Call(to)) if to == ON_CHAIN_PROPOSER_ADDRESS => return Ordering::Greater,
             _ => (),
         };
         match other.tip.cmp(&self.tip) {
