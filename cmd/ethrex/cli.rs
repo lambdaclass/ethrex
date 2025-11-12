@@ -480,6 +480,26 @@ impl Subcommand {
                 )
                 .await?;
             }
+            Subcommand::GenerateBigBlock { path } => {
+                let network = get_network(opts);
+                let genesis = network.get_genesis()?;
+                let blockchain_type = if l2 {
+                    BlockchainType::L2(L2Config::default())
+                } else {
+                    BlockchainType::L1
+                };
+                import_blocks_bench(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    BlockchainOptions {
+                        r#type: blockchain_type,
+                        perf_logs_enabled: true,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
             }
