@@ -556,12 +556,13 @@ pub async fn deploy_l1_contracts(
     initialize_contracts(contract_addresses.clone(), &eth_client, &opts, &signer).await?;
 
     if opts.deposit_rich {
-        make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
+        let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
             .await
             .inspect_err(|err| {
                 warn!("Failed to make deposits: {err}");
-            })?;
+            });
     }
+
     write_contract_addresses_to_env(contract_addresses.clone(), opts.env_file_path)?;
     info!("Deployer binary finished successfully");
     Ok(contract_addresses)
