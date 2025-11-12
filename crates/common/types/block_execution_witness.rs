@@ -438,9 +438,8 @@ impl GuestProgramState {
         } else {
             let Some(storage_root) = self.get_account_state(address)?.map(|a| a.storage_root)
             else {
-                return Err(GuestProgramStateError::Database(format!(
-                    "couldn't find account state for account {address} whose storage is not verified"
-                )));
+                // empty account
+                return Ok(None);
             };
             let storage_trie = match self.storage_tries.get(&address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
