@@ -25,6 +25,7 @@ tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
 
 ethrex-metrics = { path = "./metrics", default-features = false }
+pprof.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
