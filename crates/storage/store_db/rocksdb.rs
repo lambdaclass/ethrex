@@ -146,7 +146,7 @@ pub struct Store {
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
-    code_cache: Arc<Mutex<CodeCache>>,
+    account_code_cache: Arc<Mutex<CodeCache>>,
 }
 
 impl Store {
@@ -374,7 +374,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
-            code_cache: Arc::new(Mutex::new(FxHashMap::default())),
+            account_code_cache: Arc::new(Mutex::new(FxHashMap::default())),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -1310,7 +1310,21 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    /// Get account code by its hash.
+    ///
+    /// Check if the code exists in the cache (attribute `account_code_cache`), if not,
+    /// reads the database, and if it exists, decodes and returns it.
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
+        // check cache first
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)
+        {
+            return Ok(Some(code.clone()));
+        }
+
         let cf = self.cf_handle(CF_ACCOUNT_CODES)?;
         let Some(bytes) = self
             .db
@@ -1325,6 +1339,12 @@ impl StoreEngine for Store {
             bytecode: Bytes::copy_from_slice(bytecode),
             jump_targets: <Vec<_>>::decode(targets)?,
         };
+        // insert into cache
+        self.account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(code_hash, code.clone());
+
         Ok(Some(code))
     }
 
