@@ -405,6 +405,10 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[command(
+        name = "generate-big-block",
+        about = "Compresesses a lot of blocks into a NewPayloadV4 json"
+    )]
     GenerateBigBlock {
         #[arg(
             required = true,
