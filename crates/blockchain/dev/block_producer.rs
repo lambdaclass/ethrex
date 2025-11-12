@@ -34,6 +34,7 @@ pub async fn start_block_producer(
             parent_beacon_block_root: Some(parent_beacon_block_root),
             withdrawals: Some(Vec::new()),
         };
+
         let fork_choice_response = match engine_client
             .engine_forkchoice_updated_v3(fork_choice_state, Some(payload_attributes))
             .await
@@ -50,6 +51,8 @@ pub async fn start_block_producer(
                 continue;
             }
         };
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         let payload_id = fork_choice_response
             .payload_id
             .expect("Failed to produce block: payload_id is None in ForkChoiceResponse");
