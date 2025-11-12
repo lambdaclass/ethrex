@@ -125,7 +125,7 @@ impl Default for GasTipEstimator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eth::test_utils::{
+    use crate::test_utils::{
         BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_empty_blocks, add_legacy_tx_blocks,
         add_mixed_tx_blocks, setup_store,
     };

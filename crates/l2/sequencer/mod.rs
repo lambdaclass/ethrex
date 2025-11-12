@@ -20,6 +20,8 @@ use l1_watcher::L1Watcher;
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use reqwest::Url;
+use spawned_concurrency::tasks::GenServerHandle;
+use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -49,7 +51,14 @@ pub async fn start_l2(
     _l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
-) -> Result<(), errors::SequencerError> {
+) -> Result<
+    (
+        Option<GenServerHandle<L1Committer>>,
+        Option<GenServerHandle<BlockProducer>>,
+        Pin<Box<dyn Future<Output = Result<(), errors::SequencerError>> + Send>>,
+    ),
+    errors::SequencerError,
+> {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
     } else {
@@ -76,7 +85,11 @@ pub async fn start_l2(
     )
     .await
     .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
-        return Ok(());
+        return Ok((
+            None,
+            None,
+            Box::pin(async { Ok::<(), errors::SequencerError>(()) }),
+        ));
     };
 
     if needed_proof_types.contains(&ProverType::TDX)
@@ -85,7 +98,11 @@ pub async fn start_l2(
         error!(
             "A private key for TDX is required. Please set the flag `--proof-coordinator.tdx-private-key <KEY>` or use the `ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY` environment variable to set the private key"
         );
-        return Ok(());
+        return Ok((
+            None,
+            None,
+            Box::pin(async { Ok::<(), errors::SequencerError>(()) }),
+        ));
     }
 
     let l1_watcher = L1Watcher::spawn(
@@ -120,7 +137,6 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting Proof Coordinator: {err}");
     });
-
     let l1_proof_sender = L1ProofSender::spawn(
         cfg.clone(),
         shared_state.clone(),
@@ -196,15 +212,17 @@ pub async fn start_l2(
         .await?;
     }
 
+    let l1_committer_handle = l1_committer.ok();
+    let block_producer_handle = block_producer.ok();
     let admin_server = start_api(
         format!(
             "{}:{}",
             cfg.admin_server.listen_ip, cfg.admin_server.listen_port
         ),
-        l1_committer.ok(),
+        l1_committer_handle.clone(),
         l1_watcher.ok(),
         l1_proof_sender.ok(),
-        block_producer.ok(),
+        block_producer_handle.clone(),
         #[cfg(feature = "metrics")]
         metrics_gatherer.ok(),
     )
@@ -214,26 +232,27 @@ pub async fn start_l2(
     })
     .ok();
 
-    match (verifier_handle, admin_server) {
-        (Some(handle), Some(admin_server)) => {
-            let (server_res, verifier_res) = tokio::join!(admin_server.into_future(), handle);
-            if let Err(e) = server_res {
-                error!("Admin server task error: {e}");
+    let driver = Box::pin(async move {
+        match (verifier_handle, admin_server) {
+            (Some(handle), Some(admin_server)) => {
+                let (server_res, verifier_res) = tokio::join!(admin_server.into_future(), handle);
+                if let Err(e) = server_res {
+                    error!("Admin server task error: {e}");
+                }
+                handle_verifier_result(verifier_res).await;
             }
-            handle_verifier_result(verifier_res).await;
-        }
-        (Some(handle), None) => {
-            handle_verifier_result(tokio::join!(handle).0).await;
-        }
-        (None, Some(admin_server)) => {
-            if let Err(e) = admin_server.into_future().await {
-                error!("Admin server task error: {e}");
+            (Some(handle), None) => handle_verifier_result(tokio::join!(handle).0).await,
+            (None, Some(admin_server)) => {
+                if let Err(e) = admin_server.into_future().await {
+                    error!("Admin server task error: {e}");
+                }
             }
+            (None, None) => {}
         }
-        (None, None) => {}
-    }
 
-    Ok(())
+        Ok(())
+    });
+    Ok((l1_committer_handle, block_producer_handle, driver))
 }
 
 async fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {
