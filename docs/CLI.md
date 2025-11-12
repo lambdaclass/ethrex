@@ -78,6 +78,8 @@ P2P options:
 
       --p2p.disabled
 
+      --p2p.addr <ADDRESS>
+          Listening address for the P2P protocol.
 
       --p2p.port <PORT>
           TCP port for P2P protocol.
