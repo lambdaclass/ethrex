@@ -217,6 +217,7 @@ pub fn stateless_validation_l2(
             storage_tries: BTreeMap::new(),
             block_headers: BTreeMap::new(),
             account_hashes_by_address: BTreeMap::new(),
+            verified_storage_roots: BTreeMap::new(),
         };
 
         let wrapped_db = GuestProgramStateWrapper::new(guest_program_state);

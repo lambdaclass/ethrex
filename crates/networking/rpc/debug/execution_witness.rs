@@ -46,7 +46,7 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
     type Error = TrieError;
     fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
         let mut nodes = Vec::new();
-        for node in value.storage_trie_roots {
+        for node in value.storage_trie_roots.values() {
             node.encode_subtrie(&mut nodes)?;
         }
         value.state_trie_root.encode_subtrie(&mut nodes)?;
@@ -96,12 +96,13 @@ pub fn execution_witness_from_rpc_chain_config(
     let state_trie = Trie::new_temp_with_root(state_trie_root.clone().into());
 
     // get all storage trie roots and embed the rest of the trie into it
-    let mut storage_trie_roots = Vec::new();
+    let mut storage_trie_roots = BTreeMap::new();
     for key in &rpc_witness.keys {
         if key.len() != 20 {
             continue; // not an address
         }
-        let hashed_address = hash_address(&Address::from_slice(key));
+        let address = Address::from_slice(key);
+        let hashed_address = hash_address(&address);
         let Some(encoded_account) = state_trie.get(&hashed_address)? else {
             continue; // empty account, doesn't have a storage trie
         };
@@ -118,7 +119,7 @@ pub fn execution_witness_from_rpc_chain_config(
                 "execution witness does not contain non-empty storage trie".to_string(),
             ));
         };
-        storage_trie_roots.push((*node).clone());
+        storage_trie_roots.insert(address, (*node).clone());
     }
 
     let witness = ExecutionWitness {

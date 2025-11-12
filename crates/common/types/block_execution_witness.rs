@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
+use crate::rkyv_utils::H160Wrapper;
 use crate::types::{Block, Code};
 use crate::{
     constants::EMPTY_KECCACK_HASH,
@@ -14,6 +15,7 @@ use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
+use rkyv::with::{Identity, MapKV};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -44,12 +46,16 @@ pub struct GuestProgramState {
     /// The chain configuration.
     pub chain_config: ChainConfig,
     /// Map of storage root hashes to their corresponding storage tries.
-    pub storage_tries: BTreeMap<H256, Trie>,
+    pub storage_tries: BTreeMap<Address, Trie>,
     /// Map of account addresses to their corresponding hashed addresses.
     /// This is a convenience map to avoid recomputing the hashed address
     /// multiple times during guest program execution.
     /// It is built on-demand during guest program execution, inside the zkVM.
     pub account_hashes_by_address: BTreeMap<Address, Vec<u8>>,
+    /// Map of account addresses to booleans, indicating whose account's storage tries were
+    /// verified.
+    /// Verification is done by hashing the trie and comparing the root hash with the account's storage root.
+    pub verified_storage_roots: BTreeMap<Address, bool>,
 }
 
 /// Witness data produced by the client and consumed by the guest program
@@ -71,10 +77,11 @@ pub struct ExecutionWitness {
     pub first_block_number: u64,
     // The chain config.
     pub chain_config: ChainConfig,
-    /// Root node embedded with the rest of the trie
+    /// Root node embedded with the rest of the trie's nodes
     pub state_trie_root: Node,
-    /// Root nodes embedded with the rest of the tries
-    pub storage_trie_roots: Vec<Node>,
+    /// Root nodes per account storage embedded with the rest of the trie's nodes
+    #[rkyv(with = MapKV<H160Wrapper, Identity>)]
+    pub storage_trie_roots: BTreeMap<Address, Node>,
     /// Flattened map of account addresses and storage keys whose values
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
@@ -138,11 +145,11 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         state_trie.hash_no_commit();
 
         let mut storage_tries = BTreeMap::new();
-        for storage_trie_root in value.storage_trie_roots {
+        for (address, storage_trie_root) in value.storage_trie_roots {
             // hash storage trie nodes
             let storage_trie = Trie::new_temp_with_root(storage_trie_root.into());
-            let hash = storage_trie.hash_no_commit();
-            storage_tries.insert(hash, storage_trie);
+            storage_trie.hash_no_commit();
+            storage_tries.insert(address, storage_trie);
         }
 
         // hash codes
@@ -165,6 +172,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             first_block_number: value.first_block_number,
             chain_config: value.chain_config,
             account_hashes_by_address: BTreeMap::new(),
+            verified_storage_roots: BTreeMap::new(),
         };
 
         Ok(guest_program_state)
@@ -216,11 +224,7 @@ impl GuestProgramState {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let mut storage_trie = self
-                        .storage_tries
-                        .get(&account_state.storage_root)
-                        .map(|n| Trie::new_temp_with_root(n.root.clone()))
-                        .unwrap_or_default();
+                    let storage_trie = self.storage_tries.entry(update.address).or_default();
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -245,7 +249,6 @@ impl GuestProgramState {
                     }
 
                     let storage_root = storage_trie.hash_no_commit();
-                    self.storage_tries.insert(storage_root, storage_trie);
                     account_state.storage_root = storage_root;
                 }
 
@@ -351,22 +354,10 @@ impl GuestProgramState {
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, GuestProgramStateError> {
-        let Some(storage_root) = self
-            .get_account_state(address)?
-            .map(|account| account.storage_root)
-        else {
-            return Ok(None);
-        };
-        if storage_root == *EMPTY_TRIE_HASH {
-            return Ok(None);
-        }
-        let Some(storage_trie) = self.storage_tries.get(&storage_root) else {
-            return Err(GuestProgramStateError::Database(format!(
-                "non empty storage trie not found for root {storage_root:?} of account {address:?} for key {key:?}"
-            )));
-        };
-
         let hashed_key = hash_key(&key);
+        let Some(storage_trie) = self.get_valid_storage_trie(address)? else {
+            return Ok(None)
+        };
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)
             .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
@@ -435,6 +426,34 @@ impl GuestProgramState {
         }
 
         Ok(())
+    }
+
+    pub fn get_valid_storage_trie(
+        &mut self,
+        address: Address,
+    ) -> Result<Option<&Trie>, GuestProgramStateError> {
+        let is_storage_verified = *self.verified_storage_roots.get(&address).unwrap_or(&false);
+        if is_storage_verified {
+            Ok(self.storage_tries.get(&address))
+        } else {
+            let Some(storage_root) = self.get_account_state(address)?.map(|a| a.storage_root)
+            else {
+                return Err(GuestProgramStateError::Database(format!(
+                    "couldn't find account state for account {address} whose storage is not verified"
+                )));
+            };
+            let storage_trie = match self.storage_tries.get(&address) {
+                None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
+                Some(trie) if trie.hash_no_commit() == storage_root => trie,
+                _ => {
+                    return Err(GuestProgramStateError::Custom(format!(
+                        "invalid storage trie for account {address}"
+                    )));
+                }
+            };
+            self.verified_storage_roots.insert(address, true);
+            Ok(Some(storage_trie))
+        }
     }
 }
 
