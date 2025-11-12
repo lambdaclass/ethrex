@@ -23,13 +23,13 @@ use ethrex_common::{
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 pub type Storage = HashMap<U256, H256>;
 
@@ -270,16 +270,12 @@ pub fn eip7702_recover_address(
         return Ok(None);
     }
 
-    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
+    let mut rlp_buf = Vec::with_capacity(128);
+    rlp_buf.push(MAGIC);
+    (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
+    let bytes = keccak_hash(&rlp_buf);
 
-    let mut hasher = Keccak256::new();
-    hasher.update([MAGIC]);
-    hasher.update(rlp_buf);
-    let bytes = &mut hasher.finalize();
-
-    let Ok(message) = Message::from_digest_slice(bytes) else {
-        return Ok(None);
-    };
+    let message = Message::from_digest(bytes);
 
     let bytes = [
         auth_tuple.r_signature.to_big_endian(),
@@ -303,14 +299,10 @@ pub fn eip7702_recover_address(
     };
 
     let public_key = authority.serialize_uncompressed();
-    let mut hasher = Keccak256::new();
-    hasher.update(public_key.get(1..).ok_or(InternalError::Slicing)?);
-    let address_hash = hasher.finalize();
+    let address_hash = keccak_hash(&public_key[1..]);
 
     // Get the last 20 bytes of the hash -> Address
-    let authority_address_bytes: [u8; 20] = address_hash
-        .get(12..32)
-        .ok_or(InternalError::Slicing)?
+    let authority_address_bytes: [u8; 20] = address_hash[12..]
         .try_into()
         .map_err(|_| InternalError::TypeConversion)?;
     Ok(Some(Address::from_slice(&authority_address_bytes)))

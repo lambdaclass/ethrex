@@ -34,7 +34,7 @@ contract OnChainProposer is
     /// all the withdrawals that were processed in the batch being committed
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
-        bytes32 BlobKZGVersionedHash;
+        bytes32 blobKZGVersionedHash;
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
@@ -529,7 +529,7 @@ contract OnChainProposer is
         }
         bytes32 blobVersionedHash = bytes32(publicData[128:160]);
         if (
-            batchCommitments[batchNumber].BlobKZGVersionedHash !=
+            batchCommitments[batchNumber].blobKZGVersionedHash !=
             blobVersionedHash
         ) {
             return

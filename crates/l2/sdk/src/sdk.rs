@@ -77,7 +77,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x36664d7c5031bd965bbb405b55495a90dd780740
+/// BRIDGE_ADDRESS or 0xebc31eff9d9f5f63f65a68734816b7de1256845b
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
