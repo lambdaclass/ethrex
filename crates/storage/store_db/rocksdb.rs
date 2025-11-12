@@ -18,6 +18,7 @@ use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch, checkpoint::Checkpoint,
 };
+use rustc_hash::FxHashMap;
 use std::{
     collections::HashSet,
     path::Path,
@@ -136,6 +137,8 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
+type CodeCache = FxHashMap<H256, Code>;
+
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
@@ -143,6 +146,7 @@ pub struct Store {
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    code_cache: Arc<Mutex<CodeCache>>,
 }
 
 impl Store {
@@ -370,6 +374,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            code_cache: Arc::new(Mutex::new(FxHashMap::default())),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
