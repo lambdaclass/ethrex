@@ -192,21 +192,18 @@ pub trait RpcHandler: Sized {
 
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(context).await
+        let namespace = match req.namespace() {
+            Ok(RpcNamespace::Engine) => "engine",
+            _ => "rpc",
+        };
+
+        record_async_duration(namespace, req.method.as_str(), async move {
+            request.handle(context).await
+        })
+        .await
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
-}
-
-/// Middleware wrapper that records RPC method latency directly in the shared profiling histogram.
-#[inline]
-async fn instrumented_call<T: RpcHandler>(
-    namespace: &str,
-    method: &str,
-    req: &RpcRequest,
-    context: RpcApiContext,
-) -> Result<Value, RpcErr> {
-    record_async_duration(namespace, method, T::call(req, context)).await
 }
 
 pub const FILTER_DURATION: Duration = {
@@ -468,125 +465,36 @@ pub async fn map_authrpc_requests(
 
 pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "eth_chainId" => instrumented_call::<ChainId>("rpc", "eth_chainId", req, context).await,
-        "eth_syncing" => instrumented_call::<Syncing>("rpc", "eth_syncing", req, context).await,
-        "eth_getBlockByNumber" => {
-            instrumented_call::<GetBlockByNumberRequest>(
-                "rpc",
-                "eth_getBlockByNumber",
-                req,
-                context,
-            )
-            .await
-        }
-        "eth_getBlockByHash" => {
-            instrumented_call::<GetBlockByHashRequest>("rpc", "eth_getBlockByHash", req, context)
-                .await
-        }
-        "eth_getBalance" => {
-            instrumented_call::<GetBalanceRequest>("rpc", "eth_getBalance", req, context).await
-        }
-        "eth_getCode" => {
-            instrumented_call::<GetCodeRequest>("rpc", "eth_getCode", req, context).await
-        }
-        "eth_getStorageAt" => {
-            instrumented_call::<GetStorageAtRequest>("rpc", "eth_getStorageAt", req, context).await
-        }
+        "eth_chainId" => ChainId::call(req, context).await,
+        "eth_syncing" => Syncing::call(req, context).await,
+        "eth_getBlockByNumber" => GetBlockByNumberRequest::call(req, context).await,
+        "eth_getBlockByHash" => GetBlockByHashRequest::call(req, context).await,
+        "eth_getBalance" => GetBalanceRequest::call(req, context).await,
+        "eth_getCode" => GetCodeRequest::call(req, context).await,
+        "eth_getStorageAt" => GetStorageAtRequest::call(req, context).await,
         "eth_getBlockTransactionCountByNumber" => {
-            instrumented_call::<GetBlockTransactionCountRequest>(
-                "rpc",
-                "eth_getBlockTransactionCountByNumber",
-                req,
-                context,
-            )
-            .await
+            GetBlockTransactionCountRequest::call(req, context).await
         }
         "eth_getBlockTransactionCountByHash" => {
-            instrumented_call::<GetBlockTransactionCountRequest>(
-                "rpc",
-                "eth_getBlockTransactionCountByHash",
-                req,
-                context,
-            )
-            .await
+            GetBlockTransactionCountRequest::call(req, context).await
         }
         "eth_getTransactionByBlockNumberAndIndex" => {
-            instrumented_call::<GetTransactionByBlockNumberAndIndexRequest>(
-                "rpc",
-                "eth_getTransactionByBlockNumberAndIndex",
-                req,
-                context,
-            )
-            .await
+            GetTransactionByBlockNumberAndIndexRequest::call(req, context).await
         }
         "eth_getTransactionByBlockHashAndIndex" => {
-            instrumented_call::<GetTransactionByBlockHashAndIndexRequest>(
-                "rpc",
-                "eth_getTransactionByBlockHashAndIndex",
-                req,
-                context,
-            )
-            .await
+            GetTransactionByBlockHashAndIndexRequest::call(req, context).await
         }
-        "eth_getBlockReceipts" => {
-            instrumented_call::<GetBlockReceiptsRequest>(
-                "rpc",
-                "eth_getBlockReceipts",
-                req,
-                context,
-            )
-            .await
-        }
-        "eth_getTransactionByHash" => {
-            instrumented_call::<GetTransactionByHashRequest>(
-                "rpc",
-                "eth_getTransactionByHash",
-                req,
-                context,
-            )
-            .await
-        }
-        "eth_getTransactionReceipt" => {
-            instrumented_call::<GetTransactionReceiptRequest>(
-                "rpc",
-                "eth_getTransactionReceipt",
-                req,
-                context,
-            )
-            .await
-        }
-        "eth_createAccessList" => {
-            instrumented_call::<CreateAccessListRequest>(
-                "rpc",
-                "eth_createAccessList",
-                req,
-                context,
-            )
-            .await
-        }
-        "eth_blockNumber" => {
-            instrumented_call::<BlockNumberRequest>("rpc", "eth_blockNumber", req, context).await
-        }
-        "eth_call" => instrumented_call::<CallRequest>("rpc", "eth_call", req, context).await,
-        "eth_blobBaseFee" => {
-            instrumented_call::<GetBlobBaseFee>("rpc", "eth_blobBaseFee", req, context).await
-        }
-        "eth_getTransactionCount" => {
-            instrumented_call::<GetTransactionCountRequest>(
-                "rpc",
-                "eth_getTransactionCount",
-                req,
-                context,
-            )
-            .await
-        }
-        "eth_feeHistory" => {
-            instrumented_call::<FeeHistoryRequest>("rpc", "eth_feeHistory", req, context).await
-        }
-        "eth_estimateGas" => {
-            instrumented_call::<EstimateGasRequest>("rpc", "eth_estimateGas", req, context).await
-        }
-        "eth_getLogs" => instrumented_call::<LogsFilter>("rpc", "eth_getLogs", req, context).await,
+        "eth_getBlockReceipts" => GetBlockReceiptsRequest::call(req, context).await,
+        "eth_getTransactionByHash" => GetTransactionByHashRequest::call(req, context).await,
+        "eth_getTransactionReceipt" => GetTransactionReceiptRequest::call(req, context).await,
+        "eth_createAccessList" => CreateAccessListRequest::call(req, context).await,
+        "eth_blockNumber" => BlockNumberRequest::call(req, context).await,
+        "eth_call" => CallRequest::call(req, context).await,
+        "eth_blobBaseFee" => GetBlobBaseFee::call(req, context).await,
+        "eth_getTransactionCount" => GetTransactionCountRequest::call(req, context).await,
+        "eth_feeHistory" => FeeHistoryRequest::call(req, context).await,
+        "eth_estimateGas" => EstimateGasRequest::call(req, context).await,
+        "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
             NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
         }
@@ -596,76 +504,26 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getFilterChanges" => {
             FilterChangesRequest::stateful_call(req, context.storage, context.active_filters).await
         }
-        "eth_sendRawTransaction" => {
-            instrumented_call::<SendRawTransactionRequest>(
-                "rpc",
-                "eth_sendRawTransaction",
-                req,
-                context,
-            )
-            .await
-        }
-        "eth_getProof" => {
-            instrumented_call::<GetProofRequest>("rpc", "eth_getProof", req, context).await
-        }
-        "eth_gasPrice" => instrumented_call::<GasPrice>("rpc", "eth_gasPrice", req, context).await,
+        "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
+        "eth_getProof" => GetProofRequest::call(req, context).await,
+        "eth_gasPrice" => GasPrice::call(req, context).await,
         "eth_maxPriorityFeePerGas" => {
-            instrumented_call::<eth::max_priority_fee::MaxPriorityFee>(
-                "rpc",
-                "eth_maxPriorityFeePerGas",
-                req,
-                context,
-            )
-            .await
+            eth::max_priority_fee::MaxPriorityFee::call(req, context).await
         }
-        "eth_config" => instrumented_call::<Config>("rpc", "eth_config", req, context).await,
+        "eth_config" => Config::call(req, context).await,
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
 
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "debug_getRawHeader" => {
-            instrumented_call::<GetRawHeaderRequest>("rpc", "debug_getRawHeader", req, context)
-                .await
-        }
-        "debug_getRawBlock" => {
-            instrumented_call::<GetRawBlockRequest>("rpc", "debug_getRawBlock", req, context).await
-        }
-        "debug_getRawTransaction" => {
-            instrumented_call::<GetRawTransaction>("rpc", "debug_getRawTransaction", req, context)
-                .await
-        }
-        "debug_getRawReceipts" => {
-            instrumented_call::<GetRawReceipts>("rpc", "debug_getRawReceipts", req, context).await
-        }
-        "debug_executionWitness" => {
-            instrumented_call::<ExecutionWitnessRequest>(
-                "rpc",
-                "debug_executionWitness",
-                req,
-                context,
-            )
-            .await
-        }
-        "debug_traceTransaction" => {
-            instrumented_call::<TraceTransactionRequest>(
-                "rpc",
-                "debug_traceTransaction",
-                req,
-                context,
-            )
-            .await
-        }
-        "debug_traceBlockByNumber" => {
-            instrumented_call::<TraceBlockByNumberRequest>(
-                "rpc",
-                "debug_traceBlockByNumber",
-                req,
-                context,
-            )
-            .await
-        }
+        "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
+        "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
+        "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
+        "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
+        "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
+        "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
+        "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
@@ -675,111 +533,30 @@ pub async fn map_engine_requests(
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "engine_exchangeCapabilities" => {
-            instrumented_call::<ExchangeCapabilitiesRequest>(
-                "engine",
-                "engine_exchangeCapabilities",
-                req,
-                context,
-            )
-            .await
-        }
-        "engine_forkchoiceUpdatedV1" => {
-            instrumented_call::<ForkChoiceUpdatedV1>(
-                "engine",
-                "engine_forkchoiceUpdatedV1",
-                req,
-                context,
-            )
-            .await
-        }
-        "engine_forkchoiceUpdatedV2" => {
-            instrumented_call::<ForkChoiceUpdatedV2>(
-                "engine",
-                "engine_forkchoiceUpdatedV2",
-                req,
-                context,
-            )
-            .await
-        }
-        "engine_forkchoiceUpdatedV3" => {
-            instrumented_call::<ForkChoiceUpdatedV3>(
-                "engine",
-                "engine_forkchoiceUpdatedV3",
-                req,
-                context,
-            )
-            .await
-        }
-        "engine_newPayloadV4" => {
-            instrumented_call::<NewPayloadV4Request>("engine", "engine_newPayloadV4", req, context)
-                .await
-        }
-        "engine_newPayloadV3" => {
-            instrumented_call::<NewPayloadV3Request>("engine", "engine_newPayloadV3", req, context)
-                .await
-        }
-        "engine_newPayloadV2" => {
-            instrumented_call::<NewPayloadV2Request>("engine", "engine_newPayloadV2", req, context)
-                .await
-        }
-        "engine_newPayloadV1" => {
-            instrumented_call::<NewPayloadV1Request>("engine", "engine_newPayloadV1", req, context)
-                .await
-        }
+        "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
+        "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
+        "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
+        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
+        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
+        "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
+        "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
         "engine_exchangeTransitionConfigurationV1" => {
-            instrumented_call::<ExchangeTransitionConfigV1Req>(
-                "engine",
-                "engine_exchangeTransitionConfigurationV1",
-                req,
-                context,
-            )
-            .await
+            ExchangeTransitionConfigV1Req::call(req, context).await
         }
-        "engine_getPayloadV5" => {
-            instrumented_call::<GetPayloadV5Request>("engine", "engine_getPayloadV5", req, context)
-                .await
-        }
-        "engine_getPayloadV4" => {
-            instrumented_call::<GetPayloadV4Request>("engine", "engine_getPayloadV4", req, context)
-                .await
-        }
-        "engine_getPayloadV3" => {
-            instrumented_call::<GetPayloadV3Request>("engine", "engine_getPayloadV3", req, context)
-                .await
-        }
-        "engine_getPayloadV2" => {
-            instrumented_call::<GetPayloadV2Request>("engine", "engine_getPayloadV2", req, context)
-                .await
-        }
-        "engine_getPayloadV1" => {
-            instrumented_call::<GetPayloadV1Request>("engine", "engine_getPayloadV1", req, context)
-                .await
-        }
+        "engine_getPayloadV5" => GetPayloadV5Request::call(req, context).await,
+        "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
+        "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
+        "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,
+        "engine_getPayloadV1" => GetPayloadV1Request::call(req, context).await,
         "engine_getPayloadBodiesByHashV1" => {
-            instrumented_call::<GetPayloadBodiesByHashV1Request>(
-                "engine",
-                "engine_getPayloadBodiesByHashV1",
-                req,
-                context,
-            )
-            .await
+            GetPayloadBodiesByHashV1Request::call(req, context).await
         }
         "engine_getPayloadBodiesByRangeV1" => {
-            instrumented_call::<GetPayloadBodiesByRangeV1Request>(
-                "engine",
-                "engine_getPayloadBodiesByRangeV1",
-                req,
-                context,
-            )
-            .await
+            GetPayloadBodiesByRangeV1Request::call(req, context).await
         }
-        "engine_getBlobsV1" => {
-            instrumented_call::<BlobsV1Request>("engine", "engine_getBlobsV1", req, context).await
-        }
-        "engine_getBlobsV2" => {
-            instrumented_call::<BlobsV2Request>("engine", "engine_getBlobsV2", req, context).await
-        }
+        "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
+        "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
