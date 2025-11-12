@@ -395,7 +395,6 @@ pub async fn create_deploy(
     overrides: Overrides,
 ) -> Result<(H256, Address), EthClientError> {
     let mut deploy_overrides = overrides;
-
     deploy_overrides.to = Some(TxKind::Create);
 
     let deploy_tx = build_generic_tx(
