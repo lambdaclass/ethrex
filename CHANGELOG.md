@@ -5,6 +5,7 @@
 ### 2025-11-12
 
 - Only mark individual values as dirty instead of the whole trie [#5282](https://github.com/lambdaclass/ethrex/pull/5282)
+- Separate Account and storage Column families in rocksdb [#5055](https://github.com/lambdaclass/ethrex/pull/5055)
 - Avoid copying while reading account code [#5289](https://github.com/lambdaclass/ethrex/pull/5289)
 - Cache `BLOBBASEFEE` opcode value [#5288](https://github.com/lambdaclass/ethrex/pull/5288)
 
