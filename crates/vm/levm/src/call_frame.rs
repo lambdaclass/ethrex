@@ -174,10 +174,7 @@ impl Stack {
 
     #[inline(always)]
     pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
-        let index = self
-            .offset
-            .checked_add(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        let index = self.offset + index;
         if index >= self.values.len() {
             return Err(ExceptionalHalt::StackUnderflow);
         }
