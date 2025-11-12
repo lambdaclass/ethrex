@@ -1,5 +1,5 @@
+use ethrex_crypto::keccak::keccak_hash;
 use revm_comparison::{levm_bench::run_with_levm, revm_bench::run_with_revm};
-use sha3::{Digest, Keccak256};
 use std::{fs::File, io::Read};
 
 enum VM {
@@ -50,7 +50,7 @@ fn main() {
 
 fn generate_calldata(function: &str, n: u64) -> String {
     let function_signature = format!("{function}(uint256)");
-    let hash = Keccak256::digest(function_signature.as_bytes());
+    let hash = keccak_hash(function_signature.as_bytes());
     let function_selector = &hash[..4];
 
     // Encode argument n (uint256, padded to 32 bytes)
