@@ -751,7 +751,7 @@ pub async fn import_blocks_bench(
             // Because this wants to compare against running a real node in terms of reported performance
             // It takes less than 500ms, so this is good enough, but we should report the performance
             // without taking into account that wait.
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         // Make head canonical and label all special blocks correctly.
