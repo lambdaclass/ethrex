@@ -936,7 +936,6 @@ impl L1Committer {
             Value::Uint(U256::from(batch.number)),
             Value::FixedBytes(batch.state_root.0.to_vec().into()),
             Value::FixedBytes(l1_messages_merkle_root.0.to_vec().into()),
-            Value::FixedBytes(l2_messages_merkle_root.0.to_vec().into()),
             Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
             Value::FixedBytes(last_block_hash.0.to_vec().into()),
         ];
@@ -961,6 +960,7 @@ impl L1Committer {
 
             (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
         } else {
+            calldata_values.push(Value::FixedBytes(l2_messages_merkle_root.0.to_vec().into()));
             calldata_values.push(Value::Array(balance_diffs));
             (COMMIT_FUNCTION_SIGNATURE, calldata_values)
         };

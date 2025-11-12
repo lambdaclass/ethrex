@@ -197,9 +197,9 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
+        bytes32 l2MessagesMerkleRoot,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs
     ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
