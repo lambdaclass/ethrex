@@ -44,21 +44,36 @@ impl StoreVmDatabase {
 }
 
 impl VmDatabase for StoreVmDatabase {
-    #[instrument(level = "trace", name = "Account read", skip_all)]
+    #[instrument(
+        level = "trace",
+        namespace = "block_execution",
+        name = "Account read",
+        skip_all
+    )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.store
             .get_account_state_by_root(self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    #[instrument(level = "trace", name = "Storage read", skip_all)]
+    #[instrument(
+        level = "trace",
+        namespace = "block_execution",
+        name = "Storage read",
+        skip_all
+    )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
             .get_storage_at_root(self.state_root, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    #[instrument(level = "trace", name = "Block hash read", skip_all)]
+    #[instrument(
+        level = "trace",
+        namespace = "block_execution",
+        name = "Block hash read",
+        skip_all
+    )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         // Check if we have it cached
         if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
@@ -103,7 +118,12 @@ impl VmDatabase for StoreVmDatabase {
         Ok(self.store.get_chain_config())
     }
 
-    #[instrument(level = "trace", name = "Account code read", skip_all)]
+    #[instrument(
+        level = "trace",
+        namespace = "block_execution",
+        name = "Account code read",
+        skip_all
+    )]
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());

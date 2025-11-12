@@ -77,7 +77,12 @@ impl Evm {
         LEVM::execute_block(block, &mut self.db, self.vm_type)
     }
 
-    #[instrument(level = "trace", name = "Block execution", skip_all)]
+    #[instrument(
+        level = "trace",
+        namespace = "block_execution",
+        name = "Block execution",
+        skip_all
+    )]
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,

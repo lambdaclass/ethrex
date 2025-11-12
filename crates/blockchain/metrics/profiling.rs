@@ -1,6 +1,10 @@
 use prometheus::{Encoder, HistogramTimer, HistogramVec, TextEncoder, register_histogram_vec};
-use std::{future::Future, sync::LazyLock};
-use tracing::{Subscriber, span::Id};
+use std::{borrow::Cow, future::Future, sync::LazyLock};
+use tracing::{
+    Subscriber,
+    field::{Field, Visit},
+    span::{Attributes, Id},
+};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 use crate::MetricsError;
@@ -25,10 +29,43 @@ pub struct FunctionProfilingLayer;
 /// Wrapper around [`HistogramTimer`] to avoid conflicts with other layers
 struct ProfileTimer(HistogramTimer);
 
+/// Span extension storing the profiling namespace selected by instrumentation.
+struct Namespace(Cow<'static, str>);
+
+#[derive(Default)]
+struct NamespaceVisitor {
+    namespace: Option<Cow<'static, str>>,
+}
+
+impl Visit for NamespaceVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "namespace" {
+            self.namespace = Some(Cow::Owned(value.to_owned()));
+        }
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "namespace" {
+            self.namespace = Some(Cow::Owned(
+                format!("{value:?}").trim_matches('"').to_owned(),
+            ));
+        }
+    }
+}
+
 impl<S> Layer<S> for FunctionProfilingLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let mut visitor = NamespaceVisitor::default();
+        attrs.record(&mut visitor);
+
+        if let (Some(span), Some(namespace)) = (ctx.span(id), visitor.namespace) {
+            span.extensions_mut().insert(Namespace(namespace));
+        }
+    }
+
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
         if let Some(span) = ctx.span(id)
             && span.metadata().target().starts_with("ethrex")
@@ -40,20 +77,26 @@ where
                 return;
             }
 
-            let namespace = if target.contains("blockchain") {
-                "block_processing"
-            } else if target.contains("storage") {
-                "storage"
-            } else if target.contains("networking") {
-                "networking"
-            } else {
-                "other"
-            };
+            let namespace = span
+                .extensions()
+                .get::<Namespace>()
+                .map(|ns| ns.0.clone())
+                .unwrap_or_else(|| {
+                    if target.contains("blockchain") {
+                        Cow::Borrowed("block_processing")
+                    } else if target.contains("storage") {
+                        Cow::Borrowed("storage")
+                    } else if target.contains("networking") {
+                        Cow::Borrowed("networking")
+                    } else {
+                        Cow::Borrowed("other")
+                    }
+                });
 
             let function_name = span.metadata().name();
 
             let timer = METRICS_BLOCK_PROCESSING_PROFILE
-                .with_label_values(&[namespace, function_name])
+                .with_label_values(&[namespace.as_ref(), function_name])
                 .start_timer();
             // PERF: `extensions_mut` uses a Mutex internally (per span)
             span.extensions_mut().insert(ProfileTimer(timer));
