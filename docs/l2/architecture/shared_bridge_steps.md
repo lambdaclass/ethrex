@@ -51,7 +51,7 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 	--proof-coordinator.addr 127.0.0.1 \
     --l1.router-address 0x2bc74c22739625e06609ac16eea025f31fd350e3 \
     --watcher.l2-rpcs http://localhost:1730 \
-    --watcher.l2-chain-ids 1730 --no-monitor
+    --watcher.l2-chain-ids 1730
 ```
 
 ### Deploy the second L2
@@ -103,7 +103,7 @@ Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs 
     --proof-coordinator.port 3901 \
     --l1.router-address 0x2bc74c22739625e06609ac16eea025f31fd350e3 \
     --watcher.l2-rpcs http://localhost:1729 \
-    --watcher.l2-chain-ids 65536999 --no-monitor
+    --watcher.l2-chain-ids 65536999
 ```
 
 
