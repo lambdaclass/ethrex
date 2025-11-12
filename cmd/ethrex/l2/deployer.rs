@@ -352,7 +352,7 @@ pub struct DeployerOptions {
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_INITIAL_FEE_TOKEN",
         help_heading = "Deployer options",
-        help = "This address wil be registered as an initial fee token"
+        help = "This address will be registered as an initial fee token"
     )]
     pub initial_fee_token: Option<Address>,
 }
