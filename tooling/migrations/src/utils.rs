@@ -179,7 +179,7 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
                 access_list: tx.access_list,
                 from: tx.from,
                 inner_hash: tx.inner_hash,
-                source_chain_id: SourceChainId::L1
+                source_chain_id: SourceChainId::L1,
             })
         }
     }
