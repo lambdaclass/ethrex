@@ -2,6 +2,9 @@
 
 ## Perf
 
+### 2025-11-12
+- Avoid copying while reading account code [#5289](https://github.com/lambdaclass/ethrex/pull/5289)
+
 ### 2025-11-11
 
 - Insert instead of merge for bloom rebuilds [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
