@@ -22,6 +22,7 @@ use ethrex_rpc::{
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
+use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
@@ -54,6 +55,7 @@ pub struct L1Watcher {
     pub store: Store,
     pub blockchain: Arc<Blockchain>,
     pub eth_client: EthClient,
+    pub this_l2_client: EthClient,
     pub l2_clients: Vec<L2Client>,
     pub bridge_address: Address,
     pub router_address: Address,
@@ -91,8 +93,10 @@ impl L1Watcher {
         eth_config: &EthConfig,
         watcher_config: &L1WatcherConfig,
         sequencer_state: SequencerState,
+        l2_url: Url,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
+        let this_l2_client = EthClient::new(l2_url)?;
         let mut l2_clients: Vec<L2Client> = vec![];
         info!(
             "Configuring L1 Watcher L2 clients {:?} {:?}",
@@ -128,6 +132,7 @@ impl L1Watcher {
             store,
             blockchain,
             eth_client,
+            this_l2_client,
             l2_clients,
             bridge_address: watcher_config.bridge_address,
             router_address,
@@ -146,6 +151,7 @@ impl L1Watcher {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        l2_url: Url,
     ) -> Result<GenServerHandle<Self>, L1WatcherError> {
         let state = Self::new(
             store,
@@ -153,6 +159,7 @@ impl L1Watcher {
             &cfg.eth,
             &cfg.l1_watcher,
             sequencer_state,
+            l2_url,
         )?;
         Ok(state.start())
     }
@@ -263,9 +270,15 @@ impl L1Watcher {
 
             let chain_id = self.store.get_chain_config().chain_id;
 
+            let gas_price = self.this_l2_client.get_gas_price().await?;
+            // Avoid panicking when using as_u64()
+            let gas_price: u64 = gas_price
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
+
             // We should actually delete the gas price field from privileged transactions.
             let mint_transaction = privileged_transaction_data
-                .into_tx(&self.eth_client, chain_id, u64::MAX)
+                .into_tx(&self.eth_client, chain_id, gas_price)
                 .await?;
 
             let tx = Transaction::PrivilegedL2Transaction(mint_transaction);
@@ -313,14 +326,20 @@ impl L1Watcher {
     ) -> Result<(), L1WatcherError> {
         let mut privileged_txs = Vec::new();
 
+        let gas_price = self.this_l2_client.get_gas_price().await?;
+        // Avoid panicking when using as_u64()
+        let gas_price: u64 = gas_price
+            .try_into()
+            .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
+
         for (tx, source_chain_id) in l2_txs {
             info!("Add mint tx with nonce: {}", tx.tx_id.as_u64());
 
             let mint_transaction = PrivilegedL2Transaction {
                 chain_id: tx.chain_id.as_u64(),
                 nonce: tx.tx_id.as_u64(),
-                max_priority_fee_per_gas: u64::MAX,
-                max_fee_per_gas: u64::MAX,
+                max_priority_fee_per_gas: gas_price,
+                max_fee_per_gas: gas_price,
                 gas_limit: tx.gas_limit.as_u64(),
                 to: TxKind::Call(tx.to),
                 value: tx.value,
