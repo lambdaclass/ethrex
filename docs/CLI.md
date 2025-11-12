@@ -605,4 +605,9 @@ Prover client options:
           Possible values: info, debug, trace, warn, error
 
           [default: INFO]
+
+      --sp1-server <URL>
+          Url to the moongate server to use when using sp1 backend
+
+          [env: ETHREX_SP1_SERVER=]
 ```
