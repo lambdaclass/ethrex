@@ -1971,7 +1971,7 @@ impl StoreEngine for Store {
     fn get_trie_layer_cache(&self) -> Result<Arc<TrieLayerCache>, StoreError> {
         Ok(self
             .trie_cache
-            .try_lock()
+            .lock()
             .map_err(|e| StoreError::Custom(e.to_string()))?
             .clone())
     }
