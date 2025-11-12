@@ -367,20 +367,20 @@ impl L1Committer {
                 new_checkpoint_store.clone(),
                 new_checkpoint_blockchain.clone(),
             )
-            .await;
+            .await?;
 
-        let (
+        let Some((
             blobs_bundle,
             new_state_root,
             message_hashes,
             privileged_transactions_hash,
             last_block_of_batch,
-        ) = result?;
-
-        if *last_block == last_block_of_batch {
+        )) = result
+        else {
             debug!("No new blocks to commit, skipping");
+
             return Ok(None);
-        }
+        };
 
         let batch = Batch {
             number: batch_number,
@@ -431,7 +431,7 @@ impl L1Committer {
         batch_number: u64,
         checkpoint_store: Store,
         checkpoint_blockchain: Arc<Blockchain>,
-    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
+    ) -> Result<Option<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber)>, CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
@@ -659,6 +659,11 @@ impl L1Committer {
             acc_blocks.push((last_added_block_number, potential_batch_block.hash()));
         } // end loop
 
+        if acc_blocks.is_empty() {
+            debug!("No new blocks were available to build batch {batch_number}, skipping it");
+            return Ok(None);
+        }
+
         metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
                 privileged_transactions_hashes.len().try_into(),
                 message_hashes.len().try_into()
@@ -707,13 +712,13 @@ impl L1Committer {
             )
             .await?;
 
-        Ok((
+        Ok(Some((
             blobs_bundle,
             new_state_root,
             message_hashes,
             privileged_transactions_hash,
             last_added_block_number,
-        ))
+        )))
     }
 
     async fn generate_and_store_batch_prover_input(
