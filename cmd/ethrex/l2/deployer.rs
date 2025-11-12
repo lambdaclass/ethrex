@@ -1033,10 +1033,7 @@ async fn initialize_contracts(
             initializer,
         )
         .await?;
-        info!(
-            ?fee_token,
-            "CommonBridge initial fee token registered"
-        );
+        info!(?fee_token, "CommonBridge initial fee token registered");
     }
 
     if opts.bridge_owner != initializer.address() {
