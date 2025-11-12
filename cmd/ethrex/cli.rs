@@ -481,24 +481,7 @@ impl Subcommand {
                 .await?;
             }
             Subcommand::GenerateBigBlock { path } => {
-                let network = get_network(opts);
-                let genesis = network.get_genesis()?;
-                let blockchain_type = if l2 {
-                    BlockchainType::L2(L2Config::default())
-                } else {
-                    BlockchainType::L1
-                };
-                import_blocks_bench(
-                    &path,
-                    &opts.datadir,
-                    genesis,
-                    BlockchainOptions {
-                        r#type: blockchain_type,
-                        perf_logs_enabled: true,
-                        ..Default::default()
-                    },
-                )
-                .await?;
+                generate_big_block(&path).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -804,6 +787,37 @@ pub async fn import_blocks_bench(
         seconds = total_duration.as_secs_f64(),
         "Import completed"
     );
+    Ok(())
+}
+
+pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
+    let start_time = Instant::now();
+    let path_metadata = metadata(path).expect("Failed to read path");
+
+    // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
+    let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
+        info!(path = %path, "Importing blocks from directory");
+        let mut entries: Vec<_> = read_dir(path)
+            .expect("Failed to read blocks directory")
+            .map(|res| res.expect("Failed to open file in directory").path())
+            .collect();
+
+        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
+        entries.sort();
+
+        entries
+            .iter()
+            .map(|entry| {
+                let path_str = entry.to_str().expect("Couldn't convert path to string");
+                info!(path = %path_str, "Importing blocks from file");
+                utils::read_chain_file(path_str)
+            })
+            .collect()
+    } else {
+        info!(path = %path, "Importing blocks from file");
+        vec![utils::read_chain_file(path)]
+    };
+
     Ok(())
 }
 
