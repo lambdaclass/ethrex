@@ -138,7 +138,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
-          build_args: BUILD_FLAGS=--features l2
+          build_args: BUILD_FLAGS=--features l2,l2-sql
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

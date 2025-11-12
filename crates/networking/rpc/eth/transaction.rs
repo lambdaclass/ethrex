@@ -18,7 +18,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::ExecutionResult;
+use ethrex_vm::{ExecutionResult, backends::levm::get_max_allowed_gas_limit};
 use serde::Serialize;
 
 use serde_json::Value;
@@ -438,12 +438,16 @@ impl RpcHandler for EstimateGasRequest {
         let storage = &context.storage;
         let blockchain = &context.blockchain;
         let block = self.block.clone().unwrap_or_default();
+        let chain_config = storage.get_chain_config();
+
         debug!("Requested estimate on block: {}", block);
         let block_header = match block.resolve_block_header(storage).await? {
             Some(header) => header,
             // Block not found
             _ => return Ok(Value::Null),
         };
+
+        let current_fork = chain_config.fork(block_header.timestamp);
 
         let transaction = match self.transaction.nonce {
             Some(_nonce) => self.transaction.clone(),
@@ -482,9 +486,10 @@ impl RpcHandler for EstimateGasRequest {
         }
 
         // Prepare binary search
+        let highest_gas_limit = get_max_allowed_gas_limit(block_header.gas_limit, current_fork);
         let mut highest_gas_limit = match transaction.gas {
-            Some(gas) => gas.min(block_header.gas_limit),
-            None => block_header.gas_limit,
+            Some(gas) => gas.min(highest_gas_limit),
+            None => highest_gas_limit,
         };
 
         if transaction.gas_price != 0 {

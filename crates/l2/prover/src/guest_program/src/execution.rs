@@ -12,14 +12,12 @@ use ethrex_common::types::{
     block_execution_witness::GuestProgramState, block_execution_witness::GuestProgramStateError,
 };
 use ethrex_common::{Address, U256};
-use ethrex_common::{
-    H256,
-    types::{Block, BlockHeader},
-};
+use ethrex_common::{H256, types::Block};
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
@@ -32,7 +30,6 @@ use ethrex_l2_common::{
         PrivilegedTransactionError, compute_privileged_transactions_hash,
         get_block_privileged_transactions,
     },
-    state_diff::{StateDiff, StateDiffError, prepare_state_diff},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -51,9 +48,6 @@ pub enum StatelessExecutionError {
     #[error("Privileged Transaction calculation error: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
     #[cfg(feature = "l2")]
-    #[error("State diff error: {0}")]
-    StateDiffError(#[from] StateDiffError),
-    #[cfg(feature = "l2")]
     #[error("Blobs bundle error: {0}")]
     BlobsBundleError(#[from] BlobsBundleError),
     #[cfg(feature = "l2")]
@@ -62,9 +56,6 @@ pub enum StatelessExecutionError {
     #[cfg(feature = "l2")]
     #[error("Invalid KZG blob proof")]
     InvalidBlobProof,
-    #[cfg(feature = "l2")]
-    #[error("Invalid state diff")]
-    InvalidStateDiff,
     #[cfg(feature = "l2")]
     #[error("FeeConfig not provided for L2 execution")]
     FeeConfigNotFound,
@@ -94,6 +85,8 @@ pub enum StatelessExecutionError {
     InvalidPrivilegedTransaction,
     #[error("Internal error: {0}")]
     Internal(String),
+    #[error("Failed to convert integer")]
+    TryIntoError(#[from] std::num::TryFromIntError),
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -165,24 +158,17 @@ pub fn stateless_validation_l2(
     blob_proof: Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    let initial_db = execution_witness.clone();
-
     let StatelessResult {
         receipts,
         initial_state_hash,
         final_state_hash,
-        account_updates,
-        last_block_header,
         last_block_hash,
         non_privileged_count,
-        nodes_hashed,
-        codes_hashed,
-        parent_block_header,
     } = execute_stateless(
         blocks,
         execution_witness,
         elasticity_multiplier,
-        fee_configs,
+        fee_configs.clone(),
     )?;
 
     let (l1messages, privileged_transactions) =
@@ -197,42 +183,10 @@ pub fn stateless_validation_l2(
     // TODO: this could be replaced with something like a ProverConfig in the future.
     let validium = (blob_commitment, &blob_proof) == ([0; 48], &[0; 48]);
 
-    // Check state diffs are valid
+    // Check blobs are valid
     let blob_versioned_hash = if !validium {
-        use bytes::Bytes;
-        use ethrex_common::types::Code;
-
-        let mut guest_program_state = GuestProgramState {
-            codes_hashed: codes_hashed
-                .into_iter()
-                .map(|(h, c)| (h, Code::from_bytecode(Bytes::from_owner(c))))
-                .collect(),
-            parent_block_header,
-            first_block_number: initial_db.first_block_number,
-            chain_config: initial_db.chain_config,
-            nodes_hashed,
-            state_trie: None,
-            // The following fields are not needed for blob validation.
-            storage_tries: BTreeMap::new(),
-            block_headers: BTreeMap::new(),
-            account_hashes_by_address: BTreeMap::new(),
-        };
-
-        guest_program_state
-            .rebuild_state_trie()
-            .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
-
-        let wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
-
-        let state_diff = prepare_state_diff(
-            last_block_header,
-            &wrapped_db,
-            &l1messages,
-            &privileged_transactions,
-            account_updates.values().cloned().collect(),
-        )?;
-
-        verify_blob(state_diff, blob_commitment, blob_proof)?
+        let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
+        verify_blob(blocks, &fee_configs, blob_commitment, blob_proof)?
     } else {
         H256::zero()
     };
@@ -253,20 +207,8 @@ struct StatelessResult {
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,
     final_state_hash: H256,
-    account_updates: HashMap<Address, AccountUpdate>,
-    last_block_header: BlockHeader,
     last_block_hash: H256,
     non_privileged_count: U256,
-
-    // These fields are only used in L2 to validate state diff blobs.
-    // We return them to avoid recomputing when comparing the initial state
-    // with the final state after block execution.
-    #[cfg(feature = "l2")]
-    pub nodes_hashed: BTreeMap<H256, Vec<u8>>,
-    #[cfg(feature = "l2")]
-    pub codes_hashed: BTreeMap<H256, Vec<u8>>,
-    #[cfg(feature = "l2")]
-    pub parent_block_header: BlockHeader,
 }
 
 fn execute_stateless(
@@ -279,19 +221,6 @@ fn execute_stateless(
         .try_into()
         .map_err(StatelessExecutionError::GuestProgramState)?;
 
-    // Cache these L2-specific state fields for later state diff blob validation
-    // to avoid expensive recomputation after the guest_program_state is moved
-    // to the wrapper
-    #[cfg(feature = "l2")]
-    let nodes_hashed = guest_program_state.nodes_hashed.clone();
-    #[cfg(feature = "l2")]
-    let codes_hashed = guest_program_state
-        .codes_hashed
-        .iter()
-        .map(|(h, c)| (*h, c.bytecode.to_vec()))
-        .collect();
-    #[cfg(feature = "l2")]
-    let parent_block_header_clone = guest_program_state.parent_block_header.clone();
     #[cfg(feature = "l2")]
     let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
 
@@ -411,16 +340,8 @@ fn execute_stateless(
         receipts: acc_receipts,
         initial_state_hash,
         final_state_hash,
-        account_updates: acc_account_updates,
-        last_block_header: last_block.header.clone(),
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
-        #[cfg(feature = "l2")]
-        nodes_hashed,
-        #[cfg(feature = "l2")]
-        codes_hashed,
-        #[cfg(feature = "l2")]
-        parent_block_header: parent_block_header_clone,
     })
 }
 
@@ -465,14 +386,28 @@ fn compute_l1messages_and_privileged_transactions_digests(
 
 #[cfg(feature = "l2")]
 fn verify_blob(
-    state_diff: StateDiff,
+    blocks: &[Block],
+    fee_configs: &[FeeConfig],
     commitment: Commitment,
     proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
+    use bytes::Bytes;
     use ethrex_crypto::kzg::verify_blob_kzg_proof;
 
-    let encoded_state_diff = state_diff.encode()?;
-    let blob_data = blob_from_bytes(encoded_state_diff)?;
+    let len: u64 = blocks.len().try_into()?;
+    let mut blob_data = Vec::new();
+
+    blob_data.extend(len.to_be_bytes());
+
+    for block in blocks {
+        blob_data.extend(block.encode_to_vec());
+    }
+
+    for fee_config in fee_configs {
+        blob_data.extend(fee_config.to_vec());
+    }
+
+    let blob_data = blob_from_bytes(Bytes::from(blob_data))?;
 
     if !verify_blob_kzg_proof(blob_data, commitment, proof)? {
         return Err(StatelessExecutionError::InvalidBlobProof);
