@@ -172,4 +172,3 @@ interface ICommonBridge {
     /// @param feeToken Address of the token to unset the ratio.
     function unsetFeeTokenRatio(address feeToken) external;
 }
-
