@@ -264,9 +264,10 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_TRIE_NODES => {
-                    cf_opts.set_write_buffer_size(32 * 1024 * 1024); // 32MB
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
@@ -274,9 +275,10 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_FLATKEYVALUE => {
-                    cf_opts.set_write_buffer_size(32 * 1024 * 1024); // 32MB
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
