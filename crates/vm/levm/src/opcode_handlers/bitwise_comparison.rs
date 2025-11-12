@@ -16,7 +16,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::LT)?;
         let [lho, rho] = *current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho < rho);
-        current_call_frame.stack.push1(result)?;
+        current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -27,7 +27,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::GT)?;
         let [lho, rho] = *current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho > rho);
-        current_call_frame.stack.push1(result)?;
+        current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -46,7 +46,7 @@ impl<'a> VM<'a> {
             // Negative is smaller if signs differ
             u256_from_bool(lho_is_negative)
         };
-        current_call_frame.stack.push1(result)?;
+        current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -65,7 +65,7 @@ impl<'a> VM<'a> {
             // Positive is bigger if signs differ
             u256_from_bool(rho_is_negative)
         };
-        current_call_frame.stack.push1(result)?;
+        current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -77,7 +77,7 @@ impl<'a> VM<'a> {
         let [lho, rho] = *current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho == rho);
 
-        current_call_frame.stack.push1(result)?;
+        current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -90,7 +90,7 @@ impl<'a> VM<'a> {
         let [operand] = current_call_frame.stack.pop()?;
         let result = u256_from_bool(operand.is_zero());
 
-        current_call_frame.stack.push1(result)?;
+        current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -100,7 +100,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::AND)?;
         let [a, b] = *current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(&[a & b])?;
+        current_call_frame.stack.push(a & b)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -110,7 +110,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::OR)?;
         let [a, b] = *current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(&[a | b])?;
+        current_call_frame.stack.push(a | b)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -120,7 +120,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
         let [a, b] = *current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(&[a ^ b])?;
+        current_call_frame.stack.push(a ^ b)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -130,7 +130,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
         let a = current_call_frame.stack.pop1()?;
-        current_call_frame.stack.push(&[!a])?;
+        current_call_frame.stack.push(!a)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -157,7 +157,7 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::Underflow)?; // Same case as above
             current_call_frame
                 .stack
-                .push(&[U256::from(op2.byte(byte_to_push))])?;
+                .push(U256::from(op2.byte(byte_to_push)))?;
         } else {
             current_call_frame.stack.push_zero()?;
         }
@@ -173,7 +173,7 @@ impl<'a> VM<'a> {
         let [shift, value] = *current_call_frame.stack.pop()?;
 
         if shift < U256::from(256) {
-            current_call_frame.stack.push(&[value << shift])?;
+            current_call_frame.stack.push(value << shift)?;
         } else {
             current_call_frame.stack.push_zero()?;
         }
@@ -189,7 +189,7 @@ impl<'a> VM<'a> {
         let [shift, value] = *current_call_frame.stack.pop()?;
 
         if shift < U256::from(256) {
-            current_call_frame.stack.push(&[value >> shift])?;
+            current_call_frame.stack.push(value >> shift)?;
         } else {
             current_call_frame.stack.push_zero()?;
         }
@@ -218,7 +218,7 @@ impl<'a> VM<'a> {
         } else {
             U256::zero()
         };
-        current_call_frame.stack.push1(res)?;
+        current_call_frame.stack.push(res)?;
 
         Ok(OpcodeResult::Continue)
     }
