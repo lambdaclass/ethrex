@@ -894,8 +894,6 @@ impl StoreEngine for Store {
         let mut buf = Vec::with_capacity(128 * 1024);
         for (code_hash, code) in update_batch.code_updates {
             buf.clear();
-            code.bytecode.encode(&mut buf);
-            code.jump_targets.encode(&mut buf);
             buf.put_u32_le(code.bytecode.len() as u32);
             buf.extend_from_slice(&code.bytecode);
             buf.extend(code.jump_targets.into_iter().flat_map(u32::to_le_bytes));
@@ -1266,7 +1264,7 @@ impl StoreEngine for Store {
     async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let code_len = code.bytecode.len();
         let targets_len = code.jump_targets.len();
-        let mut buf = Vec::with_capacity(8 + code_len + std::mem::size_of::<u32>() * targets_len);
+        let mut buf = Vec::with_capacity(4 + code_len + std::mem::size_of::<u32>() * targets_len);
         buf.put_u32_le(code_len as u32);
         buf.extend_from_slice(&code.bytecode);
         buf.extend(code.jump_targets.into_iter().flat_map(u32::to_le_bytes));
@@ -1304,7 +1302,7 @@ impl StoreEngine for Store {
         else {
             return Ok(None);
         };
-        if bytes.len() < 4 {
+        if bytes.len() < std::mem::size_of::<u32>() {
             return Err(StoreError::DecodeError);
         }
         const JUMPDEST_SIZE: usize = std::mem::size_of::<u32>();
