@@ -37,10 +37,10 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use pprof::protos::Message;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
 use std::sync::{
     Arc, Mutex, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -834,12 +834,7 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
-        use std::io::Write;
-
-        let guard = pprof::ProfilerGuardBuilder::default()
-            .frequency(99997)
-            .build()
-            .unwrap();
+        let guard = pprof::ProfilerGuardBuilder::default().build().unwrap();
         let (res, account_updates_list, merkle_queue_length, instants) =
             self.execute_block_pipeline(&block)?;
 
@@ -871,13 +866,10 @@ impl Blockchain {
             );
         }
         if let Ok(report) = guard.report().build() {
-            let mut file = std::fs::File::create("profile.pb").unwrap();
-            let profile = report.pprof().unwrap();
+            let file = File::create("flamegraph.svg").unwrap();
+            report.flamegraph(file).unwrap();
+        };
 
-            let mut content = Vec::new();
-            profile.write_to_vec(&mut content).unwrap();
-            file.write_all(&content).unwrap();
-        }
         result
     }
     #[allow(clippy::too_many_arguments)]
