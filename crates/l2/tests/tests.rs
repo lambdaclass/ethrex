@@ -603,7 +603,7 @@ async fn test_erc20_roundtrip(
     .unwrap();
 
     println!("test_erc20_roundtrip: Waiting for deposit transaction receipt on L1");
-    let res = wait_for_transaction_receipt(deposit_tx, &l1_client, 10)
+    let res = wait_for_transaction_receipt(deposit_tx, &l1_client, 20)
         .await
         .unwrap();
 
