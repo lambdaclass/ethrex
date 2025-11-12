@@ -207,14 +207,14 @@ impl SQLStore {
     async fn store_blob_bundle_by_batch_number_in_tx(
         &self,
         batch_number: u64,
-        state_diff: Vec<Blob>,
+        blobs: Vec<Blob>,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
         let mut queries = vec![(
             "DELETE FROM blob_bundles WHERE batch = ?1",
             vec![batch_number].into_params()?,
         )];
-        for (index, blob) in state_diff.iter().enumerate() {
+        for (index, blob) in blobs.iter().enumerate() {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
