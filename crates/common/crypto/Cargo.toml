@@ -12,8 +12,10 @@ path = "./lib.rs"
 # TODO(#1102): Move to Lambdaworks in the future
 c-kzg = { version = "2.1.1", optional = true }
 kzg-rs.workspace = true
-
 thiserror.workspace = true
+
+#[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
 default = []

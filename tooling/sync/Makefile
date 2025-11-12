@@ -182,7 +182,7 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--metrics.port 3701 \
     		--network $(NETWORK) \
     		--datadir "$(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM)" \
-    		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
+    		--authrpc.jwtsecret "$(DATA_PATH)/${NETWORK}_data/jwt.hex" \
     		$(BOOTNODES_FLAG) \
 
 SERVER_SYNC_BRANCH ?= main

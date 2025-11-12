@@ -24,6 +24,8 @@
   - [Databases]()
   - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
+  - [Snap sync internals](./internal/l1/healing.md)
+    - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
   - [Pruning]()
 
 # Ethrex for L2 chains
@@ -65,6 +67,7 @@
   - [Importing blocks from a file](./developers/l1/importing-blocks.md)
   - [Kurtosis localnet](./developers/l1/kurtosis-localnet.md)
   - [Metrics](./developers/l1/metrics.md)
+  - [Dashboards](./developers/l1/dashboards.md)
   - [Testing](./developers/l1/testing/README.md)
     - [Ethereum foundation tests](./developers/l1/testing/ef-tests.md)
     - [Hive tests](./developers/l1/testing/hive.md)
@@ -73,6 +76,7 @@
     - [Load tests](./developers/l1/testing/load-tests.md)
 - [L2](./developers/l2/introduction.md)
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
+  - [Integration tests](./developers/l2/integration-tests.md)
   - [Running the Prover](./developers/l2/prover.md)
 - [Prover](./prover/prover.md)
   - [Guest program](./prover/guest_program.md)
@@ -90,3 +94,4 @@
 # Other resources
 
 - [Contributing to the Documentation](./CONTRIBUTING_DOCS.md)
+- [Recommended lectures](./lectures.md)

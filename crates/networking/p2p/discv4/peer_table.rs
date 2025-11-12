@@ -17,7 +17,6 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tracing::debug;
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
@@ -127,7 +126,7 @@ pub struct PeerTable {
 impl PeerTable {
     pub fn spawn(target_peers: usize) -> PeerTable {
         PeerTable {
-            handle: PeerTableServer::new(target_peers).start_on_thread(),
+            handle: PeerTableServer::new(target_peers).start(),
         }
     }
 
@@ -320,25 +319,20 @@ impl PeerTable {
         }
     }
 
-    /// Get all contacts available to initiate a connection
-    pub async fn get_contacts_to_initiate(
-        &mut self,
-        amount: usize,
-    ) -> Result<Vec<Contact>, PeerTableError> {
-        match self
-            .handle
-            .call(CallMessage::GetContactsToInitiate(amount))
-            .await?
-        {
-            OutMessage::Contacts(contacts) => Ok(contacts),
+    /// Provide a contact to initiate a connection
+    pub async fn get_contact_to_initiate(&mut self) -> Result<Option<Contact>, PeerTableError> {
+        match self.handle.call(CallMessage::GetContactToInitiate).await? {
+            OutMessage::Contact(contact) => Ok(Some(contact)),
+            OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
     }
 
-    /// Get all contacts available for lookup
-    pub async fn get_contacts_for_lookup(&mut self) -> Result<Vec<Contact>, PeerTableError> {
-        match self.handle.call(CallMessage::GetContactsForLookup).await? {
-            OutMessage::Contacts(contacts) => Ok(contacts),
+    /// Provide a contact to perform Discovery lookup
+    pub async fn get_contact_for_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
+        match self.handle.call(CallMessage::GetContactForLookup).await? {
+            OutMessage::Contact(contact) => Ok(Some(contact)),
+            OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
     }
@@ -574,10 +568,7 @@ impl PeerTableServer {
         }
     }
 
-    fn get_contacts_to_initiate(&mut self, max_amount: usize) -> Vec<Contact> {
-        let mut contacts = Vec::new();
-        let mut tried_connections = 0;
-
+    fn get_contact_to_initiate(&mut self) -> Option<Contact> {
         for contact in self.contacts.values() {
             let node_id = contact.node.node_id();
             if !self.peers.contains_key(&node_id)
@@ -587,29 +578,23 @@ impl PeerTableServer {
             {
                 self.already_tried_peers.insert(node_id);
 
-                contacts.push(contact.clone());
-
-                tried_connections += 1;
-                if tried_connections >= max_amount {
-                    break;
-                }
+                return Some(contact.clone());
             }
         }
-
-        if tried_connections < max_amount {
-            debug!("Resetting list of tried peers.");
-            self.already_tried_peers.clear();
-        }
-
-        contacts
+        // No untried contact found, resetting tried peers.
+        tracing::trace!("Resetting list of tried peers.");
+        self.already_tried_peers.clear();
+        None
     }
 
-    fn get_contacts_for_lookup(&mut self) -> Vec<Contact> {
+    fn get_contact_for_lookup(&mut self) -> Option<Contact> {
         self.contacts
             .values()
             .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
+            .collect::<Vec<_>>()
+            .choose(&mut rand::rngs::OsRng)
             .cloned()
-            .collect()
+            .cloned()
     }
 
     fn get_contacts_to_revalidate(&mut self, revalidation_interval: Duration) -> Vec<Contact> {
@@ -635,7 +620,7 @@ impl PeerTableServer {
         if sender_ip != contact.node.ip {
             return OutMessage::IpMismatch;
         }
-        OutMessage::ValidContact(contact.clone())
+        OutMessage::Contact(contact.clone())
     }
 
     fn get_closest_nodes(&mut self, node_id: H256) -> Vec<Node> {
@@ -814,8 +799,8 @@ enum CallMessage {
     PeerCountByCapabilities { capabilities: Vec<Capability> },
     TargetReached,
     TargetPeersReached,
-    GetContactsToInitiate(usize),
-    GetContactsForLookup,
+    GetContactToInitiate,
+    GetContactForLookup,
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
     GetScore { node_id: H256 },
@@ -844,7 +829,7 @@ pub enum OutMessage {
     TargetReached(bool),
     IsNew(bool),
     Nodes(Vec<Node>),
-    ValidContact(Contact),
+    Contact(Contact),
     InvalidContact,
     UnknownContact,
     IpMismatch,
@@ -890,12 +875,14 @@ impl GenServer for PeerTableServer {
             CallMessage::TargetPeersReached => CallResponse::Reply(Self::OutMsg::TargetReached(
                 self.peers.len() >= self.target_peers,
             )),
-            CallMessage::GetContactsToInitiate(amount) => CallResponse::Reply(
-                Self::OutMsg::Contacts(self.get_contacts_to_initiate(amount)),
+            CallMessage::GetContactToInitiate => CallResponse::Reply(
+                self.get_contact_to_initiate()
+                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
-            CallMessage::GetContactsForLookup => {
-                CallResponse::Reply(Self::OutMsg::Contacts(self.get_contacts_for_lookup()))
-            }
+            CallMessage::GetContactForLookup => CallResponse::Reply(
+                self.get_contact_for_lookup()
+                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
+            ),
             CallMessage::GetContactsToRevalidate(revalidation_interval) => CallResponse::Reply(
                 Self::OutMsg::Contacts(self.get_contacts_to_revalidate(revalidation_interval)),
             ),

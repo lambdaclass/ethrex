@@ -43,6 +43,7 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Produce,
+    Abort,
 }
 
 #[derive(Clone)]
@@ -226,11 +227,7 @@ impl BlockProducer {
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
-            let _ = METRICS_BLOCKS
-            .set_block_number(block_number)
-            .inspect_err(|e| {
-                tracing::error!("Failed to set metric: block_number {}", e.to_string())
-            });
+            METRICS_BLOCKS.set_block_number(block_number);
             #[allow(clippy::as_conversions)]
             let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
@@ -264,22 +261,30 @@ impl GenServer for BlockProducer {
 
     async fn handle_cast(
         &mut self,
-        _message: Self::CastMsg,
+        message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        // Right now we only have the Produce message, so we ignore the message
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self
-                .produce_block()
-                .await
-                .inspect_err(|e| error!("Block Producer Error: {e}"));
+        match message {
+            InMessage::Produce => {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                    let _ = self
+                        .produce_block()
+                        .await
+                        .inspect_err(|e| error!("Block Producer Error: {e}"));
+                }
+                send_after(
+                    Duration::from_millis(self.block_time_ms),
+                    handle.clone(),
+                    Self::CastMsg::Produce,
+                );
+                CastResponse::NoReply
+            }
+            InMessage::Abort => {
+                // start_blocking keeps this GenServer alive even if the JoinSet aborts the task.
+                // Returning CastResponse::Stop is how the blocking runner actually shuts down.
+                CastResponse::Stop
+            }
         }
-        send_after(
-            Duration::from_millis(self.block_time_ms),
-            handle.clone(),
-            Self::CastMsg::Produce,
-        );
-        CastResponse::NoReply
     }
 
     async fn handle_call(

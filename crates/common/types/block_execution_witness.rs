@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -11,13 +11,13 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, NodeRLP, Trie};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
-use sha3::{Digest, Keccak256};
 
 /// State produced by the guest program execution inside the zkVM. It is
 /// essentially built from the `ExecutionWitness`.
@@ -469,40 +469,33 @@ impl GuestProgramState {
         }
     }
 
-    /// Hashes headers in witness and in blocks only once if they are repeated to avoid double hashing.
+    /// When executing multiple blocks in the L2 it happens that the headers in block_headers correspond to the same block headers that we have in the blocks array. The main goal is to hash these only once and set them in both places.
+    /// We also initialize the remaining block headers hashes. If they are set, we check their validity.
     pub fn initialize_block_header_hashes(
         &self,
         blocks: &[Block],
     ) -> Result<(), GuestProgramStateError> {
-        // First we need to ensure that the block headers are initialized not before the guest program is executed
-        for header in self.block_headers.values() {
-            if header.hash.get().is_some() {
-                return Err(GuestProgramStateError::Custom(format!(
-                    "Block header hash is already set for {}",
-                    header.number
-                )));
-            }
-        }
-
-        // Now we initialize the block_headers hashes and check the remaining blocks hashes
+        let mut block_numbers_in_common = BTreeSet::new();
         for block in blocks {
-            // Verify each block's header hash is uninitialized
-            if block.header.hash.get().is_some() {
-                return Err(GuestProgramStateError::Custom(format!(
-                    "Block header hash is already set for {}",
-                    block.header.number
-                )));
-            }
-            let header = self
-                .block_headers
-                .get(&block.header.number)
-                .unwrap_or(&block.header);
+            let hash = block.header.compute_block_hash();
+            set_hash_or_validate(&block.header, hash)?;
 
-            let hash = header.hash();
-            // this returns err if it's already set, so we drop the Result as we don't
-            // care if it was already initialized.
-            let _ = block.header.hash.set(hash);
+            let number = block.header.number;
+            if let Some(header) = self.block_headers.get(&number) {
+                block_numbers_in_common.insert(number);
+                set_hash_or_validate(header, hash)?;
+            }
         }
+
+        for header in self.block_headers.values() {
+            if block_numbers_in_common.contains(&header.number) {
+                // We have already set this hash in the previous step
+                continue;
+            }
+            let hash = header.compute_block_hash();
+            set_hash_or_validate(header, hash)?;
+        }
+
         Ok(())
     }
 }
@@ -571,13 +564,24 @@ where
 }
 
 fn hash_address(address: &Address) -> Vec<u8> {
-    Keccak256::new_with_prefix(address.to_fixed_bytes())
-        .finalize()
-        .to_vec()
+    keccak_hash(address.to_fixed_bytes()).to_vec()
 }
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
-    Keccak256::new_with_prefix(key.to_fixed_bytes())
-        .finalize()
-        .to_vec()
+    keccak_hash(key.to_fixed_bytes()).to_vec()
+}
+
+/// Initializes hash of header or validates the hash is correct in case it's already set
+/// Note that header doesn't need to be mutable because the hash is a OnceCell
+fn set_hash_or_validate(header: &BlockHeader, hash: H256) -> Result<(), GuestProgramStateError> {
+    // If it's already set the .set() method will return the current value
+    if let Err(prev_hash) = header.hash.set(hash)
+        && prev_hash != hash
+    {
+        return Err(GuestProgramStateError::Custom(format!(
+            "Block header hash was previously set for {} with the wrong value. It should be set correctly or left unset.",
+            header.number
+        )));
+    }
+    Ok(())
 }

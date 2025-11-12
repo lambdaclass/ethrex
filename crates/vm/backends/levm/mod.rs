@@ -18,7 +18,8 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
-use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
+use ethrex_levm::call_frame::Stack;
+use ethrex_levm::constants::{STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -29,6 +30,8 @@ use ethrex_levm::{
     vm::VM,
 };
 use std::cmp::min;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::Sender;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -52,6 +55,14 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                    block.header.gas_limit,
+                    tx.gas_limit()
+                )));
+            }
+
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
@@ -78,6 +89,104 @@ impl LEVM {
         };
 
         Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    pub fn execute_block_pipeline(
+        block: &Block,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        merkleizer: Sender<Vec<AccountUpdate>>,
+        queue_length: &AtomicUsize,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        Self::prepare_block(block, db, vm_type)?;
+
+        let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+
+        let mut receipts = Vec::new();
+        let mut cumulative_gas_used = 0;
+
+        // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
+        // The value itself can be safely changed.
+        let mut tx_since_last_flush = 2;
+
+        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })? {
+            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                    block.header.gas_limit,
+                    tx.gas_limit()
+                )));
+            }
+
+            let report = Self::execute_tx_in_block(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                &mut shared_stack_pool,
+            )?;
+            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                tx_since_last_flush = 0;
+            } else {
+                tx_since_last_flush += 1;
+            }
+
+            cumulative_gas_used += report.gas_used;
+            let receipt = Receipt::new(
+                tx.tx_type(),
+                matches!(report.result, TxResult::Success),
+                cumulative_gas_used,
+                report.logs,
+            );
+
+            receipts.push(receipt);
+        }
+        if queue_length.load(Ordering::Relaxed) == 0 {
+            LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+        }
+
+        for (address, increment) in block
+            .body
+            .withdrawals
+            .iter()
+            .flatten()
+            .filter(|withdrawal| withdrawal.amount > 0)
+            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+        {
+            let account = db
+                .get_account_mut(address)
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
+
+            account.info.balance += increment.into();
+        }
+
+        // TODO: I don't like deciding the behavior based on the VMType here.
+        // TODO2: Revise this, apparently extract_all_requests_levm is not called
+        // in L2 execution, but its implementation behaves differently based on this.
+        let requests = match vm_type {
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L2(_) => Default::default(),
+        };
+        LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+
+        Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    fn send_state_transitions_tx(
+        merkleizer: &Sender<Vec<AccountUpdate>>,
+        db: &mut GeneralizedDatabase,
+        queue_length: &AtomicUsize,
+    ) -> Result<(), EvmError> {
+        let transitions = LEVM::get_state_transitions_tx(db)?;
+        merkleizer
+            .send(transitions)
+            .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
+        queue_length.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     fn setup_env(
@@ -124,7 +233,7 @@ impl LEVM {
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
-        // The transactions recovered address
+        // The transaction's recovered address
         tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
@@ -135,6 +244,27 @@ impl LEVM {
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
+    }
+
+    // Like execute_tx but allows reusing the stack pool
+    fn execute_tx_in_block(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transaction's recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        stack_pool: &mut Vec<Stack>,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        let result = vm.execute().map_err(VMError::into);
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        result
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
@@ -167,6 +297,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         Ok(db.get_state_transitions()?)
+    }
+
+    pub fn get_state_transitions_tx(
+        db: &mut GeneralizedDatabase,
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
+        Ok(db.get_state_transitions_tx()?)
     }
 
     pub fn process_withdrawals(

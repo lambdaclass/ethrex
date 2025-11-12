@@ -8,7 +8,7 @@ use crate::{
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
+        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
     vm::{Substate, VM},
@@ -19,17 +19,20 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
-    types::{Account, Code, Fork, Transaction, account_diff::AccountStateDiff, tx_fields::*},
+    types::{
+        Account, Code, Fork, Transaction, account_diff::AccountStateDiff, fake_exponential,
+        tx_fields::*,
+    },
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 pub type Storage = HashMap<U256, H256>;
 
@@ -268,6 +271,7 @@ pub fn get_base_fee_per_blob_gas(
         block_excess_blob_gas.unwrap_or_default(),
         base_fee_update_fraction,
     )
+    .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
 }
 
 /// Gets the max blob gas cost for a transaction that a user is
@@ -362,16 +366,12 @@ pub fn eip7702_recover_address(
         return Ok(None);
     }
 
-    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
+    let mut rlp_buf = Vec::with_capacity(128);
+    rlp_buf.push(MAGIC);
+    (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
+    let bytes = keccak_hash(&rlp_buf);
 
-    let mut hasher = Keccak256::new();
-    hasher.update([MAGIC]);
-    hasher.update(rlp_buf);
-    let bytes = &mut hasher.finalize();
-
-    let Ok(message) = Message::from_digest_slice(bytes) else {
-        return Ok(None);
-    };
+    let message = Message::from_digest(bytes);
 
     let bytes = [
         auth_tuple.r_signature.to_big_endian(),
@@ -395,14 +395,10 @@ pub fn eip7702_recover_address(
     };
 
     let public_key = authority.serialize_uncompressed();
-    let mut hasher = Keccak256::new();
-    hasher.update(public_key.get(1..).ok_or(InternalError::Slicing)?);
-    let address_hash = hasher.finalize();
+    let address_hash = keccak_hash(&public_key[1..]);
 
     // Get the last 20 bytes of the hash -> Address
-    let authority_address_bytes: [u8; 20] = address_hash
-        .get(12..32)
-        .ok_or(InternalError::Slicing)?
+    let authority_address_bytes: [u8; 20] = address_hash[12..]
         .try_into()
         .map_err(|_| InternalError::TypeConversion)?;
     Ok(Some(Address::from_slice(&authority_address_bytes)))
