@@ -8,20 +8,41 @@ The Shared Bridge feature changes this by enabling seamless message passing betw
 
 While the user performs just one interaction and waits for the result, a similar process to the conventional flow occurs behind the scenes. In the following sections, we'll explore how it works.
 
-## Overview
+## High-Level Overview
 
-The flow is as follows:
-- A user on L2-A (Alice) wants to send ETH to a user on L2-B (Bob).
-- Alice sends a transaction on L2-A to the L2's CommonBridge, specifying Bob's address on L2-B and the amount of ETH to send. The ETH is burned on L2-A.
-- The sequencer eventually seals a batch including Alice's transaction and submits a commitment to L1. This commitment includes, among other things, a merkle root of all transactions for other L2s in the batch and a list of balance to transfer to the other L2s.
-- The prover will now generate a zk-proof that the commitment is valid. Once the proof is generated, it is submitted to the L1, which verifies the proof and mark the commitment as valid. If the proof is valid, the OnChainProposer contract will ask L2-A's CommonBridge to transfer the ETH to L2-B's CommonBridge. This is done through the Router contract (more on this later).
-- In parallel, the sequencer of L2-B will be periodically checking a list of known L2 servers (including L2-A) for new messages for L2-B. L2-A will respond with the Alice transfer, including transaction data (sender, destination, amount, etc.) and a merkle path for the committed merkle root. L2-B sequencer will then check (through the Router contract) if the information provided is valid, in which case it will mint ETH to Bob's address.
+To understand the behind-the-scenes mechanics, we'll revisit the earlier example. For a quick recap, here's a high-level breakdown of what happens when Alice (on L2-A) wants to send ETH to Bob (on L2-B):
 
-Note this is a simply ETH transfer example but should be easily extensible to arbitrary messages (contract calls).
+[Image: Diagram illustrating the cross-L2 transfer flow from L2-A to L2-B]
 
-## Router contract
+- **Source L2 (L2-A, Alice's side):** Alice invokes the sendToL2 function on the CommonBridgeL2 contract, specifying the destination chain ID (L2-B), Bob's address on L2-B, the ETH amount to send, the gas limit the sender is willing to consume for the final transaction on L2-B (notably, this gas is burned on the source L2-A), and optionally, the calldata for any custom transaction to execute on L2-B.
+- **Source L2 Sequencer (L2-A):** Alice's transaction is included in a block on L2-A. Eventually, a batch containing that block is sealed, and a commitment is submitted to L1 (Ethereum). This commitment includes, among other details, a Merkle root of all transactions directed to other destination L2s, along with a list of balances to transfer to those L2s.
+- **Source L2 Prover (L2-A):** A zero-knowledge (ZK) proof is generated to validate the commitment for the batch containing Alice's message to Bob.
+- **Source L2 Sequencer (L2-A):** Once the prover delivers the ZK proof, it is submitted to L1 for verification. If the proof succeeds, the commitment is marked as valid, the message is considered settled, and the funds are transferred between bridges via the Router contract on L1.
+- **Destination L2 Sequencer (L2-B):** A dedicated process periodically polls a permissioned set of sequencers from other L2s to check for new emitted messages. It receives Alice's message to Bob preemptively (i.e., before the message is fully settled on L1). Upon receipt, the process verifies the message's validity by querying the Router contract on L1. If the source batch (including Alice's message) hasn't been verified yet, the message is discarded and retried in the next iteration. (Note: Handling for stalled or reverted batches on source L2s remains under consideration.) If the message validates, it is processed, and the transferred ETH is minted to Bob's address on L2-B.
 
-The Router is the responsible for routing messages between L2s. It is deployed on L1 and chain operators of each L2 need to register their chain on it. For now, the Router is permissioned, meaning only administrators can register new chains. The Router exposes two main functions:
+## Protocol Details
 
-- `sendMessage`: Sends the balance needed to cover outgoing transactions to the destination L2's CommonBridge.
-- `verifyMessage`: Verifies that a message coming from another L2 is valid. It checks that the commitment including the message has been verified on L1.
+### Cross-chain Messaging
+
+A cross-chain message directed from a source L2 to a destination L2 is essentially an event emitted by the CommonBridgeL2 contract within a block on the source L2. These events are triggered upon successful invocations of the sendToL2 function in the CommonBridgeL2.
+
+During batch preparation on the source L2, cross-chain messages are collected. From these, a Merkle root is constructed, and the balance diffs generated by the messages are calculated. These values are included in the batch commitment submitted to L1 by the `L1Committer`.
+
+Once the `L1Committer` prepares the inputs for the prover, the prover requests them and initiates generation of the ZK proof for the specific batch. As part of this process, the prover recomputes the Merkle root of the cross-chain messages and the balance diffs, returning them to be used as public values during on-chain verification. Upon completing proof generation, the prover sends it back to the sequencer—specifically, to the `ProofCoordinator`.
+
+After the prover delivers the ZK proof validating the batch prepared by the `L1Committer`, the `L1Sender` submits it along with the public values for on-chain verification. On-chain, before verifying the proof itself, the submitted public values are compared against the previously committed ones, confirming that the Merkle root of cross-chain messages and the balance diffs match. If verification succeeds, the involved cross-chain messages are deemed settled, and the state is transferred from the source bridge to the corresponding destination bridges.
+
+To execute a cross-chain message on the destination L2, the message(s) must first be settled on L1. Additionally, the `Watcher` on the destination L2 must obtain them in advance via internal communication among permissioned sequencers.
+While the source L2's batch is being prepared and verified, the destination L2 has already preemptively acquired its corresponding messages. This is feasible because L2s with the Shared Bridge feature enabled are aware of the other sequencers participating in the same Shared Bridge ecosystem. The Watcher—a sequencer component originally designed to handle L1-incoming privileged transactions—periodically scans for relevant correspondence across the permissioned set of L2s. Upon receiving potential matches, the L2 queries the Router contract on L1 to validate the message (i.e., confirm it has been settled) before processing it. If the message is not yet validated, it is discarded and retried in the next polling iteration.
+
+### Replay Attack
+
+Once a cross-chain message is settled on L1, the destination L2's sequencer processes it. To do so, it constructs a privileged transaction from the message's payload and adds it to the mempool only if the hash of this constructed transaction does not match the hash of any previously executed transaction. Hash collisions are prevented, among other measures, by incorporating the source L2's chain ID and the message's nonce (as recorded on the source L2). Each L2 maintains a mapping in its corresponding `CommonBridgeL2` contract, using the destination chain ID as the key and the message nonce as the value.
+
+### State Availability
+
+Cross-chain messages are planned to be forcibly included in recipient chains (though this is not yet enforced in the current implementation). In adverse scenarios—such as a sequencer shutdown, loss of communication with the source L2, or the destination L2's inability to retrieve messages directly—a security mechanism must enable recovery of these messages from L1. This fallback is not yet implemented, and since forced inclusion is also pending, it does not pose an immediate concern. However, the necessary data is already available on L1 to support this functionality since the state of the L2 lives in the blobs, so it'd be available as long as the blob containing the L2's data is available.
+
+### Proving
+
+Batch proving encompasses several tasks, including recomputing the Merkle root of cross-chain messages within the batch and the associated balance diffs. These values are returned as part of the guest program execution output and serve as public inputs for on-chain proof verification.
