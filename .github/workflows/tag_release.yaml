@@ -8,6 +8,7 @@ on:
     # On pushes to main, this silently builds and pushes docker images tagged as 'main'
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -316,7 +317,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          push: true
+          push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
 
       # Pushes to ghcr.io/lambdaclass/ethrex
@@ -327,13 +328,13 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          push: true
+          push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
           build_args: BUILD_FLAGS=--features l2,l2-sql
 
   # Creates a release on GitHub with the binaries
   finalize-release:
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' && github.event_name != 'workflow_dispatch'
     needs:
       - build-ethrex
       - build-ethrex-guest
