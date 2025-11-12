@@ -832,7 +832,7 @@ pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), Cha
 
     let mut payload = {
         let first_block = chain
-            .pop()
+            .remove(0)
             .expect("We should have at least the first block");
 
         ExecutionPayload::from_block(first_block)
