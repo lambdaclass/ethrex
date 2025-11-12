@@ -411,7 +411,13 @@ pub enum Subcommand {
             value_name = "FILE_PATH/FOLDER",
             help = "Path to a RLP chain file or a folder containing files with individual Blocks"
         )]
-        path: String,
+        in_path: String,
+        #[arg(
+            required = true,
+            value_name = "FILE_PATH/FOLDER",
+            help = "Path to the big block as a json file"
+        )]
+        out_path: String,
     },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
@@ -481,8 +487,8 @@ impl Subcommand {
                 )
                 .await?;
             }
-            Subcommand::GenerateBigBlock { path } => {
-                generate_big_block(&path).await?;
+            Subcommand::GenerateBigBlock { in_path, out_path } => {
+                generate_big_block(&in_path, &out_path).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -791,14 +797,14 @@ pub async fn import_blocks_bench(
     Ok(())
 }
 
-pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
+pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), ChainError> {
     let start_time = Instant::now();
-    let path_metadata = metadata(path).expect("Failed to read path");
+    let path_metadata = metadata(in_path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let mut chain: Vec<Block> = if path_metadata.is_dir() {
-        info!(path = %path, "Importing blocks from directory");
-        let mut entries: Vec<_> = read_dir(path)
+        info!(path = %in_path, "Importing blocks from directory");
+        let mut entries: Vec<_> = read_dir(in_path)
             .expect("Failed to read blocks directory")
             .map(|res| res.expect("Failed to open file in directory").path())
             .collect();
@@ -815,8 +821,8 @@ pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
             })
             .collect()
     } else {
-        info!(path = %path, "Importing blocks from file");
-        utils::read_chain_file(path)
+        info!(path = %in_path, "Importing blocks from file");
+        utils::read_chain_file(in_path)
     };
     let total_blocks_imported = chain.len();
 
@@ -828,7 +834,7 @@ pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
         ExecutionPayload::from_block(first_block)
     };
 
-    for block in chain {
+    for block in chain.drain(0..100) {
         payload.transactions.extend(
             block
                 .body
@@ -838,6 +844,9 @@ pub async fn generate_big_block(path: &str) -> Result<(), ChainError> {
         );
         info!(block_count = block.body.transactions.len(), "")
     }
+
+    let file = File::create(out_path).expect("Failed to open file");
+    serde_json::to_writer_pretty(file, &payload).expect("We should be able to write");
 
     let total_duration = start_time.elapsed();
     info!(
