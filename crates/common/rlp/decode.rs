@@ -526,6 +526,7 @@ pub fn static_left_pad<const N: usize>(data: &[u8]) -> Result<[u8; N], RLPDecode
     let Some(data_start_index) = N.checked_sub(data.len()) else {
         return Err(RLPDecodeError::InvalidLength);
     };
+    // N - data.len() is between N-1 and 0, so range is in bounds
     result[data_start_index..].copy_from_slice(data);
     Ok(result)
 }
