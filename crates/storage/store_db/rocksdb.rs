@@ -5,7 +5,7 @@ use crate::{
         rocksdb_locked::RocksDBLockedTrieDB,
     },
 };
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use ethrex_common::{
     H256,
     types::{
@@ -36,10 +36,7 @@ use crate::{
     trie_db::rocksdb::RocksDBTrieDB,
     utils::{ChainDataIndex, SnapStateIndex},
 };
-use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
-    encode::RLPEncode,
-};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use std::fmt::Debug;
 
 // TODO: use finalized hash to determine when to commit
@@ -893,18 +890,16 @@ impl StoreEngine for Store {
             }
         }
 
+        // Default to a rather pessimistic size, amortized across codes
+        let mut buf = Vec::with_capacity(128 * 1024);
         for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(
-                6 + code.bytecode.len()
-                    + code
-                        .jump_targets
-                        .iter()
-                        .map(std::mem::size_of_val)
-                        .sum::<usize>(),
-            );
+            buf.clear();
             code.bytecode.encode(&mut buf);
             code.jump_targets.encode(&mut buf);
-            batch.put_cf(&cf_codes, code_hash.0, buf);
+            buf.put_u32_le(code.bytecode.len() as u32);
+            buf.extend_from_slice(&code.bytecode);
+            buf.extend(code.jump_targets.into_iter().flat_map(u32::to_le_bytes));
+            batch.put_cf(&cf_codes, code_hash, &buf);
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
@@ -1269,18 +1264,13 @@ impl StoreEngine for Store {
     }
 
     async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
-        let hash_key = code.hash.0.to_vec();
-        let mut buf = Vec::with_capacity(
-            6 + code.bytecode.len()
-                + code
-                    .jump_targets
-                    .iter()
-                    .map(std::mem::size_of_val)
-                    .sum::<usize>(),
-        );
-        code.bytecode.encode(&mut buf);
-        code.jump_targets.encode(&mut buf);
-        self.write_async(CF_ACCOUNT_CODES, hash_key, buf).await
+        let code_len = code.bytecode.len();
+        let targets_len = code.jump_targets.len();
+        let mut buf = Vec::with_capacity(8 + code_len + std::mem::size_of::<u32>() * targets_len);
+        buf.put_u32_le(code_len as u32);
+        buf.extend_from_slice(&code.bytecode);
+        buf.extend(code.jump_targets.into_iter().flat_map(u32::to_le_bytes));
+        self.write_async(CF_ACCOUNT_CODES, code.hash, buf).await
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
@@ -1314,11 +1304,29 @@ impl StoreEngine for Store {
         else {
             return Ok(None);
         };
-        let (bytecode, targets) = decode_bytes(&bytes)?;
+        if bytes.len() < 4 {
+            return Err(StoreError::DecodeError);
+        }
+        const JUMPDEST_SIZE: usize = std::mem::size_of::<u32>();
+        let (len_bytes, rest) = bytes.split_first_chunk().ok_or(StoreError::DecodeError)?;
+        let bytecode_len = u32::from_le_bytes(*len_bytes) as usize;
+        // Overflow covered later
+        let targets_len = rest.len().wrapping_sub(bytecode_len);
+        if rest.len() < bytecode_len || !targets_len.is_multiple_of(JUMPDEST_SIZE) {
+            return Err(StoreError::DecodeError);
+        }
+        let mut targets = Vec::with_capacity(targets_len);
+        targets.extend(
+            rest[bytecode_len..]
+                .as_chunks()
+                .0
+                .iter()
+                .map(|chunk| u32::from_le_bytes(*chunk)),
+        );
         let code = Code {
             hash: code_hash,
-            bytecode: Bytes::copy_from_slice(bytecode),
-            jump_targets: <Vec<_>>::decode(targets)?,
+            bytecode: Bytes::copy_from_slice(&rest[..bytecode_len]),
+            jump_targets: targets,
         };
         Ok(Some(code))
     }
@@ -1877,18 +1885,15 @@ impl StoreEngine for Store {
         let mut batch_ops = Vec::new();
 
         for (code_hash, code) in account_codes {
-            let key = code_hash.as_bytes().to_vec();
-            let mut buf = Vec::with_capacity(
-                6 + code.bytecode.len()
-                    + code
-                        .jump_targets
-                        .iter()
-                        .map(std::mem::size_of_val)
-                        .sum::<usize>(),
-            );
-            code.bytecode.encode(&mut buf);
-            code.jump_targets.encode(&mut buf);
-            batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, buf));
+            let mut buf = Vec::new();
+            buf.put_u32_le(code.bytecode.len() as u32);
+            buf.extend_from_slice(&code.bytecode);
+            buf.extend(code.jump_targets.into_iter().flat_map(u32::to_le_bytes));
+            batch_ops.push((
+                CF_ACCOUNT_CODES.to_string(),
+                code_hash.as_bytes().to_vec(),
+                buf,
+            ));
         }
 
         self.write_batch_async(batch_ops).await
