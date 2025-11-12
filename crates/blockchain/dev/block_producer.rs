@@ -16,6 +16,7 @@ pub async fn start_block_producer(
     let engine_client = EngineClient::new(&execution_client_auth_url, jwt_secret);
 
     let mut ticker = tokio::time::interval(Duration::from_millis(block_production_interval_ms));
+    ticker.tick().await;
 
     let mut head_block_hash: H256 = head_block_hash;
     let parent_beacon_block_root = H256::zero();
