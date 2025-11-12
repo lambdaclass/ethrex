@@ -167,6 +167,7 @@ impl Store {
         db_options.set_db_write_buffer_size(1024 * 1024 * 1024); // 1GB
         db_options.set_write_buffer_size(128 * 1024 * 1024); // 128MB
         db_options.set_max_write_buffer_number(4);
+        db_options.set_min_write_buffer_number_to_merge(1);
 
         db_options.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
         db_options.set_max_total_wal_size(2 * 1024 * 1024 * 1024); // 2GB
@@ -264,6 +265,7 @@ impl Store {
                 }
                 CF_TRIE_NODES => {
                     cf_opts.set_write_buffer_size(32 * 1024 * 1024); // 32MB
+                    cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
@@ -273,6 +275,7 @@ impl Store {
                 }
                 CF_FLATKEYVALUE => {
                     cf_opts.set_write_buffer_size(32 * 1024 * 1024); // 32MB
+                    cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
