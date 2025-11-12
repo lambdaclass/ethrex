@@ -1,13 +1,14 @@
 use ethrex_common::H256;
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
-    parent: H256,
+    parent_root: H256,
+    parent_layer: Weak<TrieLayer>,
     id: usize,
 }
 
@@ -58,12 +59,12 @@ impl TrieLayerCache {
         }
 
         let mut current_state_root = state_root;
-
-        while let Some(layer) = self.layers.get(&current_state_root) {
+        let mut current_layer = self.layers.get(&current_state_root).cloned();
+        while let Some(layer) = current_layer {
             if let Some(value) = layer.nodes.get(key) {
                 return Some(value.clone());
             }
-            current_state_root = layer.parent;
+            current_state_root = layer.parent_root;
             if current_state_root == state_root {
                 // TODO: check if this is possible in practice
                 // This can't happen in L1, due to system contracts irreversibly modifying state
@@ -73,6 +74,7 @@ impl TrieLayerCache {
                 // state with a privileged tx and later reverts it (since it doesn't update nonce).
                 panic!("State cycle found");
             }
+            current_layer = layer.parent_layer.upgrade();
         }
         None
     }
@@ -80,12 +82,14 @@ impl TrieLayerCache {
     // TODO: use finalized hash to know when to commit
     pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
         let mut counter = 0;
-        while let Some(layer) = self.layers.get(&state_root) {
-            state_root = layer.parent;
+        let mut current_layer = self.layers.get(&state_root).cloned();
+        while let Some(layer) = current_layer {
+            state_root = layer.parent_root;
             counter += 1;
             if counter > commit_threshold {
                 return Some(state_root);
             }
+            current_layer = layer.parent_layer.upgrade();
         }
         None
     }
@@ -123,10 +127,16 @@ impl TrieLayerCache {
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
 
+        let parent_layer = self
+            .layers
+            .get(&parent)
+            .map(Arc::downgrade)
+            .unwrap_or_default();
         self.last_id += 1;
         let entry = TrieLayer {
             nodes,
-            parent,
+            parent_root: parent,
+            parent_layer,
             id: self.last_id,
         };
         self.layers.insert(state_root, Arc::new(entry));
@@ -163,7 +173,7 @@ impl TrieLayerCache {
             Err(layer) => TrieLayer::clone(&layer),
         };
         // ensure parents are commited
-        let parent_nodes = self.commit(layer.parent);
+        let parent_nodes = self.commit(layer.parent_root);
         // older layers are useless
         self.layers.retain(|_, item| item.id > layer.id);
         self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
