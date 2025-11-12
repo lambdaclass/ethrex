@@ -404,6 +404,14 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    GenerateBigBlock {
+        #[arg(
+            required = true,
+            value_name = "FILE_PATH/FOLDER",
+            help = "Path to a RLP chain file or a folder containing files with individual Blocks"
+        )]
+        path: String,
+    },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
