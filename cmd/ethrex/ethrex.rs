@@ -5,7 +5,7 @@ use ethrex::{
     utils::{NodeConfigFile, get_client_version, store_node_config_file},
 };
 use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
-use std::{path::Path, time::Duration};
+use std::{io::Write, path::Path, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -44,6 +44,7 @@ async fn server_shutdown(
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
 }
+use pprof::protos::Message;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -62,6 +63,11 @@ async fn main() -> eyre::Result<()> {
 
     info!("ethrex version: {}", get_client_version());
 
+    let guard = pprof::ProfilerGuardBuilder::default()
+        .frequency(1000)
+        .build()
+        .unwrap();
+
     let (datadir, cancel_token, peer_table, local_node_record) =
         init_l1(opts, Some(log_filter_handler)).await?;
 
@@ -77,6 +83,17 @@ async fn main() -> eyre::Result<()> {
             server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
     }
+    match guard.report().build() {
+    Ok(report) => {
+        let mut file = std::fs::File::create("profile.pb").unwrap();
+        let profile = report.pprof().unwrap();
+
+        let mut content = Vec::new();
+        profile.write_to_vec(&mut content).unwrap();
+        file.write_all(&content).unwrap();
+    }
+    Err(_) => {}
+};
 
     Ok(())
 }

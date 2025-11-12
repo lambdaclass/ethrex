@@ -9,6 +9,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+pprof = { version = "0.15", features = ["cpp", "protobuf-codec"] }
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-config.workspace = true
