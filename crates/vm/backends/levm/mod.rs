@@ -108,6 +108,10 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
+        // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
+        // The value itself can be safely changed.
+        let mut tx_since_last_flush = 2;
+
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
@@ -127,7 +131,12 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
             )?;
-            LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                tx_since_last_flush = 0;
+            } else {
+                tx_since_last_flush += 1;
+            }
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -138,6 +147,9 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+        if queue_length.load(Ordering::Relaxed) == 0 {
+            LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
         for (address, increment) in block
@@ -154,22 +166,15 @@ impl LEVM {
 
             account.info.balance += increment.into();
         }
-        LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm_pipeline(
-                &receipts,
-                db,
-                &block.header,
-                vm_type,
-                &merkleizer,
-                queue_length,
-            )?,
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2(_) => Default::default(),
         };
+        LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         Ok(BlockExecutionResult { receipts, requests })
     }
@@ -588,46 +593,6 @@ pub fn extract_all_requests_levm(
     let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
         .output
         .into();
-
-    let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
-        .ok_or(EvmError::InvalidDepositRequest)?;
-    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
-    let consolidation = Requests::from_consolidation_data(consolidation_data);
-
-    Ok(vec![deposits, withdrawals, consolidation])
-}
-
-#[allow(unreachable_code)]
-#[allow(unused_variables)]
-pub fn extract_all_requests_levm_pipeline(
-    receipts: &[Receipt],
-    db: &mut GeneralizedDatabase,
-    header: &BlockHeader,
-    vm_type: VMType,
-    merkleizer: &Sender<Vec<AccountUpdate>>,
-    queue_length: &AtomicUsize,
-) -> Result<Vec<Requests>, EvmError> {
-    if let VMType::L2(_) = vm_type {
-        return Err(EvmError::InvalidEVM(
-            "extract_all_requests_levm should not be called for L2 VM".to_string(),
-        ));
-    }
-
-    let chain_config = db.store.get_chain_config()?;
-    let fork = chain_config.fork(header.timestamp);
-
-    if fork < Fork::Prague {
-        return Ok(Default::default());
-    }
-
-    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type)?
-        .output
-        .into();
-    LEVM::send_state_transitions_tx(merkleizer, db, queue_length)?;
-    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
-        .output
-        .into();
-    LEVM::send_state_transitions_tx(merkleizer, db, queue_length)?;
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
         .ok_or(EvmError::InvalidDepositRequest)?;
