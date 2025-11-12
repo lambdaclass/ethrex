@@ -78,7 +78,7 @@ pub struct ExecutionWitness {
     // The chain config.
     pub chain_config: ChainConfig,
     /// Root node embedded with the rest of the trie's nodes
-    pub state_trie_root: Node,
+    pub state_trie_root: Option<Node>,
     /// Root nodes per account storage embedded with the rest of the trie's nodes
     #[rkyv(with = MapKV<H160Wrapper, Identity>)]
     pub storage_trie_roots: BTreeMap<Address, Node>,
@@ -141,7 +141,11 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         )?;
 
         // hash state trie nodes
-        let state_trie = Trie::new_temp_with_root(value.state_trie_root.into());
+        let state_trie = if let Some(state_trie_root) = value.state_trie_root {
+            Trie::new_temp_with_root(state_trie_root.into())
+        } else {
+            Trie::new_temp()
+        };
         state_trie.hash_no_commit();
 
         let mut storage_tries = BTreeMap::new();

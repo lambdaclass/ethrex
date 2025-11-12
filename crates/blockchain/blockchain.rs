@@ -32,7 +32,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, NodeRef, Trie};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -766,14 +766,20 @@ impl Blockchain {
             .into_iter()
             .map(|node| (node.compute_hash().finalize(), node))
             .collect();
-        let state_trie_root = Trie::get_embedded_root(&nodes, initial_state_root)?
-            .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))?
-            .ok_or(ChainError::Custom(
-                "used trie nodes do not contain the initial state root".to_string(),
-            ))?;
-        let state_trie = Trie::new_temp_with_root(state_trie_root.clone().into());
+        let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+            Trie::get_embedded_root(&nodes, initial_state_root)?
+        {
+            Some((*state_trie_root).clone())
+        } else {
+            None
+        };
 
         // Get all initial storage trie roots and embed the rest of the trie into it
+        let state_trie = if let Some(state_trie_root) = &state_trie_root {
+            Trie::new_temp_with_root(state_trie_root.clone().into())
+        } else {
+            Trie::new_temp()
+        };
         let mut storage_trie_roots = BTreeMap::new();
         for key in &keys {
             if key.len() != 20 {
@@ -805,7 +811,7 @@ impl Blockchain {
             block_headers_bytes,
             first_block_number: first_block_header.number,
             chain_config: self.storage.get_chain_config(),
-            state_trie_root: (*state_trie_root).clone(),
+            state_trie_root,
             storage_trie_roots,
             keys,
         })

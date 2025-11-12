@@ -11,7 +11,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::hash_address;
-use ethrex_trie::{EMPTY_TRIE_HASH, InMemoryTrieDB, Nibbles, Node, NodeRef, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -46,10 +46,12 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
     type Error = TrieError;
     fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
         let mut nodes = Vec::new();
+        if let Some(state_trie_root) = value.state_trie_root {
+            state_trie_root.encode_subtrie(&mut nodes)?;
+        }
         for node in value.storage_trie_roots.values() {
             node.encode_subtrie(&mut nodes)?;
         }
-        value.state_trie_root.encode_subtrie(&mut nodes)?;
         Ok(Self {
             state: nodes
                 .into_iter()
@@ -88,14 +90,20 @@ pub fn execution_witness_from_rpc_chain_config(
         .collect::<Result<_, RLPDecodeError>>()?;
 
     // get state trie root and embed the rest of the trie into it
-    let state_trie_root = Trie::get_embedded_root(&nodes, initial_state_root)?
-        .get_node(&InMemoryTrieDB::new_empty(), Nibbles::from_bytes(&[]))?
-        .ok_or(GuestProgramStateError::Custom(
-            "execution witness does not contain the initial state".to_string(),
-        ))?;
-    let state_trie = Trie::new_temp_with_root(state_trie_root.clone().into());
+    let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+        Trie::get_embedded_root(&nodes, initial_state_root)?
+    {
+        Some((*state_trie_root).clone())
+    } else {
+        None
+    };
 
     // get all storage trie roots and embed the rest of the trie into it
+    let state_trie = if let Some(state_trie_root) = &state_trie_root {
+        Trie::new_temp_with_root(state_trie_root.clone().into())
+    } else {
+        Trie::new_temp()
+    };
     let mut storage_trie_roots = BTreeMap::new();
     for key in &rpc_witness.keys {
         if key.len() != 20 {
@@ -131,7 +139,7 @@ pub fn execution_witness_from_rpc_chain_config(
             .into_iter()
             .map(|b| b.to_vec())
             .collect(),
-        state_trie_root: (*state_trie_root).clone(),
+        state_trie_root,
         storage_trie_roots,
         keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
