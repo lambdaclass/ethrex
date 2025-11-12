@@ -181,7 +181,6 @@ impl Store {
         db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         db_options.set_advise_random_on_open(false);
         db_options.set_compression_type(rocksdb::DBCompressionType::None);
-        db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
         // db_options.enable_statistics();
         // db_options.set_stats_dump_period_sec(600);
@@ -241,7 +240,9 @@ impl Store {
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
-            cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+            if cf_name != CF_ACCOUNT_CODES {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+            }
 
             match cf_name.as_str() {
                 CF_HEADERS | CF_BODIES => {
@@ -288,6 +289,7 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_RECEIPTS | CF_ACCOUNT_CODES => {
+                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
