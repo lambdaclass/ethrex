@@ -1,7 +1,11 @@
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
-use ethrex_common::types::TxType;
+use ethrex_common::{
+    Bytes,
+    types::{GenesisAccount, TxType},
+};
+use ethrex_config::networks::Network;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
@@ -15,10 +19,15 @@ use ethrex_rpc::types::receipt::RpcReceipt;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use hex::ToHex;
-use secp256k1::SecretKey;
-use std::fs;
-use std::path::Path;
+use secp256k1::{PublicKey, Secp256k1, SecretKey, rand};
+use sha3::{Digest, Keccak256};
 use std::time::Duration;
+use std::{collections::HashMap, path::PathBuf};
+use std::{collections::hash_map::Entry, path::Path};
+use std::{
+    fs::{self, File},
+    io::{BufWriter, Write},
+};
 use tokio::{task::JoinSet, time::sleep};
 use url::Url;
 
@@ -38,10 +47,19 @@ const FIBO_CODE: &str = "6080604052348015600e575f5ffd5b506103198061001c5f395ff3f
 // See `fixtures/contracts/load_test/IOHeavyContract.sol` for the code.
 const IO_HEAVY_CODE: &str = "6080604052348015600e575f5ffd5b505f5f90505b6064811015603e57805f8260648110602d57602c6043565b5b018190555080806001019150506014565b506070565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b6102728061007d5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c8063431aabc21461004357806358faa02f1461007357806362f8e72a1461007d575b5f5ffd5b61005d6004803603810190610058919061015c565b61009b565b60405161006a9190610196565b60405180910390f35b61007b6100b3565b005b61008561010a565b6040516100929190610196565b60405180910390f35b5f81606481106100a9575f80fd5b015f915090505481565b5f5f90505b60648110156101075760015f82606481106100d6576100d56101af565b5b01546100e29190610209565b5f82606481106100f5576100f46101af565b5b018190555080806001019150506100b8565b50565b5f5f5f6064811061011e5761011d6101af565b5b0154905090565b5f5ffd5b5f819050919050565b61013b81610129565b8114610145575f5ffd5b50565b5f8135905061015681610132565b92915050565b5f6020828403121561017157610170610125565b5b5f61017e84828501610148565b91505092915050565b61019081610129565b82525050565b5f6020820190506101a95f830184610187565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61021382610129565b915061021e83610129565b9250828201905080821115610236576102356101dc565b5b9291505056fea264697066735822122055f6d7149afdb56c745a203d432710eaa25a8ccdb030503fb970bf1c964ac03264736f6c634300081b0033";
 
+// Max account count that will be parsed from the pk files
+const MAX_RICH_ACCOUNTS: usize = 100;
+
 #[derive(Parser)]
 #[command(name = "load_test")]
-#[command(about = "A CLI tool with a single test flag", long_about = None)]
-struct Cli {
+#[command(about = "A CLI tool for load testing.", long_about = None)]
+enum Cli {
+    Load(SubcommandLoad),
+    GenerateGenesis(SubcommandGenerateGenesis),
+}
+
+#[derive(Parser)]
+struct SubcommandLoad {
     #[arg(
         long,
         short = 'n',
@@ -53,28 +71,77 @@ struct Cli {
     #[arg(long, short = 'k', help = "Path to the file containing private keys.")]
     pkeys: String,
 
-    #[arg(long, short='t', value_enum, default_value_t=TestType::Erc20, help="Type of test to run. Can be eth_transfers or erc20.")]
+    #[arg(
+        long,
+        short='t',
+        value_enum,
+        default_value_t=TestType::Erc20,
+        help="Type of transaction to send."
+    )]
     test_type: TestType,
 
-    #[arg(
-        short = 'N',
-        long,
-        default_value_t = 1000,
-        help = "Number of transactions to send for each account."
-    )]
-    tx_amount: u64,
-
-    // Amount of minutes to wait before exiting. If the value is 0, the program will wait indefinitely. If not present, the program will not wait for transactions to be included in blocks.
-    #[arg(
-        long,
-        short = 'w',
-        default_value_t = 0,
-        help = "Timeout in minutes. If the node doesn't provide updates in this time, it's considered stuck and the load test fails. If 0 is specified, the load test will wait indefinitely."
-    )]
-    wait: u64,
+    #[command(subcommand)]
+    load_type: LoadType,
 }
 
-#[derive(ValueEnum, Clone, Debug)] // Derive ValueEnum for TestType
+#[derive(Parser)]
+pub struct SubcommandGenerateGenesis {
+    #[arg(
+        long,
+        help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi, local-devnet-l2. Default: mainnet",
+        value_parser = clap::value_parser!(Network),
+        default_value_t = Network::default(),
+    )]
+    network: Network,
+    #[arg(long, help = "Number of accounts to generate.")]
+    num_accounts: u64,
+    #[arg(
+        long,
+        help = "Balance for each account.",
+        default_value_t = 1_000_000_000_000_000_000_000_000
+    )]
+    balance: u128,
+    #[arg(
+        long,
+        help = "Output path for the genesis file.",
+        default_value = "genesis.json"
+    )]
+    genesis_out: PathBuf,
+    #[arg(
+        long,
+        help = "Output path for the private keys file.",
+        default_value = "keys.txt"
+    )]
+    keys_out: PathBuf,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+enum LoadType {
+    /// Send a burst of N transactions from each account.
+    Burst {
+        #[arg(
+            short = 'N',
+            long,
+            default_value_t = 1000,
+            help = "Number of transactions to send for each account."
+        )]
+        tx_amount: u64,
+        #[arg(
+            long,
+            short = 'w',
+            default_value_t = 0,
+            help = "Timeout in minutes for waiting for transactions. If 0, waits indefinitely."
+        )]
+        wait: u64,
+    },
+    /// Send transactions continuously at a constant rate (TPS).
+    Tps {
+        #[arg(long, short = 'r', help = "Transactions per second rate.")]
+        rate: u64,
+    },
+}
+
+#[derive(ValueEnum, Clone, Debug)]
 pub enum TestType {
     EthTransfers,
     Erc20,
@@ -95,7 +162,6 @@ async fn deploy_contract(
 ) -> eyre::Result<Address> {
     let (_, contract_address) =
         create_deploy(&client, deployer, contract.into(), Overrides::default()).await?;
-
     eyre::Ok(contract_address)
 }
 
@@ -121,14 +187,11 @@ async fn claim_erc20_balances(
     accounts: Vec<Signer>,
 ) -> eyre::Result<()> {
     let mut tasks = JoinSet::new();
-
     for account in accounts {
         let contract = contract_address;
         let client = client.clone();
-
         tasks.spawn(async move {
             let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
-
             let claim_tx = build_generic_tx(
                 &client,
                 TxType::EIP1559,
@@ -145,8 +208,8 @@ async fn claim_erc20_balances(
             wait_for_transaction_receipt(tx_hash, &client, RETRIES).await
         });
     }
-    for response in tasks.join_all().await {
-        match response {
+    while let Some(response) = tasks.join_next().await {
+        match response.unwrap() {
             Ok(RpcReceipt { receipt, .. }) if !receipt.status => {
                 return Err(eyre::eyre!(
                     "Failed to assign balance to an account, tx failed with receipt: {receipt:?}"
@@ -157,9 +220,7 @@ async fn claim_erc20_balances(
                     "Failed to assign balance to an account, tx failed: {err}"
                 ));
             }
-            Ok(_) => {
-                continue;
-            }
+            Ok(_) => continue,
         }
     }
     Ok(())
@@ -204,14 +265,22 @@ impl TxBuilder {
     }
 }
 
+fn public_key_to_address(public_key: &PublicKey) -> Address {
+    let public_key = public_key.serialize_uncompressed();
+    let hash = Keccak256::digest(&public_key[1..]);
+    Address::from_slice(&hash[12..])
+}
+
 async fn load_test(
     tx_amount: u64,
     accounts: Vec<Signer>,
     client: EthClient,
     chain_id: u64,
     tx_builder: TxBuilder,
-) -> eyre::Result<()> {
+) -> eyre::Result<HashMap<Address, u64>> {
     let mut tasks = FuturesUnordered::new();
+    let mut target_nonces = HashMap::new();
+
     for account in accounts {
         let client = client.clone();
         let tx_builder = tx_builder.clone();
@@ -222,6 +291,7 @@ async fn load_test(
                 .unwrap();
             let src = account.address();
             let encoded_src: String = src.encode_hex();
+            let target_nonce = nonce + tx_amount;
 
             for i in 0..tx_amount {
                 let (value, calldata, dst) = tx_builder.build_tx();
@@ -247,63 +317,161 @@ async fn load_test(
                 let _sent = send_generic_transaction(&client, tx, &account).await?;
             }
             println!("{tx_amount} transactions have been sent for {encoded_src}",);
-            Ok::<(), EthClientError>(())
+            Ok::<_, EthClientError>((src, target_nonce))
         });
     }
 
     while let Some(result) = tasks.next().await {
-        result?; // Propagate errors from tasks
+        let (address, target_nonce) = result?;
+        target_nonces.insert(address, target_nonce);
     }
-    Ok(())
+    Ok(target_nonces)
 }
 
-// Waits until the nonce of each account has reached the tx_amount.
+async fn tps_load_test(
+    rate: u64,
+    accounts: &[Signer],
+    client: EthClient,
+    chain_id: u64,
+    tx_builder: TxBuilder,
+) -> eyre::Result<()> {
+    if accounts.is_empty() {
+        return Err(eyre::eyre!("Cannot run test with no accounts."));
+    }
+    if rate == 0 {
+        return Err(eyre::eyre!("TPS rate cannot be zero."));
+    }
+
+    let interval = Duration::from_secs_f64(1.0 / rate as f64);
+    let mut ticker = tokio::time::interval(interval);
+
+    let mut nonce_map = HashMap::new();
+    let mut account_index = 0;
+    let mut tasks = JoinSet::new();
+
+    loop {
+        ticker.tick().await;
+
+        let account = accounts[account_index].clone();
+        let client = client.clone();
+        let tx_builder = tx_builder.clone();
+        let address = account.address();
+        let current_nonce = match nonce_map.entry(address) {
+            Entry::Occupied(mut nonce) => {
+                *nonce.get_mut() += 1;
+                *nonce.get()
+            }
+            Entry::Vacant(entry) => {
+                let nonce = client
+                    .get_nonce(address, BlockIdentifier::Tag(BlockTag::Latest))
+                    .await?;
+                entry.insert(nonce);
+                nonce
+            }
+        };
+
+        tasks.spawn(async move {
+            println!("Sending from {address} (rate: {rate} TPS)");
+
+            let (value, calldata, dst) = tx_builder.build_tx();
+            let tx_result = build_generic_tx(
+                &client,
+                TxType::EIP1559,
+                dst,
+                address,
+                calldata.into(),
+                Overrides {
+                    chain_id: Some(chain_id),
+                    value,
+                    nonce: Some(current_nonce),
+                    max_fee_per_gas: Some(i64::MAX as u64),
+                    max_priority_fee_per_gas: Some(10_u64),
+                    gas_limit: Some(TX_GAS_COST * 100),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+            match tx_result {
+                Ok(tx) => {
+                    if let Err(e) = send_generic_transaction(&client, tx, &account).await {
+                        eprintln!("Failed to send transaction: {e}");
+                    }
+                }
+                Err(e) => eprintln!("Failed to build transaction: {e}"),
+            }
+        });
+
+        while let Some(res) = tasks.try_join_next() {
+            if let Err(e) = res {
+                eprintln!("A transaction sending task panicked: {e:?}");
+            }
+        }
+
+        account_index = (account_index + 1) % accounts.len();
+    }
+}
+
 async fn wait_until_all_included(
     client: EthClient,
     timeout: Option<Duration>,
-    accounts: Vec<Signer>,
-    tx_amount: u64,
+    target_nonces: HashMap<Address, u64>,
 ) -> Result<(), String> {
-    for account in accounts {
+    let mut tasks = JoinSet::new();
+    for (address, target_nonce) in target_nonces {
         let client = client.clone();
-        let src = account.address();
-        let encoded_src: String = src.encode_hex();
-        let mut last_updated = tokio::time::Instant::now();
-        let mut last_nonce = 0;
-
-        loop {
-            let nonce = client
-                .get_nonce(src, BlockIdentifier::Tag(BlockTag::Latest))
-                .await
-                .unwrap();
-            if nonce >= tx_amount {
-                println!(
-                    "All transactions sent from {encoded_src} have been included in blocks. Nonce: {nonce}",
-                );
-                break;
-            } else {
-                println!(
-                    "Waiting for transactions to be included from {encoded_src}. Nonce: {nonce}. Needs: {tx_amount}. Percentage: {:2}%.",
-                    (nonce as f64 / tx_amount as f64) * 100.0
-                );
-            }
-
-            if let Some(timeout) = timeout {
-                if last_nonce == nonce {
-                    let inactivity_time = last_updated.elapsed();
-                    if inactivity_time > timeout {
-                        return Err(format!(
-                            "Node inactive for {} seconds. Timeout reached.",
-                            inactivity_time.as_secs()
-                        ));
+        tasks.spawn(async move {
+            let encoded_src: String = address.encode_hex();
+            let mut last_updated = tokio::time::Instant::now();
+            let mut last_nonce = 0;
+            loop {
+                let nonce = match client
+                    .get_nonce(address, BlockIdentifier::Tag(BlockTag::Latest))
+                    .await
+                {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("Failed to get nonce for {encoded_src}: {e}. Retrying...");
+                        sleep(Duration::from_secs(1)).await;
+                        continue;
                     }
+                };
+                if nonce >= target_nonce {
+                    println!(
+                        "All transactions sent from {encoded_src} have been included. Final Nonce: {nonce}",
+                    );
+                    break;
                 } else {
-                    last_nonce = nonce;
-                    last_updated = tokio::time::Instant::now();
+                    println!(
+                        "Waiting for transactions from {encoded_src}. Nonce: {nonce}. Target: {target_nonce}. Percentage: {:.2}%.",
+                        (nonce as f64 / target_nonce as f64) * 100.0
+                    );
                 }
+                if let Some(timeout) = timeout {
+                    if last_nonce == nonce {
+                        let inactivity_time = last_updated.elapsed();
+                        if inactivity_time > timeout {
+                            return Err(format!(
+                                "Node inactive for {encoded_src} for {} seconds. Timeout reached.",
+                                inactivity_time.as_secs()
+                            ));
+                        }
+                    } else {
+                        last_nonce = nonce;
+                        last_updated = tokio::time::Instant::now();
+                    }
+                }
+                sleep(Duration::from_secs(5)).await;
             }
+            Ok(())
+        });
+    }
 
-            sleep(Duration::from_secs(5)).await;
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(Ok(_)) => (),
+            Ok(Err(e)) => return Err(e),
+            Err(e) => return Err(format!("Task failed: {e}")),
         }
     }
 
@@ -314,9 +482,13 @@ fn parse_pk_file(path: &Path) -> eyre::Result<Vec<Signer>> {
     let pkeys_content = fs::read_to_string(path).expect("Unable to read private keys file");
     let accounts: Vec<Signer> = pkeys_content
         .lines()
+        .take(MAX_RICH_ACCOUNTS)
         .map(parse_private_key_into_local_signer)
         .collect();
-
+    println!(
+        "Parsed {} rich accounts (limit: {MAX_RICH_ACCOUNTS})",
+        accounts.len()
+    );
     Ok(accounts)
 }
 
@@ -330,87 +502,142 @@ fn parse_private_key_into_local_signer(pkey: &str) -> Signer {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
-    let pkeys_path = Path::new(&cli.pkeys);
-    let accounts = parse_pk_file(pkeys_path)
-        .unwrap_or_else(|_| panic!("Failed to parse private keys file {}", pkeys_path.display()));
-    let client = EthClient::new(cli.node).expect("Failed to create EthClient");
+    match cli {
+        Cli::Load(cmd) => cmd.run().await?,
+        Cli::GenerateGenesis(cmd) => cmd.run().await?,
+    }
+    Ok(())
+}
 
-    // We ask the client for the chain id.
-    let chain_id = client
-        .get_chain_id()
-        .await
-        .expect("Failed to get chain id")
-        .as_u64();
+impl SubcommandLoad {
+    pub async fn run(self) -> eyre::Result<()> {
+        let pkeys_path = Path::new(&self.pkeys);
+        let accounts = parse_pk_file(pkeys_path).unwrap_or_else(|_| {
+            panic!("Failed to parse private keys file {}", pkeys_path.display())
+        });
+        let client = EthClient::new(self.node).expect("Failed to create EthClient");
+        let chain_id = client
+            .get_chain_id()
+            .await
+            .expect("Failed to get chain id")
+            .as_u64();
+        let deployer = parse_private_key_into_local_signer(RICH_ACCOUNT);
+        let tx_builder = match self.test_type {
+            TestType::Erc20 => {
+                println!("ERC20 Load test starting");
+                println!("Deploying ERC20 contract...");
+                let contract_address = erc20_deploy(client.clone(), &deployer)
+                    .await
+                    .expect("Failed to deploy ERC20 contract");
+                claim_erc20_balances(contract_address, client.clone(), accounts.clone())
+                    .await
+                    .expect("Failed to claim ERC20 balances");
+                TxBuilder::Erc20(contract_address)
+            }
+            TestType::EthTransfers => {
+                println!("Eth transfer load test starting");
+                TxBuilder::EthTransfer
+            }
+            TestType::Fibonacci => {
+                println!("Fibonacci load test starting");
+                println!("Deploying Fibonacci contract...");
+                let contract_address = deploy_fibo(client.clone(), &deployer)
+                    .await
+                    .expect("Failed to deploy Fibonacci contract");
+                TxBuilder::Fibonacci(contract_address)
+            }
+            TestType::IOHeavy => {
+                println!("IO Heavy load test starting");
+                println!("Deploying IO Heavy contract...");
+                let contract_address = deploy_io_heavy(client.clone(), &deployer)
+                    .await
+                    .expect("Failed to deploy IO Heavy contract");
+                TxBuilder::IOHeavy(contract_address)
+            }
+        };
 
-    let deployer = parse_private_key_into_local_signer(RICH_ACCOUNT);
+        let time_now = tokio::time::Instant::now();
 
-    let tx_builder = match cli.test_type {
-        TestType::Erc20 => {
-            println!("ERC20 Load test starting");
-            println!("Deploying ERC20 contract...");
-            let contract_address = erc20_deploy(client.clone(), &deployer)
+        match self.load_type {
+            LoadType::Burst { tx_amount, wait } => {
+                println!(
+                    "Starting burst load test with {} transactions per account...",
+                    tx_amount
+                );
+                let target_nonces = load_test(
+                    tx_amount,
+                    accounts.clone(),
+                    client.clone(),
+                    chain_id,
+                    tx_builder,
+                )
                 .await
-                .expect("Failed to deploy ERC20 contract");
-            claim_erc20_balances(contract_address, client.clone(), accounts.clone())
-                .await
-                .expect("Failed to claim ERC20 balances");
-            TxBuilder::Erc20(contract_address)
+                .expect("Failed to run burst load test");
+
+                if wait > 0 {
+                    println!("Waiting for all transactions to be included in blocks...");
+                    let wait_time = Some(Duration::from_secs(wait * 60));
+                    wait_until_all_included(client, wait_time, target_nonces)
+                        .await
+                        .unwrap();
+                }
+            }
+            LoadType::Tps { rate } => {
+                tps_load_test(rate, &accounts, client.clone(), chain_id, tx_builder)
+                    .await
+                    .expect("Failed to run TPS load test");
+            }
         }
-        TestType::EthTransfers => {
-            println!("Eth transfer load test starting");
-            TxBuilder::EthTransfer
+
+        let elapsed_time = time_now.elapsed();
+        println!(
+            "Load test finished. Total elapsed time: {} seconds",
+            elapsed_time.as_secs()
+        );
+        Ok(())
+    }
+}
+
+impl SubcommandGenerateGenesis {
+    pub async fn run(self) -> eyre::Result<()> {
+        println!(
+            "Generating genesis file with {} accounts...",
+            self.num_accounts
+        );
+
+        let secp = Secp256k1::new();
+        let mut keys_file = File::create(&self.keys_out)?;
+        let balance = U256::from(self.balance);
+        let mut genesis = self.network.get_genesis()?;
+
+        for _ in 0..self.num_accounts {
+            let (secret_key, public_key) = secp.generate_keypair(&mut rand::thread_rng());
+            let address = public_key_to_address(&public_key);
+
+            writeln!(keys_file, "{}", hex::encode(secret_key.secret_bytes()))?;
+
+            genesis.alloc.insert(
+                address,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage: HashMap::new(),
+                    balance,
+                    nonce: 0,
+                },
+            );
         }
-        TestType::Fibonacci => {
-            println!("Fibonacci load test starting");
-            println!("Deploying Fibonacci contract...");
-            let contract_address = deploy_fibo(client.clone(), &deployer)
-                .await
-                .expect("Failed to deploy Fibonacci contract");
-            TxBuilder::Fibonacci(contract_address)
-        }
-        TestType::IOHeavy => {
-            println!("IO Heavy load test starting");
-            println!("Deploying IO Heavy contract...");
-            let contract_address = deploy_io_heavy(client.clone(), &deployer)
-                .await
-                .expect("Failed to deploy IO Heavy contract");
-            TxBuilder::IOHeavy(contract_address)
-        }
-    };
 
-    println!(
-        "Starting load test with {} transactions per account...",
-        cli.tx_amount
-    );
-    let time_now = tokio::time::Instant::now();
+        let file = BufWriter::new(File::create(&self.genesis_out)?);
+        serde_json::to_writer_pretty(file, &genesis)?;
 
-    load_test(
-        cli.tx_amount,
-        accounts.clone(),
-        client.clone(),
-        chain_id,
-        tx_builder,
-    )
-    .await
-    .expect("Failed to load test");
+        println!(
+            "Successfully generated genesis file '{}' and keys file '{}'",
+            self.genesis_out.display(),
+            self.keys_out.display()
+        );
 
-    let wait_time = if cli.wait > 0 {
-        Some(Duration::from_secs(cli.wait * 60))
-    } else {
-        None
-    };
-
-    println!("Waiting for all transactions to be included in blocks...");
-    wait_until_all_included(client, wait_time, accounts, cli.tx_amount)
-        .await
-        .unwrap();
-
-    let elapsed_time = time_now.elapsed();
-
-    println!(
-        "Load test finished. Elapsed time: {} seconds",
-        elapsed_time.as_secs()
-    );
+        Ok(())
+    }
 }
