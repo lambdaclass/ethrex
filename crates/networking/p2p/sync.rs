@@ -17,6 +17,8 @@ use crate::{
     peer_handler::{MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+#[cfg(not(feature = "rocksdb"))]
+use ethrex_common::U256;
 use ethrex_common::types::Code;
 use ethrex_common::{
     H256,
