@@ -2,6 +2,9 @@
 
 ## Perf
 
+### 2025-11-12
+- Only mark individual values as dirty instead of the whole trie [#5282](https://github.com/lambdaclass/ethrex/pull/5282)
+
 ### 2025-11-11
 
 - Insert instead of merge for bloom rebuilds [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
