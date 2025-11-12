@@ -523,14 +523,10 @@ pub fn static_left_pad<const N: usize>(data: &[u8]) -> Result<[u8; N], RLPDecode
     if data[0] == 0 {
         return Err(RLPDecodeError::MalformedData);
     }
-    if data.len() > N {
+    let Some(data_start_index) = N.checked_sub(data.len()) else {
         return Err(RLPDecodeError::InvalidLength);
-    }
-    let data_start_index = N.saturating_sub(data.len());
-    result
-        .get_mut(data_start_index..)
-        .ok_or(RLPDecodeError::InvalidLength)?
-        .copy_from_slice(data);
+    };
+    result[data_start_index..].copy_from_slice(data);
     Ok(result)
 }
 
