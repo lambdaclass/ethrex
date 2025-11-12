@@ -1163,10 +1163,18 @@ pub fn generate_blobs_bundle(
     fee_configs: &[FeeConfig],
     fork: Fork,
 ) -> Result<(BlobsBundle, usize), CommitterError> {
-    let len: u64 = blocks.len().try_into()?;
+    let blocks_len: u64 = blocks.len().try_into()?;
+    let fee_configs_len: u64 = fee_configs.len().try_into()?;
+
+    if blocks_len != fee_configs_len {
+        return Err(CommitterError::UnexpectedError(
+            "Blocks and fee configs length mismatch".to_string(),
+        ));
+    }
+
     let mut blob_data = Vec::new();
 
-    blob_data.extend(len.to_be_bytes());
+    blob_data.extend(blocks_len.to_be_bytes());
 
     for block in blocks {
         blob_data.extend(block.encode_to_vec());
