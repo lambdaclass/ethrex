@@ -203,6 +203,15 @@ impl Store {
             CF_FLATKEYVALUE,
             CF_MISC_VALUES,
         ];
+        let compressible_cfs = vec![
+            CF_BLOCK_NUMBERS,
+            CF_HEADERS,
+            CF_BODIES,
+            CF_ACCOUNT_CODES,
+            CF_RECEIPTS,
+            CF_TRANSACTION_LOCATIONS,
+            CF_FULLSYNC_HEADERS
+        ];
 
         // Get existing column families to know which ones to drop later
         let existing_cfs = match DBWithThreadMode::<MultiThreaded>::list_cf(&db_options, path) {
@@ -240,7 +249,10 @@ impl Store {
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
-            if cf_name != CF_ACCOUNT_CODES {
+
+            if compressible_cfs.contains(&cf_name.as_str()) {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            } else {
                 cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
             }
 
@@ -289,7 +301,6 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_RECEIPTS | CF_ACCOUNT_CODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
