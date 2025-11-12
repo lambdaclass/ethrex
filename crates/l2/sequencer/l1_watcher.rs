@@ -252,8 +252,6 @@ impl L1Watcher {
             .get_logs(last_block_fetched + 1, new_last_block, address, topics)
             .await?;
 
-        info!("Logs: {:#?}", logs);
-
         // If we have an error adding the tx to the mempool we may assign it to the next
         // block to fetch, but we may lose a privileged tx.
         Ok((new_last_block, logs))
