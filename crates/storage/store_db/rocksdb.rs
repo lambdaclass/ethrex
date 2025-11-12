@@ -790,12 +790,14 @@ impl Store {
         )?;
 
         let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
+
+        // Before encoding, accounts have only the account address as their path, while storage keys have
+        // the account address (32 bytes) + storage path (up to 32 bytes).
+
         // Commit removes the bottom layer and returns it, this is the mutation step.
         let nodes = trie_mut.commit(root).unwrap_or_default();
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
-            // Accounts have only the account address as their path, while storage keys have
-            // the account address (32 bytes) + storage path (up to 32 bytes).
             let is_account = key.len() <= 65;
 
             if is_leaf && key > last_written {
