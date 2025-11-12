@@ -1,9 +1,12 @@
 # Shared Bridge
 
-## Motivation
+## Introduction
 
-If a user wants to send funds from one L2 to another, the basic flow would be to withdraw its ETH from the first L2 to L1 and then deposit them in the second L2. The goal is to be able to send funds and messages from one L2 to another L2 in just one transaction, without going through L1.
+If a user wants to transfer funds from L2-A to an account on L2-B, the conventional process involves several steps: withdrawing assets from L2-A to Ethereum, claiming the unlocked funds on Ethereum, and then depositing those assets from Ethereum to L2-B. These multiple steps degrade the UX, and two of them require transactions on Ethereum, which are often expensive. This inefficiency arises because there is currently no direct communication channel between different L2s, forcing all interactions to route through their common hub: Ethereum.
 
+The Shared Bridge feature changes this by enabling seamless message passing between L2s. As a result, a user can achieve the same transfer by interacting only with the source chain (L2-A), with the outcome eventually reflecting on the destination chain (L2-B).
+
+While the user performs just one interaction and waits for the result, a similar process to the conventional flow occurs behind the scenes. In the following sections, we'll explore how it works.
 
 ## Overview
 
