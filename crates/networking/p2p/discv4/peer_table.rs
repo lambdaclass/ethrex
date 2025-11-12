@@ -33,7 +33,7 @@ const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 /// The target number of RLPx connections to reach.
 pub const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
-const TARGET_CONTACTS: usize = 100_000;
+pub const TARGET_CONTACTS: usize = 100_000;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -276,6 +276,14 @@ impl PeerTable {
     pub async fn prune(&mut self) -> Result<(), PeerTableError> {
         self.handle.cast(CastMessage::Prune).await?;
         Ok(())
+    }
+
+    /// Return the amount of contacts
+    pub async fn contact_count(&mut self) -> Result<usize, PeerTableError> {
+        match self.handle.call(CallMessage::ContactCount).await? {
+            OutMessage::ContactCount(contact_count) => Ok(contact_count),
+            _ => unreachable!(),
+        }
     }
 
     /// Return the amount of connected peers
@@ -795,6 +803,7 @@ enum CastMessage {
 
 #[derive(Clone, Debug)]
 enum CallMessage {
+    ContactCount,
     PeerCount,
     PeerCountByCapabilities { capabilities: Vec<Capability> },
     TargetReached,
@@ -816,6 +825,7 @@ enum CallMessage {
 
 #[derive(Debug)]
 pub enum OutMessage {
+    ContactCount(usize),
     PeerCount(usize),
     FoundPeer {
         node_id: H256,
@@ -863,6 +873,9 @@ impl GenServer for PeerTableServer {
         _handle: &GenServerHandle<PeerTableServer>,
     ) -> CallResponse<Self> {
         match message {
+            CallMessage::ContactCount => {
+                CallResponse::Reply(Self::OutMsg::PeerCount(self.contacts.len()))
+            }
             CallMessage::PeerCount => {
                 CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()))
             }

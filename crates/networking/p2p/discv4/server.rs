@@ -5,7 +5,9 @@ use crate::{
             ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
             PacketDecodeErr, PingMessage, PongMessage,
         },
-        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
+        peer_table::{
+            Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError, TARGET_CONTACTS,
+        },
     },
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
@@ -255,12 +257,11 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        if !self.peer_table.target_reached().await.unwrap_or(false) {
-            INITIAL_LOOKUP_INTERVAL
-        } else {
-            trace!("Reached target number of peers or contacts. Using longer lookup interval.");
-            LOOKUP_INTERVAL
-        }
+        let count_peers_contacts = self.peer_table.peer_count().await.unwrap_or(0)
+            + self.peer_table.contact_count().await.unwrap_or(0);
+        let progress = (count_peers_contacts as f32 / TARGET_CONTACTS as f32).clamp(0.0, 1.0);
+
+        INITIAL_LOOKUP_INTERVAL + (LOOKUP_INTERVAL - INITIAL_LOOKUP_INTERVAL) * progress as u32
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
