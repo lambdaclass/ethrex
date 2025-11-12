@@ -1034,7 +1034,7 @@ async fn initialize_contracts(
         )
         .await?;
         info!(
-            fee_token = %format!("{fee_token:#x}"),
+            ?fee_token,
             "CommonBridge initial fee token registered"
         );
     }
