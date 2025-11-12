@@ -305,9 +305,6 @@ jobs:
 
       - name: Run test
         run: |
-          if  [ "${{ matrix.based }}" = true ]; then
-            export INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true
-          fi
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
