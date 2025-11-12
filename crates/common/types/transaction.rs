@@ -10,6 +10,9 @@ use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
 
+/// The serialized length of a default eip1559 transaction
+pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
+
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, decode_rlp_item},
@@ -3147,5 +3150,11 @@ mod tests {
         let encoded = tx.encode_to_vec();
         let decoded_tx = Transaction::decode(&encoded).unwrap();
         assert_eq!(tx, decoded_tx);
+    }
+
+    #[test]
+    fn test_eip1559_simple_transfer_size() {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
+        assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
     }
 }

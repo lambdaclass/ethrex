@@ -47,6 +47,7 @@
   - [Deploy a contract](./l2/interacting/deploy_contracts.md)
 - [Fundamentals](./l2/fundamentals/README.md)
   - [State diffs](./l2/fundamentals/state_diffs.md)
+  - [Block vs StateDiff](./l2/fundamentals/block_vs_state_diff_measurements.md)
   - [Deposits](./l2/fundamentals/deposits.md)
   - [Withdrawals](./l2/fundamentals/withdrawals.md)
   - [Smart contracts](./l2/fundamentals/contracts.md)
