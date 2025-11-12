@@ -14,7 +14,8 @@ use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use std::collections::{BTreeMap, HashSet};
+use rustc_hash::FxHashSet;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -52,8 +53,8 @@ pub type TrieNode = (Nibbles, NodeRLP);
 pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
-    pending_removal: HashSet<Nibbles>,
-    dirty: HashSet<Nibbles>,
+    pending_removal: FxHashSet<Nibbles>,
+    dirty: FxHashSet<Nibbles>,
 }
 
 impl Default for Trie {
@@ -68,8 +69,8 @@ impl Trie {
         Self {
             db,
             root: NodeRef::default(),
-            pending_removal: HashSet::new(),
-            dirty: HashSet::new(),
+            pending_removal: Default::default(),
+            dirty: Default::default(),
         }
     }
 
@@ -82,8 +83,8 @@ impl Trie {
             } else {
                 Default::default()
             },
-            pending_removal: HashSet::new(),
-            dirty: HashSet::new(),
+            pending_removal: Default::default(),
+            dirty: Default::default(),
         }
     }
 
@@ -279,7 +280,7 @@ impl Trie {
         if self.root.is_valid() {
             let encoded_root = self.get_root_node(Nibbles::default())?.encode_to_vec();
 
-            let mut node_path = HashSet::new();
+            let mut node_path: FxHashSet<_> = Default::default();
             for path in paths {
                 let mut nodes = self.get_proof(path)?;
                 nodes.swap_remove(0);
