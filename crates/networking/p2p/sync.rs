@@ -14,19 +14,19 @@ use crate::utils::{
 };
 use crate::{
     metrics::METRICS,
-    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    peer_handler::{MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+#[cfg(not(feature = "rocksdb"))]
+use ethrex_common::U256;
 use ethrex_common::types::Code;
 use ethrex_common::{
-    BigEndianHash, H256, U256,
+    H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-#[cfg(any(test, feature = "test-utils"))]
-use ethrex_storage::EngineType;
-use ethrex_storage::{STATE_TRIE_SEGMENTS, Store, error::StoreError};
+use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -34,7 +34,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use std::{
-    array,
     cmp::min,
     collections::HashMap,
     sync::{
@@ -68,19 +67,6 @@ lazy_static::lazy_static! {
 #[cfg(not(feature = "sync-test"))]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
-}
-
-lazy_static::lazy_static! {
-    // Size of each state trie segment
-    static ref STATE_TRIE_SEGMENT_SIZE: U256 = HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS;
-    // Starting hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_START: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * i)))
-    };
-    // Ending hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_END: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * (i+1))))
-    };
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -119,22 +105,6 @@ impl Syncer {
             cancel_token,
             blockchain,
             datadir,
-        }
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    /// Creates a dummy Syncer for tests where syncing is not needed
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub async fn dummy() -> Self {
-        Self {
-            snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::dummy().await,
-            // This won't be used
-            cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
-            )),
-            datadir: ".".into(),
         }
     }
 

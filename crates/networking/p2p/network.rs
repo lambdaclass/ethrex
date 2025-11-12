@@ -93,36 +93,6 @@ impl P2PContext {
             tx_broadcaster,
         })
     }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    /// Creates a dummy P2PContext for tests
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub async fn dummy(peer_table: PeerTable) -> P2PContext {
-        use ethrex_storage::EngineType;
-
-        let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
-        let blockchain: Arc<Blockchain> = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let (channel_broadcast_send_end, _) =
-            tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<Message>)>(100000);
-        P2PContext {
-            tracker: TaskTracker::default(),
-            signer: SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
-            table: peer_table.clone(),
-            storage,
-            blockchain: blockchain.clone(),
-            broadcast: channel_broadcast_send_end,
-            local_node: local_node.clone(),
-            client_version: "".to_string(),
-            #[cfg(feature = "l2")]
-            based_context: None,
-            tx_broadcaster: TxBroadcaster::spawn(peer_table.clone(), blockchain, 1000)
-                .await
-                .expect("Failed to spawn tx broadcaster"),
-        }
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
