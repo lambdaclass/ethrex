@@ -1,13 +1,13 @@
+use ethrex_common::utils::keccak;
 use ethrex_common::{H256, H512};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use secp256k1::ecdh::shared_secret_point;
 use secp256k1::{PublicKey, SecretKey};
-use sha3::{Digest, Keccak256};
+use sha2::{Digest, Sha256};
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder, max_compress_len};
 use std::array::TryFromSliceError;
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
     Sha256::digest(data).into()
 }
 use crate::rlpx::error::CryptographyError;
@@ -47,7 +47,7 @@ pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), CryptographyError> {
 
 /// Cpmputes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
-    H256(Keccak256::new_with_prefix(public_key).finalize().into())
+    keccak(public_key)
 }
 
 /// Decompresses the received public key
