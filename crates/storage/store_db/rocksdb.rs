@@ -15,8 +15,8 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
-    Options, WriteBatch, checkpoint::Checkpoint,
+    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBPinnableSlice,
+    DBWithThreadMode, MultiThreaded, Options, WriteBatch, checkpoint::Checkpoint,
 };
 use std::{
     collections::HashSet,
@@ -1306,18 +1306,17 @@ impl StoreEngine for Store {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
-        let cf = self.cf_handle(CF_ACCOUNT_CODES)?;
-        let Some(bytes) = self
-            .db
-            .get_pinned_cf(&cf, code_hash.as_bytes())
-            .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))?
+        let db = self.db.clone();
+        let Some(slice) = OwnedPinnableSlice::new(db, CF_ACCOUNT_CODES, code_hash.as_bytes())?
         else {
             return Ok(None);
         };
+        let bytes = Bytes::from_owner(slice);
         let (bytecode, targets) = decode_bytes(&bytes)?;
+        let bytecode = bytes.slice_ref(bytecode);
         let code = Code {
             hash: code_hash,
-            bytecode: Bytes::copy_from_slice(bytecode),
+            bytecode,
             jump_targets: <Vec<_>>::decode(targets)?,
         };
         Ok(Some(code))
@@ -1989,4 +1988,49 @@ fn open_cfs<'a, const N: usize>(
     handles
         .try_into()
         .map_err(|_| StoreError::Custom("Unexpected number of column families".to_string()))
+}
+
+/// Owned version of [`DBPinnableSlice`], that keeps a reference to the database to ensure
+/// the slice remains valid.
+struct OwnedPinnableSlice {
+    /// Leaked reference to the database to ensure the slice remains valid
+    db_ref: &'static Arc<DBWithThreadMode<MultiThreaded>>,
+    /// The pinned slice
+    slice: DBPinnableSlice<'static>,
+}
+
+impl OwnedPinnableSlice {
+    fn new(
+        db: Arc<DBWithThreadMode<MultiThreaded>>,
+        cf_name: &'static str,
+        key: &[u8],
+    ) -> Result<Option<Self>, StoreError> {
+        let db_ref = Box::leak(Box::new(db));
+        let cf = db_ref
+            .cf_handle(cf_name)
+            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+        let slice_opt = db_ref
+            .get_pinned_cf(&cf, key)
+            .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))?;
+        let this = slice_opt.map(|slice| Self { db_ref, slice });
+        Ok(this)
+    }
+}
+
+impl AsRef<[u8]> for OwnedPinnableSlice {
+    fn as_ref(&self) -> &[u8] {
+        &self.slice
+    }
+}
+
+impl Drop for OwnedPinnableSlice {
+    fn drop(&mut self) {
+        // Restore the leaked database reference
+        drop(unsafe {
+            Box::from_raw(
+                self.db_ref as *const Arc<DBWithThreadMode<MultiThreaded>>
+                    as *mut Arc<DBWithThreadMode<MultiThreaded>>,
+            )
+        })
+    }
 }
