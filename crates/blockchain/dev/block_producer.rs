@@ -16,6 +16,8 @@ pub async fn start_block_producer(
     let engine_client = EngineClient::new(&execution_client_auth_url, jwt_secret);
 
     let mut ticker = tokio::time::interval(Duration::from_millis(block_production_interval_ms));
+
+    // Sleep until the first tick to avoid timestamp collision with the genesis block.
     ticker.tick().await;
 
     let mut head_block_hash: H256 = head_block_hash;
