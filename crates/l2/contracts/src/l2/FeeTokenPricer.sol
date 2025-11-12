@@ -16,6 +16,10 @@ contract FeeTokenPricer is IFeeTokenPricer {
     function getFeeTokenRatio(
         address feeToken
     ) external view override returns (uint256) {
+        require(
+            ratios[feeToken] != 0,
+            "FeeTokenPricer: token has not set a correct ratio"
+        );
         return ratios[feeToken];
     }
 

@@ -61,30 +61,19 @@ Operators decide which ERC-20s are valid fee tokens:
 
 > ⚠️ **Warning:** Registration completes only after the L1 watcher processes the privileged transaction and the L2 registry emits `FeeTokenRegistered`. Until then, user transactions referencing the token will fail.
 
-If the token is not yet registered, the bridge owner can queue the privileged call from L1 with the SDK helpers:
+If the token is not yet registered, the bridge owner can queue the privileged call from L1 with the `rex` CLI:
 
-```rust
-let calldata = ethrex_l2_sdk::calldata::encode_calldata(
-    "registerNewFeeToken(address)",
-    &[Value::Address(fee_token_address)],
-)?;
-let tx = build_generic_tx(
-    &l1_client,
-    TxType::EIP1559,
-    ethrex_l2_sdk::bridge_address()?, // CommonBridge proxy on L1
-    owner_signer.address(),
-    calldata.into(),
-    Overrides {
-        gas_limit: Some(21000 * 10),
-        ..Default::default()
-    },
-).await?;
-let hash = send_generic_transaction(&l1_client, tx, &owner_signer).await?;
-wait_for_transaction_receipt(hash, &l1_client, 100).await?;
-// The L1 watcher will include the privileged tx and the registry will emit FeeTokenRegistered.
+```shell
+rex send <L1_BRIDGE_ADDRESS> \
+  "registerNewFeeToken(address)" \
+  <L2_FEE_TOKEN_ADDRESS> \
+  --rpc-url http://localhost:8545 \
+  --private-key <BRIDGE_OWNER_PK>
+
+# After the L1 watcher processes the privileged tx, the registry emits FeeTokenRegistered.
 ```
 
-Setting the ratio uses the exact same pattern; just change the signature and add the `uint256` argument:
+Setting the ratio uses a similar pattern:
 
 ```shell
 rex send <L1_BRIDGE_ADDRESS> \
