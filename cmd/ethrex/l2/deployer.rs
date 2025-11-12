@@ -566,7 +566,7 @@ pub async fn deploy_l1_contracts(
     if contract_addresses.router.is_some() {
         let _ = register_chain(
             &eth_client,
-            contract_addresses,
+            contract_addresses.clone(),
             genesis.config.chain_id,
             &signer,
         )

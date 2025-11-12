@@ -38,7 +38,7 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 	--metrics \
 	--metrics.port 3702 \
 	--datadir dev_ethrex_l2 \
-	--l1.bridge-address 0x2009c28e68099471942def2fbd85ad345c51a0f9 \
+	--l1.bridge-address 0x74bb68663fc303ac954ef9aed5a2edb0b4887296 \
 	--l1.on-chain-proposer-address 0x84307998a57635ccc4ed1e5dba1e76344dcdfbe6 \
 	--eth.rpc-url http://localhost:8545 \
 	--osaka-activation-time 1761677592 \
