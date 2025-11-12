@@ -39,7 +39,7 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 	--metrics.port 3702 \
 	--datadir dev_ethrex_l2 \
 	--l1.bridge-address 0x2009c28e68099471942def2fbd85ad345c51a0f9 \
-	--l1.on-chain-proposer-address 0x63f1854b380b1f02bb2201eadd04c4a096c5a78f \
+	--l1.on-chain-proposer-address 0x84307998a57635ccc4ed1e5dba1e76344dcdfbe6 \
 	--eth.rpc-url http://localhost:8545 \
 	--osaka-activation-time 1761677592 \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
