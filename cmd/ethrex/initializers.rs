@@ -35,6 +35,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::oneshot;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
@@ -541,6 +542,7 @@ pub async fn regenerate_head_state(
     }
 
     info!("Regenerating state from block {last_state_number} to {head_block_number}");
+    let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
 
     // Re-apply blocks from the last known state root to the head block
     for i in (last_state_number + 1)..=head_block_number {
@@ -551,7 +553,11 @@ pub async fn regenerate_head_state(
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block_pipeline(block)?;
+        let (notify_send, notify_recv) = oneshot::channel();
+        block_worker_channel.send((notify_send, block)).unwrap();
+        notify_recv.await.unwrap().unwrap();
+
+        // blockchain.add_block_pipeline(block)?;
     }
 
     info!("Finished regenerating state");
