@@ -415,7 +415,17 @@ impl Default for DeployerOptions {
                 0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
             ]),
-            bridge_owner_pk: None,
+            // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
+            bridge_owner_pk: Some(
+                SecretKey::from_slice(
+                    H256::from_str(
+                        "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e",
+                    )
+                    .expect("Bridge owner private key is a valid hex string")
+                    .as_bytes(),
+                )
+                .expect("Bridge owner private key is valid"),
+            ),
             on_chain_proposer_owner_pk: None,
             sp1_vk_path: None,
             risc0_vk_path: None,
