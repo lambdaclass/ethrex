@@ -846,7 +846,11 @@ pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), Cha
                 .iter()
                 .map(EncodedTransaction::encode),
         );
-        info!(transaction_count = block.body.transactions.len(), "")
+        info!(
+            transaction_count = block.body.transactions.len(),
+            block_num = block.header.number,
+            ""
+        )
     }
 
     let file = File::create(out_path).expect("Failed to open file");
