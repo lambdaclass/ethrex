@@ -10,8 +10,8 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_rlp::error::RLPDecodeError;
 use ethrex_crypto::keccak::keccak_hash;
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
 use serde::de::{SeqAccess, Visitor};
@@ -218,7 +218,8 @@ impl GuestProgramState {
                 if !update.added_storage.is_empty() {
                     let mut storage_trie = self
                         .storage_tries
-                        .remove(&account_state.storage_root)
+                        .get(&account_state.storage_root)
+                        .map(|n| Trie::new_temp_with_root(n.root.clone()))
                         .unwrap_or_default();
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
@@ -361,7 +362,7 @@ impl GuestProgramState {
         }
         let Some(storage_trie) = self.storage_tries.get(&storage_root) else {
             return Err(GuestProgramStateError::Database(format!(
-                "non empty storage trie not found for root {storage_root}"
+                "non empty storage trie not found for root {storage_root:?} of account {address:?} for key {key:?}"
             )));
         };
 
