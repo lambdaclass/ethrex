@@ -226,7 +226,7 @@ pub async fn fill_transactions(
         blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
 
         // Add transaction to block
-        context.payload.body.transactions.push(head_tx.into());
+        context.payload.body.transactions.push(tx);
 
         // Save receipt for hash calculation
         context.receipts.push(receipt);
