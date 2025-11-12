@@ -30,7 +30,7 @@ use std::env;
 use std::{
     fs,
     io::IsTerminal,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -299,22 +299,22 @@ pub fn get_signer(datadir: &Path) -> SecretKey {
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
-    let udp_socket_addr = parse_socket_addr("::", &opts.discovery_port)
-        .expect("Failed to parse discovery address and port");
-    let tcp_socket_addr =
-        parse_socket_addr("::", &opts.p2p_port).expect("Failed to parse addr and port");
+    let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
+    let udp_port = opts
+        .discovery_port
+        .parse()
+        .expect("Failed to parse discovery port");
 
-    let p2p_node_ip = local_ip()
-        .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"));
+    let p2p_node_ip: IpAddr = if let Some(addr) = &opts.p2p_addr {
+        addr.parse().expect("Failed to parse p2p address")
+    } else {
+        local_ip()
+            .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"))
+    };
 
     let local_public_key = public_key_from_signing_key(signer);
 
-    let node = Node::new(
-        p2p_node_ip,
-        udp_socket_addr.port(),
-        tcp_socket_addr.port(),
-        local_public_key,
-    );
+    let node = Node::new(p2p_node_ip, udp_port, tcp_port, local_public_key);
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
