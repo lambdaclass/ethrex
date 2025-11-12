@@ -659,7 +659,7 @@ impl L1Committer {
             acc_blocks.push((last_added_block_number, potential_batch_block.hash()));
         } // end loop
 
-        if blocks.is_empty() {
+        if acc_blocks.is_empty() {
             debug!("No new blocks were available to build batch {batch_number}, skipping it");
             return Ok(None);
         }
