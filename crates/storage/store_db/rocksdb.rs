@@ -180,6 +180,8 @@ impl Store {
         db_options.set_enable_write_thread_adaptive_yield(true);
         db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         db_options.set_advise_random_on_open(false);
+        db_options.set_compression_type(rocksdb::DBCompressionType::None);
+        db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
         // db_options.enable_statistics();
         // db_options.set_stats_dump_period_sec(600);
@@ -239,10 +241,10 @@ impl Store {
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
+            cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
 
             match cf_name.as_str() {
                 CF_HEADERS | CF_BODIES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(4);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
@@ -252,7 +254,6 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_CANONICAL_BLOCK_HASHES | CF_BLOCK_NUMBERS => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
@@ -263,7 +264,18 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_TRIE_NODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
+                    cf_opts.set_max_write_buffer_number(6);
+                    cf_opts.set_min_write_buffer_number_to_merge(2);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                CF_FLATKEYVALUE => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
@@ -276,7 +288,6 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_RECEIPTS | CF_ACCOUNT_CODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
@@ -287,7 +298,6 @@ impl Store {
                 }
                 _ => {
                     // Default for other CFs
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
@@ -808,8 +818,6 @@ impl StoreEngine for Store {
             .state_root;
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
-        let _span = tracing::trace_span!("Block DB update").entered();
-
         let [
             cf_receipts,
             cf_codes,
@@ -886,14 +894,16 @@ impl StoreEngine for Store {
         }
 
         for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(
+                6 + code.bytecode.len()
+                    + code
+                        .jump_targets
+                        .iter()
+                        .map(std::mem::size_of_val)
+                        .sum::<usize>(),
+            );
             code.bytecode.encode(&mut buf);
-            code.jump_targets
-                .into_iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>()
-                .as_slice()
-                .encode(&mut buf);
+            code.jump_targets.encode(&mut buf);
             batch.put_cf(&cf_codes, code_hash.0, buf);
         }
 
@@ -1260,14 +1270,16 @@ impl StoreEngine for Store {
 
     async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
-        let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+        let mut buf = Vec::with_capacity(
+            6 + code.bytecode.len()
+                + code
+                    .jump_targets
+                    .iter()
+                    .map(std::mem::size_of_val)
+                    .sum::<usize>(),
+        );
         code.bytecode.encode(&mut buf);
-        code.jump_targets
-            .into_iter()
-            .flat_map(|t| t.to_le_bytes())
-            .collect::<Vec<u8>>()
-            .as_slice()
-            .encode(&mut buf);
+        code.jump_targets.encode(&mut buf);
         self.write_async(CF_ACCOUNT_CODES, hash_key, buf).await
     }
 
@@ -1300,17 +1312,10 @@ impl StoreEngine for Store {
         };
         let bytes = Bytes::from_owner(bytes);
         let (bytecode, targets) = decode_bytes(&bytes)?;
-        let (targets, rest) = decode_bytes(targets)?;
-        if !rest.is_empty() || !targets.len().is_multiple_of(2) {
-            return Err(StoreError::DecodeError);
-        }
         let code = Code {
             hash: code_hash,
             bytecode: Bytes::copy_from_slice(bytecode),
-            jump_targets: targets
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect(),
+            jump_targets: <Vec<_>>::decode(targets)?,
         };
         Ok(Some(code))
     }
@@ -1870,14 +1875,16 @@ impl StoreEngine for Store {
 
         for (code_hash, code) in account_codes {
             let key = code_hash.as_bytes().to_vec();
-            let mut buf = Vec::with_capacity(6 + code.bytecode.len() + 2 * code.jump_targets.len());
+            let mut buf = Vec::with_capacity(
+                6 + code.bytecode.len()
+                    + code
+                        .jump_targets
+                        .iter()
+                        .map(std::mem::size_of_val)
+                        .sum::<usize>(),
+            );
             code.bytecode.encode(&mut buf);
-            code.jump_targets
-                .into_iter()
-                .flat_map(|t| t.to_le_bytes())
-                .collect::<Vec<u8>>()
-                .as_slice()
-                .encode(&mut buf);
+            code.jump_targets.encode(&mut buf);
             batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, buf));
         }
 

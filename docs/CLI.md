@@ -12,6 +12,7 @@ Usage: ethrex [OPTIONS] [COMMAND]
 Commands:
   removedb            Remove the database
   import              Import blocks to the database
+  import-bench        Import blocks to the database for benchmarking
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
   help                Print this message or the help of the given subcommand(s)
@@ -147,7 +148,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 5.0.0"]
+          [default: "ethrex 6.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -310,7 +311,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 5.0.0"]
+          [default: "ethrex 6.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
