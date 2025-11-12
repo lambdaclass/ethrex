@@ -1,9 +1,6 @@
 use crate::types::Node;
 use crate::{
-    discv4::{
-        peer_table::PeerTableError,
-        server::{INITIAL_LOOKUP_INTERVAL, LOOKUP_INTERVAL},
-    },
+    discv4::{peer_table::PeerTableError, server::LOOKUP_INTERVAL},
     metrics::METRICS,
     network::P2PContext,
     rlpx::connection::server::PeerConnection,
@@ -25,9 +22,8 @@ pub enum RLPxInitiatorError {
 pub struct RLPxInitiator {
     context: P2PContext,
 
-    /// The initial interval between peer lookups, until the number of peers
+    /// The interval between peer lookups, incremets as the number of peers
     /// reaches [target_peers](RLPxInitiatorState::target_peers).
-    initial_lookup_interval: Duration,
     lookup_interval: Duration,
 
     /// The target number of RLPx connections to reach.
@@ -39,7 +35,6 @@ impl RLPxInitiator {
         Self {
             context,
             // We use the same lookup intervals as Discovery to try to get both process to check at the same rate
-            initial_lookup_interval: INITIAL_LOOKUP_INTERVAL,
             lookup_interval: LOOKUP_INTERVAL,
             target_peers: 50,
         }
@@ -68,12 +63,13 @@ impl RLPxInitiator {
     async fn get_lookup_interval(&mut self) -> Duration {
         let num_peers = self.context.table.peer_count().await.unwrap_or(0) as u64;
 
-        if num_peers < self.target_peers {
-            self.initial_lookup_interval
-        } else {
-            debug!("Reached target number of peers. Using longer lookup interval.");
-            self.lookup_interval
+        if num_peers > self.target_peers {
+            debug!(
+                "Reached target number of peers. Using longer lookup interval of {:?} ms.",
+                self.lookup_interval
+            );
         }
+        self.lookup_interval
     }
 }
 
