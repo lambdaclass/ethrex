@@ -1,6 +1,6 @@
 use prometheus::{Encoder, HistogramTimer, HistogramVec, TextEncoder, register_histogram_vec};
-use std::sync::LazyLock;
-use tracing::{Subscriber, span::{Attributes, Id}, field::{Field, Visit}};
+use std::{future::Future, sync::LazyLock};
+use tracing::{Subscriber, span::Id};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 use crate::MetricsError;
@@ -25,91 +25,35 @@ pub struct FunctionProfilingLayer;
 /// Wrapper around [`HistogramTimer`] to avoid conflicts with other layers
 struct ProfileTimer(HistogramTimer);
 
-/// Wrapper to store method name in span extensions
-struct MethodName(String);
-
-/// Wrapper to store namespace in span extensions
-struct Namespace(String);
-
-/// Visitor to extract 'method' and 'namespace' fields from RPC spans for more granular profiling
-#[derive(Default)]
-struct SpanFieldVisitor {
-    method: Option<String>,
-    namespace: Option<String>,
-}
-
-impl Visit for SpanFieldVisitor {
-    fn record_str(&mut self, field: &Field, value: &str) {
-        match field.name() {
-            "method" => self.method = Some(value.to_string()),
-            "namespace" => self.namespace = Some(value.to_string()),
-            _ => {}
-        }
-    }
-    
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        let value_str = format!("{:?}", value).trim_matches('"').to_string();
-        match field.name() {
-            "method" => self.method = Some(value_str),
-            "namespace" => self.namespace = Some(value_str),
-            _ => {}
-        }
-    }
-}
-
 impl<S> Layer<S> for FunctionProfilingLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        // Extract 'method' and 'namespace' fields if present (used by RPC instrumentation)
-        let mut visitor = SpanFieldVisitor::default();
-        attrs.record(&mut visitor);
-        
-        if let Some(span) = ctx.span(id) {
-            let mut extensions = span.extensions_mut();
-            if let Some(method_name) = visitor.method {
-                extensions.insert(MethodName(method_name));
-            }
-            if let Some(namespace) = visitor.namespace {
-                extensions.insert(Namespace(namespace));
-            }
-        }
-    }
-
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
         if let Some(span) = ctx.span(id)
             && span.metadata().target().starts_with("ethrex")
         {
             let target = span.metadata().target();
-            let extensions = span.extensions();
-            
-            // First, check if namespace was explicitly set in span (from RPC middleware)
-            // Otherwise, determine namespace based on the module target
-            let namespace = if let Some(ns) = extensions.get::<Namespace>() {
-                ns.0.clone()
-            } else if target.contains("::rpc") {
-                "rpc".to_string()
-            } else if target.contains("blockchain") {
-                "block_processing".to_string()
+
+            // Skip RPC modules; RPC timing is recorded explicitly at the call sites.
+            if target.contains("::rpc") {
+                return;
+            }
+
+            let namespace = if target.contains("blockchain") {
+                "block_processing"
             } else if target.contains("storage") {
-                "storage".to_string()
+                "storage"
             } else if target.contains("networking") {
-                "networking".to_string()
+                "networking"
             } else {
-                "other".to_string()
+                "other"
             };
 
-            // Check if we have a stored method name (from RPC middleware)
-            // Otherwise fall back to the span name
-            let function_name = extensions
-                .get::<MethodName>()
-                .map(|m| m.0.clone())
-                .unwrap_or_else(|| span.metadata().name().to_string());
-            drop(extensions);
+            let function_name = span.metadata().name();
 
             let timer = METRICS_BLOCK_PROCESSING_PROFILE
-                .with_label_values(&[&namespace, &function_name])
+                .with_label_values(&[namespace, function_name])
                 .start_timer();
             // PERF: `extensions_mut` uses a Mutex internally (per span)
             span.extensions_mut().insert(ProfileTimer(timer));
@@ -125,6 +69,20 @@ where
             timer.observe_duration();
         }
     }
+}
+
+/// Record the duration of an async operation under the shared function profiling histogram.
+pub async fn record_async_duration<Fut, T>(namespace: &str, function_name: &str, future: Fut) -> T
+where
+    Fut: Future<Output = T>,
+{
+    let timer = METRICS_BLOCK_PROCESSING_PROFILE
+        .with_label_values(&[namespace, function_name])
+        .start_timer();
+
+    let output = future.await;
+    timer.observe_duration();
+    output
 }
 
 pub fn gather_profiling_metrics() -> Result<String, MetricsError> {
