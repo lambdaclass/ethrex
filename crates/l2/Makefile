@@ -140,7 +140,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--datadir ${ethrex_L2_DEV_DB} \
-	--sponsorable-addresses sponsorable.txt \
+	--sponsorable-addresses $(shell pwd)/sponsorable.txt \
 	--sponsor-private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
@@ -152,7 +152,8 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--block-producer.operator-fee-per-gas ${ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS} \
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
+	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS} \
+	--no-monitor
 
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \

@@ -36,6 +36,7 @@ pub struct AuthorizationTuple {
     pub chain_id: U256,
     #[rkyv(with = crate::rkyv_utils::H160Wrapper)]
     pub address: Address,
+    // TODO: Check if we need to use rkyv instead of serde
     #[serde(
         default,
         deserialize_with = "crate::serde_utils::u64::deser_hex_or_dec_str"
