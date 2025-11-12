@@ -29,7 +29,7 @@ use tokio::{
     sync::mpsc::{Sender, error::TrySendError},
     task::yield_now,
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, trace};
 
 const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 
@@ -128,9 +128,9 @@ pub async fn heal_storage_trie(
 ) -> Result<bool, SyncError> {
     METRICS.current_step.set(CurrentStepValue::HealingStorage);
     let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
-    info!(
-        "Started Storage Healing with {} accounts",
-        download_queue.len()
+    debug!(
+        initial_accounts_count = download_queue.len(),
+        "Started Storage Healing",
     );
     let mut state = StorageHealer {
         last_update: Instant::now(),
@@ -174,24 +174,27 @@ pub async fn heal_storage_trie(
                 .healing_empty_try_recv
                 .store(state.empty_count as u64, Ordering::Relaxed);
             state.last_update = Instant::now();
+            let snap_peer_count = peers
+                .peer_table
+                .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
+                .await
+                .unwrap_or(0);
             debug!(
-                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Downloads {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
-                peers
-                    .peer_table
-                    .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
-                    .await
-                    .unwrap_or(0),
-                state.requests.len(),
-                state.download_queue.len(),
-                state.maximum_length_seen,
-                state.leafs_healed,
-                state.roots_healed,
-                state.succesful_downloads,
-                state.succesful_downloads as f64
+                snap_peer_count,
+                inflight_requests = state.requests.len(),
+                download_queue_len = state.download_queue.len(),
+                maximum_depth = state.maximum_length_seen,
+                leaves_healed = state.leafs_healed,
+                global_leaves_healed = global_leafs_healed,
+                roots_healed = state.roots_healed,
+                succesful_downloads = state.succesful_downloads,
+                succesful_downloads_percentage = state.succesful_downloads as f64
                     / (state.succesful_downloads as f64 + state.failed_downloads as f64),
-                state.empty_count,
-                state.disconnected_count,
+                empty_count = state.empty_count,
+                disconnected_count = state.disconnected_count,
+                "We are storage healing",
             );
+            //. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {}. Roots Healed {}. Good Downloads {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.
             state.succesful_downloads = 0;
             state.failed_downloads = 0;
             state.empty_count = 0;
@@ -321,7 +324,7 @@ async fn ask_peers_for_nodes(
             .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
             .await
             .inspect_err(
-                |err| error!(err= ?err, "Error requesting a peer to perform storage healing"),
+                |err| debug!(err= ?err, "Error requesting a peer to perform storage healing"),
             )
             .unwrap_or(None)
         else {
@@ -354,13 +357,12 @@ async fn ask_peers_for_nodes(
 
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
-            // TODO: check errors to determine whether the current block is stale
             let response =
                 PeerHandler::request_storage_trienodes(peer_id, connection, peer_table, gtn).await;
             // TODO: add error handling
-            tx.try_send(response).inspect_err(|err| {
-                error!("Failed to send state trie nodes response. Error: {err}")
-            })?;
+            tx.try_send(response).inspect_err(
+                |err| debug!(error=?err, "Failed to send state trie nodes response"),
+            )?;
             Ok(req_id)
         });
     }
@@ -408,11 +410,14 @@ async fn zip_requeue_node_responses_score_peer(
     failed_downloads: &mut usize,
 ) -> Result<Option<Vec<NodeResponse>>, SyncError> {
     trace!(
-        "We are processing the nodes, we received {} nodes from our peer",
-        trie_nodes.nodes.len()
+        trie_response_len=?trie_nodes.nodes.len(),
+        "We are processing the nodes",
     );
     let Some(request) = requests.remove(&trie_nodes.id) else {
-        info!("No matching request found for received response {trie_nodes:?}");
+        debug!(
+            ?trie_nodes,
+            "No matching request found for received response"
+        );
         return Ok(None);
     };
 
@@ -437,17 +442,28 @@ async fn zip_requeue_node_responses_score_peer(
         .iter()
         .zip(trie_nodes.nodes.clone())
         .map(|(node_request, node_bytes)| {
-            let node = Node::decode(&node_bytes).inspect_err(|err|{
-                    info!("this peer {} request {node_request:?}, had this error {err:?}, and the raw node was {node_bytes:?}", request.peer_id)
-                })?;
+            let node = Node::decode(&node_bytes).inspect_err(|err| {
+                trace!(
+                    peer=?request.peer_id,
+                    ?node_request,
+                    error=?err,
+                    ?node_bytes,
+                    "Decode Failed"
+                )
+            })?;
 
             if node.compute_hash().finalize() != node_request.hash {
-                error!("this peer {} request {node_request:?}, sent us a valid node with the wrong hash, and the raw node was {node_bytes:?}", request.peer_id);
+                trace!(
+                    peer=?request.peer_id,
+                    ?node_request,
+                    ?node_bytes,
+                    "Node Hash failed"
+                );
                 Err(RLPDecodeError::MalformedData)
             } else {
                 Ok(NodeResponse {
                     node_request: node_request.clone(),
-                    node
+                    node,
                 })
             }
         })
@@ -457,11 +473,17 @@ async fn zip_requeue_node_responses_score_peer(
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
         *succesful_downloads += 1;
-        peer_handler.peer_table.record_success(&request.peer_id).await?;
+        peer_handler
+            .peer_table
+            .record_success(&request.peer_id)
+            .await?;
         Ok(Some(nodes))
     } else {
         *failed_downloads += 1;
-        peer_handler.peer_table.record_failure(&request.peer_id).await?;
+        peer_handler
+            .peer_table
+            .record_failure(&request.peer_id)
+            .await?;
         download_queue.extend(request.requests);
         Ok(None)
     }
@@ -480,7 +502,7 @@ fn process_node_responses(
     to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
-        trace!("We are processing node response {:?}", node_response);
+        trace!(?node_response, "We are processing node response");
         if let Node::Leaf(_) = &node_response.node {
             *leafs_healed += 1;
             *global_leafs_healed += 1;
@@ -493,13 +515,21 @@ fn process_node_responses(
 
         let (missing_children_nibbles, missing_children_count) =
             determine_missing_children(&node_response, store).inspect_err(|err| {
-                error!("{err} in determine missing children while searching {node_response:?}")
+                debug!(
+                    error=?err,
+                    ?node_response,
+                    "Error in determine_missing_children"
+                )
             })?;
 
         if missing_children_count == 0 {
             // We flush to the database this node
             commit_node(&node_response, membatch, roots_healed, to_write).inspect_err(|err| {
-                error!("{err} in commit node while committing {node_response:?}")
+                debug!(
+                    error=?err,
+                    ?node_response,
+                    "Error in commit_node"
+                )
             })?;
         } else {
             let key = (
@@ -572,7 +602,7 @@ pub fn determine_missing_children(
             *EMPTY_TRIE_HASH,
         )
         .inspect_err(|_| {
-            error!("Malformed data when opening the storage trie in determine missing children")
+            debug!("Malformed data when opening the storage trie in determine missing children")
         })?;
     let trie_state = trie.db();
 
@@ -587,9 +617,9 @@ pub fn determine_missing_children(
                     continue;
                 }
                 let validity = child
-                    .get_node(trie_state, child_path.clone())
+                    .get_node_checked(trie_state, child_path.clone())
                     .inspect_err(|_| {
-                        error!("Malformed data when doing get child of a branch node")
+                        debug!("Malformed data when doing get child of a branch node")
                     })?
                     .is_some();
 
@@ -613,8 +643,8 @@ pub fn determine_missing_children(
             }
             let validity = node
                 .child
-                .get_node(trie_state, child_path.clone())
-                .inspect_err(|_| error!("Malformed data when doing get child of a branch node"))?
+                .get_node_checked(trie_state, child_path.clone())
+                .inspect_err(|_| debug!("Malformed data when doing get child of a branch node"))?
                 .is_some();
 
             if validity {

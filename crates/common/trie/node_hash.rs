@@ -1,6 +1,6 @@
 use ethereum_types::H256;
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
-use sha3::{Digest, Keccak256};
 
 /// Struct representing a trie node hash
 /// If the encoded node is less than 32 bits, contains the encoded node itself
@@ -26,7 +26,7 @@ impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
     pub fn from_encoded(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
-            let hash = Keccak256::new_with_prefix(encoded).finalize();
+            let hash = keccak_hash(encoded);
             NodeHash::Hashed(H256::from_slice(&hash))
         } else {
             NodeHash::from_slice(encoded)
@@ -51,7 +51,7 @@ impl NodeHash {
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
     pub fn finalize(self) -> H256 {
         match self {
-            NodeHash::Inline(_) => H256::from_slice(&Keccak256::digest(self.as_ref())),
+            NodeHash::Inline(_) => H256(keccak_hash(self.as_ref())),
             NodeHash::Hashed(x) => x,
         }
     }
@@ -119,6 +119,14 @@ impl Default for NodeHash {
 impl RLPEncode for NodeHash {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         RLPEncode::encode(&Into::<Vec<u8>>::into(self), buf)
+    }
+
+    fn length(&self) -> usize {
+        match self {
+            NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
+            NodeHash::Inline((_, 0)) => 1,               // if empty then it's encoded to RLP_NULL
+            NodeHash::Inline((_, len)) => *len as usize, // already encoded
+        }
     }
 }
 

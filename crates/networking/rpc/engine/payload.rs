@@ -489,7 +489,7 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
-        return Err(RpcErr::BadParams("Expected 1 params".to_owned()));
+        return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     }
     serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
@@ -591,6 +591,11 @@ async fn handle_new_payload_v1_v2(
     block: Block,
     context: RpcApiContext,
 ) -> Result<PayloadStatus, RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "New payload requested but syncer is not initialized".to_string(),
+        ));
+    };
     // Validate block hash
     if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
         return Ok(PayloadStatus::invalid_with_err(&error_msg));
@@ -604,7 +609,7 @@ async fn handle_new_payload_v1_v2(
     // We have validated ancestors, the parent is correct
     let latest_valid_hash = block.header.parent_hash;
 
-    if context.syncer.sync_mode() == SyncMode::Snap {
+    if syncer.sync_mode() == SyncMode::Snap {
         debug!("Snap sync in progress, skipping new payload validation");
         return Ok(PayloadStatus::syncing());
     }
@@ -698,6 +703,11 @@ async fn try_execute_payload(
     context: &RpcApiContext,
     latest_valid_hash: H256,
 ) -> Result<PayloadStatus, RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "New payload requested but syncer is not initialized".to_string(),
+        ));
+    };
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
@@ -714,7 +724,7 @@ async fn try_execute_payload(
     match add_block(context, block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
-            context.syncer.sync_to_head(block_hash);
+            syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }
         // Under the current implementation this is not possible: we always calculate the state

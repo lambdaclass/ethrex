@@ -11,9 +11,9 @@ mod trie_iter;
 pub mod trie_sorted;
 mod verify_range;
 use ethereum_types::H256;
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -34,8 +34,8 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256::from_slice(
-        &Keccak256::digest([RLP_NULL]),
+    pub static ref EMPTY_TRIE_HASH: H256 = H256(
+        keccak_hash([RLP_NULL]),
     );
 }
 
@@ -53,6 +53,7 @@ pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
     pending_removal: HashSet<Nibbles>,
+    dirty: bool,
 }
 
 impl Default for Trie {
@@ -68,6 +69,7 @@ impl Trie {
             db,
             root: NodeRef::default(),
             pending_removal: HashSet::new(),
+            dirty: false,
         }
     }
 
@@ -81,6 +83,7 @@ impl Trie {
                 Default::default()
             },
             pending_removal: HashSet::new(),
+            dirty: false,
         }
     }
 
@@ -96,10 +99,7 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32
-            && !self.pending_removal.contains(&path)
-            && self.db().flatkeyvalue_computed(path.clone())
-        {
+        if pathrlp.len() == 32 && !self.dirty && self.db().flatkeyvalue_computed(path.clone()) {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
@@ -128,6 +128,7 @@ impl Trie {
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
+        self.dirty = true;
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -155,6 +156,7 @@ impl Trie {
         if path.len() == 32 {
             self.pending_removal.insert(Nibbles::from_bytes(path));
         }
+        self.dirty = true;
 
         // If the trie is not empty, call the root node's removal logic.
         let (is_trie_empty, value) = self
@@ -192,11 +194,13 @@ impl Trie {
     }
 
     pub fn get_root_node(&self, path: Nibbles) -> Result<Arc<Node>, TrieError> {
-        self.root.get_node(self.db.as_ref(), path)?.ok_or_else(|| {
-            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                self.root.compute_hash().finalize(),
-            )))
-        })
+        self.root
+            .get_node_checked(self.db.as_ref(), path)?
+            .ok_or_else(|| {
+                TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
+                    self.root.compute_hash().finalize(),
+                )))
+            })
     }
 
     /// Returns a list of changes in a TrieNode format since last root hash processed.
@@ -252,7 +256,10 @@ impl Trie {
                 node_path.push(data[..len as usize].to_vec());
             }
 
-            let root = match self.root.get_node(self.db.as_ref(), Nibbles::default())? {
+            let root = match self
+                .root
+                .get_node_checked(self.db.as_ref(), Nibbles::default())?
+            {
                 Some(x) => x,
                 None => return Ok(Vec::new()),
             };
@@ -429,8 +436,9 @@ impl Trie {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
                             let child_path = current_path.append_new(idx as u8);
-                            let child_node =
-                                child_ref.get_node(db, child_path.clone())?.ok_or_else(|| {
+                            let child_node = child_ref
+                                .get_node_checked(db, child_path.clone())?
+                                .ok_or_else(|| {
                                     TrieError::InconsistentTree(Box::new(
                                         InconsistentTreeError::NodeNotFoundOnBranchNode(
                                             child_ref.compute_hash().finalize(),
@@ -453,7 +461,7 @@ impl Trie {
                         let child_path = partial_path.concat(&extension_node.prefix);
                         let child_node = extension_node
                             .child
-                            .get_node(db, child_path.clone())?
+                            .get_node_checked(db, child_path.clone())?
                             .ok_or_else(|| {
                                 TrieError::InconsistentTree(Box::new(
                                     InconsistentTreeError::ExtensionNodeChildNotFound(
@@ -498,7 +506,8 @@ impl Trie {
         if self.hash_no_commit() == *EMPTY_TRIE_HASH {
             return Ok(None);
         }
-        self.root.get_node(self.db.as_ref(), Nibbles::default())
+        self.root
+            .get_node_checked(self.db.as_ref(), Nibbles::default())
     }
 
     /// Creates a new Trie based on a temporary InMemory DB

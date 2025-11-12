@@ -19,7 +19,7 @@ use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
-use tracing::{debug, error, info};
+use tracing::debug;
 
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -56,7 +56,7 @@ pub async fn heal_state_trie_wrap(
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     METRICS.current_step.set(CurrentStepValue::HealingState);
-    info!("Starting state healing");
+    debug!("Starting state healing");
     while !healing_done {
         healing_done = heal_state_trie(
             state_root,
@@ -70,11 +70,11 @@ pub async fn heal_state_trie_wrap(
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
-            info!("Stopped state healing due to staleness");
+            debug!("Stopped state healing due to staleness");
             break;
         }
     }
-    info!("Stopped state healing");
+    debug!("Stopped state healing");
     Ok(healing_done)
 }
 
@@ -137,11 +137,17 @@ async fn heal_state_trie(
                 .healing_empty_try_recv
                 .store(empty_try_recv, Ordering::Relaxed);
             debug!(
-                "State Healing {}, snap peers available {num_peers}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}, Processing per cycle {heals_per_cycle}",
-                if is_stale { "stopping" } else { "in progress" },
+                status = if is_stale { "stopping" } else { "in progress" },
+                snap_peers = num_peers,
+                inflight_tasks,
+                longest_path_seen,
+                leafs_healed,
                 global_leafs_healed,
-                paths.len(),
-                membatch.len()
+                downloads_rate,
+                paths_to_go = paths.len(),
+                pending_nodes = membatch.len(),
+                heals_per_cycle,
+                "State Healing",
             );
             downloads_success = 0;
             downloads_fail = 0;
@@ -220,7 +226,7 @@ async fn heal_state_trie(
                     .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                     .await
                     .inspect_err(
-                        |err| error!(err= ?err, "Error requesting a peer to perform state healing"),
+                        |err| debug!(err=?err, "Error requesting a peer to perform state healing"),
                     )
                     .unwrap_or(None)
                 else {
@@ -244,11 +250,9 @@ async fn heal_state_trie(
                     )
                     .await;
                     // TODO: add error handling
-                    tx.send((peer_id, response, batch))
-                        .await
-                        .inspect_err(|err| {
-                            error!("Failed to send state trie nodes response. Error: {err}")
-                        })
+                    tx.send((peer_id, response, batch)).await.inspect_err(
+                        |err| debug!(error=?err, "Failed to send state trie nodes response"),
+                    )
                 });
                 tokio::task::yield_now().await;
             }
@@ -265,7 +269,7 @@ async fn heal_state_trie(
                 &mut nodes_to_write,
             )
             .inspect_err(|err| {
-                error!("We have found a sync error while trying to write to DB a batch: {err}")
+                debug!(error=?err, "We have found a sync error while trying to write to DB a batch")
             })?;
             paths.extend(return_paths);
         }
@@ -303,24 +307,24 @@ async fn heal_state_trie(
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if is_done {
-            info!("Nothing more to heal found");
+            debug!("Nothing more to heal found");
             db_joinset.join_all().await;
             break;
         }
 
         // We check with a clock if we are stale
         if !is_stale && current_unix_time() > staleness_timestamp {
-            info!("state healing is stale");
+            debug!("state healing is stale");
             is_stale = true;
         }
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            info!("Finisehd inflight tasks");
+            debug!("Finisehd inflight tasks");
             db_joinset.join_all().await;
             break;
         }
     }
-    info!("State Healing stopped, signaling storage healer");
+    debug!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle. If there are no paths left, clear it in case pivot becomes stale during storage
     // Send empty batch to signal that no more batches are incoming
     // bytecode_sender.send(vec![]).await?;
@@ -410,9 +414,9 @@ pub fn node_missing_children(
                     continue;
                 }
                 let validity = child
-                    .get_node(trie_state, child_path.clone())
+                    .get_node_checked(trie_state, child_path.clone())
                     .inspect_err(|_| {
-                        error!("Malformed data when doing get child of a branch node")
+                        debug!("Malformed data when doing get child of a branch node")
                     })?
                     .is_some();
                 if validity {
@@ -434,8 +438,8 @@ pub fn node_missing_children(
             }
             let validity = node
                 .child
-                .get_node(trie_state, child_path.clone())
-                .inspect_err(|_| error!("Malformed data when doing get child of a branch node"))?
+                .get_node_checked(trie_state, child_path.clone())
+                .inspect_err(|_| debug!("Malformed data when doing get child of a branch node"))?
                 .is_some();
             if validity {
                 return Ok((0, vec![]));
