@@ -39,7 +39,7 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use sha3::Digest;
+use sha2::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 
@@ -376,8 +376,6 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 
 #[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
-    use sha3::Keccak256;
-
     use crate::gas_cost::ECRECOVER_COST;
 
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
@@ -420,10 +418,10 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     };
 
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
-    let public_key_hash = Keccak256::digest(&public_key.serialize_uncompressed()[1..]);
+    let public_key_hash =
+        ethrex_crypto::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
 
     // Address is the last 20 bytes of the hash.
-    #[expect(clippy::indexing_slicing)]
     let recovered_address_bytes = &public_key_hash[12..];
 
     let mut out = [0u8; 32];

@@ -489,7 +489,7 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
-        return Err(RpcErr::BadParams("Expected 1 params".to_owned()));
+        return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     }
     serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }

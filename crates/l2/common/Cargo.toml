@@ -8,6 +8,7 @@ documentation.workspace = true
 [dependencies]
 ethereum-types.workspace = true
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
@@ -17,7 +18,6 @@ bytes.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 lambdaworks-crypto.workspace = true
-sha3.workspace = true
 secp256k1.workspace = true
 hex.workspace = true
 serde_with.workspace = true
