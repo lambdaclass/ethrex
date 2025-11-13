@@ -6,6 +6,8 @@ use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
 use ethrex_common::types::AccountUpdate;
+#[cfg(not(feature = "l2"))]
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
@@ -89,40 +91,46 @@ pub enum StatelessExecutionError {
     TryIntoError(#[from] std::num::TryFromIntError),
 }
 
+#[cfg(feature = "l2")]
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
     let ProgramInput {
         blocks,
         execution_witness,
         elasticity_multiplier,
-        fee_configs: _fee_configs,
-        #[cfg(feature = "l2")]
+        fee_configs,
         blob_commitment,
-        #[cfg(feature = "l2")]
         blob_proof,
     } = input;
 
     let chain_id = execution_witness.chain_config.chain_id;
 
-    if cfg!(feature = "l2") {
-        #[cfg(feature = "l2")]
-        return stateless_validation_l2(
-            &blocks,
-            execution_witness,
-            elasticity_multiplier,
-            _fee_configs,
-            blob_commitment,
-            blob_proof,
-            chain_id,
-        );
-    }
-
-    stateless_validation_l1(&blocks, execution_witness, elasticity_multiplier, chain_id)
+    stateless_validation_l2(
+        &blocks,
+        execution_witness,
+        elasticity_multiplier,
+        fee_configs,
+        blob_commitment,
+        blob_proof,
+        chain_id,
+    )
 }
 
+#[cfg(not(feature = "l2"))]
+pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
+    let ProgramInput {
+        block,
+        execution_witness,
+    } = input;
+
+    let chain_id = execution_witness.chain_config.chain_id;
+
+    stateless_validation_l1(&blocks, execution_witness, chain_id)
+}
+
+#[cfg(not(feature = "l2"))]
 pub fn stateless_validation_l1(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
-    elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
@@ -131,17 +139,11 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, None)?;
+    } = execute_stateless(blocks, execution_witness, ELASTICITY_MULTIPLIER, None)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
-        #[cfg(feature = "l2")]
-        l1messages_merkle_root: H256::zero(),
-        #[cfg(feature = "l2")]
-        privileged_transactions_hash: H256::zero(),
-        #[cfg(feature = "l2")]
-        blob_versioned_hash: H256::zero(),
         last_block_hash,
         chain_id: chain_id.into(),
         non_privileged_count,
