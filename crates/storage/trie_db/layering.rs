@@ -210,10 +210,11 @@ impl TrieDB for TrieWrapper {
     }
 
     fn get_nodes_in_path(&self, key: Nibbles) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
-        let mut values = self.db.get_nodes_in_path(key.clone())?;
         let key = apply_prefix(self.prefix, key);
         let start = apply_prefix(self.prefix, Nibbles::default()).len();
         let end = key.len();
+        let mut values = self.db.get_nodes_in_path(key.clone())?;
+        values.drain(0..start);
         for (i, j) in (start..end).enumerate() {
             if let Some(value) = self.inner.get(self.state_root, &key.as_ref()[..j]) {
                 values[i] = Some(value);
