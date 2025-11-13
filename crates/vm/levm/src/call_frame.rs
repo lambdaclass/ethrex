@@ -181,7 +181,7 @@ impl Stack {
         }
         #[expect(clippy::arithmetic_side_effects)]
         let index = self.offset + N;
-        
+
         if index >= self.values.len() {
             return Err(ExceptionalHalt::StackUnderflow);
         }
