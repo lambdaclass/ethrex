@@ -23,7 +23,7 @@ use ethrex_common::{
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
 use std::{
-    cell::{OnceCell, RefCell},
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     mem,
     rc::Rc,
@@ -327,8 +327,6 @@ pub struct VM<'a> {
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
-    /// Cached `BLOBBASEFEE` value.
-    pub(crate) blob_base_fee: OnceCell<U256>,
 }
 
 impl<'a> VM<'a> {
@@ -377,8 +375,7 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
-            opcode_table: VM::build_opcode_table(fork),
-            blob_base_fee: OnceCell::new(),
+            opcode_table: VM::build_opcode_table(fork)
         };
 
         let call_type = if is_create {
