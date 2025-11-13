@@ -19,15 +19,22 @@ fn build_risc0_program() {
         vec![]
     };
 
-    let docker_options = DockerOptionsBuilder::default()
-        .root_dir(format!("{}/../../../../../", env!("CARGO_MANIFEST_DIR")))
-        .build()
-        .unwrap();
-    let guest_options = GuestOptionsBuilder::default()
-        .features(features)
-        .use_docker(docker_options)
-        .build()
-        .unwrap();
+    let guest_options = if option_env!("PROVER_REPRODUCIBLE_BUILD").is_some() {
+        let docker_options = DockerOptionsBuilder::default()
+            .root_dir(format!("{}/../../../../../", env!("CARGO_MANIFEST_DIR")))
+            .build()
+            .unwrap();
+        GuestOptionsBuilder::default()
+            .features(features)
+            .use_docker(docker_options)
+            .build()
+            .unwrap()
+    } else {
+        GuestOptionsBuilder::default()
+            .features(features)
+            .build()
+            .unwrap()
+    };
 
     let built_guests = embed_methods_with_options(std::collections::HashMap::from([(
         "zkvm-risc0-program",
@@ -66,7 +73,9 @@ fn build_sp1_program() {
             output_directory: Some("./src/sp1/out".to_string()),
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
-            docker: true,
+            docker: option_env!("PROVER_REPRODUCIBLE_BUILD")
+                .map(|_| true)
+                .unwrap_or(false),
             tag: "v5.0.8".to_string(),
             workspace_directory: Some(format!("{}/../../../../../", env!("CARGO_MANIFEST_DIR"))),
             ..Default::default()
