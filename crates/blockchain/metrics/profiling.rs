@@ -84,7 +84,7 @@ where
                 .extensions()
                 .get::<Namespace>()
                 .map(|ns| ns.0.clone())
-                .unwrap_or_else(|| { Cow::Borrowed("default") });
+                .unwrap_or_else(|| Cow::Borrowed("default"));
 
             let function_name = span.metadata().name();
 
