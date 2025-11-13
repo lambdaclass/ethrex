@@ -474,6 +474,7 @@ pub fn calculate_base_fee_per_gas(
     // Check gas limit, if the check passes we can also rest assured that none of the
     // following divisions will have zero as a divider
     if !check_gas_limit(block_gas_limit, parent_gas_limit) {
+        tracing::info!("expected_base_fee_per_gas");
         return None;
     }
 
