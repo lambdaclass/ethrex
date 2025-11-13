@@ -603,7 +603,7 @@ async fn test_erc20_roundtrip(
     .unwrap();
 
     println!("test_erc20_roundtrip: Waiting for deposit transaction receipt on L1");
-    let res = wait_for_transaction_receipt(deposit_tx, &l1_client, 20)
+    let res = wait_for_transaction_receipt(deposit_tx, &l1_client, 10)
         .await
         .unwrap();
 
@@ -1045,7 +1045,7 @@ async fn test_send(
     .with_context(|| format!("Failed to build tx for {test}"))?;
     tx.gas = tx.gas.map(|g| g * 6 / 5); // (+20%) tx reverts in some cases otherwise
     let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
-    ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
+    ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 20)
         .await
         .with_context(|| format!("Failed to get receipt for {test}"))
 }
