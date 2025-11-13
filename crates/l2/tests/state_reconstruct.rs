@@ -3,7 +3,7 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::as_conversions)]
 
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{Address, U256};
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 
@@ -74,7 +74,7 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
         if index < rich_accounts as usize {
             // The bridge owner accept the ownership transfer, so the balance is not exactly 500000000000000000000000000
             if address
-                == H256::from_slice(
+                == H160::from_slice(
                     &hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap(),
                 )
             {
