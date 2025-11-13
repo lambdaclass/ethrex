@@ -1139,6 +1139,7 @@ dependencies = [
  "ethrex-threadpool",
  "hex",
  "lazy_static",
+ "rustc-hash",
  "serde",
  "serde_json",
  "smallvec",

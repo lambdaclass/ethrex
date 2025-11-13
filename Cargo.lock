@@ -3833,6 +3833,7 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "rocksdb",
+ "rustc-hash 2.1.1",
  "serde",
  "serde_json",
  "smallvec",
