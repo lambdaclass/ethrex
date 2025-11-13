@@ -166,7 +166,8 @@ pub async fn fill_transactions(
                 // We break here because if we have expired privileged transactions
                 // in the contract, our batch will be rejected if non-privileged txs
                 // are included.
-                break;
+                txs.pop();
+                continue;
             }
             let id = head_tx.nonce();
             if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
