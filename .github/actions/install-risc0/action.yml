@@ -1,9 +1,6 @@
 name: "Install RISC0"
 description: "Install RISC0 Toolchain"
 
-env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 runs:
   using: "composite"
   run: |

@@ -95,6 +95,8 @@ jobs:
 
       - name: Install RISC0 (only Linux x86)
         if: ${{ matrix.platform == 'ubuntu-22.04' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: ./.github/actions/install-risc0
 
       - name: Install CUDA (only Linux x86 GPU)
@@ -179,6 +181,8 @@ jobs:
 
       - name: Install RISC0
         if: ${{ matrix.zkvm == 'risc0' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: ./.github/actions/install-risc0
 
       - name: Build ethrex elf - ${{ matrix.zkvm }}
