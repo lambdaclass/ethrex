@@ -433,7 +433,7 @@ impl Blockchain {
                         storage_trie.remove(&hashed_key)?;
                     } else {
                         trace!(slot = hex::encode(&hashed_key), "Inserting");
-                        storage_trie.insert_storage(hashed_key, storage_value.encode_to_vec())?;
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
                 trace!(
