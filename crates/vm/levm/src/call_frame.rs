@@ -163,21 +163,22 @@ impl Stack {
         }
         #[expect(clippy::arithmetic_side_effects)]
         let index = self.offset + N;
-
-        let value = self
-            .values
-            .get(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        if index >= self.values.len() {
+            return Err(ExceptionalHalt::StackUnderflow);
+        }
 
         self.offset = self
             .offset
             .checked_sub(1)
             .ok_or(ExceptionalHalt::StackOverflow)?;
 
-        // self.offset is within bounds because `index` (strictly greater) was just checked to be within bounds
-        #[expect(clippy::indexing_slicing)]
-        {
-            self.values[self.offset] = *value;
+        #[expect(unsafe_code, reason = "index < size, offset-1 >= 0")]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.values.get_unchecked_mut(index).0.as_mut_ptr(),
+                self.values.get_unchecked_mut(self.offset).0.as_mut_ptr(),
+                4,
+            );
         }
         Ok(())
     }
