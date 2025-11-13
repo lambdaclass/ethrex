@@ -165,8 +165,10 @@ pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub active_filters: ActiveFilters,
-    pub syncer: Arc<SyncManager>,
-    pub peer_handler: PeerHandler,
+    // L2 nodes don't need to initialize the syncer
+    pub syncer: Option<Arc<SyncManager>>,
+    // L2 nodes don't need to initialize the peer handler
+    pub peer_handler: Option<PeerHandler>,
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -246,8 +248,8 @@ pub async fn start_api(
         storage,
         blockchain,
         active_filters: active_filters.clone(),
-        syncer: Arc::new(syncer),
-        peer_handler,
+        syncer: Some(Arc::new(syncer)),
+        peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
             local_p2p_node,
@@ -611,13 +613,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::default_context_with_storage;
+    use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
         H160,
         types::{ChainConfig, Genesis},
     };
+    use ethrex_crypto::keccak::keccak_hash;
     use ethrex_storage::{EngineType, Store};
-    use sha3::{Digest, Keccak256};
     use std::io::BufReader;
     use std::str::FromStr;
     use std::{fs::File, path::Path};
@@ -657,7 +659,7 @@ mod tests {
             "result": {
                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
                 "enr": enr_url,
-                "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
+                "id": hex::encode(keccak_hash(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
                 "name": "ethrex/test",
                 "ports": {

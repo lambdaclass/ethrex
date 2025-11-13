@@ -16,8 +16,9 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork,
-        Genesis, MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
+        BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork, Genesis,
+        MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
+        fee_config::FeeConfig,
     },
 };
 use ethrex_l2_common::{
@@ -29,7 +30,6 @@ use ethrex_l2_common::{
         get_block_privileged_transactions,
     },
     prover::ProverInputData,
-    state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{
@@ -51,7 +51,7 @@ use ethrex_vm::{BlockExecutionResult, Evm};
 use rand::Rng;
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs::remove_dir_all,
     path::{Path, PathBuf},
     sync::Arc,
@@ -81,6 +81,7 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Commit,
+    Abort,
 }
 
 #[derive(Clone)]
@@ -366,20 +367,20 @@ impl L1Committer {
                 new_checkpoint_store.clone(),
                 new_checkpoint_blockchain.clone(),
             )
-            .await;
+            .await?;
 
-        let (
+        let Some((
             blobs_bundle,
             new_state_root,
             message_hashes,
             privileged_transactions_hash,
             last_block_of_batch,
-        ) = result?;
-
-        if *last_block == last_block_of_batch {
+        )) = result
+        else {
             debug!("No new blocks to commit, skipping");
+
             return Ok(None);
-        }
+        };
 
         let batch = Batch {
             number: batch_number,
@@ -430,18 +431,19 @@ impl L1Committer {
         batch_number: u64,
         checkpoint_store: Store,
         checkpoint_blockchain: Arc<Blockchain>,
-    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
+    ) -> Result<Option<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber)>, CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
         let mut acc_messages = vec![];
         let mut acc_privileged_txs = vec![];
-        let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         let mut message_hashes = vec![];
         let mut privileged_transactions_hashes = vec![];
         let mut new_state_root = H256::default();
         let mut acc_gas_used = 0_u64;
-        let mut blocks = vec![];
+        let mut acc_blocks = vec![];
+        let mut current_blocks = vec![];
+        let mut current_fee_configs = vec![];
 
         #[cfg(feature = "metrics")]
         let mut tx_count = 0_u64;
@@ -450,7 +452,7 @@ impl L1Committer {
         #[cfg(feature = "metrics")]
         let mut batch_gas_used = 0_u64;
 
-        info!("Preparing state diff from block {first_block_of_batch}, {batch_number}");
+        info!("Preparing batch from block {first_block_of_batch}, {batch_number}");
 
         loop {
             let block_to_commit_number = last_added_block_number + 1;
@@ -584,33 +586,6 @@ impl L1Committer {
             // Accumulate block data with the rest of the batch.
             acc_messages.extend(messages.clone());
             acc_privileged_txs.extend(privileged_transactions.clone());
-            for account in account_updates {
-                let address = account.address;
-                if let Some(existing) = acc_account_updates.get_mut(&address) {
-                    existing.merge(account);
-                } else {
-                    acc_account_updates.insert(address, account);
-                }
-            }
-
-            // It is safe to retrieve this from the main store because blocks
-            // are available there. What's not available is the state
-            let parent_block_hash = self
-                .store
-                .get_block_header(first_block_of_batch)?
-                .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                    "Failed to get_block_header() of the last added block".to_owned(),
-                ))?
-                .parent_hash;
-
-            let parent_header = self
-                .store
-                .get_block_header_by_hash(parent_block_hash)?
-                .ok_or(CommitterError::ChainError(ChainError::ParentNotFound))?;
-
-            // Again, here the VM database should be instantiated from the checkpoint
-            // store to have access to the previous state
-            let parent_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header);
 
             let acc_privileged_txs_len: u64 = acc_privileged_txs.len().try_into()?;
             if acc_privileged_txs_len > PRIVILEGED_TX_BUDGET {
@@ -622,18 +597,21 @@ impl L1Committer {
             }
 
             let result = if !self.validium {
-                // Prepare current state diff.
-                let state_diff: StateDiff = prepare_state_diff(
-                    potential_batch_block.header.clone(),
-                    &parent_db,
-                    &acc_messages,
-                    &acc_privileged_txs,
-                    acc_account_updates.clone().into_values().collect(),
-                )?;
-                let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
-                    .await
-                    .map_err(CommitterError::EthClientError)?;
-                generate_blobs_bundle(&state_diff, l1_fork)
+                // Prepare blob
+                let fee_config = self
+                    .rollup_store
+                    .get_fee_config_by_block(block_to_commit_number)
+                    .await?
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "Failed to get fee config for re-execution".to_owned(),
+                    ))?;
+
+                current_blocks.push(potential_batch_block.clone());
+                current_fee_configs.push(fee_config);
+                let l1_fork =
+                    get_l1_active_fork(&self.eth_client, self.osaka_activation_time).await?;
+
+                generate_blobs_bundle(&current_blocks, &current_fee_configs, l1_fork)
             } else {
                 Ok((BlobsBundle::default(), 0_usize))
             };
@@ -678,8 +656,13 @@ impl L1Committer {
 
             last_added_block_number += 1;
             acc_gas_used += current_block_gas_used;
-            blocks.push((last_added_block_number, potential_batch_block.hash()));
+            acc_blocks.push((last_added_block_number, potential_batch_block.hash()));
         } // end loop
+
+        if acc_blocks.is_empty() {
+            debug!("No new blocks were available to build batch {batch_number}, skipping it");
+            return Ok(None);
+        }
 
         metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
                 privileged_transactions_hashes.len().try_into(),
@@ -712,7 +695,7 @@ impl L1Committer {
         let privileged_transactions_hash =
             compute_privileged_transactions_hash(privileged_transactions_hashes)?;
 
-        let last_block_hash = blocks
+        let last_block_hash = acc_blocks
             .last()
             .ok_or(CommitterError::Unreachable(
                 "There should always be blocks".to_string(),
@@ -721,7 +704,7 @@ impl L1Committer {
 
         checkpoint_store
             .forkchoice_update(
-                Some(blocks),
+                Some(acc_blocks),
                 last_added_block_number,
                 last_block_hash,
                 None,
@@ -729,13 +712,13 @@ impl L1Committer {
             )
             .await?;
 
-        Ok((
+        Ok(Some((
             blobs_bundle,
             new_state_root,
             message_hashes,
             privileged_transactions_hash,
             last_added_block_number,
-        ))
+        )))
     }
 
     async fn generate_and_store_batch_prover_input(
@@ -1086,21 +1069,8 @@ impl L1Committer {
             on_chain_proposer_address: self.on_chain_proposer_address,
         })))
     }
-}
 
-impl GenServer for L1Committer {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-
-    type Error = CommitterError;
-
-    // Right now we only have the `Commit` message, so we ignore the `message` parameter
-    async fn handle_cast(
-        &mut self,
-        _message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
+    async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
@@ -1151,6 +1121,33 @@ impl GenServer for L1Committer {
         self.schedule_commit(self.committer_wake_up_ms, handle.clone());
         CastResponse::NoReply
     }
+}
+
+impl GenServer for L1Committer {
+    type CallMsg = CallMessage;
+    type CastMsg = InMessage;
+    type OutMsg = OutMessage;
+
+    type Error = CommitterError;
+
+    // Right now we only have the `Commit` message, so we ignore the `message` parameter
+    async fn handle_cast(
+        &mut self,
+        message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+    ) -> CastResponse {
+        match message {
+            InMessage::Commit => self.handle_commit_message(handle).await,
+            InMessage::Abort => {
+                // start_blocking keeps the committer loop alive even if the JoinSet aborts the task.
+                // Returning CastResponse::Stop is what unblocks shutdown by ending that blocking loop.
+                if let Some(ct) = self.cancellation_token.take() {
+                    ct.cancel()
+                };
+                CastResponse::Stop
+            }
+        }
+    }
 
     async fn handle_call(
         &mut self,
@@ -1167,14 +1164,35 @@ impl GenServer for L1Committer {
 
 /// Generate the blob bundle necessary for the EIP-4844 transaction.
 pub fn generate_blobs_bundle(
-    state_diff: &StateDiff,
+    blocks: &[Block],
+    fee_configs: &[FeeConfig],
     fork: Fork,
 ) -> Result<(BlobsBundle, usize), CommitterError> {
-    let blob_data = state_diff.encode().map_err(CommitterError::from)?;
+    let blocks_len: u64 = blocks.len().try_into()?;
+    let fee_configs_len: u64 = fee_configs.len().try_into()?;
+
+    if blocks_len != fee_configs_len {
+        return Err(CommitterError::UnexpectedError(
+            "Blocks and fee configs length mismatch".to_string(),
+        ));
+    }
+
+    let mut blob_data = Vec::new();
+
+    blob_data.extend(blocks_len.to_be_bytes());
+
+    for block in blocks {
+        blob_data.extend(block.encode_to_vec());
+    }
+
+    for fee_config in fee_configs {
+        blob_data.extend(fee_config.to_vec());
+    }
 
     let blob_size = blob_data.len();
 
-    let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
+    let blob =
+        blobs_bundle::blob_from_bytes(Bytes::from(blob_data)).map_err(CommitterError::from)?;
     let wrapper_version = if fork <= Fork::Prague { None } else { Some(1) };
 
     Ok((

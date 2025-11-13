@@ -79,6 +79,8 @@ pub enum EthClientError {
     GetOperatorFeeVaultAddressError(#[from] GetOperatorFeeVaultAddressError),
     #[error("ethrex_getOperatorFee request error: {0}")]
     GetOperatorFeeError(#[from] GetOperatorFeeError),
+    #[error("ethrex_getL1FeeVaultAddress request error: {0}")]
+    GetL1FeeVaultAddressError(#[from] GetL1FeeVaultAddressError),
     #[error("ethrex_getL1BlobBaseFee request error: {0}")]
     GetL1BlobBaseFeeError(#[from] GetL1BlobBaseFeeRequestError),
 }
@@ -349,6 +351,14 @@ pub enum GetOperatorFeeVaultAddressError {
 }
 #[derive(Debug, thiserror::Error)]
 pub enum GetOperatorFeeError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetL1FeeVaultAddressError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
