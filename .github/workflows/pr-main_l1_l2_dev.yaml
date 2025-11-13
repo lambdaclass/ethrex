@@ -19,6 +19,7 @@ env:
 
 jobs:
   integration-test-l1-l2-dev:
+    if: ${{ github.event_name != 'merge_group' }}
     name: Integration Test
     runs-on: ubuntu-latest
     steps:
@@ -70,8 +71,8 @@ jobs:
       - name: Run test
         run: |
           cd crates/l2
-          tail -n 100 -f /tmp/ethrex.log &
-          tail -n 100 -f /tmp/prover.log &
-          export $(shell cat .env | xargs); \
+          tail -n +1 -f /tmp/ethrex.log &
+          tail -n +1 -f /tmp/prover.log &
+          export $(xargs < .env)
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           cargo test l2 --release -- --nocapture --test-threads=1

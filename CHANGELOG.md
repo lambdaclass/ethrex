@@ -2,6 +2,13 @@
 
 ## Perf
 
+### 2025-11-12
+
+- Only mark individual values as dirty instead of the whole trie [#5282](https://github.com/lambdaclass/ethrex/pull/5282)
+- Separate Account and storage Column families in rocksdb [#5055](https://github.com/lambdaclass/ethrex/pull/5055)
+- Avoid copying while reading account code [#5289](https://github.com/lambdaclass/ethrex/pull/5289)
+- Cache `BLOBBASEFEE` opcode value [#5288](https://github.com/lambdaclass/ethrex/pull/5288)
+
 ### 2025-11-11
 
 - Insert instead of merge for bloom rebuilds [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
@@ -17,6 +24,7 @@
 - Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
 
 ### 2025-11-05
+
 - Merkelization backpressure and batching [#5200](https://github.com/lambdaclass/ethrex/pull/5200)
 
 ### 2025-11-03

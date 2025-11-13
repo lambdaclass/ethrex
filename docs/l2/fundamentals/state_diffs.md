@@ -1,5 +1,9 @@
 # State diffs
 
+> [!WARNING]  
+> Data availability through `state diffs` has been deprecated in #5135.  
+> See the `Transition to RLP encoded blocks` section [here](../architecture/overview.md) for more details.
+
 This architecture was inspired by [MatterLabs' ZKsync pubdata architecture](https://github.com/matter-labs/zksync-era/blob/main/docs/src/specs/contracts/settlement_contracts/data_availability/pubdata.md).
 
 To provide data availability for our blockchain, we need to publish enough information on every commit transaction to be able to reconstruct the entire state of the L2 from the beginning by querying the L1.
