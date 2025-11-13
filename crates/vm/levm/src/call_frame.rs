@@ -144,11 +144,15 @@ impl Stack {
     }
 
     #[inline(always)]
-    pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
-        let index = self
-            .offset
-            .checked_add(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+    pub fn swap<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {
+        // Compile-time check that ensures `self.offset + N` is safe,
+        // since self.offset is bounded by STACK_LIMIT
+        const {
+            assert!(STACK_LIMIT.checked_add(N).is_some());
+        }
+        #[expect(clippy::arithmetic_side_effects)]
+        let index = self.offset + N;
+
         if index >= self.values.len() {
             return Err(ExceptionalHalt::StackUnderflow);
         }
