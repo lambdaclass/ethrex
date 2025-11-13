@@ -82,7 +82,34 @@ impl NodeRef {
                 self.get_node_mut(db, path)
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
-                let Some(node) = db
+                let encoded_nodes = db.get_nodes_in_path(path.clone())?;
+                let keys = (0..path.len()).map(|i| path.slice(0, i));
+                let mut nodes = Vec::with_capacity(path.len());
+                for (path, encoded) in std::iter::zip(keys, encoded_nodes) {
+                    let Some(encoded) = encoded else {
+                        continue;
+                    };
+                    nodes.push((path, encoded));
+                }
+
+                struct VecTrieDB(Vec<(Nibbles, Vec<u8>)>);
+                impl TrieDB for VecTrieDB {
+                    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+                        let Ok(pos) = self.0.binary_search_by(|(k, _)| k.cmp(&key)) else {
+                            return Ok(None);
+                        };
+                        Ok(self.0.get(pos).map(|(_, v)| v.clone()))
+                    }
+                    fn put_batch(
+                        &self,
+                        key_values: Vec<(Nibbles, Vec<u8>)>,
+                    ) -> Result<(), TrieError> {
+                        unimplemented!()
+                    }
+                }
+                let fake_db = VecTrieDB(nodes);
+
+                let Some(node) = fake_db
                     .get(path.clone())?
                     .filter(|rlp| !rlp.is_empty())
                     .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
@@ -91,7 +118,7 @@ impl NodeRef {
                     return Ok(None);
                 };
                 *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
-                self.get_node_mut(db, path)
+                self.get_node_mut(&fake_db, path)
             }
         }
     }

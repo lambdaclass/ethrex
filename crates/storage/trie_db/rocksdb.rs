@@ -1,7 +1,7 @@
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
-use rocksdb::{DBWithThreadMode, MultiThreaded};
+use rocksdb::{DBWithThreadMode, MultiThreaded, ReadOptions};
 use std::sync::Arc;
 
 use crate::trie_db::layering::apply_prefix;
