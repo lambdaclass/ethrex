@@ -1,12 +1,16 @@
 use ethrex_common::H256;
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::{
+    sync::{Arc, RwLock},
+    time::Instant,
+};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    prebuilt_clone: Arc<Option<FxHashMap<Vec<u8>, H256>>>,
     layers_map: FxHashMap<Vec<u8>, H256>,
     parent: H256,
     id: usize,
@@ -17,7 +21,7 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: FxHashMap<H256, Arc<TrieLayer>>,
+    layers: FxHashMap<H256, Arc<RwLock<TrieLayer>>>,
 }
 
 impl Default for TrieLayerCache {
@@ -33,11 +37,16 @@ impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         // Check if value is present in a layer.
         self.layers.get(&state_root).and_then(|trie_layer| {
-            trie_layer.layers_map.get(key).and_then(|layer_key| {
-                self.layers
-                    .get(layer_key)
-                    .and_then(|trie_layer| trie_layer.nodes.get(key).cloned())
-            })
+            trie_layer
+                .read()
+                .unwrap()
+                .layers_map
+                .get(key)
+                .and_then(|layer_key| {
+                    self.layers
+                        .get(layer_key)
+                        .and_then(|trie_layer| trie_layer.read().unwrap().nodes.get(key).cloned())
+                })
         })
     }
 
@@ -45,7 +54,7 @@ impl TrieLayerCache {
     pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
-            state_root = layer.parent;
+            state_root = layer.read().unwrap().parent;
             counter += 1;
             if counter > commit_threshold {
                 return Some(state_root);
@@ -70,46 +79,78 @@ impl TrieLayerCache {
             tracing::warn!("tried to insert a state_root that's already inserted");
             return;
         }
+        let mut now = Instant::now();
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .clone()
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
+        tracing::info!("put_batch 1: nodes creation - elapsed {:?}", now.elapsed());
+        now = Instant::now();
 
         self.last_id += 1;
 
-        let values = key_values
-            .into_iter()
-            .map(|(path, _)| (path.into_vec(), state_root));
-
-        let previous = self.layers.get(&parent).map_or_else(
-            || values.clone().collect(),
-            |trie_layer| {
-                let mut previous = trie_layer.layers_map.clone();
-                previous.extend(values.clone());
+        let layers_map = match self.layers.get(&parent) {
+            Some(trie_layer) => {
+                let mut t = trie_layer.write().unwrap();
+                let previous_arc = t.prebuilt_clone.clone();
+                t.prebuilt_clone = Arc::new(None);
+                let mut previous = Arc::try_unwrap(previous_arc).unwrap().unwrap();
+                tracing::info!(
+                    "put_batch 2: layers_map.clone - elapsed {:?}",
+                    now.elapsed()
+                );
+                now = Instant::now();
+                previous.extend(
+                    key_values
+                        .into_iter()
+                        .map(|(path, _)| (path.into_vec(), state_root)),
+                );
+                tracing::info!("put_batch 3: previous extend - elapsed {:?}", now.elapsed());
                 previous
-            },
-        );
+            }
+            None => {
+                let a = key_values
+                    .into_iter()
+                    .map(|(path, _)| (path.into_vec(), state_root))
+                    .collect();
+                tracing::info!("put_batch 4: new layer_map - elapsed {:?}", now.elapsed());
+                a
+            }
+        };
+        now = Instant::now();
 
         let entry = TrieLayer {
-            nodes: nodes.clone(),
-            layers_map: previous,
+            nodes,
+            prebuilt_clone: Arc::new(None),
+            layers_map,
             parent,
             id: self.last_id,
         };
-        self.layers.insert(state_root, Arc::new(entry));
+        self.layers.insert(state_root, Arc::new(RwLock::new(entry)));
+        tracing::info!("put_batch 5: layer insert - elapsed {:?}", now.elapsed());
+    }
+
+    pub fn prebuild_clones(&mut self) {
+        self.layers.iter_mut().for_each(|(_k, trie_layer)| {
+            let mut t = trie_layer.write().unwrap();
+            if t.prebuilt_clone.is_none() {
+                t.prebuilt_clone = Arc::new(Some(t.layers_map.clone()));
+            }
+        });
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
-            Ok(layer) => layer,
-            Err(layer) => TrieLayer::clone(&layer),
+            Ok(layer) => layer.into_inner().unwrap(),
+            Err(layer) => TrieLayer::clone(&layer.read().unwrap()),
         };
         // ensure parents are commited
         let parent_nodes = self.commit(layer.parent);
         // older layers are useless
-        self.layers.retain(|_, item| item.id > layer.id);
+        self.layers
+            .retain(|_, item| item.read().unwrap().id > layer.id);
         Some(
             parent_nodes
                 .unwrap_or_default()
