@@ -703,6 +703,7 @@ async fn try_execute_payload(
     context: &RpcApiContext,
     latest_valid_hash: H256,
 ) -> Result<PayloadStatus, RpcErr> {
+    info!("We are trying to execute payload");
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
             "New payload requested but syncer is not initialized".to_string(),
@@ -721,6 +722,7 @@ async fn try_execute_payload(
     // Execute and store the block
     info!(%block_hash, %block_number, "Executing payload");
 
+    info!("We are trying to add block");
     match add_block(context, block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
