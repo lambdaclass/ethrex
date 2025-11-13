@@ -67,7 +67,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install RISC0
-        uses: ./.github/actions/install-risc-0
+        uses: ./.github/actions/install-risc0
 
       - name: Create placeholder SP1 ELF
         run: |

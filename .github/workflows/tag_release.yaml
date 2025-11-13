@@ -95,7 +95,7 @@ jobs:
 
       - name: Install RISC0 (only Linux x86)
         if: ${{ matrix.platform == 'ubuntu-22.04' }}
-        uses: ./.github/actions/install-risc-0
+        uses: ./.github/actions/install-risc0
 
       - name: Install CUDA (only Linux x86 GPU)
         uses: Jimver/cuda-toolkit@v0.2.24
@@ -179,7 +179,7 @@ jobs:
 
       - name: Install RISC0
         if: ${{ matrix.zkvm == 'risc0' }}
-        uses: ./.github/actions/install-risc-0
+        uses: ./.github/actions/install-risc0
 
       - name: Build ethrex elf - ${{ matrix.zkvm }}
         run: |
