@@ -260,10 +260,9 @@ state-diff-test:
 	l2 reconstruct \
 	-g ../../fixtures/genesis/l2.json \
 	-b ../../fixtures/blobs/ \
-	-s $$PWD/store \
-	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
+	-s $$PWD/store
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
-
+	docker logs --follow ethrex_l2 & \
 	cargo test state_reconstruct --release

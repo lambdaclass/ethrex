@@ -9,16 +9,20 @@ use crate::system_contracts::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
     Address, U256,
     types::{
-        AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
-        EIP7702Transaction, Fork, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
-        Transaction, TxKind, Withdrawal, requests::Requests,
+        AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
+        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
+        requests::Requests,
     },
 };
 use ethrex_levm::EVMConfig;
-use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
+use ethrex_levm::call_frame::Stack;
+use ethrex_levm::constants::{
+    POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
+};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -99,8 +103,14 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
+        let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
+
+        // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
+        // The value itself can be safely changed.
+        let mut tx_since_last_flush = 2;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
@@ -113,8 +123,20 @@ impl LEVM {
                 )));
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
-            LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+            let report = Self::execute_tx_in_block(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                &mut shared_stack_pool,
+            )?;
+            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                tx_since_last_flush = 0;
+            } else {
+                tx_since_last_flush += 1;
+            }
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -125,6 +147,9 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+        if queue_length.load(Ordering::Relaxed) == 0 {
+            LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
         for (address, increment) in block
@@ -141,22 +166,15 @@ impl LEVM {
 
             account.info.balance += increment.into();
         }
-        LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm_pipeline(
-                &receipts,
-                db,
-                &block.header,
-                vm_type,
-                &merkleizer,
-                queue_length,
-            )?,
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
             VMType::L2(_) => Default::default(),
         };
+        LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         Ok(BlockExecutionResult { receipts, requests })
     }
@@ -218,7 +236,7 @@ impl LEVM {
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
-        // The transactions recovered address
+        // The transaction's recovered address
         tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
@@ -229,6 +247,27 @@ impl LEVM {
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
+    }
+
+    // Like execute_tx but allows reusing the stack pool
+    fn execute_tx_in_block(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transaction's recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        stack_pool: &mut Vec<Stack>,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        let result = vm.execute().map_err(VMError::into);
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        result
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
@@ -563,46 +602,6 @@ pub fn extract_all_requests_levm(
     Ok(vec![deposits, withdrawals, consolidation])
 }
 
-#[allow(unreachable_code)]
-#[allow(unused_variables)]
-pub fn extract_all_requests_levm_pipeline(
-    receipts: &[Receipt],
-    db: &mut GeneralizedDatabase,
-    header: &BlockHeader,
-    vm_type: VMType,
-    merkleizer: &Sender<Vec<AccountUpdate>>,
-    queue_length: &AtomicUsize,
-) -> Result<Vec<Requests>, EvmError> {
-    if let VMType::L2(_) = vm_type {
-        return Err(EvmError::InvalidEVM(
-            "extract_all_requests_levm should not be called for L2 VM".to_string(),
-        ));
-    }
-
-    let chain_config = db.store.get_chain_config()?;
-    let fork = chain_config.fork(header.timestamp);
-
-    if fork < Fork::Prague {
-        return Ok(Default::default());
-    }
-
-    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type)?
-        .output
-        .into();
-    LEVM::send_state_transitions_tx(merkleizer, db, queue_length)?;
-    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
-        .output
-        .into();
-    LEVM::send_state_transitions_tx(merkleizer, db, queue_length)?;
-
-    let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
-        .ok_or(EvmError::InvalidDepositRequest)?;
-    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
-    let consolidation = Requests::from_consolidation_data(consolidation_data);
-
-    Ok(vec![deposits, withdrawals, consolidation])
-}
-
 /// Calculating gas_price according to EIP-1559 rules
 /// See https://github.com/ethereum/go-ethereum/blob/7ee9a6e89f59cee21b5852f5f6ffa2bcfc05a25f/internal/ethapi/transaction_args.go#L430
 pub fn calculate_gas_price_for_generic(tx: &GenericTransaction, basefee: u64) -> U256 {
@@ -689,7 +688,9 @@ fn env_from_generic(
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
     Ok(Environment {
         origin: tx.from.0.into(),
-        gas_limit: tx.gas.unwrap_or(header.gas_limit), // Ensure tx doesn't fail due to gas limit
+        gas_limit: tx
+            .gas
+            .unwrap_or(get_max_allowed_gas_limit(header.gas_limit, config.fork)), // Ensure tx doesn't fail due to gas limit
         config,
         block_number: header.number.into(),
         coinbase: header.coinbase,
@@ -750,6 +751,15 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
+
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
     VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+}
+
+pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
+    if fork >= Fork::Osaka {
+        POST_OSAKA_GAS_LIMIT_CAP
+    } else {
+        block_gas_limit
+    }
 }

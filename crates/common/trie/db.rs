@@ -59,6 +59,7 @@ impl InMemoryTrieDB {
         }
     }
 
+    // Do not remove or make private as we use this in ethrex-replay
     pub fn from_nodes(
         root_hash: H256,
         state_nodes: &BTreeMap<H256, NodeRLP>,
@@ -81,6 +82,11 @@ impl InMemoryTrieDB {
             Some(prefix) => prefix.concat(&path),
             None => path,
         }
+    }
+
+    // Do not remove or make private as we use this in ethrex-replay
+    pub fn inner(&self) -> NodeMap {
+        Arc::clone(&self.inner)
     }
 }
 

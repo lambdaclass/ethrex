@@ -139,6 +139,25 @@ impl RLPEncode for [u8] {
             buf.put_slice(self);
         }
     }
+
+    fn length(&self) -> usize {
+        const U8_MAX_PLUS_ONE: usize = u8::MAX as usize + 1;
+        const U16_MAX_PLUS_ONE: usize = u16::MAX as usize + 1;
+
+        match self.len() {
+            0 => 1,                                                  // encodes to RLP_NULL
+            1 if self[0] < 0x80 => 1,                                // `self` is its own encoding
+            1..56 => 1 + self.len(),                                 // single byte prefix
+            56..U8_MAX_PLUS_ONE => 1 + 1 + self.len(), // single byte prefix + payload len bytes
+            U8_MAX_PLUS_ONE..U16_MAX_PLUS_ONE => 1 + 2 + self.len(), // single byte prefix + payload len bytes
+            _ => {
+                // fallback if `self` is longer than 2^16 - 1 bytes
+                let payload_len_bytes =
+                    ((usize::BITS - self.len().leading_zeros()) as usize).div_ceil(8);
+                1 + payload_len_bytes + self.len()
+            }
+        }
+    }
 }
 
 impl<const N: usize> RLPEncode for [u8; N] {

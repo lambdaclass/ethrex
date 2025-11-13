@@ -16,27 +16,27 @@ concurrency:
 
 jobs:
   detect-changes:
-      runs-on: ubuntu-latest
-      outputs:
-        run_tests: ${{ steps.finish.outputs.run_tests }}
-      steps:
-        - uses: actions/checkout@v4
-        - uses: dorny/paths-filter@v3
-          id: filter
-          with:
-            filters: |
-              run_tests:
-                - '!crates/l2/**'
-        - name: finish
-          id: finish
-          run: |
-            if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
-                echo "run_tests=true" >> "$GITHUB_OUTPUT"
-            else
-                echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
-            fi
-        - name: Print result
-          run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
+    runs-on: ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.finish.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run_tests:
+              - '!crates/l2/**'
+      - name: finish
+        id: finish
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+              echo "run_tests=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Print result
+        run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
 
   lint:
     # "Lint" is a required check, don't change the name
@@ -189,11 +189,10 @@ jobs:
             # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
             buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
             artifact_prefix: rpc_compat
-          # muted until further notice
-          # - name: "Devp2p tests"
-          #   simulation: devp2p
-          #   limit: discv4|eth|snap/Ping|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate|AccountRange|GetTrieNodes|GetByteCodes|GetStorageRanges|Findnode|BlobViolations
-          #   artifact_prefix: devp2p
+          - name: "Devp2p tests"
+            simulation: devp2p
+            limit: discv4|eth|snap
+            artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             limit: engine-(auth|exchange-capabilities)/

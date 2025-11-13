@@ -36,7 +36,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{debug, error, info, warn};
+use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -54,22 +54,23 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let mut layer = fmt::layer();
-
-    if opts.log_color == LogColor::Never
-        || (opts.log_color == LogColor::Auto && !std::io::stdout().is_terminal())
-    {
-        layer = layer.with_ansi(false);
-    }
-
-    let fmt_layer = layer.with_filter(filter);
-
-    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
-        let profiling_layer = FunctionProfilingLayer;
-        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
-    } else {
-        Box::new(Registry::default().with(fmt_layer))
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let use_color = match opts.log_color {
+        LogColor::Always => true,
+        LogColor::Never => false,
+        LogColor::Auto => stdout_is_tty,
     };
+
+    let include_target = matches!(opts.log_level, Level::DEBUG | Level::TRACE);
+
+    let fmt_layer = fmt::layer()
+        .with_target(include_target)
+        .with_ansi(use_color)
+        .with_filter(filter);
+
+    let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
+
+    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
@@ -394,6 +395,9 @@ pub async fn init_l1(
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store = init_store(datadir, genesis).await;
+    if opts.syncmode == SyncMode::Full {
+        store.generate_flatkeyvalue()?;
+    }
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
@@ -460,7 +464,7 @@ pub async fn init_l1(
     if opts.dev {
         #[cfg(feature = "dev")]
         init_dev_network(&opts, &store, tracker.clone()).await;
-    } else if opts.p2p_enabled {
+    } else if !opts.p2p_disabled {
         init_network(
             &opts,
             &network,
