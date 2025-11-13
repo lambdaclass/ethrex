@@ -852,7 +852,6 @@ pub async fn generate_big_block(
     };
     let total_blocks_imported = chain.len();
 
-    //         .retain(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)));
     // We start with a mutable block
     let mut block = chain.remove(0);
     let mut transactions = block.body.transactions;
