@@ -130,6 +130,29 @@ impl Trie {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
         self.dirty.insert(path.clone());
+
+        if self.root.is_valid() {
+            // If the trie is not empty, call the root node's insertion logic.
+            self.root
+                .get_node_mut(self.db.as_ref(), Nibbles::default())?
+                .ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
+                })?
+                .insert(self.db.as_ref(), path, value)?
+        } else {
+            // If the trie is empty, just add a leaf.
+            self.root = Node::from(LeafNode::new(path, value)).into()
+        };
+        self.root.clear_hash();
+
+        Ok(())
+    }
+
+    /// Insert an RLP-encoded value into the trie.
+    pub fn insert_storage(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
+        let path = Nibbles::from_bytes(&path);
+        self.pending_removal.remove(&path);
+        self.dirty.insert(path.clone());
         let encoded_nodes = self.db.get_nodes_in_path(path.clone())?;
         let keys = (0..path.len()).map(|i| path.slice(0, i));
         let mut nodes = Vec::with_capacity(path.len());
