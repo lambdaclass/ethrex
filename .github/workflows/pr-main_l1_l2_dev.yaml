@@ -19,6 +19,7 @@ env:
 
 jobs:
   integration-test-l1-l2-dev:
+    if: ${{ github.event_name != 'merge_group' }}
     name: Integration Test
     runs-on: ubuntu-latest
     steps:
