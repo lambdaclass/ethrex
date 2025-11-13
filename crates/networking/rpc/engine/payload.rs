@@ -615,6 +615,7 @@ async fn handle_new_payload_v1_v2(
         return Ok(PayloadStatus::syncing());
     }
 
+    info!("We are trying to execute the payload");
     // All checks passed, execute payload
     let payload_status = try_execute_payload(block, &context, latest_valid_hash).await?;
     Ok(payload_status)
