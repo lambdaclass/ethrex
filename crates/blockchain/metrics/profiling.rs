@@ -1,5 +1,5 @@
 use prometheus::{Encoder, HistogramTimer, HistogramVec, TextEncoder, register_histogram_vec};
-use std::{borrow::Cow, future::Future, sync::LazyLock};
+use std::{future::Future, sync::LazyLock};
 use tracing::{
     Subscriber,
     field::{Field, Visit},
@@ -30,17 +30,17 @@ pub struct FunctionProfilingLayer;
 struct ProfileTimer(HistogramTimer);
 
 /// Span extension storing the profiling namespace selected by instrumentation.
-struct Namespace(Cow<'static, str>);
+struct Namespace(String);
 
 #[derive(Default)]
 struct NamespaceVisitor {
-    namespace: Option<Cow<'static, str>>,
+    namespace: Option<String>,
 }
 
 impl Visit for NamespaceVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
         if field.name() == "namespace" {
-            self.namespace = Some(Cow::Owned(value.to_owned()));
+            self.namespace = Some(value.to_owned());
         }
     }
 
@@ -51,7 +51,7 @@ impl Visit for NamespaceVisitor {
                 .strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
                 .unwrap_or(&rendered);
-            self.namespace = Some(Cow::Owned(cleaned.to_owned()));
+            self.namespace = Some(cleaned.to_owned());
         }
     }
 }
@@ -80,16 +80,16 @@ where
                 return;
             }
 
-            let namespace = span
-                .extensions()
+            let extensions = span.extensions();
+            let namespace = extensions
                 .get::<Namespace>()
-                .map(|ns| ns.0.clone())
-                .unwrap_or_else(|| Cow::Borrowed("default"));
+                .map(|ns| ns.0.as_str())
+                .unwrap_or("default");
 
             let function_name = span.metadata().name();
 
             let timer = METRICS_BLOCK_PROCESSING_PROFILE
-                .with_label_values(&[namespace.as_ref(), function_name])
+                .with_label_values(&[namespace, function_name])
                 .start_timer();
             // PERF: `extensions_mut` uses a Mutex internally (per span)
             span.extensions_mut().insert(ProfileTimer(timer));
@@ -116,13 +116,6 @@ where
 /// * `namespace` - Category for the metric (e.g., "rpc", "engine", "block_execution")
 /// * `function_name` - Name identifier for the operation being timed
 /// * `future` - The async operation to time
-///
-/// # Example
-/// ```
-/// let result = record_async_duration("rpc", "eth_getBalance", async {
-///     // your async operation
-/// }).await;
-/// ```
 ///
 /// Use this function when you need to instrument an async operation for duration metrics,
 /// but cannot or do not want to use the `#[instrument]` attribute (for example, in RPC handlers).
