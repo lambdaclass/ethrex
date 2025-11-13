@@ -131,18 +131,6 @@ impl Stack {
         self.offset == self.values.len()
     }
 
-    pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
-        // The following index cannot fail because `self.offset` is known to be within
-        // `STACK_LIMIT`.
-        #[expect(unsafe_code)]
-        unsafe {
-            self.values
-                .get_unchecked(self.offset..)
-                .get(index)
-                .ok_or(ExceptionalHalt::StackUnderflow)
-        }
-    }
-
     #[inline(always)]
     pub fn swap<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {
         // Compile-time check that ensures `self.offset + N` is safe,
@@ -163,6 +151,35 @@ impl Stack {
 
     pub fn clear(&mut self) {
         self.offset = STACK_LIMIT;
+    }
+
+    /// Pushes a copy of the value at depth N
+    #[inline]
+    pub fn dup<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {
+        // Compile-time check that ensures `self.offset + N` is safe,
+        // since self.offset is bounded by STACK_LIMIT
+        const {
+            assert!(STACK_LIMIT.checked_add(N).is_some());
+        }
+        #[expect(clippy::arithmetic_side_effects)]
+        let index = self.offset + N;
+
+        let value = self
+            .values
+            .get(index)
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+
+        self.offset = self
+            .offset
+            .checked_sub(1)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        // self.offset is within bounds because `index` (strictly greater) was just checked to be within bounds
+        #[expect(clippy::indexing_slicing)]
+        {
+            self.values[self.offset] = *value;
+        }
+        Ok(())
     }
 }
 
