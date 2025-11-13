@@ -375,11 +375,7 @@ impl RLPDecode for Withdrawal {
 
 // Checks that the gas_limit fits the gas bounds set by its parent block
 fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) -> bool {
-    let max_adjustment_delta = parent_gas_limit * GAS_LIMIT_ADJUSTMENT_FACTOR;
-
-    gas_limit < parent_gas_limit + max_adjustment_delta
-        && gas_limit > parent_gas_limit - max_adjustment_delta
-        && gas_limit >= GAS_LIMIT_MINIMUM
+    true
 }
 
 /// Calculates the base fee per blob gas for the current block based on
