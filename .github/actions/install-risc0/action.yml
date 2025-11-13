@@ -1,10 +1,11 @@
 name: "Install RISC0"
 description: "Install RISC0 Toolchain"
 
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 runs:
   using: "composite"
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   run: |
     curl -L https://risczero.com/install | bash
     ~/.risc0/bin/rzup install cargo-risczero 3.0.3
