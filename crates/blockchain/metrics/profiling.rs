@@ -46,9 +46,12 @@ impl Visit for NamespaceVisitor {
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         if field.name() == "namespace" {
-            self.namespace = Some(Cow::Owned(
-                format!("{value:?}").trim_matches('"').to_owned(),
-            ));
+            let rendered = format!("{value:?}");
+            let cleaned = rendered
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .unwrap_or(&rendered);
+            self.namespace = Some(Cow::Owned(cleaned.to_owned()));
         }
     }
 }
@@ -81,17 +84,7 @@ where
                 .extensions()
                 .get::<Namespace>()
                 .map(|ns| ns.0.clone())
-                .unwrap_or_else(|| {
-                    if target.contains("blockchain") {
-                        Cow::Borrowed("block_processing")
-                    } else if target.contains("storage") {
-                        Cow::Borrowed("storage")
-                    } else if target.contains("networking") {
-                        Cow::Borrowed("networking")
-                    } else {
-                        Cow::Borrowed("other")
-                    }
-                });
+                .unwrap_or_else(|| { Cow::Borrowed("default") });
 
             let function_name = span.metadata().name();
 
