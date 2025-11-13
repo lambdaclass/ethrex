@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::{
-    EIP1559_DEFAULT_SERIALIZED_LENGTH, EIP1559Transaction, SAFE_BYTES_PER_BLOB, Transaction,
-    TxKind, TxType,
+    EIP1559_DEFAULT_SERIALIZED_LENGTH, EIP1559Transaction, FeeTokenTransaction,
+    SAFE_BYTES_PER_BLOB, Transaction, TxKind, TxType,
 };
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, U256};
@@ -27,8 +27,8 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    L2_WITHDRAW_SIGNATURE, build_generic_tx, get_last_verified_batch, send_generic_transaction,
-    wait_for_message_proof,
+    FEE_TOKEN_REGISTRY_ADDRESS, L2_WITHDRAW_SIGNATURE, REGISTER_FEE_TOKEN_SIGNATURE,
+    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
@@ -43,11 +43,11 @@ use reqwest::Url;
 use secp256k1::SecretKey;
 use std::cmp::min;
 use std::ops::{Add, AddAssign};
+use std::time::Duration;
 use std::{
     fs::{File, read_to_string},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    time::Duration,
 };
 use tokio::task::JoinSet;
 
@@ -129,6 +129,23 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let l1_fee_vault = l1_fee_vault(&l2_client).await;
     let l1_fee_vault_balance_before_tests = get_fee_vault_balance(&l2_client, l1_fee_vault).await;
 
+    let mut acc_priority_fees = 0;
+    let mut acc_base_fees = 0;
+    let mut acc_operator_fee = 0;
+    let mut acc_l1_fees = 0;
+
+    // Non thread-safe uses owner address
+    let fee_token_fees = test_fee_token(
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+        private_keys.pop().unwrap(),
+    )
+    .await?;
+    acc_priority_fees += fee_token_fees.priority_fees;
+    acc_base_fees += fee_token_fees.base_fees;
+    acc_operator_fee += fee_token_fees.operator_fees;
+    acc_l1_fees += fee_token_fees.l1_fees;
+
     let mut set = JoinSet::new();
 
     set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
@@ -201,10 +218,6 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
-    let mut acc_priority_fees = 0;
-    let mut acc_base_fees = 0;
-    let mut acc_operator_fee = 0;
-    let mut acc_l1_fees = 0;
     while let Some(res) = set.join_next().await {
         let fees_details = res??;
         acc_priority_fees += fees_details.priority_fees;
@@ -1021,6 +1034,18 @@ async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U
         .await
         .unwrap();
     U256::from_str_radix(res.trim_start_matches("0x"), 16).unwrap()
+}
+
+async fn test_balance_of_optional(
+    client: &EthClient,
+    token: Address,
+    user: Option<Address>,
+) -> U256 {
+    if let Some(user) = user {
+        test_balance_of(client, token, user).await
+    } else {
+        U256::zero()
+    }
 }
 
 async fn test_send(
@@ -1963,6 +1988,258 @@ async fn test_call_to_contract_with_deposit(
     );
 
     Ok(())
+}
+
+async fn test_fee_token(
+    l2_client: EthClient,
+    rich_wallet_private_key: SecretKey,
+    recipient_private_key: SecretKey,
+) -> Result<FeesDetails> {
+    let test = "test_fee_token";
+    let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
+    let l1_client = l1_client();
+    println!("{test}: Rich wallet address: {rich_wallet_address:#x}");
+
+    let contracts_path = Path::new("contracts");
+    get_contract_dependencies(contracts_path);
+
+    let fee_token_path = Path::new("../../crates/l2/contracts/src/example");
+    let interfaces_path = Path::new("../../crates/l2/contracts/src/l2");
+    let remappings = [(
+        "@openzeppelin/contracts",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    let allow_paths = [fee_token_path, interfaces_path, contracts_path];
+
+    compile_contract(
+        fee_token_path,
+        &fee_token_path.join("FeeToken.sol"),
+        false,
+        Some(&remappings),
+        &allow_paths,
+    )?;
+
+    let mut fee_token_contract =
+        hex::decode(std::fs::read(fee_token_path.join("solc_out/FeeToken.bin"))?)?;
+    fee_token_contract.extend_from_slice(&[0u8; 32]); // constructor argument: address(0), we don't want now an L1 fee token
+    let (fee_token_address, deploy_fees) = test_deploy(
+        &l2_client,
+        &fee_token_contract,
+        &rich_wallet_private_key,
+        "test_fee_token",
+    )
+    .await?;
+
+    let owner_pk = bridge_owner_private_key();
+    let owner_signer: Signer = LocalSigner::new(owner_pk).into();
+    let calldata = encode_calldata(
+        REGISTER_FEE_TOKEN_SIGNATURE,
+        &[Value::Address(fee_token_address)],
+    )
+    .unwrap();
+    let register_tx = build_generic_tx(
+        &l1_client,
+        TxType::EIP1559,
+        bridge_address().unwrap(),
+        owner_signer.address(),
+        calldata.into(),
+        Overrides {
+            gas_limit: Some(21000 * 20),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // Register fee token contract
+    let register_tx_hash = send_generic_transaction(&l1_client, register_tx, &owner_signer)
+        .await
+        .unwrap();
+    let register_tx_receipt = wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
+        .await
+        .unwrap();
+    let _ = wait_for_l2_deposit_receipt(&register_tx_receipt, &l1_client, &l2_client).await?;
+
+    let sender_balance_before_transfer = l2_client
+        .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let sender_token_balance_before_transfer =
+        test_balance_of(&l2_client, fee_token_address, rich_wallet_address).await;
+    println!("{test}: Fee token address: {fee_token_address:#x}");
+    println!("{test}: Sender balance before transfer: {sender_balance_before_transfer}");
+    println!("{test}: Sender fee balance before transfer: {sender_token_balance_before_transfer}");
+
+    let recipient_address = get_address_from_secret_key(&recipient_private_key).unwrap();
+    let recipient_balance_before_transfer = l2_client
+        .get_balance(recipient_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    println!("{test}: Recipient address: {recipient_address:#x}");
+    println!("{test}: Recipient balance before transfer: {recipient_balance_before_transfer}");
+
+    let coinbase_address = coinbase();
+    let coinbase_token_balance_before_transfer =
+        test_balance_of(&l2_client, fee_token_address, coinbase_address).await;
+    println!(
+        "{test}: Coinbase address fee token balance before transfer: {coinbase_token_balance_before_transfer}"
+    );
+
+    // This may not be configured
+    let fee_vault = base_fee_vault(&l2_client).await;
+    let fee_vault_address_token_balance_before_transfer =
+        test_balance_of_optional(&l2_client, fee_token_address, fee_vault).await;
+    println!(
+        "{test}: Fee vault address fee token balance before transfer: {fee_vault_address_token_balance_before_transfer}"
+    );
+
+    let operator_fee_vault = operator_fee_vault(&l2_client).await;
+    let operator_fee_vault_token_balance_before_transfer =
+        test_balance_of_optional(&l2_client, fee_token_address, operator_fee_vault).await;
+    println!(
+        "{test}: Operator fee vault address fee token balance before transfer: {operator_fee_vault_token_balance_before_transfer}"
+    );
+
+    let l1_fee_vault = l1_fee_vault(&l2_client).await;
+    let l1_fee_vault_token_balance_before_transfer =
+        test_balance_of_optional(&l2_client, fee_token_address, l1_fee_vault).await;
+    println!(
+        "{test}: L1 fee vault address fee token balance before transfer: {l1_fee_vault_token_balance_before_transfer}"
+    );
+
+    let cd = encode_calldata("isFeeToken(address)", &[Value::Address(fee_token_address)]).unwrap();
+    let expected = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    let is_registered = l2_client
+        .call(FEE_TOKEN_REGISTRY_ADDRESS, cd.into(), Overrides::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        is_registered, expected,
+        "{test}: fee token registry state unexpected"
+    );
+    let value_to_transfer = 100_000;
+    let mut generic_tx = build_generic_tx(
+        &l2_client,
+        TxType::FeeToken,
+        recipient_address,
+        rich_wallet_address,
+        Bytes::new(),
+        Overrides {
+            fee_token: Some(fee_token_address),
+            value: Some(U256::from(value_to_transfer)),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let signer = Signer::Local(LocalSigner::new(rich_wallet_private_key));
+    generic_tx.gas = generic_tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
+    let tx_hash = send_generic_transaction(&l2_client, generic_tx, &signer).await?;
+    let transfer_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2_client, 1000).await?;
+
+    let sender_balance_after_transfer = l2_client
+        .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    println!("{test}: Sender balance after transfer: {sender_balance_after_transfer}");
+    let recipient_balance_after_transfer = l2_client
+        .get_balance(recipient_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    println!("{test}: Recipient balance after transfer: {recipient_balance_after_transfer}");
+
+    assert_eq!(
+        sender_balance_after_transfer,
+        sender_balance_before_transfer - value_to_transfer,
+        "Sender balance did not decrease"
+    );
+
+    println!("{test}: Sender balance decrease correctly");
+
+    assert_eq!(
+        recipient_balance_after_transfer,
+        recipient_balance_before_transfer + value_to_transfer,
+        "Recipient balance did not increase"
+    );
+    println!("{test}: Recipient balance increased correctly");
+
+    let sender_token_balance_after_transfer =
+        test_balance_of(&l2_client, fee_token_address, rich_wallet_address).await;
+    println!(
+        "{test}: Sender fee token balance after transfer: {sender_token_balance_after_transfer}"
+    );
+
+    let tx = Transaction::FeeTokenTransaction(FeeTokenTransaction {
+        data: Bytes::new(),
+        ..Default::default()
+    });
+    let tx_size = tx.encode_canonical_to_vec().len().try_into().unwrap();
+    let transfer_fees = get_fees_details_l2(&transfer_receipt, &l2_client, tx_size).await?;
+
+    let sender_fee_token_spent = sender_token_balance_before_transfer
+        .checked_sub(sender_token_balance_after_transfer)
+        .expect("Sender fee token balance increased unexpectedly");
+    assert_eq!(
+        sender_fee_token_spent,
+        U256::from(transfer_fees.total()),
+        "{test}: Sender fee token spend mismatch"
+    );
+
+    let coinbase_token_balance_after_transfer =
+        test_balance_of(&l2_client, fee_token_address, coinbase_address).await;
+    let coinbase_delta = coinbase_token_balance_after_transfer
+        .checked_sub(coinbase_token_balance_before_transfer)
+        .expect("Coinbase fee token balance decreased");
+    assert_eq!(
+        coinbase_delta,
+        U256::from(transfer_fees.priority_fees),
+        "{test}: Priority fee mismatch"
+    );
+
+    if let Some(fee_vault) = base_fee_vault(&l2_client).await {
+        let fee_vault_address_token_balance_after_transfer =
+            test_balance_of(&l2_client, fee_token_address, fee_vault).await;
+        println!(
+            "{test}: Fee vault address fee token balance after transfer: {fee_vault_address_token_balance_after_transfer}"
+        );
+        let base_fee_vault_delta = fee_vault_address_token_balance_after_transfer
+            .checked_sub(fee_vault_address_token_balance_before_transfer)
+            .expect("Base fee vault balance decreased");
+        assert_eq!(
+            base_fee_vault_delta,
+            U256::from(transfer_fees.base_fees),
+            "{test}: Base fee vault mismatch"
+        );
+    }
+    let operator_fee_vault_address_token_balance_after_transfer =
+        test_balance_of_optional(&l2_client, fee_token_address, operator_fee_vault).await;
+    println!(
+        "{test}: Operator fee vault address fee token balance after transfer: {operator_fee_vault_address_token_balance_after_transfer}"
+    );
+    let l1_fee_vault_address_token_balance_after_transfer =
+        test_balance_of_optional(&l2_client, fee_token_address, l1_fee_vault).await;
+    println!(
+        "{test}: L1 fee vault address fee token balance after transfer: {l1_fee_vault_address_token_balance_after_transfer}"
+    );
+
+    let operator_fee_vault_delta = operator_fee_vault_address_token_balance_after_transfer
+        .checked_sub(operator_fee_vault_token_balance_before_transfer)
+        .expect("Operator fee vault balance decreased");
+    assert_eq!(
+        operator_fee_vault_delta,
+        U256::from(transfer_fees.operator_fees),
+        "{test}: Operator fee vault mismatch"
+    );
+
+    let l1_fee_vault_delta = l1_fee_vault_address_token_balance_after_transfer
+        .checked_sub(l1_fee_vault_token_balance_before_transfer)
+        .expect("L1 fee vault balance decreased");
+    assert_eq!(
+        l1_fee_vault_delta,
+        U256::from(transfer_fees.l1_fees),
+        "{test}: L1 fee vault mismatch"
+    );
+
+    Ok(deploy_fees)
 }
 
 fn bridge_owner_private_key() -> SecretKey {

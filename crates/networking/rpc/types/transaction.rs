@@ -3,7 +3,8 @@ use ethrex_common::{
     Address, H256, serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
-        LegacyTransaction, PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
+        FeeTokenTransaction, LegacyTransaction, PrivilegedL2Transaction, Transaction,
+        WrappedEIP4844Transaction,
     },
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
@@ -53,6 +54,7 @@ pub enum SendRawTransactionRequest {
     EIP4844(WrappedEIP4844Transaction),
     EIP7702(EIP7702Transaction),
     PrivilegedL2(PrivilegedL2Transaction),
+    FeeToken(FeeTokenTransaction),
 }
 
 impl SendRawTransactionRequest {
@@ -66,16 +68,18 @@ impl SendRawTransactionRequest {
             SendRawTransactionRequest::PrivilegedL2(t) => {
                 Transaction::PrivilegedL2Transaction(t.clone())
             }
+            SendRawTransactionRequest::FeeToken(t) => Transaction::FeeTokenTransaction(t.clone()),
         }
     }
 
     pub fn decode_canonical(bytes: &[u8]) -> Result<Self, RLPDecodeError> {
         // Look at the first byte to check if it corresponds to a TransactionType
         match bytes.first() {
-            // First byte is a valid TransactionType
-            Some(tx_type) if *tx_type < 0x7f => {
+            // First byte is a valid TransactionType https://eips.ethereum.org/EIPS/eip-2718#transactiontype-only-goes-up-to-0x7f
+            Some(tx_type) if *tx_type <= 0x7f => {
                 // Decode tx based on type
                 let tx_bytes = &bytes[1..];
+
                 match *tx_type {
                     // Legacy
                     0x0 => {
@@ -96,6 +100,10 @@ impl SendRawTransactionRequest {
                     0x4 => {
                         EIP7702Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP7702)
                     }
+                    // FeeTokenTransaction
+                    0x7d => FeeTokenTransaction::decode(tx_bytes)
+                        .map(SendRawTransactionRequest::FeeToken),
+                    // PrivilegedL2Transaction
                     0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::PrivilegedL2),
                     ty => Err(RLPDecodeError::Custom(format!(

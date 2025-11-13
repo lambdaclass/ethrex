@@ -36,6 +36,8 @@ DOCKER_ETHREX_WORKDIR := /usr/local/bin
 
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+L2_OWNER_ADDRESS=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+BRIDGE_OWNER_PRIVATE_KEY=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
 
 ethrex_L2_DEV_DB?=dev_ethrex_l2
 ethrex_L1_DEV_DB=dev_ethrex_l1
@@ -89,8 +91,9 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--on-chain-proposer-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
@@ -106,8 +109,9 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	--sp1.deploy-verifier \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--on-chain-proposer-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \

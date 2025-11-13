@@ -205,7 +205,7 @@ impl GeneralizedDatabase {
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = if !removed_storage {
-                    initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?
+                    initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}")))})?
                 } else {
                     // There's not an "old value" if the contract was destroyed and re-created.
                     &ZERO_U256
