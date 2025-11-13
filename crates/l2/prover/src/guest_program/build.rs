@@ -73,9 +73,7 @@ fn build_sp1_program() {
             output_directory: Some("./src/sp1/out".to_string()),
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
-            docker: option_env!("PROVER_REPRODUCIBLE_BUILD")
-                .map(|_| true)
-                .unwrap_or(false),
+            docker: option_env!("PROVER_REPRODUCIBLE_BUILD").is_some(),
             tag: "v5.0.8".to_string(),
             workspace_directory: Some(format!("{}/../../../../../", env!("CARGO_MANIFEST_DIR"))),
             ..Default::default()
