@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-13
+
+- Use BlobDB for account_codes column family [#5300](https://github.com/lambdaclass/ethrex/pull/5300)
+
 ### 2025-11-12
 
 - Only mark individual values as dirty instead of the whole trie [#5282](https://github.com/lambdaclass/ethrex/pull/5282)
