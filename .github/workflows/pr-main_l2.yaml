@@ -69,11 +69,7 @@ jobs:
       - name: Install RISC0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-          ~/.risc0/bin/rzup install risc0-groth16
-          ~/.risc0/bin/rzup install rust
+        uses: ./.github/actions/install-risc0
 
       - name: Create placeholder SP1 ELF
         run: |
@@ -138,7 +134,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
-          build_args: BUILD_FLAGS=--features l2
+          build_args: BUILD_FLAGS=--features l2,l2-sql
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -305,9 +301,6 @@ jobs:
 
       - name: Run test
         run: |
-          if  [ "${{ matrix.based }}" = true ]; then
-            export INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true
-          fi
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &

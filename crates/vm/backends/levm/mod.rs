@@ -9,17 +9,20 @@ use crate::system_contracts::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
     Address, U256,
     types::{
-        AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
-        EIP7702Transaction, Fork, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
-        Transaction, TxKind, Withdrawal, requests::Requests,
+        AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
+        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
+        requests::Requests,
     },
 };
 use ethrex_levm::EVMConfig;
 use ethrex_levm::call_frame::Stack;
-use ethrex_levm::constants::{STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST};
+use ethrex_levm::constants::{
+    POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
+};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -225,6 +228,7 @@ impl LEVM {
             block_gas_limit: block_header.gas_limit,
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
+            fee_token: tx.fee_token(),
         };
 
         Ok(env)
@@ -685,7 +689,9 @@ fn env_from_generic(
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
     Ok(Environment {
         origin: tx.from.0.into(),
-        gas_limit: tx.gas.unwrap_or(header.gas_limit), // Ensure tx doesn't fail due to gas limit
+        gas_limit: tx
+            .gas
+            .unwrap_or(get_max_allowed_gas_limit(header.gas_limit, config.fork)), // Ensure tx doesn't fail due to gas limit
         config,
         block_number: header.number.into(),
         coinbase: header.coinbase,
@@ -704,6 +710,7 @@ fn env_from_generic(
         block_gas_limit: header.gas_limit,
         difficulty: header.difficulty,
         is_privileged: false,
+        fee_token: tx.fee_token,
     })
 }
 
@@ -746,6 +753,15 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
+
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
     VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+}
+
+pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
+    if fork >= Fork::Osaka {
+        POST_OSAKA_GAS_LIMIT_CAP
+    } else {
+        block_gas_limit
+    }
 }
