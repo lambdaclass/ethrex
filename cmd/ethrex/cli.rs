@@ -10,10 +10,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
-use ethrex_common::{
-    H256,
-    types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, transaction},
-};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, Transaction};
 use ethrex_p2p::{
     discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
@@ -832,18 +829,13 @@ pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), Cha
         utils::read_chain_file(in_path)
     };
     let total_blocks_imported = chain.len();
-    let mut blob_versioned_hashes: Vec<H256> = Vec::new();
 
     let mut payload = {
-        let first_block = chain.remove(0);
-        blob_versioned_hashes.extend(
-            first_block
-                .body
-                .transactions
-                .iter()
-                .flat_map(|tx| tx.blob_versioned_hashes()),
-        );
-
+        let mut first_block = chain.remove(0);
+        first_block
+            .body
+            .transactions
+            .retain(|tx| matches!(tx, Transaction::EIP4844Transaction(_)));
         ExecutionPayload::from_block(first_block)
     };
 
@@ -853,14 +845,8 @@ pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), Cha
                 .body
                 .transactions
                 .iter()
+                .filter(|tx| matches!(tx, Transaction::EIP4844Transaction(_)))
                 .map(EncodedTransaction::encode),
-        );
-        blob_versioned_hashes.extend(
-            block
-                .body
-                .transactions
-                .iter()
-                .flat_map(|tx| tx.blob_versioned_hashes()),
         );
         info!(
             transaction_count = block.body.transactions.len(),
@@ -868,10 +854,6 @@ pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), Cha
             ""
         );
     }
-
-    let out_path_2 = format!("{out_path}2");
-    let file = File::create(out_path_2).expect("Failed to open file");
-    serde_json::to_writer_pretty(file, &blob_versioned_hashes).expect("We should be able to write");
 
     let file = File::create(out_path).expect("Failed to open file");
     serde_json::to_writer_pretty(file, &payload).expect("We should be able to write");
