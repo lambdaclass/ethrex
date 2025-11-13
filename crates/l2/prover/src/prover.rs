@@ -139,7 +139,7 @@ impl Prover {
                 #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
                 #[cfg(feature = "l2")]
-                fee_configs: Some(input.fee_configs),
+                fee_configs: input.fee_configs,
             },
             format,
         }))

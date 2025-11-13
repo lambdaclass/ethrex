@@ -139,7 +139,12 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, execution_witness, ELASTICITY_MULTIPLIER, None)?;
+    } = execute_stateless(
+        blocks,
+        execution_witness,
+        ELASTICITY_MULTIPLIER,
+        Vec::default(),
+    )?;
 
     Ok(ProgramOutput {
         initial_state_hash,
@@ -155,7 +160,7 @@ pub fn stateless_validation_l2(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_configs: Option<Vec<FeeConfig>>,
+    fee_configs: Vec<FeeConfig>,
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
@@ -187,7 +192,9 @@ pub fn stateless_validation_l2(
 
     // Check blobs are valid
     let blob_versioned_hash = if !validium {
-        let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
+        if fee_configs.is_empty() {
+            return Err(StatelessExecutionError::FeeConfigNotFound);
+        }
         verify_blob(blocks, &fee_configs, blob_commitment, blob_proof)?
     } else {
         H256::zero()
@@ -217,14 +224,16 @@ fn execute_stateless(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_configs: Option<Vec<FeeConfig>>,
+    fee_configs: Vec<FeeConfig>,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let guest_program_state: GuestProgramState = execution_witness
         .try_into()
         .map_err(StatelessExecutionError::GuestProgramState)?;
 
     #[cfg(feature = "l2")]
-    let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
+    if fee_configs.is_empty() {
+        return Err(StatelessExecutionError::FeeConfigNotFound);
+    }
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
