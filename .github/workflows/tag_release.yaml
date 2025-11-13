@@ -95,13 +95,8 @@ jobs:
 
       - name: Install RISC0 (only Linux x86)
         if: ${{ matrix.platform == 'ubuntu-22.04' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-          ~/.risc0/bin/rzup install risc0-groth16
-          ~/.risc0/bin/rzup install rust
+        uses: ./.github/actions/install-risc-0
+
       - name: Install CUDA (only Linux x86 GPU)
         uses: Jimver/cuda-toolkit@v0.2.24
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }}
@@ -184,13 +179,7 @@ jobs:
 
       - name: Install RISC0
         if: ${{ matrix.zkvm == 'risc0' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-          ~/.risc0/bin/rzup install risc0-groth16
-          ~/.risc0/bin/rzup install rust
+        uses: ./.github/actions/install-risc-0
 
       - name: Build ethrex elf - ${{ matrix.zkvm }}
         run: |
