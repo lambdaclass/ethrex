@@ -135,11 +135,11 @@ pub fn stateless_validation_l1(
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let guest_program_state: GuestProgramState =
-        report_cycles!("guest_program_state_initialization", {
+        report_cycles("guest_program_state_initialization", || {
             execution_witness
                 .try_into()
-                .map_err(StatelessExecutionError::GuestProgramState)?
-        });
+                .map_err(StatelessExecutionError::GuestProgramState)
+        })?;
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
@@ -149,16 +149,19 @@ pub fn stateless_validation_l1(
 
     // Hashing is an expensive operation in zkVMs, this way we avoid hashing twice
     // (once in get_first_invalid_block_hash(), later in validate_block()).
-    report_cycles!("initialize_block_header_hashes", {
-        wrapped_db.initialize_block_header_hashes(&blocks)?;
-    });
+    report_cycles("initialize_block_header_hashes", || {
+        wrapped_db.initialize_block_header_hashes(&blocks)
+    })?;
 
     // Validate execution witness' block hashes, except parent block hash (latest block hash).
-    report_cycles!("get_first_invalid_block_hash", if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
+    report_cycles("get_first_invalid_block_hash", || {
+        if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
             return Err(StatelessExecutionError::InvalidBlockHash(
                 invalid_block_header,
             ));
-        };);
+        }
+        Ok(())
+    })?;
 
     // Validate the initial state
     let parent_block_header = wrapped_db
@@ -171,11 +174,11 @@ pub fn stateless_validation_l1(
         )
         .map_err(StatelessExecutionError::GuestProgramState)?;
 
-    let initial_state_hash = report_cycles!("state_trie_root", {
+    let initial_state_hash = report_cycles("state_trie_root", || {
         wrapped_db
             .state_trie_root()
-            .map_err(StatelessExecutionError::GuestProgramState)?
-    });
+            .map_err(StatelessExecutionError::GuestProgramState)
+    })?;
 
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
@@ -189,35 +192,37 @@ pub fn stateless_validation_l1(
 
     for block in blocks.iter() {
         // Validate the block
-        report_cycles!("validate_block", {
+        report_cycles("validate_block", || {
             validate_block(
                 block,
                 parent_block_header,
                 &chain_config,
                 elasticity_multiplier,
             )
-            .map_err(StatelessExecutionError::BlockValidationError)?;
-        });
+            .map_err(StatelessExecutionError::BlockValidationError)
+        })?;
 
-        let mut vm = report_cycles!("setup_evm", Evm::new_for_l1(wrapped_db.clone()));
+        let mut vm = report_cycles("setup_evm", || {
+            let vm = Evm::new_for_l1(wrapped_db.clone());
+            Ok::<_, StatelessExecutionError>(vm)
+        })?;
 
-        let result = report_cycles!("execute_block", {
+        let result = report_cycles("execute_block", || {
             vm.execute_block(block)
-                .map_err(StatelessExecutionError::EvmError)?
-        });
+                .map_err(StatelessExecutionError::EvmError)
+        })?;
 
-        let account_updates = report_cycles!("get_state_transitions", {
+        let account_updates = report_cycles("get_state_transitions", || {
             vm.get_state_transitions()
-                .map_err(StatelessExecutionError::EvmError)?
-        });
+                .map_err(StatelessExecutionError::EvmError)
+        })?;
 
         // Update db for the next block
-        report_cycles!("apply_account_updates", {
+        report_cycles("apply_account_updates", || {
             wrapped_db
                 .apply_account_updates(&account_updates)
-                .map_err(StatelessExecutionError::GuestProgramState)?;
-        });
-
+                .map_err(StatelessExecutionError::GuestProgramState)
+        })?;
         // Update acc_account_updates
         for account in account_updates {
             let address = account.address;
@@ -228,41 +233,41 @@ pub fn stateless_validation_l1(
             }
         }
 
-        report_cycles!("validate_gas_and_receipts", {
+        report_cycles("validate_gas_and_receipts", || {
             validate_gas_used(&result.receipts, &block.header)
-                .map_err(StatelessExecutionError::GasValidationError)?;
-        });
+                .map_err(StatelessExecutionError::GasValidationError)
+        })?;
 
-        report_cycles!("validate_receipts_root", {
+        report_cycles("validate_receipts_root", || {
             validate_receipts_root(&block.header, &result.receipts)
-                .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
-        });
+                .map_err(StatelessExecutionError::ReceiptsRootValidationError)
+        })?;
 
         // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
-        report_cycles!("validate_requests_hash", {
+        report_cycles("validate_requests_hash", || {
             validate_requests_hash(&block.header, &chain_config, &result.requests)
-                .map_err(StatelessExecutionError::RequestsRootValidationError)?;
-        });
+                .map_err(StatelessExecutionError::RequestsRootValidationError)
+        })?;
 
         non_privileged_count += block.body.transactions.len();
         acc_receipts.push(result.receipts);
         parent_block_header = &block.header;
     }
 
-    let final_state_root = report_cycles!("get_final_state_root", {
+    let final_state_root = report_cycles("get_final_state_root", || {
         wrapped_db
             .state_trie_root()
-            .map_err(StatelessExecutionError::GuestProgramState)?
-    });
+            .map_err(StatelessExecutionError::GuestProgramState)
+    })?;
 
     let last_block = blocks
         .last()
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
 
-    report_cycles!("validate_state_root", {
+    report_cycles("validate_state_root", || {
         validate_state_root(&last_block.header, final_state_root)
-            .map_err(|_chain_err| StatelessExecutionError::InvalidFinalStateTrie)?;
-    });
+            .map_err(|_chain_err| StatelessExecutionError::InvalidFinalStateTrie)
+    })?;
 
     Ok(ProgramOutput {
         initial_state_hash,
