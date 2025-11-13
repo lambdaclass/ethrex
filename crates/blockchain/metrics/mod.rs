@@ -10,6 +10,10 @@ pub mod metrics_process;
 pub mod metrics_transactions;
 #[cfg(feature = "api")]
 pub mod profiling;
+#[cfg(feature = "api")]
+pub mod registry;
+#[cfg(feature = "api")]
+pub mod rpc;
 
 /// A macro to conditionally enable metrics-related code.
 ///
