@@ -371,21 +371,21 @@ impl L1Committer {
                 new_checkpoint_store.clone(),
                 new_checkpoint_blockchain.clone(),
             )
-            .await;
+            .await?;
 
-        let (
+        let Some((
             blobs_bundle,
             new_state_root,
             l1_message_hashes,
             l2_messages,
             privileged_transactions_hash,
             last_block_of_batch,
-        ) = result?;
-
-        if *last_block == last_block_of_batch {
+        )) = result
+        else {
             debug!("No new blocks to commit, skipping");
+
             return Ok(None);
-        }
+        };
 
         let balance_diffs = get_balance_diffs(&l2_messages);
         let l2_message_hashes: Vec<H256> = l2_messages.iter().map(get_l2_message_hash).collect();
@@ -443,14 +443,14 @@ impl L1Committer {
         checkpoint_store: Store,
         checkpoint_blockchain: Arc<Blockchain>,
     ) -> Result<
-        (
+        Option<(
             BlobsBundle,
             H256,
             Vec<H256>,
             Vec<L2Message>,
             H256,
             BlockNumber,
-        ),
+        )>,
         CommitterError,
     > {
         let first_block_of_batch = last_added_block_number + 1;
@@ -682,6 +682,11 @@ impl L1Committer {
             acc_blocks.push((last_added_block_number, potential_batch_block.hash()));
         } // end loop
 
+        if acc_blocks.is_empty() {
+            debug!("No new blocks were available to build batch {batch_number}, skipping it");
+            return Ok(None);
+        }
+
         metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
                 privileged_transactions_hashes.len().try_into(),
                 l1_message_hashes.len().try_into()
@@ -730,14 +735,14 @@ impl L1Committer {
             )
             .await?;
 
-        Ok((
+        Ok(Some((
             blobs_bundle,
             new_state_root,
             l1_message_hashes,
             acc_l2_messages,
             privileged_transactions_hash,
             last_added_block_number,
-        ))
+        )))
     }
 
     async fn generate_and_store_batch_prover_input(
