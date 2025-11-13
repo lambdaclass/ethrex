@@ -1733,7 +1733,7 @@
             "y": 28
           },
           "id": 115,
-          "interval": "10ss",
+          "interval": "10s",
           "options": {
             "displayMode": "gradient",
             "legend": {
