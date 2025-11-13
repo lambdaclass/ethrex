@@ -55,7 +55,12 @@ path = "src/lib.rs"
 # TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct
 default = ["l2"]
 # prover backends
-risc0 = ["guest_program/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
+risc0 = [
+    "guest_program/risc0",
+    "dep:risc0-zkvm",
+    "dep:risc0-zkp",
+    "ethrex-common/risc0",
+]
 sp1 = ["guest_program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
 profiling = ["sp1-sdk?/profiling"]
 
@@ -72,3 +77,4 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+redundant_clone = "warn"

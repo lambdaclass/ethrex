@@ -290,7 +290,7 @@ impl EthClient {
             .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(EstimateGasError::RPCError(error_response.error.message.to_string()).into())
+                Err(EstimateGasError::RPCError(error_response.error.message).into())
             }
         }
     }

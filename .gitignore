@@ -74,3 +74,6 @@ GEMINI.md
 
 # RKYV
 *.bin
+
+# Documentation Graphs
+!docs/internal/l1/healing/*.svg

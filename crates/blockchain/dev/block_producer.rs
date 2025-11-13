@@ -53,15 +53,15 @@ pub async fn start_block_producer(
         let payload_id = fork_choice_response
             .payload_id
             .expect("Failed to produce block: payload_id is None in ForkChoiceResponse");
-        let execution_payload_response = match engine_client.engine_get_payload_v4(payload_id).await
+        let execution_payload_response = match engine_client.engine_get_payload_v5(payload_id).await
         {
             Ok(response) => {
-                tracing::debug!("engine_getPayloadV4 response: {response:?}");
+                tracing::debug!("engine_getPayloadV5 response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_getPayloadV4: {error}"
+                    "Failed to produce block: error sending engine_getPayloadV5: {error}"
                 );
                 tries += 1;
                 continue;

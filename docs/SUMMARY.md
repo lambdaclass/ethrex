@@ -24,6 +24,8 @@
   - [Databases]()
   - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
+  - [Snap sync internals](./internal/l1/healing.md)
+    - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
   - [Pruning]()
 
 # Ethrex for L2 chains
@@ -45,6 +47,7 @@
   - [Deploy a contract](./l2/interacting/deploy_contracts.md)
 - [Fundamentals](./l2/fundamentals/README.md)
   - [State diffs](./l2/fundamentals/state_diffs.md)
+  - [Block vs StateDiff](./l2/fundamentals/block_vs_state_diff_measurements.md)
   - [Deposits](./l2/fundamentals/deposits.md)
   - [Withdrawals](./l2/fundamentals/withdrawals.md)
   - [Smart contracts](./l2/fundamentals/contracts.md)
@@ -63,6 +66,7 @@
   - [Importing blocks from a file](./developers/l1/importing-blocks.md)
   - [Kurtosis localnet](./developers/l1/kurtosis-localnet.md)
   - [Metrics](./developers/l1/metrics.md)
+  - [Dashboards](./developers/l1/dashboards.md)
   - [Testing](./developers/l1/testing/README.md)
     - [Ethereum foundation tests](./developers/l1/testing/ef-tests.md)
     - [Hive tests](./developers/l1/testing/hive.md)
@@ -71,6 +75,7 @@
     - [Load tests](./developers/l1/testing/load-tests.md)
 - [L2](./developers/l2/introduction.md)
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
+  - [Integration tests](./developers/l2/integration-tests.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
   - [FAQ](./ethrex_replay/faq.md)
@@ -85,3 +90,4 @@
 # Other resources
 
 - [Contributing to the Documentation](./CONTRIBUTING_DOCS.md)
+- [Recommended lectures](./lectures.md)

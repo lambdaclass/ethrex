@@ -71,3 +71,8 @@ jobs:
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2
+  
+  publish-apt:
+    needs:
+      - retag_docker_images
+    uses: lambdaclass/ethrex-apt/.github/workflows/publish-apt.yml@main

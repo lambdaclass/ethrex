@@ -279,7 +279,7 @@ impl Node {
 
         let payload_response = self
             .engine_client
-            .engine_get_payload_v4(payload_id)
+            .engine_get_payload_v5(payload_id)
             .await
             .unwrap();
 

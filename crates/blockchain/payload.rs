@@ -8,7 +8,7 @@ use std::{
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
         ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
@@ -18,12 +18,11 @@ use ethrex_common::{
     },
 };
 
+use ethrex_crypto::keccak::Keccak256;
 use ethrex_vm::{Evm, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
-
-use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
 
@@ -43,7 +42,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -217,6 +216,7 @@ pub struct PayloadBuildContext {
     pub store: Store,
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
+    pub payload_size: u64,
 }
 
 impl PayloadBuildContext {
@@ -234,9 +234,14 @@ impl PayloadBuildContext {
                 .unwrap_or_default(),
         );
 
-        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let parent_header = storage
+            .get_block_header_by_hash(payload.header.parent_hash)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+            .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
+        let vm_db = StoreVmDatabase::new(storage.clone(), parent_header);
         let vm = new_evm(blockchain_type, vm_db)?;
 
+        let payload_size = payload.encode_to_vec().len() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
@@ -244,12 +249,13 @@ impl PayloadBuildContext {
                 .is_prague_activated(payload.header.timestamp)
                 .then_some(Vec::new()),
             block_value: U256::zero(),
-            base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
+            base_fee_per_blob_gas,
             payload,
             blobs_bundle: BlobsBundle::default(),
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
+            payload_size,
         })
     }
 
@@ -528,6 +534,20 @@ impl Blockchain {
                 txs.pop();
                 continue;
             }
+
+            // Check adding a transaction wouldn't exceed the Osaka block size limit of 10 MiB
+            // if inclusion of the transaction puts the block size over the size limit
+            // we don't add any more txs to the payload.
+            let potential_rlp_block_size =
+                context.payload_size + head_tx.encode_canonical_to_vec().len() as u64;
+            if context
+                .chain_config()
+                .is_osaka_activated(context.payload.header.timestamp)
+                && potential_rlp_block_size > MAX_RLP_BLOCK_SIZE
+            {
+                break;
+            }
+            context.payload_size = potential_rlp_block_size;
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
             let tx_hash = head_tx.tx.hash();

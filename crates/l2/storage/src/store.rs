@@ -64,8 +64,12 @@ impl Store {
             verify_tx: None,
         })
         .await?;
-        // Sets the lastest sent batch proof to 0
-        self.set_latest_sent_batch_proof(0).await
+        // Sets the latest sent batch proof to 0
+        if self.get_latest_sent_batch_proof().await.is_err() {
+            // If not set, we initialize it to 0
+            self.set_latest_sent_batch_proof(0).await?;
+        };
+        Ok(())
     }
 
     /// Returns the block numbers by a given batch_number
@@ -293,12 +297,12 @@ impl Store {
         self.engine.get_signature_by_batch(batch_number).await
     }
 
-    /// Returns the lastest sent batch proof
+    /// Returns the latest sent batch proof
     pub async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         self.engine.get_latest_sent_batch_proof().await
     }
 
-    /// Sets the lastest sent batch proof
+    /// Sets the latest sent batch proof
     pub async fn set_latest_sent_batch_proof(
         &self,
         batch_number: u64,
