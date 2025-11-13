@@ -537,7 +537,7 @@ Admin server options:
 
 L2 options:
       --validium
-          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.
+          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1.
 
           [env: ETHREX_L2_VALIDIUM=]
 
