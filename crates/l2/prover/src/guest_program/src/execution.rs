@@ -19,7 +19,7 @@ use ethrex_common::{H256, types::Block};
 use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
