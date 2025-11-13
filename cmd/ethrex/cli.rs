@@ -852,51 +852,17 @@ pub async fn generate_big_block(
     };
     let total_blocks_imported = chain.len();
 
-    // let (mut payload, header) = {
-    //     let mut first_block = chain.remove(0);
-    //     first_block
-    //         .body
-    //         .transactions
     //         .retain(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)));
-    //     (
-    //         ExecutionPayload::from_block(first_block.clone()),
-    //         first_block.header,
-    //     )
-    // };
-
-    // let vm_db = StoreVmDatabase::new(store, header);
-    // let mut vm = new_evm(&BlockchainType::L1, vm_db)?;
-
-    // for block in chain.drain(0..100) {
-    //     payload.transactions.extend(
-    //         block
-    //             .body
-    //             .transactions
-    //             .iter()
-    //             .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)))
-    //             .map(EncodedTransaction::encode),
-    //     );
-    //     info!(
-    //         transaction_count = block.body.transactions.len(),
-    //         block_num = block.header.number,
-    //         ""
-    //     );
-    // }
-
     // We start with a mutable block
     let mut block = chain.remove(0);
     let mut transactions = block.body.transactions;
     block.body.transactions = Vec::new();
 
     for block in chain {
-        transactions.extend(
-            block
-                .body
-                .transactions
-                .into_iter()
-                .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction(_))),
-        );
+        transactions.extend(block.body.transactions.into_iter());
     }
+
+    transactions.retain(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)));
 
     // We update the header for the proper amount of gas we're going to use
     block.header.gas_limit = 1_000_000_000; // 1 gigagas for this test
