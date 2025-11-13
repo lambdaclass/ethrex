@@ -67,9 +67,26 @@ _**Limitations**: This panel has the same limitations as the "Ggas/s by Block" p
 
 ## Block execution breakdown
 
-This row repeats a pie chart for each instance showing how execution time splits between storage reads, account reads, and non-database work so you can confirm performance tuning effects.
+This row surfaces instrumentation from the `execute_block_pipeline` timer series so you can understand how each instance spends time when processing blocks. Every panel repeats per instance vertically to facilitate comparisons.
 
 ![Block Execution Breakdown](img/block_execution_breakdown.png)
+
+### Block Execution Breakdown pie
+Repeats a per-instance pie chart showing how execution time splits between storage reads, account reads, and non-database work so you can confirm performance tuning effects.
+
+![Block Execution Breakdown pie](img/block_execution_breakdown_pie.png)
+
+### Execution vs Merkleization Diff %
+Tracks how much longer we spend merkleizing versus running the execution phase inside `execute_block_pipeline`. Values above zero mean merkleization dominates; negative readings flag when pure execution becomes the bottleneck (which should be extremely rare). Both run concurrently and merkleization depends on execution, 99% of the actual `execute_block_pipeline` time is just the max of both.
+
+![Execution vs Merkleization Diff %](img/execution_vs_merkleization_diff.png)
+
+### Block Execution Deaggregated by Block
+Plots execution-stage timers (storage/account reads, execution without reads, merkleization) against the block number once all selected instances report the same head. Hovering the scatter points reveals the specific block and offers a shortcut to Etherscan for deeper dives. 
+
+![Block Execution Deaggregated by Block](img/block_execution_deaggregated_by_block.png)
+
+_**Limitations**: This panel has the same limitations as the other `by block` panels, as it relies on the same logic to align blocks across instances. Can look odd during multi-slot reorgs_
 
 ## Process and server info
 
