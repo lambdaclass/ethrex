@@ -39,7 +39,7 @@ pub struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    trie_cache: Arc<TrieLayerCache>,
+    trie_cache: Arc<Mutex<TrieLayerCache>>,
     // Contains account trie nodes
     state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -91,7 +91,7 @@ impl StoreEngine for Store {
         let mut store = self.inner()?;
 
         // Store trie updates
-        let mut trie = TrieLayerCache::clone(&store.trie_cache);
+        let mut trie = store.trie_cache.lock().expect("poison");
         let parent = update_batch
             .blocks
             .first()
@@ -141,7 +141,7 @@ impl StoreEngine for Store {
             .chain(update_batch.account_updates)
             .collect();
         trie.put_batch(pre_state_root, last_state_root, key_values);
-        store.trie_cache = Arc::new(trie);
+        drop(trie);
 
         for block in update_batch.blocks {
             // store block

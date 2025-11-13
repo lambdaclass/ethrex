@@ -152,7 +152,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<Mutex<TrieLayerCache>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
@@ -749,19 +749,13 @@ impl Store {
             .chain(account_updates)
             .collect();
         // Read-Copy-Update the trie cache with a new layer.
-        let trie = trie_cache
-            .lock()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
-        let mut trie_mut = (*trie).clone();
+        let mut trie_mut = trie_cache.lock().map_err(|_| StoreError::LockError)?;
         trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
-        let trie = Arc::new(trie_mut);
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
         // Update finished, signal block processing.
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
         // Phase 2: update disk layer.
-        let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
+        let Some(root) = trie_mut.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
             // Nothing to commit to disk, move on.
             return Ok(());
         };
@@ -770,7 +764,6 @@ impl Store {
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-        let mut trie_mut = (*trie).clone();
         let mut batch = WriteBatch::default();
         let [
             cf_accounts_trie_nodes,
@@ -796,6 +789,7 @@ impl Store {
 
         // Commit removes the bottom layer and returns it, this is the mutation step.
         let nodes = trie_mut.commit(root).unwrap_or_default();
+        drop(trie_mut);
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
             let is_account = key.len() <= 65;
@@ -824,8 +818,6 @@ impl Store {
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
-        // Phase 3: update diff layers with the removal of bottom layer.
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         Ok(())
     }
 
@@ -1533,11 +1525,7 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
         });
@@ -1555,11 +1543,7 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: None,
         });
@@ -1602,11 +1586,7 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: None,
         });
@@ -1628,11 +1608,7 @@ impl StoreEngine for Store {
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
         });
