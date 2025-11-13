@@ -636,7 +636,7 @@ async fn test_erc20_roundtrip(
         token_l2,
         signature,
         &data,
-        "test_erc20_roundtrip",
+        "test_erc20_roundtrip 1",
     )
     .await?;
 
@@ -663,7 +663,7 @@ async fn test_erc20_roundtrip(
         COMMON_BRIDGE_L2_ADDRESS,
         signature,
         &data,
-        "test_erc20_roundtrip",
+        "test_erc20_roundtrip 2",
     )
     .await?;
 
