@@ -835,7 +835,7 @@ pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), Cha
         first_block
             .body
             .transactions
-            .retain(|tx| matches!(tx, Transaction::EIP4844Transaction(_)));
+            .retain(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)));
         ExecutionPayload::from_block(first_block)
     };
 
@@ -845,7 +845,7 @@ pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), Cha
                 .body
                 .transactions
                 .iter()
-                .filter(|tx| matches!(tx, Transaction::EIP4844Transaction(_)))
+                .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)))
                 .map(EncodedTransaction::encode),
         );
         info!(
