@@ -38,6 +38,7 @@ pub struct Environment {
     pub tx_nonce: u64,
     pub block_gas_limit: u64,
     pub is_privileged: bool,
+    pub fee_token: Option<Address>,
 }
 
 /// This struct holds special configuration variables specific to the
