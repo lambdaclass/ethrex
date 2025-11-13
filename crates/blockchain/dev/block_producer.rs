@@ -55,10 +55,6 @@ pub async fn start_block_producer(
                 continue;
             }
         };
-        // We need this sleep so the get_payload call doesn't return an empty block
-        // As of #5281 we build an empty block first before building a payload with the transactions to avoid missing slots
-        // This can cause issues in these tests if the payload is requested too early, the sleep is there to avoid it
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         let payload_id = fork_choice_response
             .payload_id
             .expect("Failed to produce block: payload_id is None in ForkChoiceResponse");
