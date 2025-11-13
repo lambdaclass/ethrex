@@ -1,4 +1,5 @@
 use std::{
+    cell::OnceCell,
     fmt::Display,
     fs::{File, metadata, read_dir},
     io::{self, Write},
@@ -868,7 +869,7 @@ pub async fn generate_big_block(
 
     let vm_db = StoreVmDatabase::new(store, block.header.clone());
     let mut vm = new_evm(&BlockchainType::L1, vm_db)?;
-    let mut remaining_gas = block.header.gas_limit;
+    let mut remaining_gas = block.header.gas_limit - 100_000_000;
 
     for transaction in transactions {
         if vm
@@ -886,7 +887,8 @@ pub async fn generate_big_block(
         }
     }
 
-    block.header.gas_used = block.header.gas_limit - remaining_gas;
+    block.header.gas_used = block.header.gas_limit - remaining_gas - 100_000_000;
+    block.header.blob_gas_used = Some(0);
 
     // We finish here with a payload
     let payload = ExecutionPayload::from_block(block);
