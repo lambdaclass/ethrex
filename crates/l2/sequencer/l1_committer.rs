@@ -424,7 +424,7 @@ impl L1Committer {
 
         // Fetch the blocks in the batch along with their respective fee configs
         let (blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
-            batch.number,
+            batch,
             &self.store,
             &self.rollup_store,
         )
@@ -899,7 +899,7 @@ impl L1Committer {
         }
 
         let (blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
-            batch.number,
+            batch,
             &self.store,
             &self.rollup_store,
         )
@@ -1052,7 +1052,7 @@ impl L1Committer {
             let mut encoded_blocks: Vec<Bytes> = Vec::new();
 
             let (blocks, _) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
-                batch.number,
+                batch,
                 &self.store,
                 &self.rollup_store,
             )
