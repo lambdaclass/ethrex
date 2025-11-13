@@ -2067,10 +2067,12 @@ cd ethrex/crates/l2/contracts/src/l1
     --tdx.verifier-address &lt;TDX_VERIFIER_ADDRESS&gt; \
     --aligned.aggregator-address &lt;ALIGNED_AGGREGATOR_ADDRESS&gt; \
     --on-chain-proposer-owner &lt;OWNER_ADDRESS&gt; \
-    --bridge-owner &lt;OWNER_ADDRESS&gt; \
+    --bridge-owner &lt;BRIDGE_OWNER_ADDRESS&gt; \
     --randomize-contract-deployment
 </code></pre>
 <p>You can find a genesis example in the <a href="https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json">repo</a>.</p>
+<p><code>--bridge-owner</code> must point to the address that will ultimately control the CommonBridge upgrades.<br />
+If you also need the deployer to accept the transfer on that owner’s behalf, pass <code>--bridge-owner-pk &lt;PRIVATE_KEY&gt;</code> in the same command; otherwise the owner can accept later.</p>
 <p>Verifier addresses can be set to <code>0x00000000000000000000000000000000000000AA</code> in case you don't want to use some prover. The same applies to Aligned.</p>
 <div class="mdbook-alerts mdbook-alerts-tip">
 <p class="mdbook-alerts-title">
@@ -3262,7 +3264,7 @@ cargo run --release --features l2,l2-sql --manifest-path "../../Cargo.toml" -- l
         --eth-rpc-url &lt;ETH_RPC_URL&gt; \
         --private-key &lt;YOUR_PRIVATE_KEY&gt; \
         --on-chain-proposer-owner &lt;ON_CHAIN_PROPOSER_OWNER&gt;  \
-        --bridge-owner &lt;ON_CHAIN_PROPOSER_OWNER&gt;  \
+        --bridge-owner &lt;BRIDGE_OWNER_ADDRESS&gt;  \
         --genesis-l2-path "../../fixtures/genesis/l2.json" \
         --proof-sender.l1-address &lt;PROOF_SENDER_L1_ADDRESS&gt;
 </code></pre>
@@ -3274,7 +3276,7 @@ cargo run --release --features l2,l2-sql --manifest-path "../../Cargo.toml" -- l
 <p>This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 In this step we are initiallizing the <code>OnChainProposer</code> contract with the <code>ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS</code> and skipping the rest of verifiers, you can find the address for the aligned aggegator service <a href="https://docs.alignedlayer.com/guides/7_contract_addresses">here</a>
 Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
-Both the private key and the addresses for the on chain proposer, bridge and proof sender should have funds.</p>
+Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add <code>--bridge-owner-pk &lt;PRIVATE_KEY&gt;</code> if you want the deployer to immediately call <code>acceptOwnership</code> on behalf of that owner; otherwise, they can accept later.</p>
 </div>
 <h3 id="3-deposit-funds-to-the-alignedbatcherpaymentservice-contract-from-the-proof-sender"><a class="header" href="#3-deposit-funds-to-the-alignedbatcherpaymentservice-contract-from-the-proof-sender">3. Deposit funds to the <code>AlignedBatcherPaymentService</code> contract from the proof sender</a></h3>
 <pre><code class="language-bash">aligned deposit-to-batcher \
@@ -9674,7 +9676,7 @@ This means every component — from L1 syncing to L2 bridging and prover integra
 <tr><td>Shared Bridge</td><td>Direct bridging between multiple L2s to improve UX and avoid L1 costs.</td><td>Planned</td></tr>
 <tr><td>Custom Native Token</td><td>Define a native token (non-ETH) for gas, staking, incentives, and governance. Fully integrated into fee mechanics and bridging.</td><td>Planned</td></tr>
 <tr><td>Validiums &amp; DACs</td><td>Enhance Validium mode with Data Availability Committees.</td><td>Planned</td></tr>
-<tr><td>Gas &amp; Fees</td><td>Set up a custom fee model to price deposits or any forced-included transaction, including data availability costs.</td><td>Planned</td></tr>
+<tr><td>Gas &amp; Fees</td><td>Set up a fee token model to price deposits or any forced-included transaction, including data availability costs.</td><td>Planned</td></tr>
 </tbody></table>
 </div>
 <hr />

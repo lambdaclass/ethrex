@@ -272,7 +272,7 @@ cargo run --release --features l2,l2-sql --manifest-path "../../Cargo.toml" -- l
         --eth-rpc-url &lt;ETH_RPC_URL&gt; \
         --private-key &lt;YOUR_PRIVATE_KEY&gt; \
         --on-chain-proposer-owner &lt;ON_CHAIN_PROPOSER_OWNER&gt;  \
-        --bridge-owner &lt;ON_CHAIN_PROPOSER_OWNER&gt;  \
+        --bridge-owner &lt;BRIDGE_OWNER_ADDRESS&gt;  \
         --genesis-l2-path "../../fixtures/genesis/l2.json" \
         --proof-sender.l1-address &lt;PROOF_SENDER_L1_ADDRESS&gt;
 </code></pre>
@@ -284,7 +284,7 @@ cargo run --release --features l2,l2-sql --manifest-path "../../Cargo.toml" -- l
 <p>This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 In this step we are initiallizing the <code>OnChainProposer</code> contract with the <code>ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS</code> and skipping the rest of verifiers, you can find the address for the aligned aggegator service <a href="https://docs.alignedlayer.com/guides/7_contract_addresses">here</a>
 Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
-Both the private key and the addresses for the on chain proposer, bridge and proof sender should have funds.</p>
+Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add <code>--bridge-owner-pk &lt;PRIVATE_KEY&gt;</code> if you want the deployer to immediately call <code>acceptOwnership</code> on behalf of that owner; otherwise, they can accept later.</p>
 </div>
 <h3 id="3-deposit-funds-to-the-alignedbatcherpaymentservice-contract-from-the-proof-sender"><a class="header" href="#3-deposit-funds-to-the-alignedbatcherpaymentservice-contract-from-the-proof-sender">3. Deposit funds to the <code>AlignedBatcherPaymentService</code> contract from the proof sender</a></h3>
 <pre><code class="language-bash">aligned deposit-to-batcher \
