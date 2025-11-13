@@ -13,7 +13,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SWAPN)?;
 
-        current_call_frame.stack.swap(N)?;
+        current_call_frame.stack.swap::<N>()?;
 
         Ok(OpcodeResult::Continue)
     }
