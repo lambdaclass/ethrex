@@ -6,10 +6,10 @@ This document explains the steps needed to perform an ETH transfer or a contract
 
 ### Change directory
 
-Every command should be run under `ethrex/crates/l2`
+Every command should be run under `crates/l2`
 
 ```bash
-cd ethrex/crates/l2
+cd crates/l2
 ```
 
 ### Start an L1
