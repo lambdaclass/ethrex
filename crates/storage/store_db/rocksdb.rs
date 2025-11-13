@@ -192,7 +192,7 @@ impl Store {
         db_options.set_allow_concurrent_memtable_write(true);
         db_options.set_enable_write_thread_adaptive_yield(true);
         db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
-        db_options.set_advise_random_on_open(false);
+        db_options.set_advise_random_on_open(true);
         db_options.set_compression_type(rocksdb::DBCompressionType::None);
         db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
