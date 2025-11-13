@@ -584,6 +584,7 @@ async fn validate_ancestors(
             "Parent header has been previously invalidated.".into(),
         )));
     }
+    info!("No invalidated stuff");
 
     Ok(None)
 }
