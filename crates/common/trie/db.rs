@@ -12,8 +12,12 @@ pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
-    fn get_nodes_in_path(&self, key: Nibbles) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
-        let keys = (0..key.len()).map(|i| key.slice(0, i));
+    fn get_nodes_in_path(
+        &self,
+        key: Nibbles,
+        start: usize,
+    ) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
+        let keys = (start..key.len()).map(|i| key.slice(0, i));
         let mut values = Vec::with_capacity(key.len());
         for key in keys {
             values.push(self.get(key)?);

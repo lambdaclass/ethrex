@@ -153,7 +153,7 @@ impl Trie {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
         self.dirty.insert(path.clone());
-        let encoded_nodes = self.db.get_nodes_in_path(path.clone())?;
+        let encoded_nodes = self.db.get_nodes_in_path(path.clone(), 0)?;
         let keys = (0..path.len()).map(|i| path.slice(0, i));
         let mut nodes = Vec::with_capacity(path.len());
         for (path, encoded) in std::iter::zip(keys, encoded_nodes) {
