@@ -5,6 +5,7 @@
 ### 2025-11-13
 
 - Use specialized DUP implementation [#5324](https://github.com/lambdaclass/ethrex/pull/5324)
+- Use BlobDB for account_codes column family [#5300](https://github.com/lambdaclass/ethrex/pull/5300)
 
 ### 2025-11-12
 
