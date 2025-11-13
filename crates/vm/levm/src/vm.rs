@@ -375,7 +375,7 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
-            opcode_table: VM::build_opcode_table(fork)
+            opcode_table: VM::build_opcode_table(fork),
         };
 
         let call_type = if is_create {

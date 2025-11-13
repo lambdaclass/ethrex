@@ -166,7 +166,9 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
-        self.current_call_frame.stack.push(self.env.base_blob_fee_per_gas)?;
+        self.current_call_frame
+            .stack
+            .push(self.env.base_blob_fee_per_gas)?;
 
         Ok(OpcodeResult::Continue)
     }
