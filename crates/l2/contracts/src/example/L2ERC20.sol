@@ -19,6 +19,10 @@ contract TestTokenL2 is ERC20, IERC20L2 {
         _;
     }
 
+    function mint() public {
+        _mint(msg.sender, 1000000000000000000000);
+    }
+
     function l1Address() external view returns (address) {
         return L1_TOKEN;
     }

@@ -46,6 +46,10 @@ interface ICommonBridge {
         bytes data;
     }
 
+    function transfer(address to, uint256 value) external;
+
+    function transferERC20(address token, address to, uint256 value) external;
+
     /// @notice Method to retrieve all the pending transaction hashes.
     /// @dev This method is used by the L2 L1_Watcher to get the pending
     /// privileged transactions to be processed.

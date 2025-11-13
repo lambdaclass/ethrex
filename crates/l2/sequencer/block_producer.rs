@@ -38,6 +38,30 @@ use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
+// 0x85a190caa61692b36b63a55e069330d18ab9af179fed7a25c16a4262bc63b7d2
+const DEPOSIT_PROCESSED_SIGNATURE: H256 = H256([
+    0x85, 0xa1, 0x90, 0xca, 0xa6, 0x16, 0x92, 0xb3, 0x6b, 0x63, 0xa5, 0x5e, 0x06, 0x93, 0x30, 0xd1,
+    0x8a, 0xb9, 0xaf, 0x17, 0x9f, 0xed, 0x7a, 0x25, 0xc1, 0x6a, 0x42, 0x62, 0xbc, 0x63, 0xb7, 0xd2,
+]);
+
+// 0xf5353a2477e10b23280de25ca6cea55c17bb48000d8807ee631e514080e7fb4e
+const ERC20_DEPOSIT_PROCESSED_SIGNATURE: H256 = H256([
+    0xf5, 0x35, 0x3a, 0x24, 0x77, 0xe1, 0x0b, 0x23, 0x28, 0x0d, 0xe2, 0x5c, 0xa6, 0xce, 0xa5, 0x5c,
+    0x17, 0xbb, 0x48, 0x00, 0x0d, 0x88, 0x07, 0xee, 0x63, 0x1e, 0x51, 0x40, 0x80, 0xe7, 0xfb, 0x4e,
+]);
+
+// 0xbb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2
+const WITHDRAWAL_INITIATED_SIGNATURE: H256 = H256([
+    0xbb, 0x26, 0x89, 0xff, 0x87, 0x6f, 0x7e, 0xf4, 0x53, 0xcf, 0x88, 0x65, 0xdd, 0xe5, 0xab, 0x10,
+    0x34, 0x9d, 0x22, 0x2e, 0x2e, 0x13, 0x83, 0xc5, 0x15, 0x2f, 0xbd, 0xb0, 0x83, 0xf0, 0x2d, 0xa2,
+]);
+
+// 0x54538b93c6e9b3f518076db2d896122f653fac2bb32fa0b6bc75097b9f332e75
+const ERC20_WITHDRAWAL_SIGNATURE: H256 = H256([
+    0x54, 0x53, 0x8b, 0x93, 0xc6, 0xe9, 0xb3, 0xf5, 0x18, 0x07, 0x6d, 0xb2, 0xd8, 0x96, 0x12, 0x2f,
+    0x65, 0x3f, 0xac, 0x2b, 0xb3, 0x2f, 0xa0, 0xb6, 0xbc, 0x75, 0x09, 0x7b, 0x9f, 0x33, 0x2e, 0x75,
+]);
+
 #[derive(Clone)]
 pub enum CallMessage {
     Health,
@@ -187,19 +211,18 @@ impl BlockProducer {
             self.block_gas_limit,
         )
         .await?;
-        let deposits = payload_build_result.receipts.iter().any(|receipt| {
+        let force_commitment = payload_build_result.receipts.iter().any(|receipt| {
             receipt.logs.iter().any(|log| {
                 log.address == COMMON_BRIDGE_L2_ADDRESS
-                    && log.topics[0]
-                        == H256::from_str(
-                            "0x85a190caa61692b36b63a55e069330d18ab9af179fed7a25c16a4262bc63b7d2",
-                        )
-                        .unwrap()
+                    && (log.topics[0] == DEPOSIT_PROCESSED_SIGNATURE
+                        || log.topics[0] == ERC20_DEPOSIT_PROCESSED_SIGNATURE
+                        || log.topics[0] == WITHDRAWAL_INITIATED_SIGNATURE
+                        || log.topics[0] == ERC20_WITHDRAWAL_SIGNATURE)
             })
         });
         info!(
-            "Built payload for new block {}",
-            payload_build_result.payload.header.number
+            force_commitment,
+            "Built payload for new block {}", payload_build_result.payload.header.number
         );
 
         // Blockchain stores block
@@ -250,7 +273,7 @@ impl BlockProducer {
             METRICS_TX.set_transactions_per_second(tps);
         );
 
-        if deposits {
+        if force_commitment {
             self.committer
                 .cast(l1_committer::InMessage::ForceCommit)
                 .await?;

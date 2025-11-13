@@ -185,6 +185,14 @@ contract OnChainProposer is
         emit VerificationKeyUpgraded("RISC0", new_vk);
     }
 
+    function transfer(address to, uint256 value) public onlySequencer {
+        ICommonBridge(BRIDGE).transfer(to, value);
+    }
+
+    function transferERC20(address token, address to, uint256 value) public onlySequencer {
+        ICommonBridge(BRIDGE).transferERC20(token, to, value);
+    }
+
     /// @inheritdoc IOnChainProposer
     function commitBatch(
         uint256 batchNumber,

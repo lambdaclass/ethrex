@@ -103,6 +103,14 @@ contract CommonBridge is
         _;
     }
 
+    function transfer(address to, uint256 value) public override onlyOnChainProposer nonReentrant {
+        payable(to).call{value: value}("");
+    }
+
+    function transferERC20(address token, address to, uint256 value) public override onlyOnChainProposer nonReentrant {
+        IERC20(token).safeTransfer(to, value);
+    }
+
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev It sets the OnChainProposer address.

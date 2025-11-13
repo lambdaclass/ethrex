@@ -36,8 +36,9 @@ use ethrex_l2_common::{
 use ethrex_l2_rpc::signer::{Signable, Signer, SignerHealth};
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, get_l1_active_fork, get_last_committed_batch,
-    send_tx_bump_gas_exponential_backoff,
+    send_generic_transaction, send_tx_bump_gas_exponential_backoff,
 };
+use ethrex_levm::hooks::l2_hook::COMMON_BRIDGE_L2_ADDRESS;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
@@ -71,6 +72,16 @@ const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
+// 0xbb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2
+const WITHDRAWAL_SIGNATURE: H256 = H256([
+    0xbb, 0x26, 0x89, 0xff, 0x87, 0x6f, 0x7e, 0xf4, 0x53, 0xcf, 0x88, 0x65, 0xdd, 0xe5, 0xab, 0x10,
+    0x34, 0x9d, 0x22, 0x2e, 0x2e, 0x13, 0x83, 0xc5, 0x15, 0x2f, 0xbd, 0xb0, 0x83, 0xf0, 0x2d, 0xa2,
+]);
+// 0x54538b93c6e9b3f518076db2d896122f653fac2bb32fa0b6bc75097b9f332e75
+const ERC20_WITHDRAWAL_SIGNATURE: H256 = H256([
+    0x54, 0x53, 0x8b, 0x93, 0xc6, 0xe9, 0xb3, 0xf5, 0x18, 0x07, 0x6d, 0xb2, 0xd8, 0x96, 0x12, 0x2f,
+    0x65, 0x3f, 0xac, 0x2b, 0xb3, 0x2f, 0xa0, 0xb6, 0xbc, 0x75, 0x09, 0x7b, 0x9f, 0x33, 0x2e, 0x75,
+]);
 
 #[derive(Clone)]
 pub enum CallMessage {
@@ -80,7 +91,7 @@ pub enum CallMessage {
     Health,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum InMessage {
     Commit,
     ForceCommit,
@@ -137,6 +148,7 @@ pub struct L1Committer {
     genesis: Genesis,
     /// Directory where checkpoints are stored.
     checkpoints_dir: PathBuf,
+    nonce: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -191,6 +203,13 @@ impl L1Committer {
             )
             .await?;
 
+        let nonce = eth_client
+            .get_nonce(
+                committer_config.signer.address(),
+                BlockIdentifier::Tag(BlockTag::Latest),
+            )
+            .await?;
+
         Ok(Self {
             eth_client,
             super_blockchain,
@@ -217,6 +236,7 @@ impl L1Committer {
             current_checkpoint_blockchain,
             genesis,
             checkpoints_dir,
+            nonce,
         })
     }
 
@@ -509,6 +529,85 @@ impl L1Committer {
                         "Transactions in a block should have a receipt".to_owned(),
                     ))?;
                 txs.push(tx.clone());
+
+                for log in receipt.logs.clone() {
+                    if log.address != COMMON_BRIDGE_L2_ADDRESS {
+                        continue;
+                    }
+
+                    let event_signature = log.topics[0];
+                    info!(
+                        block = block_to_commit_number,
+                        sig = ?event_signature,
+                        "BRIDGE TX"
+                    );
+
+                    if event_signature == WITHDRAWAL_SIGNATURE {
+                        let to = Address::from_slice(
+                            log.topics.get(2).unwrap().as_bytes().get(12..).unwrap(),
+                        );
+                        let value = U256::from_big_endian(log.topics.get(3).unwrap().as_bytes());
+
+                        let tx = build_generic_tx(
+                            &self.eth_client,
+                            TxType::EIP1559,
+                            self.on_chain_proposer_address,
+                            self.signer.address(),
+                            encode_calldata(
+                                "transfer(address,uint256)",
+                                &[Value::Address(to), Value::Uint(value)],
+                            )
+                            .unwrap()
+                            .into(),
+                            Overrides {
+                                nonce: Some(self.nonce),
+                                ..Default::default()
+                            },
+                        )
+                        .await?;
+                        self.nonce += 1;
+
+                        let tx_hash =
+                            send_generic_transaction(&self.eth_client, tx, &self.signer).await?;
+                        info!(?to, %value, ?tx_hash, "Sending Transfer transaction");
+                    } else if event_signature == ERC20_WITHDRAWAL_SIGNATURE {
+                        let token = Address::from_slice(
+                            log.topics.get(1).unwrap().as_bytes().get(12..).unwrap(),
+                        );
+                        let to = Address::from_slice(
+                            log.topics.get(3).unwrap().as_bytes().get(12..).unwrap(),
+                        );
+                        let value = U256::from_big_endian(&log.data.slice(..32));
+
+                        let tx = build_generic_tx(
+                            &self.eth_client,
+                            TxType::EIP1559,
+                            self.on_chain_proposer_address,
+                            self.signer.address(),
+                            encode_calldata(
+                                "transferERC20(address,address,uint256)",
+                                &[
+                                    Value::Address(token),
+                                    Value::Address(to),
+                                    Value::Uint(value),
+                                ],
+                            )
+                            .unwrap()
+                            .into(),
+                            Overrides {
+                                nonce: Some(self.nonce),
+                                ..Default::default()
+                            },
+                        )
+                        .await?;
+                        self.nonce += 1;
+
+                        let tx_hash =
+                            send_generic_transaction(&self.eth_client, tx, &self.signer).await?;
+                        info!(?to, ?token, %value, ?tx_hash, "Sending ERC20 Transfer transaction");
+                    }
+                }
+
                 receipts.push(receipt);
             }
 
@@ -989,6 +1088,7 @@ impl L1Committer {
                 calldata.into(),
                 Overrides {
                     from: Some(self.signer.address()),
+                    nonce: Some(self.nonce),
                     gas_price_per_blob: Some(gas_price_per_blob),
                     max_fee_per_gas: Some(gas_price),
                     max_priority_fee_per_gas: Some(gas_price),
@@ -1010,6 +1110,7 @@ impl L1Committer {
                 calldata.into(),
                 Overrides {
                     from: Some(self.signer.address()),
+                    nonce: Some(self.nonce),
                     max_fee_per_gas: Some(gas_price),
                     max_priority_fee_per_gas: Some(gas_price),
                     gas_limit: Some(0x100000),
@@ -1020,6 +1121,7 @@ impl L1Committer {
             .map_err(CommitterError::from)?
         };
 
+        self.nonce += 1;
         let commit_tx_hash =
             if let Some(l1_blockchain) = self.super_blockchain.secondary_blockchain.clone() {
                 info!("L1 BLOCKCHAIN");
@@ -1172,6 +1274,7 @@ impl GenServer for L1Committer {
                 last_committed_batch_at = self.last_committed_batch_timestamp,
                 will_send_commitment = should_send_commitment,
                 last_committed_batch = self.last_committed_batch,
+                ?message,
                 "Committer woke up"
             );
 

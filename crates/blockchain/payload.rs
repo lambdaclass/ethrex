@@ -12,10 +12,10 @@ use ethrex_common::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
-        TxType, Withdrawal, bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
-        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
-        compute_withdrawals_root,
+        ChainConfig, GenericTransaction, MempoolTransaction, PrivilegedL2Transaction, Receipt,
+        Transaction, TxKind, TxType, Withdrawal, bloom_from_logs, calc_excess_blob_gas,
+        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
+        compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -48,10 +48,15 @@ use crate::{
 use thiserror::Error;
 use tracing::{debug, warn};
 
-// 0x3e141f8f9f083024c6e1ec3de2509de5da47c354
+// 0x7c2626d2e35561138288bbc1a7307fa04d8ba6b7
 const ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
-    0x3e, 0x14, 0x1f, 0x8f, 0x9f, 0x08, 0x30, 0x24, 0xc6, 0xe1, 0xec, 0x3d, 0xe2, 0x50, 0x9d, 0xe5,
-    0xda, 0x47, 0xc3, 0x54,
+    0x7c, 0x26, 0x26, 0xd2, 0xe3, 0x55, 0x61, 0x13, 0x82, 0x88, 0xbb, 0xc1, 0xa7, 0x30, 0x7f, 0xa0,
+    0x4d, 0x8b, 0xa6, 0xb7,
+]);
+// 0x45db4d1505ebf801b50aa767d15d7c7d00dec37b
+const COMMON_BRIDGE_ADDRESS: Address = H160([
+    0x45, 0xdb, 0x4d, 0x15, 0x05, 0xeb, 0xf8, 0x01, 0xb5, 0x0a, 0xa7, 0x67, 0xd1, 0x5d, 0x7c, 0x7d,
+    0x00, 0xde, 0xc3, 0x7b,
 ]);
 
 #[derive(Debug)]
@@ -634,9 +639,7 @@ impl Blockchain {
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
                     if let Some(log) = receipt.logs.iter().find(|log| log.address
-                        == Address::from_slice(
-                            &hex::decode("cecd5910a4404ccf2718feb58dac13e975a862a2").unwrap(),
-                        )
+                        == COMMON_BRIDGE_ADDRESS
                         && log.topics.first().is_some_and(|topic| *topic == H256::from_str("7d76dd36798b00b9c38def780dc4741f49a0f441afba4260388a8f5634eac186").unwrap())) {
 
                         let from = Address::from_slice(log.data.get(0x20-20..0x20).unwrap());
