@@ -573,6 +573,7 @@ async fn validate_ancestors(
         .get_latest_valid_ancestor(block.header.parent_hash)
         .await?
     {
+        info!("set_latest_valid_ancestor");
         // Invalidate child too
         context
             .storage
