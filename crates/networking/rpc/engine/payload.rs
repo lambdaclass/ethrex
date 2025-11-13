@@ -555,6 +555,7 @@ async fn validate_ancestors(
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
     // Check if the block has already been invalidated
+    info!("Finding if it has been previously invalidated");
     if let Some(latest_valid_hash) = context
         .storage
         .get_latest_valid_ancestor(block.hash())
@@ -565,7 +566,7 @@ async fn validate_ancestors(
             "Header has been previously invalidated.".into(),
         )));
     }
-
+    info!("Finding if the parent has been previously invalidated");
     // Check if the parent block has already been invalidated
     if let Some(latest_valid_hash) = context
         .storage
