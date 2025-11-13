@@ -15,8 +15,8 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
-    Options, WriteBatch, checkpoint::Checkpoint,
+    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, FlushOptions,
+    MultiThreaded, Options, WriteBatch, checkpoint::Checkpoint,
 };
 use std::{
     collections::HashSet,
@@ -177,7 +177,7 @@ impl Store {
         db_options.set_max_bytes_for_level_multiplier(10.0);
         db_options.set_level_compaction_dynamic_level_bytes(true);
 
-        db_options.set_db_write_buffer_size(1024 * 1024 * 1024); // 1GB
+        //db_options.set_db_write_buffer_size(1024 * 1024 * 1024); // 1GB
         db_options.set_write_buffer_size(128 * 1024 * 1024); // 128MB
         db_options.set_max_write_buffer_number(4);
         db_options.set_min_write_buffer_number_to_merge(2);
@@ -195,6 +195,9 @@ impl Store {
         db_options.set_advise_random_on_open(false);
         db_options.set_compression_type(rocksdb::DBCompressionType::None);
         db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
+
+        db_options.set_avoid_unnecessary_blocking_io(true);
+
 
         // db_options.enable_statistics();
         // db_options.set_stats_dump_period_sec(600);
@@ -279,8 +282,8 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_ACCOUNT_TRIE_NODES | CF_STORAGE_TRIE_NODES => {
-                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
-                    cf_opts.set_max_write_buffer_number(6);
+                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 512MB
+                    cf_opts.set_max_write_buffer_number(4);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
@@ -291,8 +294,8 @@ impl Store {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_ACCOUNT_FLATKEYVALUE | CF_STORAGE_FLATKEYVALUE => {
-                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
-                    cf_opts.set_max_write_buffer_number(6);
+                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 512MB
+                    cf_opts.set_max_write_buffer_number(4);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
@@ -824,6 +827,12 @@ impl Store {
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
+        let mut flushopts = FlushOptions::default();
+        flushopts.set_wait(true);
+        db.flush_cfs_opt(
+            &[&cf_accounts_flatkeyvalue, &cf_storage_flatkeyvalue],
+            &flushopts,
+        )?;
         // Phase 3: update diff layers with the removal of bottom layer.
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         Ok(())
