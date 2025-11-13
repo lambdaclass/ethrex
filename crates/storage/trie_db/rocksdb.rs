@@ -110,9 +110,9 @@ impl TrieDB for RocksDBTrieDB {
     fn get_nodes_in_path(&self, key: Nibbles) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
         let cf = self.cf_handle()?;
         let mut res = Vec::with_capacity(key.len());
-        let start = self.address_prefix.map(|_| 66).unwrap_or(0);
-        let end = start + key.len();
         let key = self.make_key(key);
+        let start = self.make_key(Nibbles::default()).len();
+        let end = key.len();
         let keys = (start..end).map(|i| &key[..i]);
         let values = self.db.batched_multi_get_cf(&cf, keys, true);
         for value in values {
