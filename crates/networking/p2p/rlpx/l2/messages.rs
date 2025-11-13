@@ -117,6 +117,8 @@ impl RLPxMessage for BatchSealed {
             .encode_optional_field(&self.batch.commit_tx)
             .encode_optional_field(&self.batch.verify_tx)
             .encode_field(&self.signature)
+            .encode_field(&self.batch.l1_message_hashes)
+            .encode_field(&self.batch.balance_diffs)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -139,6 +141,8 @@ impl RLPxMessage for BatchSealed {
         let (commit_tx, decoder) = decoder.decode_optional_field();
         let (verify_tx, decoder) = decoder.decode_optional_field();
         let (signature, decoder) = decoder.decode_field("signature")?;
+        let (l2_message_hashes, decoder) = decoder.decode_field("l2_message_hashes")?;
+        let (balance_diffs, decoder) = decoder.decode_field("balance_diffs")?;
         decoder.finish()?;
 
         let batch = Batch {
@@ -156,8 +160,8 @@ impl RLPxMessage for BatchSealed {
             },
             commit_tx,
             verify_tx,
-            balance_diffs: vec![],     // Todo: Store properly
-            l2_message_hashes: vec![], // Todo: Store properly
+            balance_diffs,
+            l2_message_hashes,
         };
         Ok(BatchSealed::new(batch, signature))
     }

@@ -205,7 +205,7 @@ impl SQLStore {
                 (
                     batch_number,
                     Vec::from(balance_diff.chain_id.to_big_endian()),
-                    Vec::from(balance_diff.chain_id.to_big_endian()),
+                    Vec::from(balance_diff.value.to_big_endian()),
                 )
                     .into_params()?,
             ));
