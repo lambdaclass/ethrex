@@ -2,7 +2,7 @@
 
 ## Perf
 
-### 2025-12-13
+### 2025-11-13
 
 - Avoid recalculating blob base fee while preparing transactions [#5328](https://github.com/lambdaclass/ethrex/pull/5328)
 - Use BlobDB for account_codes column family [#5300](https://github.com/lambdaclass/ethrex/pull/5300)
