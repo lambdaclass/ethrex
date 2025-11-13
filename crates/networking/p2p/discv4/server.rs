@@ -259,8 +259,9 @@ impl DiscoveryServer {
     async fn get_lookup_interval(&mut self) -> Duration {
         let count_peers_contacts = self.peer_table.peer_count().await.unwrap_or(0)
             + self.peer_table.contact_count().await.unwrap_or(0);
-        let progress = (count_peers_contacts as f32 / TARGET_CONTACTS as f32).clamp(1.0, 6.0);
-
+        let progress = (count_peers_contacts as f32
+            / (TARGET_CONTACTS + self.peer_table.get_target_peers()) as f32)
+            .clamp(1.0, 6.0);
         LOOKUP_INTERVAL * progress as u32
     }
 

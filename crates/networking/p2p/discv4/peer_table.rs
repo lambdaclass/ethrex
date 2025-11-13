@@ -120,12 +120,14 @@ impl PeerData {
 
 #[derive(Clone, Debug)]
 pub struct PeerTable {
+    target_peers: usize,
     handle: GenServerHandle<PeerTableServer>,
 }
 
 impl PeerTable {
     pub fn spawn(target_peers: usize) -> PeerTable {
         PeerTable {
+            target_peers,
             handle: PeerTableServer::new(target_peers).start(),
         }
     }
@@ -501,6 +503,10 @@ impl PeerTable {
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
+    }
+
+    pub fn get_target_peers(&self) -> usize {
+        self.target_peers
     }
 }
 

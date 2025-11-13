@@ -1,6 +1,9 @@
 use crate::types::Node;
 use crate::{
-    discv4::{peer_table::PeerTableError, server::LOOKUP_INTERVAL},
+    discv4::{
+        peer_table::{PeerTableError, TARGET_CONTACTS},
+        server::LOOKUP_INTERVAL,
+    },
     metrics::METRICS,
     network::P2PContext,
     rlpx::connection::server::PeerConnection,
@@ -62,8 +65,9 @@ impl RLPxInitiator {
 
     async fn get_lookup_interval(&mut self) -> Duration {
         let num_peers = self.context.table.peer_count().await.unwrap_or(0) as u64;
+        let num_contacts = self.context.table.contact_count().await.unwrap_or(0) as u64;
 
-        if num_peers > self.target_peers {
+        if num_peers + num_contacts > self.target_peers + TARGET_CONTACTS as u64 {
             debug!(
                 "Reached target number of peers. Using longer lookup interval of {:?} ms.",
                 self.lookup_interval
