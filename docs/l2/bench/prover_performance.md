@@ -123,8 +123,6 @@ Using the risc0-trie we get the next perf. gains in cycle count over our ethrex-
 
 our goal is to have our trie perform as close as possible to risc0’s.
 
-**we can’t directly integrate the risc0-trie because it brings `alloy` dependencies with it, though we could fork the trie and replace `alloy` with our own libs.**
-
 # Flamegraph overview
 ethrex-trie (filtering for `ethrex_trie` functions)
 ![alt text](img/ethrex_trie_flamegraph.png)
