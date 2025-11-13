@@ -24,6 +24,7 @@ use std::{
     path::Path,
     sync::{
         Arc, Mutex,
+        atomic::AtomicU64,
         mpsc::{SyncSender, sync_channel},
     },
 };
@@ -139,7 +140,7 @@ enum FKVGeneratorControlMessage {
 
 type CodeCache = FxHashMap<H256, Code>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
@@ -147,6 +148,24 @@ pub struct Store {
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
     account_code_cache: Arc<Mutex<CodeCache>>,
+    account_code_cache_size: AtomicU64,
+}
+
+impl Clone for Store {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            trie_cache: self.trie_cache.clone(),
+            flatkeyvalue_control_tx: self.flatkeyvalue_control_tx.clone(),
+            trie_update_worker_tx: self.trie_update_worker_tx.clone(),
+            last_computed_flatkeyvalue: self.last_computed_flatkeyvalue.clone(),
+            account_code_cache: self.account_code_cache.clone(),
+            account_code_cache_size: AtomicU64::new(
+                self.account_code_cache_size
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        }
+    }
 }
 
 impl Store {
@@ -375,6 +394,7 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(FxHashMap::default())),
+            account_code_cache_size: AtomicU64::new(0),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -1342,6 +1362,18 @@ impl StoreEngine for Store {
         // insert into cache
         self.account_code_cache
             .lock()
+            .inspect(|cache| {
+                let code_size = code.size();
+                self.account_code_cache_size
+                    .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
+                let cache_len = cache.len() + 1;
+                let current_size = self
+                    .account_code_cache_size
+                    .load(std::sync::atomic::Ordering::SeqCst);
+                info!(
+                    "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+                );
+            })
             .map_err(|_| StoreError::LockError)?
             .insert(code_hash, code.clone());
 
