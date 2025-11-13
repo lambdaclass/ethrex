@@ -222,7 +222,6 @@ impl Store {
             CF_BLOCK_NUMBERS,
             CF_HEADERS,
             CF_BODIES,
-            CF_ACCOUNT_CODES,
             CF_RECEIPTS,
             CF_TRANSACTION_LOCATIONS,
             CF_FULLSYNC_HEADERS
