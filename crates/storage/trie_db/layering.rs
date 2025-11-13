@@ -19,6 +19,7 @@ pub struct TrieLayerCache {
     layers: FxHashMap<H256, Arc<TrieLayer>>,
     // node -> count, value
     accumulated_nodes: FxHashMap<Vec<u8>, (usize, Vec<u8>)>,
+    head: H256,
 }
 
 impl Default for TrieLayerCache {
@@ -27,18 +28,39 @@ impl Default for TrieLayerCache {
             last_id: 0,
             layers: Default::default(),
             accumulated_nodes: Default::default(),
+            head: Default::default(),
         }
     }
 }
 
 impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
-        if self.layers.contains_key(&state_root)
+        let mut current_state_root = state_root;
+
+        // if state_root is head
+        if let Some(layer) = self.layers.get(&state_root)
+            && layer.id == self.last_id
             && let Some((_count, value)) = self.accumulated_nodes.get(key)
         {
             return Some(value.clone());
         }
 
+        // else traverse layers
+        while let Some(layer) = self.layers.get(&current_state_root) {
+            if let Some(value) = layer.nodes.get(key) {
+                return Some(value.clone());
+            }
+            current_state_root = layer.parent;
+            if current_state_root == state_root {
+                // TODO: check if this is possible in practice
+                // This can't happen in L1, due to system contracts irreversibly modifying state
+                // at each block.
+                // On L2, if no transactions are included in a block, the state root remains the same,
+                // but we handle that case in put_batch. It may happen, however, if someone modifies
+                // state with a privileged tx and later reverts it (since it doesn't update nonce).
+                panic!("State cycle found");
+            }
+        }
         None
     }
 
@@ -71,6 +93,8 @@ impl TrieLayerCache {
             tracing::warn!("tried to insert a state_root that's already inserted");
             return;
         }
+
+        self.head = state_root;
 
         let mut nodes = FxHashMap::with_capacity_and_hasher(key_values.len(), FxBuildHasher);
         for (path, value) in key_values
