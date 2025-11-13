@@ -213,8 +213,10 @@ impl TrieDB for TrieWrapper {
         let key = apply_prefix(self.prefix, key);
         let start = apply_prefix(self.prefix, Nibbles::default()).len();
         let end = key.len();
-        let mut values = self.db.get_nodes_in_path(key.clone())?;
-        values.drain(0..start);
+        let mut values = match self.inner.get(self.state_root, key.as_ref()) {
+            Some(_) => vec![None; end - start], // If we have the FKV key then we have the nodes
+            None => self.db.get_nodes_in_path(key.clone())?.split_off(start),
+        };
         for (i, j) in (start..end).enumerate() {
             if let Some(value) = self.inner.get(self.state_root, &key.as_ref()[..j]) {
                 values[i] = Some(value);
