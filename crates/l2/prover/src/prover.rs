@@ -125,11 +125,13 @@ impl Prover {
             input: ProgramInput {
                 blocks: input.blocks,
                 execution_witness: input.execution_witness,
+                #[cfg(feature = "l2")]
                 elasticity_multiplier: input.elasticity_multiplier,
                 #[cfg(feature = "l2")]
                 blob_commitment: input.blob_commitment,
                 #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
+                #[cfg(feature = "l2")]
                 fee_configs: Some(input.fee_configs),
             },
             format,
