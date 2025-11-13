@@ -305,44 +305,48 @@ impl SQLStore {
         self.execute_in_tx(queries, db_tx).await
     }
 
-    async fn seal_batch_in_tx(batch: Batch, db_tx: &Transaction) -> Result<(), RollupStoreError> {
+    async fn seal_batch_in_tx(
+        &self,
+        batch: Batch,
+        transaction: &Transaction,
+    ) -> Result<(), RollupStoreError> {
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
         for block_number in blocks.iter() {
-            self.store_batch_number_by_block_in_tx(*block_number, batch.number, Some(&transaction))
+            self.store_batch_number_by_block_in_tx(*block_number, batch.number, Some(transaction))
                 .await?;
         }
-        self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(&transaction))
+        self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(transaction))
             .await?;
         self.store_message_hashes_by_batch_in_tx(
             batch.number,
             batch.message_hashes,
-            Some(&transaction),
+            Some(transaction),
         )
         .await?;
         self.store_privileged_transactions_hash_by_batch_number_in_tx(
             batch.number,
             batch.privileged_transactions_hash,
-            Some(&transaction),
+            Some(transaction),
         )
         .await?;
         self.store_blob_bundle_by_batch_number_in_tx(
             batch.number,
             batch.blobs_bundle.blobs,
-            Some(&transaction),
+            Some(transaction),
         )
         .await?;
         self.store_state_root_by_batch_number_in_tx(
             batch.number,
             batch.state_root,
-            Some(&transaction),
+            Some(transaction),
         )
         .await?;
         if let Some(commit_tx) = batch.commit_tx {
-            self.store_commit_tx_by_batch_in_tx(batch.number, commit_tx, Some(&transaction))
+            self.store_commit_tx_by_batch_in_tx(batch.number, commit_tx, Some(transaction))
                 .await?;
         }
         if let Some(verify_tx) = batch.verify_tx {
-            self.store_verify_tx_by_batch_in_tx(batch.number, verify_tx, Some(&transaction))
+            self.store_verify_tx_by_batch_in_tx(batch.number, verify_tx, Some(transaction))
                 .await?;
         }
         Ok(())
@@ -716,8 +720,6 @@ impl StoreEngineRollup for SQLStore {
         let conn = self.write_conn.lock().await;
         let transaction = conn.transaction().await?;
 
-        self.seal_batch_in_tx(batch, &transaction).await?;
-
         self.store_prover_input_by_batch_and_version_in_tx(
             batch.number,
             prover_version,
@@ -725,6 +727,8 @@ impl StoreEngineRollup for SQLStore {
             Some(&transaction),
         )
         .await?;
+
+        self.seal_batch_in_tx(batch, &transaction).await?;
 
         transaction.commit().await.map_err(RollupStoreError::from)
     }

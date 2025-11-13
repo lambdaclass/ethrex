@@ -344,9 +344,9 @@ impl L1Committer {
         ))
     }
 
-    fn remove_one_time_checkpoint(&self, path: PathBuf) -> Result<(), CommitterError> {
+    fn remove_one_time_checkpoint(&self, path: &PathBuf) -> Result<(), CommitterError> {
         if path.exists() {
-            let _ = remove_dir_all(&path).inspect_err(|e| {
+            let _ = remove_dir_all(path).inspect_err(|e| {
                     error!(
                         "Failed to remove one-time checkpoint directory at path {path:?}. Should be removed manually. Error: {}", e.to_string()
                     )
@@ -367,6 +367,8 @@ impl L1Committer {
             return Ok(());
         }
 
+        // At this step, the checkpoint is available
+        // We need to load it as the current checkpoint store
         let (new_checkpoint_store, _) = Self::get_checkpoint_from_path(
             self.genesis.clone(),
             self.blockchain.options.clone(),
@@ -385,24 +387,21 @@ impl L1Committer {
         let (one_time_checkpoint_path, one_time_checkpoint_store, one_time_checkpoint_blockchain) =
             self.generate_one_time_checkpoint(batch.number).await?;
 
-        let result = self
-            .execute_batch_to_generate_checkpoint(
-                &batch,
-                one_time_checkpoint_store.clone(),
-                one_time_checkpoint_blockchain,
-            )
-            .await;
-
-        // Clean up one-time checkpoint
-        self.remove_one_time_checkpoint(one_time_checkpoint_path.clone())?;
-
-        result?;
+        self.execute_batch_to_generate_checkpoint(
+            batch,
+            one_time_checkpoint_store.clone(),
+            one_time_checkpoint_blockchain,
+        )
+        .await
+        .inspect_err(|_| {
+            let _ = self.remove_one_time_checkpoint(&one_time_checkpoint_path);
+        })?;
 
         // Create the next checkpoint from the one-time checkpoint used
         let new_checkpoint_path = self
             .checkpoints_dir
             .join(batch_checkpoint_name(batch.number));
-        let (_, _) = self
+        let _ = self
             .create_checkpoint(
                 &one_time_checkpoint_store,
                 &new_checkpoint_path,
@@ -411,7 +410,7 @@ impl L1Committer {
             .await?;
 
         // Clean up one-time checkpoint
-        self.remove_one_time_checkpoint(one_time_checkpoint_path)?;
+        self.remove_one_time_checkpoint(&one_time_checkpoint_path)?;
         Ok(())
     }
 
@@ -448,7 +447,7 @@ impl L1Committer {
 
             let mut vm = Evm::new_for_l2(vm_db, *fee_config)?;
 
-            vm.execute_block(&block)?;
+            vm.execute_block(block)?;
 
             let account_updates = vm.get_state_transitions()?;
             let account_updates_list = one_time_checkpoint_store
@@ -521,7 +520,7 @@ impl L1Committer {
             )
             .await
             .inspect_err(|_| {
-                let _ = self.remove_one_time_checkpoint(one_time_checkpoint_path.clone());
+                let _ = self.remove_one_time_checkpoint(&one_time_checkpoint_path);
             })?;
 
         let Some((
@@ -532,7 +531,7 @@ impl L1Committer {
             last_block_of_batch,
         )) = result
         else {
-            self.remove_one_time_checkpoint(one_time_checkpoint_path)?;
+            self.remove_one_time_checkpoint(&one_time_checkpoint_path)?;
             return Ok(None);
         };
 
@@ -582,7 +581,7 @@ impl L1Committer {
         // on L1.
         self.current_checkpoint_store = new_checkpoint_store;
 
-        self.remove_one_time_checkpoint(one_time_checkpoint_path)?;
+        self.remove_one_time_checkpoint(&one_time_checkpoint_path)?;
 
         Ok(Some(batch))
     }
@@ -914,7 +913,7 @@ impl L1Committer {
             .await
             .map_err(CommitterError::FailedToGenerateBatchWitness);
 
-        self.remove_one_time_checkpoint(one_time_checkpoint_path)?;
+        self.remove_one_time_checkpoint(&one_time_checkpoint_path)?;
 
         let batch_witness = result?;
 
