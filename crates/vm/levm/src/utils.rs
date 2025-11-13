@@ -4,7 +4,7 @@ use crate::{
     call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
-    errors::{DatabaseError, ExceptionalHalt, InternalError, TxValidationError, VMError},
+    errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
@@ -19,10 +19,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
-    types::{
-        Account, Code, Fork, Transaction, account_diff::AccountStateDiff, fake_exponential,
-        tx_fields::*,
-    },
+    types::{Account, Code, Fork, Transaction, fake_exponential, tx_fields::*},
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
@@ -33,7 +30,7 @@ use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -165,99 +162,6 @@ pub fn restore_cache_state(
     }
 
     Ok(())
-}
-
-/// Returns the state diffs introduced by the transaction by comparing the call frame backup
-/// (which holds the state before executing the transaction) with the current state of the cache
-/// (which contains all the writes performed by the transaction).
-pub fn get_account_diffs_in_tx(
-    db: &GeneralizedDatabase,
-    transaction_backup: CallFrameBackup,
-) -> Result<HashMap<Address, AccountStateDiff>, VMError> {
-    let mut modified_accounts = HashMap::new();
-
-    // First we add the account info
-    for (address, original_account) in transaction_backup.original_accounts_info.iter() {
-        let new_account = db
-            .current_accounts_state
-            .get(address)
-            .ok_or(DatabaseError::Custom("DB Cache".to_owned()))?;
-
-        let nonce_diff: u16 = new_account
-            .info
-            .nonce
-            .checked_sub(original_account.info.nonce)
-            .ok_or(InternalError::TypeConversion)?
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
-
-        let new_balance = if new_account.info.balance != original_account.info.balance {
-            Some(new_account.info.balance)
-        } else {
-            None
-        };
-
-        let bytecode = if new_account.info.code_hash != original_account.info.code_hash {
-            // After execution the code should be in db.codes
-            let code = db
-                .codes
-                .get(&new_account.info.code_hash)
-                .ok_or_else(|| DatabaseError::Custom("Code DB Cache".to_owned()))?;
-            Some(code.clone())
-        } else {
-            None
-        };
-
-        let account_state_diff = AccountStateDiff {
-            new_balance,
-            nonce_diff,
-            storage: BTreeMap::new(), // We add the storage later
-            bytecode: bytecode.map(|c| c.bytecode),
-            bytecode_hash: None,
-        };
-
-        modified_accounts.insert(*address, account_state_diff);
-    }
-
-    // Then if there is any storage change, we add it to the account state diff
-    for (address, original_storage_slots) in
-        transaction_backup.original_account_storage_slots.iter()
-    {
-        let account_info = db
-            .current_accounts_state
-            .get(address)
-            .ok_or(DatabaseError::Custom("DB Cache".to_owned()))?;
-
-        let mut added_storage = BTreeMap::new();
-        for key in original_storage_slots.keys() {
-            added_storage.insert(
-                *key,
-                *account_info
-                    .storage
-                    .get(key)
-                    .ok_or(DatabaseError::Custom("Account info Storage".to_owned()))?,
-            );
-        }
-        if let Some(account_state_diff) = modified_accounts.get_mut(address) {
-            account_state_diff.storage = added_storage;
-        } else {
-            // If the account is not in the modified accounts, we create a new one
-            let account_state_diff = AccountStateDiff {
-                new_balance: None,
-                nonce_diff: 0,
-                storage: added_storage,
-                bytecode: None,
-                bytecode_hash: None,
-            };
-
-            // If account state diff is NOT empty
-            if account_state_diff != AccountStateDiff::default() {
-                modified_accounts.insert(*address, account_state_diff);
-            }
-        }
-    }
-
-    Ok(modified_accounts)
 }
 
 // ================= Blob hash related functions =====================
