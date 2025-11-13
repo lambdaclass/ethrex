@@ -47,6 +47,7 @@ pub struct ProgramInput {
     pub blob_proof: ethrex_common::types::blobs_bundle::Proof,
 }
 
+#[cfg(feature = "l2")]
 impl Default for ProgramInput {
     fn default() -> Self {
         Self {
