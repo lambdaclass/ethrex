@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-13
+
+- Use specialized DUP implementation [#5324](https://github.com/lambdaclass/ethrex/pull/5324)
+
 ### 2025-11-12
 
 - Only mark individual values as dirty instead of the whole trie [#5282](https://github.com/lambdaclass/ethrex/pull/5282)
