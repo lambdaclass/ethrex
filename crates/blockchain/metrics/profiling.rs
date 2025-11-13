@@ -29,7 +29,9 @@ pub struct FunctionProfilingLayer;
 /// Wrapper around [`HistogramTimer`] to avoid conflicts with other layers
 struct ProfileTimer(HistogramTimer);
 
-/// Span extension storing the profiling namespace selected by instrumentation.
+/// Span extension storing the profiling namespace selected by instrumentation. This needs to
+/// be a String instead of a &'static str because using the span macros we could recieve dynamically
+/// generated names and can't rely on only string literals.
 struct Namespace(String);
 
 #[derive(Default)]
