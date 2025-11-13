@@ -141,7 +141,6 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--datadir ${ethrex_L2_DEV_DB} \
 	--sponsorable-addresses $(shell pwd)/sponsorable.txt \
-	--sponsor-private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
 	--eth.rpc-url ${L1_RPC_URL} \
