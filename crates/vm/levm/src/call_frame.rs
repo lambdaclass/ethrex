@@ -156,10 +156,12 @@ impl Stack {
     /// Pushes a copy of the value at depth N
     #[inline]
     pub fn dup<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {
-        // Compile-time check that ensures `self.offset + N` is safe,
-        // since self.offset is bounded by STACK_LIMIT
         const {
+            // Compile-time check that ensures `self.offset + N` is safe,
+            // since self.offset is bounded by STACK_LIMIT
             assert!(STACK_LIMIT.checked_add(N).is_some());
+            // Check that N != 0, to use copy_nonoverlapping
+            assert!(N != 0);
         }
         #[expect(clippy::arithmetic_side_effects)]
         let index = self.offset + N;
