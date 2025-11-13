@@ -1849,7 +1849,7 @@
             "y": 28
           },
           "id": 112,
-          "interval": "10ss",
+          "interval": "10s",
           "options": {
             "legend": {
               "calcs": [
