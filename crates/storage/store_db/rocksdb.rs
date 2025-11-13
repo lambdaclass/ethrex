@@ -1960,6 +1960,23 @@ impl StoreEngine for Store {
         let last_computed_flatkeyvalue = self.last_written()?;
         Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
     }
+
+    async fn set_snap_client_version(&self, version: &str) -> Result<(), StoreError> {
+        self.write_async(
+            CF_MISC_VALUES,
+            "snap_client_version",
+            version.as_bytes().to_vec(),
+        )
+        .await
+    }
+
+    async fn get_snap_client_version(&self) -> Result<Option<String>, StoreError> {
+        self.read_async(CF_MISC_VALUES, "snap_client_version")
+            .await?
+            .map(|bytes| String::from_utf8(bytes))
+            .transpose()
+            .map_err(|_| StoreError::DecodeError)
+    }
 }
 
 /// Open column families

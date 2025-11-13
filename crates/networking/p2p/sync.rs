@@ -318,6 +318,9 @@ impl Syncer {
 
         store.clear_snap_state().await?;
         self.snap_enabled.store(false, Ordering::Relaxed);
+        store
+            .set_snap_client_version(env!("CARGO_PKG_VERSION"))
+            .await?;
 
         Ok(())
     }

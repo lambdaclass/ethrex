@@ -395,6 +395,10 @@ pub async fn init_l1(
 
     let store = init_store(datadir, genesis).await;
 
+    if let Some(latest_snap_client_version) = store.get_snap_client_version().await? {
+        info!("Latest snap sync performed at client version {latest_snap_client_version}");
+    }
+
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
