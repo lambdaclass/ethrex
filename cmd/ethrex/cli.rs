@@ -9,7 +9,9 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
+use ethrex_blockchain::{
+    BlockchainOptions, BlockchainType, L2Config, error::ChainError, new_evm, vm::StoreVmDatabase,
+};
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, Transaction};
 use ethrex_p2p::{
     discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
@@ -492,7 +494,19 @@ impl Subcommand {
                 .await?;
             }
             Subcommand::GenerateBigBlock { in_path, out_path } => {
-                generate_big_block(&in_path, &out_path).await?;
+                let network = get_network(opts);
+                let genesis = network.get_genesis()?;
+                generate_big_block(
+                    &in_path,
+                    &out_path,
+                    &opts.datadir,
+                    genesis,
+                    BlockchainOptions {
+                        r#type: BlockchainType::L1,
+                        ..Default::default()
+                    },
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -801,9 +815,17 @@ pub async fn import_blocks_bench(
     Ok(())
 }
 
-pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), ChainError> {
+pub async fn generate_big_block(
+    in_path: &str,
+    out_path: &str,
+    datadir: &Path,
+    genesis: Genesis,
+    blockchain_opts: BlockchainOptions,
+) -> Result<(), ChainError> {
     let start_time = Instant::now();
     let path_metadata = metadata(in_path).expect("Failed to read path");
+    init_datadir(datadir);
+    let store = init_store(datadir, genesis).await;
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let mut chain: Vec<Block> = if path_metadata.is_dir() {
@@ -830,30 +852,79 @@ pub async fn generate_big_block(in_path: &str, out_path: &str) -> Result<(), Cha
     };
     let total_blocks_imported = chain.len();
 
-    let mut payload = {
-        let mut first_block = chain.remove(0);
-        first_block
-            .body
-            .transactions
-            .retain(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)));
-        ExecutionPayload::from_block(first_block)
-    };
+    // let (mut payload, header) = {
+    //     let mut first_block = chain.remove(0);
+    //     first_block
+    //         .body
+    //         .transactions
+    //         .retain(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)));
+    //     (
+    //         ExecutionPayload::from_block(first_block.clone()),
+    //         first_block.header,
+    //     )
+    // };
 
-    for block in chain.drain(0..100) {
-        payload.transactions.extend(
+    // let vm_db = StoreVmDatabase::new(store, header);
+    // let mut vm = new_evm(&BlockchainType::L1, vm_db)?;
+
+    // for block in chain.drain(0..100) {
+    //     payload.transactions.extend(
+    //         block
+    //             .body
+    //             .transactions
+    //             .iter()
+    //             .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)))
+    //             .map(EncodedTransaction::encode),
+    //     );
+    //     info!(
+    //         transaction_count = block.body.transactions.len(),
+    //         block_num = block.header.number,
+    //         ""
+    //     );
+    // }
+
+    // We start with a mutable block
+    let mut block = chain.remove(0);
+    let mut transactions = block.body.transactions;
+    block.body.transactions = Vec::new();
+
+    for block in chain {
+        transactions.extend(
             block
                 .body
                 .transactions
-                .iter()
-                .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)))
-                .map(EncodedTransaction::encode),
-        );
-        info!(
-            transaction_count = block.body.transactions.len(),
-            block_num = block.header.number,
-            ""
+                .into_iter()
+                .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction(_))),
         );
     }
+
+    // We update the header for the proper amount of gas we're going to use
+    block.header.gas_limit = 1_000_000_000; // 1 gigagas for this test
+
+    let vm_db = StoreVmDatabase::new(store, block.header.clone());
+    let mut vm = new_evm(&BlockchainType::L1, vm_db)?;
+    let mut remaining_gas = block.header.gas_limit;
+
+    for transaction in transactions {
+        if vm
+            .execute_tx(
+                &transaction,
+                &block.header,
+                &mut remaining_gas,
+                transaction
+                    .sender()
+                    .expect("We should have a valid transaction"),
+            )
+            .is_ok()
+        {
+            block.body.transactions.push(transaction);
+        }
+    }
+
+    block.header.gas_used = block.header.gas_limit - remaining_gas;
+
+    // We finish here with a payload
+    let payload = ExecutionPayload::from_block(block);
 
     let file = File::create(out_path).expect("Failed to open file");
     serde_json::to_writer_pretty(file, &payload).expect("We should be able to write");
