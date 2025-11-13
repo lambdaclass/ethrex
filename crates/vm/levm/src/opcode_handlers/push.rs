@@ -35,7 +35,7 @@ impl<'a> VM<'a> {
             U256::zero()
         };
 
-        call_frame.stack.push1(value)?;
+        call_frame.stack.push(value)?;
 
         // Advance the PC by the number of bytes in this instruction's payload.
         call_frame.pc = call_frame.pc.wrapping_add(N);

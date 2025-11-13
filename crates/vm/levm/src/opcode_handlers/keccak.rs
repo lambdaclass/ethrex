@@ -26,9 +26,7 @@ impl<'a> VM<'a> {
         )?)?;
 
         let hash = keccak_hash(current_call_frame.memory.load_range(offset, size)?);
-        current_call_frame
-            .stack
-            .push1(u256_from_big_endian(&hash))?;
+        current_call_frame.stack.push(u256_from_big_endian(&hash))?;
 
         Ok(OpcodeResult::Continue)
     }
