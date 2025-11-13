@@ -18,7 +18,7 @@ impl<'a> VM<'a> {
         let value_at_depth = *current_call_frame.stack.get(N)?;
 
         // Push the duplicated value onto the stack
-        current_call_frame.stack.push1(value_at_depth)?;
+        current_call_frame.stack.push(value_at_depth)?;
 
         Ok(OpcodeResult::Continue)
     }

@@ -29,10 +29,7 @@ pub fn l1_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
 
 pub fn l2_hooks(fee_config: FeeConfig) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
     vec![
-        Rc::new(RefCell::new(L2Hook {
-            fee_config,
-            pre_execution_backup: Default::default(),
-        })),
+        Rc::new(RefCell::new(L2Hook { fee_config })),
         Rc::new(RefCell::new(BackupHook::default())),
     ]
 }

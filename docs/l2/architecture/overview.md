@@ -49,6 +49,11 @@ These two ideas will be used extensively throughout the rest of the documentatio
 
 ## Reconstructing state/Data Availability
 
+> [!WARNING]
+> The **state diff** mechanism is retained here for historical and conceptual reference.  
+> Ethrex now publishes **RLP-encoded blocks** (with fee configs) in blobs.  
+> The principles of verification and compression described below still apply conceptually to this new model.
+
 While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the chain. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the chain or some of their funds.
 
 This is called the **Data Availability** problem. As discussed before, sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:
@@ -76,6 +81,9 @@ With that, we can be sure that state diffs are published and that they are corre
 Because state diffs are compressed to save space on L1, this compression needs to be proven as well. Otherwise, once again, the sequencer could send the wrong (compressed) state diffs. This is easy though, we just make the prover run the compression and we're done.
 
 ## EIP 4844 (a.k.a. Blobs)
+
+> [!WARNING]  
+> The explanations below originally refer to *state diffs*, but the same blob-based mechanism now carries **RLP-encoded block data** and their associated **fee configs**.
 
 While we could send state diffs through calldata, there is a (hopefully) cheaper way to do it: blobs. The Ethereum Cancun upgrade introduced a new type of transaction where users can submit a list of opaque blobs of data, each one of size at most 128 KB. The main purpose of this new type of transaction is precisely to be used by rollups for data availability; they are priced separately through a `blob_gas` market instead of the regular `gas` one and for all intents and purposes should be much cheaper than calldata.
 
@@ -107,6 +115,12 @@ Our proof of equivalence implementation follows Method 1 [here](https://notes.et
 - When commiting to the data on L1 send, as part of the calldata, a kzg blob commitment along with an opening proving that it evaluates to `y` on `x`. The contract, through the point evaluation precompile, checks that both:
   - The commitment's hash is equal to the versioned hash for that blob.
   - The evaluation is correct.
+
+## Transition to RLP-encoded Blocks
+
+The state diff approach has been deprecated. While it provided a more compact representation, it only guaranteed the availability of the modified state, not the original transactions themselves. To ensure that transactions are also publicly available, Ethrex now publishes **RLP-encoded blocks**, together with their corresponding **fee configurations**, directly in blobs (see [Transaction fees](../fundamentals/transaction_fees.md)).
+
+This new approach guarantees both transaction and state availability, at the cost of higher data size. According to our internal measurements ([`block_vs_state_diff_measurements.md`](../fundamentals/block_vs_state_diff_measurements.md)), sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately **2× for ETH transfers** and **3× for ERC20 transfers**.
 
 ## L1<->L2 communication
 

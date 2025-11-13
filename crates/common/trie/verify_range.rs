@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use ethereum_types::H256;
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::decode::RLPDecode;
-use sha3::{Digest, Keccak256};
 
 use crate::{
     ProofTrie, Trie, TrieError, ValueRLP,
@@ -143,7 +143,7 @@ impl<'a> From<&'a [Vec<u8>]> for RangeProof<'a> {
         let node_refs = proof
             .iter()
             .map(|node| {
-                let hash = H256::from_slice(&Keccak256::digest(node));
+                let hash = H256(keccak_hash(node));
                 let encoded_data = node.as_slice();
                 (hash, encoded_data)
             })

@@ -68,38 +68,9 @@ impl Stack {
         Ok(value)
     }
 
-    #[inline]
-    pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
-        // Since the stack grows downwards, when an offset underflow is detected the stack is
-        // overflowing.
-        let next_offset = self
-            .offset
-            .checked_sub(N)
-            .ok_or(ExceptionalHalt::StackOverflow)?;
-
-        // The following index cannot fail because `next_offset` has already been checked and
-        // `self.offset` is known to be within `STACK_LIMIT`.
-        #[expect(
-            unsafe_code,
-            reason = "self.offset < STACK_LIMIT and next_offset == self.offset - N >= 0"
-        )]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                values.as_ptr(),
-                self.values
-                    .get_unchecked_mut(next_offset..self.offset)
-                    .as_mut_ptr(),
-                N,
-            );
-        }
-        self.offset = next_offset;
-
-        Ok(())
-    }
-
     /// Push a single U256 value to the stack, faster than the generic push.
     #[inline]
-    pub fn push1(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
+    pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
         let next_offset = self
@@ -173,11 +144,15 @@ impl Stack {
     }
 
     #[inline(always)]
-    pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
-        let index = self
-            .offset
-            .checked_add(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+    pub fn swap<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {
+        // Compile-time check that ensures `self.offset + N` is safe,
+        // since self.offset is bounded by STACK_LIMIT
+        const {
+            assert!(STACK_LIMIT.checked_add(N).is_some());
+        }
+        #[expect(clippy::arithmetic_side_effects)]
+        let index = self.offset + N;
+
         if index >= self.values.len() {
             return Err(ExceptionalHalt::StackUnderflow);
         }
