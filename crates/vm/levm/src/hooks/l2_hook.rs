@@ -1,12 +1,10 @@
 use crate::{
-    call_frame::CallFrameBackup,
     constants::POST_OSAKA_GAS_LIMIT_CAP,
     db::gen_db::GeneralizedDatabase,
     errors::{ContextResult, ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
     tracing::LevmCallTracer,
-    utils::get_account_diffs_in_tx,
     vm::{VM, VMType},
 };
 
@@ -18,11 +16,11 @@ use ethrex_common::{
         Code, EIP1559Transaction, Fork, Transaction, TxKind,
         {
             SAFE_BYTES_PER_BLOB,
-            account_diff::get_accounts_diff_size,
             fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig},
         },
     },
 };
+use ethrex_rlp::encode::RLPEncode;
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -44,7 +42,6 @@ const SIMULATION_MAX_FEE: u64 = 100;
 
 pub struct L2Hook {
     pub fee_config: FeeConfig,
-    pub pre_execution_backup: CallFrameBackup,
 }
 
 impl Hook for L2Hook {
@@ -59,9 +56,6 @@ impl Hook for L2Hook {
         // Different from L1:
         // Max fee per gas must be sufficient to cover base fee + operator fee
         validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
-
-        // Backup the callframe to calculate the tx state diff later
-        self.pre_execution_backup = vm.current_call_frame.call_frame_backup.clone();
         Ok(())
     }
 
@@ -82,7 +76,6 @@ impl Hook for L2Hook {
                 vm,
                 ctx_result,
                 &self.fee_config,
-                &mut self.pre_execution_backup,
                 vm.env.fee_token.is_some(),
             )?;
         }
@@ -98,7 +91,6 @@ fn finalize_non_privileged_execution(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
     fee_config: &FeeConfig,
-    pre_execution_backup: &mut CallFrameBackup,
     use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
     if !ctx_result.is_success() {
@@ -109,11 +101,7 @@ fn finalize_non_privileged_execution(
     let actual_gas_used =
         default_hook::compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
 
-    let mut l1_gas = calculate_l1_fee_gas(
-        vm,
-        std::mem::take(pre_execution_backup),
-        &fee_config.l1_fee_config,
-    )?;
+    let mut l1_gas = calculate_l1_fee_gas(vm, &fee_config.l1_fee_config)?;
 
     let mut total_gas = actual_gas_used
         .checked_add(l1_gas)
@@ -703,7 +691,7 @@ fn refund_sender_fee_token(
 /// L1 Fee = (L1 Fee per Blob Gas * GAS_PER_BLOB / SAFE_BYTES_PER_BLOB) * account_diffs_size
 fn calculate_l1_fee(
     fee_config: &L1FeeConfig,
-    account_diffs_size: u64,
+    transaction_size: usize,
 ) -> Result<U256, crate::errors::VMError> {
     let l1_fee_per_blob: U256 = fee_config
         .l1_fee_per_blob_gas
@@ -716,7 +704,7 @@ fn calculate_l1_fee(
         .ok_or(InternalError::DivisionByZero)?;
 
     let l1_fee = l1_fee_per_blob_byte
-        .checked_mul(U256::from(account_diffs_size))
+        .checked_mul(U256::from(transaction_size))
         .ok_or(InternalError::Overflow)?;
 
     Ok(l1_fee)
@@ -726,7 +714,6 @@ fn calculate_l1_fee(
 /// Returns 0 if no L1 fee config is provided.
 fn calculate_l1_fee_gas(
     vm: &mut VM<'_>,
-    pre_execution_backup: CallFrameBackup,
     l1_fee_config: &Option<L1FeeConfig>,
 ) -> Result<u64, crate::errors::VMError> {
     let Some(fee_config) = l1_fee_config else {
@@ -734,13 +721,9 @@ fn calculate_l1_fee_gas(
         return Ok(0);
     };
 
-    let mut execution_backup = vm.current_call_frame.call_frame_backup.clone();
-    execution_backup.extend(pre_execution_backup);
-    let account_diffs_in_tx = get_account_diffs_in_tx(vm.db, execution_backup)?;
-    let account_diffs_size = get_accounts_diff_size(&account_diffs_in_tx)
-        .map_err(|e| InternalError::Custom(format!("Failed to get account diffs size: {}", e)))?;
+    let tx_size = vm.tx.encode_to_vec().len();
 
-    let l1_fee = calculate_l1_fee(fee_config, account_diffs_size)?;
+    let l1_fee = calculate_l1_fee(fee_config, tx_size)?;
     let mut l1_fee_gas = l1_fee
         .checked_div(vm.env.gas_price)
         .ok_or(InternalError::DivisionByZero)?;
