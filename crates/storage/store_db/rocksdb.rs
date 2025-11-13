@@ -224,7 +224,7 @@ impl Store {
             CF_BODIES,
             CF_RECEIPTS,
             CF_TRANSACTION_LOCATIONS,
-            CF_FULLSYNC_HEADERS
+            CF_FULLSYNC_HEADERS,
         ];
 
         // Get existing column families to know which ones to drop later
