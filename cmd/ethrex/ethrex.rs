@@ -86,12 +86,11 @@ fn current_version() -> Option<Version> {
 async fn check_version_update() {
     if let (Some(current_version), Some(latest_version)) =
         (current_version(), latest_release_version().await)
+        && current_version < latest_version
     {
-        if current_version < latest_version {
-            info!(
-                "There is a newer ethrex version available, current version: {current_version} vs latest version: {latest_version}"
-            );
-        }
+        info!(
+            "There is a newer ethrex version available, current version: {current_version} vs latest version: {latest_version}"
+        );
     }
 }
 
