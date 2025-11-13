@@ -218,7 +218,7 @@ impl Store {
             CF_STORAGE_FLATKEYVALUE,
             CF_MISC_VALUES,
         ];
-        let compressible_cfs = vec![
+        let compressible_cfs = [
             CF_BLOCK_NUMBERS,
             CF_HEADERS,
             CF_BODIES,
