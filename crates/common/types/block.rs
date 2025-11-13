@@ -586,6 +586,7 @@ pub fn validate_block_header(
     };
 
     if expected_base_fee_per_gas != header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE) {
+        tracing::info!("expected_base_fee_per_gas");
         return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
     }
 
