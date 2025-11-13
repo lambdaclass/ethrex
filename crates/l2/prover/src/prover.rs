@@ -123,6 +123,13 @@ impl Prover {
         Ok(Some(ProverData {
             batch_number,
             input: ProgramInput {
+                #[cfg(not(feature = "l2"))]
+                block: input
+                    .blocks
+                    .first()
+                    .cloned()
+                    .ok_or("Input blocks is empty")?,
+                #[cfg(feature = "l2")]
                 blocks: input.blocks,
                 execution_witness: input.execution_witness,
                 #[cfg(feature = "l2")]
