@@ -1332,6 +1332,7 @@ dependencies = [
  "hex",
  "lazy_static",
  "rkyv",
+ "rustc-hash",
  "serde",
  "serde_json",
  "smallvec",
