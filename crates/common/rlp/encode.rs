@@ -222,31 +222,31 @@ pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
 
 impl<S: RLPEncode, T: RLPEncode> RLPEncode for (S, T) {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len = self.0.length() + self.1.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
+        super::structs::Encoder::new(buf)
+            .encode_field(&self.0)
+            .encode_field(&self.1)
+            .finish();
     }
 }
 
 impl<S: RLPEncode, T: RLPEncode, U: RLPEncode> RLPEncode for (S, T, U) {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len = self.0.length() + self.1.length() + self.2.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
-        self.2.encode(buf);
+        super::structs::Encoder::new(buf)
+            .encode_field(&self.0)
+            .encode_field(&self.1)
+            .encode_field(&self.2)
+            .finish();
     }
 }
 
 impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode> RLPEncode for (S, T, U, V) {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len = self.0.length() + self.1.length() + self.2.length() + self.3.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
-        self.2.encode(buf);
-        self.3.encode(buf);
+        super::structs::Encoder::new(buf)
+            .encode_field(&self.0)
+            .encode_field(&self.1)
+            .encode_field(&self.2)
+            .encode_field(&self.3)
+            .finish();
     }
 }
 
@@ -254,14 +254,13 @@ impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode, W: RLPEncode> RLPEn
     for (S, T, U, V, W)
 {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len =
-            self.0.length() + self.1.length() + self.2.length() + self.3.length() + self.4.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
-        self.2.encode(buf);
-        self.3.encode(buf);
-        self.4.encode(buf);
+        super::structs::Encoder::new(buf)
+            .encode_field(&self.0)
+            .encode_field(&self.1)
+            .encode_field(&self.2)
+            .encode_field(&self.3)
+            .encode_field(&self.4)
+            .finish();
     }
 }
 
