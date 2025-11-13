@@ -627,8 +627,8 @@ mod tests {
         H160,
         types::{ChainConfig, Genesis},
     };
+    use ethrex_crypto::keccak::keccak_hash;
     use ethrex_storage::{EngineType, Store};
-    use sha3::{Digest, Keccak256};
     use std::io::BufReader;
     use std::str::FromStr;
     use std::{fs::File, path::Path};
@@ -668,7 +668,7 @@ mod tests {
             "result": {
                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
                 "enr": enr_url,
-                "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
+                "id": hex::encode(keccak_hash(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
                 "name": "ethrex/test",
                 "ports": {

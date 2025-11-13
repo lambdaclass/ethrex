@@ -21,7 +21,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, info, warn};
 
 use crate::{
-    initializers::{get_network, init_blockchain, init_store, init_tracing, load_store},
+    initializers::{
+        get_network, init_blockchain, init_store, init_tracing, load_store, regenerate_head_state,
+    },
     utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
 
@@ -350,6 +352,22 @@ pub enum Subcommand {
         l2: bool,
     },
     #[command(
+        name = "import-bench",
+        about = "Import blocks to the database for benchmarking"
+    )]
+    ImportBench {
+        #[arg(
+            required = true,
+            value_name = "FILE_PATH/FOLDER",
+            help = "Path to a RLP chain file or a folder containing files with individual Blocks"
+        )]
+        path: String,
+        #[arg(long = "removedb", action = ArgAction::SetTrue)]
+        removedb: bool,
+        #[arg(long, action = ArgAction::SetTrue)]
+        l2: bool,
+    },
+    #[command(
         name = "export",
         about = "Export blocks in the current chain into a file in rlp encoding"
     )]
@@ -424,6 +442,31 @@ impl Subcommand {
                     BlockchainOptions {
                         max_mempool_size: opts.mempool_max_size,
                         r#type: blockchain_type,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            }
+            Subcommand::ImportBench { path, removedb, l2 } => {
+                if removedb {
+                    remove_db(&opts.datadir.clone(), opts.force);
+                }
+                info!("ethrex version: {}", get_client_version());
+
+                let network = get_network(opts);
+                let genesis = network.get_genesis()?;
+                let blockchain_type = if l2 {
+                    BlockchainType::L2(L2Config::default())
+                } else {
+                    BlockchainType::L1
+                };
+                import_blocks_bench(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    BlockchainOptions {
+                        r#type: blockchain_type,
+                        perf_logs_enabled: true,
                         ..Default::default()
                     },
                 )
@@ -597,6 +640,118 @@ pub async fn import_blocks(
                     _ => warn!("Failed to add block {number} with hash {hash:#x}"),
                 })?;
             }
+        }
+
+        // Make head canonical and label all special blocks correctly.
+        if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
+            store
+                .forkchoice_update(
+                    Some(numbers_and_hashes),
+                    head_number,
+                    head_hash,
+                    Some(head_number),
+                    Some(head_number),
+                )
+                .await?;
+        }
+
+        total_blocks_imported += size;
+    }
+
+    let total_duration = start_time.elapsed();
+    info!(
+        blocks = total_blocks_imported,
+        seconds = total_duration.as_secs_f64(),
+        "Import completed"
+    );
+    Ok(())
+}
+
+pub async fn import_blocks_bench(
+    path: &str,
+    datadir: &Path,
+    genesis: Genesis,
+    blockchain_opts: BlockchainOptions,
+) -> Result<(), ChainError> {
+    let start_time = Instant::now();
+    init_datadir(datadir);
+    let store = init_store(datadir, genesis).await;
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    regenerate_head_state(&store, &blockchain).await.unwrap();
+    let path_metadata = metadata(path).expect("Failed to read path");
+
+    // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
+    let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
+        info!(path = %path, "Importing blocks from directory");
+        let mut entries: Vec<_> = read_dir(path)
+            .expect("Failed to read blocks directory")
+            .map(|res| res.expect("Failed to open file in directory").path())
+            .collect();
+
+        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
+        entries.sort();
+
+        entries
+            .iter()
+            .map(|entry| {
+                let path_str = entry.to_str().expect("Couldn't convert path to string");
+                info!(path = %path_str, "Importing blocks from file");
+                utils::read_chain_file(path_str)
+            })
+            .collect()
+    } else {
+        info!(path = %path, "Importing blocks from file");
+        vec![utils::read_chain_file(path)]
+    };
+
+    let mut total_blocks_imported = 0;
+    for blocks in chains {
+        let size = blocks.len();
+        let mut numbers_and_hashes = blocks
+            .iter()
+            .map(|b| (b.header.number, b.hash()))
+            .collect::<Vec<_>>();
+        // Execute block by block
+        let mut last_progress_log = Instant::now();
+        for (index, block) in blocks.into_iter().enumerate() {
+            let hash = block.hash();
+            let number = block.header.number;
+
+            // Log progress every 10 seconds
+            if last_progress_log.elapsed() >= Duration::from_secs(10) {
+                let processed = index + 1;
+                let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
+                info!(processed, total = size, percent, "Import progress");
+                last_progress_log = Instant::now();
+            }
+
+            // Check if the block is already in the blockchain, if it is do nothing, if not add it
+            let block_number = store.get_block_number(hash).await.map_err(|_e| {
+                ChainError::Custom(String::from(
+                    "Couldn't check if block is already in the blockchain",
+                ))
+            })?;
+
+            if block_number.is_some() {
+                info!("Block {} is already in the blockchain", block.hash());
+                continue;
+            }
+
+            blockchain
+                .add_block_pipeline(block)
+                .inspect_err(|err| match err {
+                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
+                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                })?;
+
+            // TODO: replace this
+            // This sleep is because we have a background process writing to disk the last layer
+            // And until it's done we can't execute the new block
+            // Because this wants to compare against running a real node in terms of reported performance
+            // It takes less than 500ms, so this is good enough, but we should report the performance
+            // without taking into account that wait.
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
         // Make head canonical and label all special blocks correctly.

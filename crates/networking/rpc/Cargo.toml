@@ -21,6 +21,7 @@ ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-metrics.workspace = true
+ethrex-crypto.workspace = true
 ethrex-p2p = { workspace = true, features = ["test-utils"] }
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
@@ -33,7 +34,6 @@ jsonwebtoken.workspace = true
 rand.workspace = true
 tokio-util = { workspace = true, features = ["codec"] }
 reqwest.workspace = true
-sha3.workspace = true
 sha2.workspace = true
 jemalloc_pprof = { version = "0.8.0", optional = true, features = [
     "flamegraph",

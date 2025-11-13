@@ -12,6 +12,7 @@ Usage: ethrex [OPTIONS] [COMMAND]
 Commands:
   removedb            Remove the database
   import              Import blocks to the database
+  import-bench        Import blocks to the database for benchmarking
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
   help                Print this message or the help of the given subcommand(s)
@@ -536,7 +537,7 @@ Admin server options:
 
 L2 options:
       --validium
-          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.
+          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1.
 
           [env: ETHREX_L2_VALIDIUM=]
 

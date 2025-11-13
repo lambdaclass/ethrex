@@ -18,12 +18,11 @@ use ethrex_common::{
     },
 };
 
+use ethrex_crypto::keccak::Keccak256;
 use ethrex_vm::{Evm, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
-
-use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
 
