@@ -1973,7 +1973,7 @@ impl StoreEngine for Store {
     async fn get_snap_client_version(&self) -> Result<Option<String>, StoreError> {
         self.read_async(CF_MISC_VALUES, "snap_client_version")
             .await?
-            .map(|bytes| String::from_utf8(bytes))
+            .map(String::from_utf8)
             .transpose()
             .map_err(|_| StoreError::DecodeError)
     }
