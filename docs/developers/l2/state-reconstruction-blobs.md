@@ -1,6 +1,6 @@
 # Generate blobs for the state reconstruction test
 
-The test in `crates/l2/tests/state_reconstruct.rs` replays a fixed set of blobs to reconstruct. If you ever need to regenerate those fixtures, you need to change the files `payload_builder.rs` and `l1_committer.rs`.
+The test in `crates/l2/tests/state_reconstruct.rs` replays a fixed set of blobs to reconstruct the state. If you ever need to regenerate those fixtures, you need to change the files `payload_builder.rs` and `l1_committer.rs`.
 
 ## 1. Cap block payloads at 10 transactions
 
