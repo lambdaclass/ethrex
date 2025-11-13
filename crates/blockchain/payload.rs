@@ -369,8 +369,7 @@ impl Blockchain {
         let start = Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        // TODO(#4997): start with an empty block
-        let mut res = self.build_payload(payload.clone())?;
+        let mut res = self.build_empty_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
             let self_clone = self.clone();
@@ -392,8 +391,22 @@ impl Blockchain {
         Ok(res)
     }
 
-    /// Completes the payload building process, return the block value
+    // We separate this into two functions, so we can build the initial empty payload and then start filling it
+    // TODO: once we implement a mechanism to gradually fill the payload with transactions we won't need this
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, true)
+    }
+
+    pub fn build_empty_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, false)
+    }
+
+    /// Completes the payload building process, return the block value
+    pub fn build_payload_inner(
+        &self,
+        payload: Block,
+        fill_transactions: bool,
+    ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -405,8 +418,10 @@ impl Blockchain {
             self.apply_system_operations(&mut context)?;
         }
         self.apply_withdrawals(&mut context)?;
-        self.fill_transactions(&mut context)?;
-        self.extract_requests(&mut context)?;
+        if fill_transactions {
+            self.fill_transactions(&mut context)?;
+            self.extract_requests(&mut context)?;
+        }
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
