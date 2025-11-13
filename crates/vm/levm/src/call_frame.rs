@@ -11,6 +11,9 @@ use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
 use std::{collections::HashMap, fmt};
 
+// u64's that make up an U256
+const U64_PER_U256: usize = 256 / 64;
+
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
 ///
@@ -85,7 +88,7 @@ impl Stack {
             std::ptr::copy_nonoverlapping(
                 value.0.as_ptr(),
                 self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
-                4,
+                U64_PER_U256,
             );
         }
         self.offset = next_offset;
@@ -111,7 +114,7 @@ impl Stack {
                 .get_unchecked_mut(next_offset)
                 .0
                 .as_mut_ptr()
-                .cast() = [0u64; 4];
+                .cast() = [0u64; U64_PER_U256];
         }
         self.offset = next_offset;
 
@@ -177,7 +180,7 @@ impl Stack {
             std::ptr::copy_nonoverlapping(
                 self.values.get_unchecked_mut(index).0.as_mut_ptr(),
                 self.values.get_unchecked_mut(self.offset).0.as_mut_ptr(),
-                4,
+                U64_PER_U256,
             );
         }
         Ok(())
