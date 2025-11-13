@@ -228,6 +228,7 @@ impl LEVM {
             block_gas_limit: block_header.gas_limit,
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
+            fee_token: tx.fee_token(),
         };
 
         Ok(env)
@@ -709,6 +710,7 @@ fn env_from_generic(
         block_gas_limit: header.gas_limit,
         difficulty: header.difficulty,
         is_privileged: false,
+        fee_token: tx.fee_token,
     })
 }
 
