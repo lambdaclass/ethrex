@@ -1,15 +1,13 @@
 use ethrex_common::H256;
 use rustc_hash::FxHashMap;
-use std::{
-    sync::{Arc, Mutex},
-    time::Instant,
-};
+use std::sync::Arc;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    layers_map: FxHashMap<Vec<u8>, H256>,
     parent: H256,
     id: usize,
 }
@@ -20,14 +18,11 @@ pub struct TrieLayerCache {
     /// TODO: this implementation panics on overflow
     last_id: usize,
     layers: FxHashMap<H256, Arc<TrieLayer>>,
-    ///
-    stacked: Arc<Mutex<FxHashMap<H256, FxHashMap<Vec<u8>, Vec<u8>>>>>,
 }
 
 impl Default for TrieLayerCache {
     fn default() -> Self {
         Self {
-            stacked: Default::default(),
             last_id: 0,
             layers: Default::default(),
         }
@@ -36,37 +31,14 @@ impl Default for TrieLayerCache {
 
 impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
-        let now = Instant::now();
-        // Check if value is present in stacked cache.
-        if let Some(data) = self.stacked.lock().unwrap().get(&state_root) {
-            data.get(key).cloned()
-            // If not, we traverse the layers. It may be a previous state_root, or a forked one
-        } else {
-            let mut current_state_root = state_root;
-
-            let mut count: usize = 0;
-            while let Some(layer) = self.layers.get(&current_state_root) {
-                count += 1;
-                if let Some(value) = layer.nodes.get(key) {
-                    tracing::info!(
-                        "Layering 3: Data found, traversed {count} layers - elapsed {:?}",
-                        now.elapsed()
-                    );
-                    return Some(value.clone());
-                }
-                current_state_root = layer.parent;
-                if current_state_root == state_root {
-                    // TODO: check if this is possible in practice
-                    // This can't happen in L1, due to system contracts irreversibly modifying state
-                    // at each block.
-                    // On L2, if no transactions are included in a block, the state root remains the same,
-                    // but we handle that case in put_batch. It may happen, however, if someone modifies
-                    // state with a privileged tx and later reverts it (since it doesn't update nonce).
-                    panic!("State cycle found");
-                }
-            }
-            None
-        }
+        // Check if value is present in a layer.
+        self.layers.get(&state_root).and_then(|trie_layer| {
+            trie_layer.layers_map.get(key).and_then(|layer_key| {
+                self.layers
+                    .get(layer_key)
+                    .and_then(|trie_layer| trie_layer.nodes.get(key).cloned())
+            })
+        })
     }
 
     // TODO: use finalized hash to know when to commit
@@ -100,27 +72,33 @@ impl TrieLayerCache {
         }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
+            .clone()
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
 
         self.last_id += 1;
+
+        let values = key_values
+            .into_iter()
+            .map(|(path, _)| (path.into_vec(), state_root));
+
+        let previous = self.layers.get(&parent).map_or_else(
+            || values.clone().collect(),
+            |trie_layer| {
+                let mut previous = trie_layer.layers_map.clone();
+                previous.extend(values.clone());
+                previous
+            },
+        );
+
         let entry = TrieLayer {
             nodes: nodes.clone(),
+            layers_map: previous,
             parent,
             id: self.last_id,
         };
         self.layers.insert(state_root, Arc::new(entry));
-        let mut c = self.stacked.lock().unwrap();
-        match c.remove(&parent) {
-            Some(mut value) => {
-                value.extend(nodes.into_iter());
-                c.insert(state_root, value);
-            }
-            None => {
-                c.insert(state_root, nodes);
-            }
-        }
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
