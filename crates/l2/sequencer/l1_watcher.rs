@@ -5,7 +5,7 @@ use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::{Log, PrivilegedL2Transaction, SourceChainId, TxKind, TxType};
+use ethrex_common::types::{Log, PrivilegedL2Transaction, TxKind, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
 use ethrex_l2_common::messages::{L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS};
@@ -266,7 +266,7 @@ impl L1Watcher {
         for log in logs {
             let privileged_transaction_data = PrivilegedTransactionData::from_log(log.log)?;
 
-            let chain_id = self.store.get_chain_config().chain_id;
+            let chain_id = self.eth_client.get_chain_id().await?.as_u64();
 
             let gas_price = self.this_l2_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()
@@ -334,7 +334,7 @@ impl L1Watcher {
             info!("Add mint tx with nonce: {}", tx.tx_id.as_u64());
 
             let mint_transaction = PrivilegedL2Transaction {
-                chain_id: tx.chain_id.as_u64(),
+                chain_id: source_chain_id,
                 nonce: tx.tx_id.as_u64(),
                 max_priority_fee_per_gas: gas_price,
                 max_fee_per_gas: gas_price,
@@ -345,7 +345,6 @@ impl L1Watcher {
                 access_list: vec![],
                 from: tx.from,
                 inner_hash: Default::default(),
-                source_chain_id: SourceChainId::L2(source_chain_id),
             };
 
             let privileged_tx = Transaction::PrivilegedL2Transaction(mint_transaction);

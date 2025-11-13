@@ -60,10 +60,8 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
-    // Needed to ensure privileged tx nonces are sequential
-    last_privileged_nonce: Option<u64>,
-    // Needed to ensure L2 privileged tx nonces are sequential per source chain
-    l2_privileged_nonces: std::collections::HashMap<u64, Option<u64>>,
+    // Needed to ensure privileged tx nonces are sequential per source chain
+    privileged_nonces: std::collections::HashMap<u64, Option<u64>>,
     block_gas_limit: u64,
 }
 
@@ -115,8 +113,7 @@ impl BlockProducer {
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
             // FIXME: Initialize properly to the last privileged nonce in the chain
-            last_privileged_nonce: None,
-            l2_privileged_nonces: std::collections::HashMap::new(),
+            privileged_nonces: std::collections::HashMap::new(),
             block_gas_limit: *block_gas_limit,
         }
     }
@@ -179,8 +176,7 @@ impl BlockProducer {
             self.blockchain.clone(),
             payload,
             &self.store,
-            &mut self.last_privileged_nonce,
-            &mut self.l2_privileged_nonces,
+            &mut self.privileged_nonces,
             self.block_gas_limit,
         )
         .await?;

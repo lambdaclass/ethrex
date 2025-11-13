@@ -29,8 +29,7 @@ pub async fn build_payload(
     blockchain: Arc<Blockchain>,
     payload: Block,
     store: &Store,
-    last_privileged_nonce: &mut Option<u64>,
-    l2_privileged_nonces: &mut HashMap<u64, Option<u64>>,
+    privileged_nonces: &mut HashMap<u64, Option<u64>>,
     block_gas_limit: u64,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
@@ -43,8 +42,7 @@ pub async fn build_payload(
         blockchain.clone(),
         &mut context,
         store,
-        last_privileged_nonce,
-        l2_privileged_nonces,
+        privileged_nonces,
         block_gas_limit,
     )
     .await?;
@@ -94,8 +92,7 @@ pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
-    last_privileged_nonce: &mut Option<u64>,
-    l2_privileged_nonces: &mut HashMap<u64, Option<u64>>,
+    privileged_nonces: &mut HashMap<u64, Option<u64>>,
     configured_block_gas_limit: u64,
 ) -> Result<(), BlockProducerError> {
     let mut privileged_tx_count = 0;
@@ -171,22 +168,13 @@ pub async fn fill_transactions(
                 break;
             }
             let id = head_tx.nonce();
-            match privileged_tx.source_chain_id {
-                ethrex_common::types::SourceChainId::L1 => {
-                    if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
-                        debug!("Ignoring out-of-order privileged transaction");
-                        txs.pop();
-                        continue;
-                    }
-                }
-                ethrex_common::types::SourceChainId::L2(chain_id) => {
-                    let entry = l2_privileged_nonces.entry(chain_id).or_insert(None);
-                    if (*entry).is_some_and(|last_nonce| id != last_nonce + 1) {
-                        debug!("Ignoring out-of-order l2 privileged transaction");
-                        txs.pop();
-                        continue;
-                    }
-                }
+            let entry = privileged_nonces
+                .entry(privileged_tx.chain_id)
+                .or_insert(None);
+            if (*entry).is_some_and(|last_nonce| id != last_nonce + 1) {
+                debug!("Ignoring out-of-order privileged transaction");
+                txs.pop();
+                continue;
             }
 
             privileged_tx_count += 1;
@@ -234,14 +222,7 @@ pub async fn fill_transactions(
 
         if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
             let id = head_tx.nonce();
-            match privileged_tx.source_chain_id {
-                ethrex_common::types::SourceChainId::L1 => {
-                    last_privileged_nonce.replace(id);
-                }
-                ethrex_common::types::SourceChainId::L2(chain_id) => {
-                    l2_privileged_nonces.insert(chain_id, Some(id));
-                }
-            }
+            privileged_nonces.insert(privileged_tx.chain_id, Some(id));
 
             privileged_tx_count += 1;
         }
