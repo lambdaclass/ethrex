@@ -31,7 +31,11 @@
 # Ethrex for L2 chains
 
 - [Introduction](./l2/introduction.md)
-- [Deploy an L2](./l2/deploy.md)
+- [Deploy an L2](./l2/deployment/README.md)
+  - [Overview](./l2/deployment/overview.md)
+  - [Deploying a vanilla ethrex L2](./l2/deployment/vanilla.md)
+  - [Deploying a validium ethrex L2](./l2/deployment/validium.md)
+  - [Deploying a based ethrex L2](./l2/deployment/based.md)
 - [Monitoring and metrics](./l2/monitoring.md)
 - [Admin server](./l2/admin.md)
 - [Architecture](./l2/architecture/README.md)
