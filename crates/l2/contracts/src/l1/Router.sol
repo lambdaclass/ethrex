@@ -55,9 +55,10 @@ contract Router is
     /// @inheritdoc IRouter
     function sendMessage(uint256 chainId) public payable override {
         if (bridges[chainId] == address(0)) {
-            revert ChainNotRegistered(chainId);
+            emit TransferToChainNotRegistered(chainId);
+        } else {
+            ICommonBridge(bridges[chainId]).receiveMessage{value: msg.value}();
         }
-        ICommonBridge(bridges[chainId]).receiveMessage{value: msg.value}();
     }
 
     /// @inheritdoc IRouter

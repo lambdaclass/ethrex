@@ -38,6 +38,11 @@ interface IRouter {
     /// @param chainId The ID of the deregistered chain.
     event ChainDeregistered(uint256 indexed chainId);
 
+
+    /// @notice Emitted when a message is sent to a chain that is not registered.
+    /// @param chainId The ID of the chain that is not registered.
+    event TransferToChainNotRegistered(uint256 indexed chainId);
+
     /// @notice Error indicating an invalid address was provided.
     /// @param addr The invalid address.
     error InvalidAddress(address addr);

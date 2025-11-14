@@ -28,7 +28,7 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 
 ### Start the first L2
 
-Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs of the previous command
+Replace `L1_BRIDGE_ADDRESS`, `L1_ON_CHAIN_PROPOSER_ADDRESS` and `ROUTER_ADDRESS` with the outputs of the previous command
 
 ```bash
 ../../target/release/ethrex \
@@ -51,7 +51,7 @@ Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs 
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 	--proof-coordinator.addr 127.0.0.1 \
-    --l1.router-address 0x2bc74c22739625e06609ac16eea025f31fd350e3 \
+    --l1.router-address <ROUTER_ADDRESS> \
     --watcher.l2-rpcs http://localhost:1730 \
     --watcher.l2-chain-ids 1730
 ```
@@ -61,6 +61,8 @@ Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs 
 On another terminal
 
 Copy the `../../fixtures/genesis/l2.json` file to `../../fixtures/genesis/l2_2.json` and modify chain id to 1730
+
+Replace `ROUTER_ADDRESS` with the outputs of the first deploy
 
 ```bash
 ../../target/release/ethrex l2 deploy \
@@ -73,13 +75,15 @@ Copy the `../../fixtures/genesis/l2.json` file to `../../fixtures/genesis/l2_2.j
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
 	--genesis-l2-path ../../fixtures/genesis/l2_2.json \
     --randomize-contract-deployment \
-    --router.address 0x2bc74c22739625e06609ac16eea025f31fd350e3
+    --router.address <ROUTER_ADDRESS>
 ```
 
 
 ### Start the second L2
 
 Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs of the previous command
+And `ROUTER_ADDRESS` with the outputs of the first deploy
+
 
 ```bash
 ../../target/release/ethrex \
@@ -103,7 +107,7 @@ Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs 
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 	--proof-coordinator.addr 127.0.0.1 \
     --proof-coordinator.port 3901 \
-    --l1.router-address 0x2bc74c22739625e06609ac16eea025f31fd350e3 \
+    --l1.router-address <ROUTER_ADDRESS> \
     --watcher.l2-rpcs http://localhost:1729 \
     --watcher.l2-chain-ids 65536999
 ```
