@@ -260,6 +260,7 @@ impl L1Committer {
         let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
             .await
             .map_err(CommitterError::EthClientError)?;
+
         let batch = match self
             .rollup_store
             .get_batch(batch_to_commit, l1_fork)
@@ -358,14 +359,35 @@ impl L1Committer {
     /// Ensure the checkpoint for the given batch is available locally
     /// If not, generate it by re-executing the blocks in the batch
     async fn check_current_checkpoint(&mut self, batch: &Batch) -> Result<(), CommitterError> {
-        let expected_checkpoint_path = self
-            .checkpoints_dir
-            .join(batch_checkpoint_name(batch.number));
+        info!("Checking checkpoint for batch {}", batch.number);
+        let batch_checkpoint_name = batch_checkpoint_name(batch.number);
+        let expected_checkpoint_path = self.checkpoints_dir.join(&batch_checkpoint_name);
 
-        if !expected_checkpoint_path.exists() {
-            self.generate_checkpoint_for_batch(batch).await?;
+        let current_checkpoint_path = self
+            .store
+            .get_store_directory()?
+            .join(batch_checkpoint_name);
+
+        if current_checkpoint_path == expected_checkpoint_path {
+            info!(
+                "Current checkpoint store is already at the expected path for batch {}: {:?}",
+                batch.number, expected_checkpoint_path
+            );
             return Ok(());
         }
+
+        if !expected_checkpoint_path.exists() {
+            info!(
+                "Checkpoint for batch {} not found locally, generating it by re-executing the blocks in the batch",
+                batch.number
+            );
+            self.generate_checkpoint_for_batch(batch).await?;
+        }
+
+        info!(
+            "Checkpoint for batch {} is available at {:?}",
+            batch.number, expected_checkpoint_path
+        );
 
         // At this step, the checkpoint is available
         // We need to load it as the current checkpoint store
