@@ -1,6 +1,10 @@
 use prometheus::{Encoder, HistogramTimer, HistogramVec, TextEncoder, register_histogram_vec};
-use std::sync::LazyLock;
-use tracing::{Subscriber, span::Id};
+use std::{future::Future, sync::LazyLock};
+use tracing::{
+    Subscriber,
+    field::{Field, Visit},
+    span::{Attributes, Id},
+};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 use crate::MetricsError;
@@ -11,8 +15,8 @@ pub static METRICS_BLOCK_PROCESSING_PROFILE: LazyLock<HistogramVec> =
 fn initialize_histogram_vec() -> HistogramVec {
     register_histogram_vec!(
         "function_duration_seconds",
-        "Histogram of the run time of the functions in block processing",
-        &["function_name"]
+        "Histogram of the run time of the functions in block processing and RPC handling",
+        &["namespace", "function_name"]
     )
     .unwrap()
 }
@@ -25,19 +29,72 @@ pub struct FunctionProfilingLayer;
 /// Wrapper around [`HistogramTimer`] to avoid conflicts with other layers
 struct ProfileTimer(HistogramTimer);
 
+/// Span extension storing the profiling namespace selected by instrumentation. This needs to
+/// be a String instead of a &'static str because using the span macros we could recieve dynamically
+/// generated names and can't rely on only string literals.
+struct Namespace(String);
+
+#[derive(Default)]
+struct NamespaceVisitor {
+    namespace: Option<String>,
+}
+
+impl Visit for NamespaceVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "namespace" {
+            self.namespace = Some(value.to_owned());
+        }
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "namespace" {
+            let rendered = format!("{value:?}");
+            let cleaned = rendered
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .unwrap_or(&rendered);
+            self.namespace = Some(cleaned.to_owned());
+        }
+    }
+}
+
 impl<S> Layer<S> for FunctionProfilingLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let mut visitor = NamespaceVisitor::default();
+        attrs.record(&mut visitor);
+
+        if let (Some(span), Some(namespace)) = (ctx.span(id), visitor.namespace) {
+            span.extensions_mut().insert(Namespace(namespace));
+        }
+    }
+
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
         if let Some(span) = ctx.span(id)
             && span.metadata().target().starts_with("ethrex")
         {
-            let name = span.metadata().name();
+            let target = span.metadata().target();
 
-            let timer = METRICS_BLOCK_PROCESSING_PROFILE
-                .with_label_values(&[name])
-                .start_timer();
+            // Skip RPC modules; RPC timing is recorded explicitly at the call sites.
+            if target.contains("::rpc") {
+                return;
+            }
+            let timer = {
+                let extensions = span.extensions();
+                let namespace = extensions
+                    .get::<Namespace>()
+                    .map(|ns| ns.0.as_str())
+                    .unwrap_or("default");
+
+                let function_name = span.metadata().name();
+
+                METRICS_BLOCK_PROCESSING_PROFILE
+                    .with_label_values(&[namespace, function_name])
+                    .start_timer()
+            };
+
             // PERF: `extensions_mut` uses a Mutex internally (per span)
             span.extensions_mut().insert(ProfileTimer(timer));
         }
@@ -52,6 +109,31 @@ where
             timer.observe_duration();
         }
     }
+}
+
+/// Records the duration of an async operation in the function profiling histogram.
+///
+/// This provides a lightweight alternative to the `#[instrument]` attribute when you need
+/// manual control over timing instrumentation, such as in RPC handlers.
+///
+/// # Parameters
+/// * `namespace` - Category for the metric (e.g., "rpc", "engine", "block_execution")
+/// * `function_name` - Name identifier for the operation being timed
+/// * `future` - The async operation to time
+///
+/// Use this function when you need to instrument an async operation for duration metrics,
+/// but cannot or do not want to use the `#[instrument]` attribute (for example, in RPC handlers).
+pub async fn record_async_duration<Fut, T>(namespace: &str, function_name: &str, future: Fut) -> T
+where
+    Fut: Future<Output = T>,
+{
+    let timer = METRICS_BLOCK_PROCESSING_PROFILE
+        .with_label_values(&[namespace, function_name])
+        .start_timer();
+
+    let output = future.await;
+    timer.observe_duration();
+    output
 }
 
 pub fn gather_profiling_metrics() -> Result<String, MetricsError> {
