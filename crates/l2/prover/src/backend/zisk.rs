@@ -82,7 +82,7 @@ pub fn prove(
         .arg(ELF_PATH)
         .arg("--input")
         .arg(INPUT_PATH)
-        .arg("--output")
+        .arg("--output-dir")
         .arg(OUTPUT_PATH)
         .arg("--unlock-mapped-memory")
         .arg("--proving-key")
