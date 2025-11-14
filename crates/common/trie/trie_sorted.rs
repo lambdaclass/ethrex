@@ -85,6 +85,7 @@ fn add_center_to_parent_and_write_queue(
 ) -> Result<(), TrieGenerationError> {
     debug!("{:x?}", center_side.path);
     debug!("{:x?}", parent_element.path);
+    let mut nodehash_buffer = Vec::with_capacity(512);
     let mut path = center_side.path.clone();
     path.skip_prefix(&parent_element.path);
     let index = path
@@ -96,7 +97,7 @@ fn add_center_to_parent_and_write_queue(
             if path.is_empty() {
                 (top_path, node.clone().into())
             } else {
-                let hash = node.compute_hash();
+                let hash = node.compute_hash_no_alloc(&mut nodehash_buffer);
                 nodes_to_write.push((center_side.path.clone(), node.clone().into()));
                 (
                     top_path,
@@ -117,7 +118,8 @@ fn add_center_to_parent_and_write_queue(
             .into(),
         ),
     };
-    parent_element.element.choices[index as usize] = node.compute_hash().into();
+    parent_element.element.choices[index as usize] =
+        node.compute_hash_no_alloc(&mut nodehash_buffer).into();
     debug!(
         "branch {:x?}",
         parent_element
@@ -167,6 +169,7 @@ where
     let mut left_side = StackElement::default();
     let mut center_side: CenterSide = CenterSide::from_value(initial_value);
     let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
+    let mut nodehash_buffer = Vec::with_capacity(512);
 
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
@@ -259,7 +262,7 @@ where
                     .last()
                     .expect("we just inserted")
                     .1
-                    .compute_hash()
+                    .compute_hash_no_alloc(&mut nodehash_buffer)
                     .finalize()
             }
             Node::Extension(extension_node) => {
@@ -267,14 +270,18 @@ where
                 // This next works because this target path is always length of 1 element,
                 // and we're just removing that one element
                 target_path.next();
-                extension_node.compute_hash().finalize()
+                extension_node
+                    .compute_hash_no_alloc(&mut nodehash_buffer)
+                    .finalize()
             }
             Node::Leaf(leaf_node) => {
                 leaf_node.partial.prepend(index as u8);
                 // This next works because this target path is always length of 1 element,
                 // and we're just removing that one element
                 target_path.next();
-                leaf_node.compute_hash().finalize()
+                leaf_node
+                    .compute_hash_no_alloc(&mut nodehash_buffer)
+                    .finalize()
             }
         }
     } else {
@@ -284,7 +291,7 @@ where
             .last()
             .expect("we just inserted")
             .1
-            .compute_hash()
+            .compute_hash_no_alloc(&mut nodehash_buffer)
             .finalize()
     };
 
