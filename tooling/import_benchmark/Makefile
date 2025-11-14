@@ -4,7 +4,10 @@ NUM_REPETITIONS ?= 3
 
 help:
 	@printf "run-bench: ## Runs a bench for the current pr. \nParameters:\n -BENCH_ID: number for the log file where it will\
-	 be saved with the format bench-BENCH_ID.log\n -NETWORK: which network to acesss (hoodi, mainnet)\nRequirements:\n This tool assumes we are running on Linux,\
+	 be saved with the format bench-BENCH_ID.log\n -NETWORK: which network to access (hoodi, mainnet)\nRequirements:\n This tool assumes we are running on Linux,\
+	 and that we have a valid db in ~/.local/share/ethrex_NETWORK_bench/ethrex\n with a valid state and a list of blocks for import\
+	 in ~/.local/share/ethrex_NETWORK_bench/chain.rlp\n\n"
+	@printf "run-benches: ## Runs multiple benches for the current pr. \nParameters:\n -NUM_REPETITIONS: number of runs\n -NETWORK: which network to access (hoodi, mainnet)\nRequirements:\n This tool assumes we are running on Linux,\
 	 and that we have a valid db in ~/.local/share/ethrex_NETWORK_bench/ethrex\n with a valid state and a list of blocks for import\
 	 in ~/.local/share/ethrex_NETWORK_bench/chain.rlp\n\n"
 	@printf "python3 parse_bench.py bench_num_1 bench_num_2: ## Parses the bench log files from [bench_num_1 to bench_num_2) to find average ggas\nRequirements\n\
