@@ -206,7 +206,6 @@ pub struct Options {
     pub p2p_disabled: bool,
     #[arg(
         long = "p2p.addr",
-        default_value = None,
         value_name = "ADDRESS",
         help = "Listening address for the P2P protocol.",
         help_heading = "P2P options"
