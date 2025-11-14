@@ -276,8 +276,7 @@ pub fn validate_max_fee_per_blob_gas(
     vm: &mut VM<'_>,
     tx_max_fee_per_blob_gas: U256,
 ) -> Result<(), VMError> {
-    let base_fee_per_blob_gas =
-        get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?;
+    let base_fee_per_blob_gas = vm.env.base_blob_fee_per_gas;
     if tx_max_fee_per_blob_gas < base_fee_per_blob_gas {
         return Err(TxValidationError::InsufficientMaxFeePerBlobGas {
             base_fee_per_blob_gas,

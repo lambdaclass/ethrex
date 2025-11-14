@@ -166,17 +166,9 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
-        let blob_base_fee = match self.blob_base_fee.get() {
-            Some(value) => *value,
-            None => {
-                let value =
-                    get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?;
-                _ = self.blob_base_fee.set(value);
-                value
-            }
-        };
-
-        self.current_call_frame.stack.push(blob_base_fee)?;
+        self.current_call_frame
+            .stack
+            .push(self.env.base_blob_fee_per_gas)?;
 
         Ok(OpcodeResult::Continue)
     }
