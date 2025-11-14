@@ -79,8 +79,11 @@ P2P options:
       --p2p.disabled
 
 
+      --p2p.addr <ADDRESS>
+          Listening address for the P2P protocol.
+
       --p2p.port <PORT>
-          TCP port for P2P protocol.
+          TCP port for the P2P protocol.
 
           [default: 30303]
 
@@ -176,6 +179,11 @@ Commands:
   help          Print this message or the help of the given subcommand(s)
 
 Options:
+      --osaka-activation-time <UINT64>
+          Block timestamp at which the Osaka fork is activated on L1. If not set, it will assume Osaka is already active.
+
+          [env: ETHREX_OSAKA_ACTIVATION_TIME=]
+
   -t, --tick-rate <TICK_RATE>
           time in ms between two ticks
 
@@ -242,8 +250,11 @@ P2P options:
       --p2p.disabled
 
 
+      --p2p.addr <ADDRESS>
+          Listening address for the P2P protocol.
+
       --p2p.port <PORT>
-          TCP port for P2P protocol.
+          TCP port for the P2P protocol.
 
           [default: 30303]
 
@@ -369,6 +380,10 @@ L1 Watcher options:
           [default: 10]
 
 Block producer options:
+      --watcher.l1-fee-update-interval-ms <ADDRESS>
+          [env: ETHREX_WATCHER_L1_FEE_UPDATE_INTERVAL_MS=]
+          [default: 60000]
+
       --block-producer.block-time <UINT64>
           How often does the sequencer produce new blocks to the L1 in milliseconds.
 
@@ -384,10 +399,13 @@ Block producer options:
       --block-producer.operator-fee-vault-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=]
 
-      --operator-fee-per-gas <UINT64>
+      --block-producer.operator-fee-per-gas <UINT64>
           Fee that the operator will receive for each unit of gas consumed in a block.
 
           [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=]
+
+      --block-producer.l1-fee-vault-address <ADDRESS>
+          [env: ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=]
 
       --block-producer.block-gas-limit <UINT64>
           Maximum gas limit for the L2 blocks.
@@ -553,7 +571,6 @@ L2 options:
 Monitor options:
       --no-monitor
           [env: ETHREX_NO_MONITOR=]
-          
 ```
 
 ## ethrex l2 prover
@@ -588,11 +605,6 @@ Prover client options:
           Possible values: info, debug, trace, warn, error
 
           [default: INFO]
-
-      --aligned
-          Activate aligned proving system
-
-          [env: PROVER_CLIENT_ALIGNED=]
 
       --sp1-server <URL>
           Url to the moongate server to use when using sp1 backend
