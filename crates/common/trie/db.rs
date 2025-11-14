@@ -4,7 +4,10 @@ use ethrex_rlp::encode::RLPEncode;
 use crate::{Nibbles, Node, NodeRLP, Trie, error::TrieError};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicPtr, AtomicUsize},
+    },
 };
 
 // Nibbles -> encoded node
@@ -42,6 +45,78 @@ pub trait TrieDB: Send + Sync {
     }
 }
 
+pub(crate) struct BulkTrieDB<'a> {
+    db: &'a dyn TrieDB,
+    path: Nibbles,
+    nodes: AtomicPtr<Option<Vec<u8>>>,
+    nodes_count: AtomicUsize,
+    nodes_cap: AtomicUsize,
+}
+
+impl<'a> BulkTrieDB<'a> {
+    pub fn new(db: &'a dyn TrieDB, path: Nibbles) -> Self {
+        Self {
+            db,
+            path,
+            // NOTE: in normal usage, none of these atomics will be contended,
+            // they were chosen just to avoid playing with `UnsafeCell` while
+            // meeting the trait requirements of `Send + Sync`.
+            nodes: AtomicPtr::default(),
+            nodes_count: AtomicUsize::default(),
+            // NOTE: needed to meet the invariants for freeing
+            nodes_cap: AtomicUsize::default(),
+        }
+    }
+
+    fn get_nodes(&self, first: usize) -> Result<&'a [Option<Vec<u8>>], TrieError> {
+        // NOTE: in theory, `leak` could produce a `NULL` pointer if the vector
+        // is empty. Using `with_capacity` guarantees it's not `NULL` because it
+        // forces preallocation. So, in this initial version that call to
+        // `with_capacity` has semantic relevance and is not just an optimization.
+        use std::sync::atomic::Ordering::Relaxed;
+        let nodes_ptr = self.nodes.load(Relaxed);
+        if !nodes_ptr.is_null() {
+            let count = self.nodes_count.load(Relaxed);
+            let nodes = unsafe { std::slice::from_raw_parts(nodes_ptr, count) };
+            return Ok(nodes);
+        }
+        let encoded_nodes = self.db.get_nodes_in_path(self.path.clone(), first)?;
+        let cap = encoded_nodes.capacity();
+        let encoded_nodes = encoded_nodes.leak();
+        self.nodes_count.store(encoded_nodes.len(), Relaxed);
+        self.nodes_cap.store(cap, Relaxed);
+        self.nodes.store(encoded_nodes.as_ptr().cast_mut(), Relaxed);
+        Ok(encoded_nodes)
+    }
+}
+impl<'a> Drop for BulkTrieDB<'a> {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let ptr = self.nodes.load(Relaxed);
+        if ptr.is_null() {
+            return;
+        }
+        let len = self.nodes_count.load(Relaxed);
+        let cap = self.nodes_cap.load(Relaxed);
+        unsafe { Vec::from_raw_parts(ptr, len, cap) };
+    }
+}
+impl<'a> TrieDB for BulkTrieDB<'a> {
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        if !self.path.as_ref().starts_with(key.as_ref()) {
+            // key not in path
+            return Ok(None);
+        }
+        let nodes = self.get_nodes(key.len())?;
+        // Because we skip some nodes, we need to offset the relative position
+        // by the difference between the full path and what we actually have.
+        let index = key.len() - (self.path.len() - nodes.len());
+        Ok(nodes.get(index).cloned().flatten())
+    }
+    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        unimplemented!()
+    }
+}
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 #[derive(Default)]
 pub struct InMemoryTrieDB {

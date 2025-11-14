@@ -130,38 +130,16 @@ impl Trie {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
         self.dirty.insert(path.clone());
-        let encoded_nodes = self.db.get_nodes_in_path(path.clone(), 0)?;
-        let keys = (0..path.len()).map(|i| path.slice(0, i));
-        let mut nodes = Vec::with_capacity(path.len());
-        for (path, encoded) in std::iter::zip(keys, encoded_nodes) {
-            let Some(encoded) = encoded else {
-                continue;
-            };
-            nodes.push((path, encoded));
-        }
-
-        struct VecTrieDB(Vec<(Nibbles, Vec<u8>)>);
-        impl TrieDB for VecTrieDB {
-            fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-                let Ok(pos) = self.0.binary_search_by(|(k, _)| k.cmp(&key)) else {
-                    return Ok(None);
-                };
-                Ok(self.0.get(pos).map(|(_, v)| v.clone()))
-            }
-            fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-                unimplemented!()
-            }
-        }
-        let fake_db = VecTrieDB(nodes);
+        let bulk_db = db::BulkTrieDB::new(self.db.as_ref(), path.clone());
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
             self.root
-                .get_node_mut(&fake_db, Nibbles::default())?
+                .get_node_mut(&bulk_db, Nibbles::default())?
                 .ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
                 })?
-                .insert(&fake_db, path, value)?
+                .insert(&bulk_db, path, value)?
         } else {
             // If the trie is empty, just add a leaf.
             self.root = Node::from(LeafNode::new(path, value)).into()
