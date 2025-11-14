@@ -168,22 +168,23 @@ impl TrieLayerCache {
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
-            Ok(layer) => layer,
-            Err(layer) => TrieLayer::clone(&layer),
-        };
-        // ensure parents are commited
-        let parent_nodes = self.commit(layer.parent_root);
+        let mut layers_to_commit = vec![];
+        let mut current_state_root = state_root;
+        while let Some(layer) = self.layers.remove(&current_state_root) {
+            let layer = Arc::unwrap_or_clone(layer);
+            current_state_root = layer.parent_root;
+            layers_to_commit.push(layer);
+        }
+        let top_layer_id = layers_to_commit.first()?.id;
         // older layers are useless
-        self.layers.retain(|_, item| item.id > layer.id);
+        self.layers.retain(|_, item| item.id > top_layer_id);
         self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
-        Some(
-            parent_nodes
-                .unwrap_or_default()
-                .into_iter()
-                .chain(layer.nodes)
-                .collect(),
-        )
+        let nodes_to_commit = layers_to_commit
+            .into_iter()
+            .rev()
+            .flat_map(|layer| layer.nodes)
+            .collect();
+        Some(nodes_to_commit)
     }
 }
 
