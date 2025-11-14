@@ -1,0 +1,15 @@
+name: "Install RISC0"
+description: "Install RISC0 Toolchain"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install RISC0
+      shell: bash
+      run: |
+        curl -L https://risczero.com/install | bash
+        ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+        ~/.risc0/bin/rzup install risc0-groth16
+        ~/.risc0/bin/rzup install rust
+        ~/.risc0/bin/rzup install cpp
+        ~/.risc0/bin/rzup install r0vm 3.0.3

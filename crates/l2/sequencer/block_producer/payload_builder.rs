@@ -163,10 +163,8 @@ pub async fn fill_transactions(
         if head_tx.is_privileged() {
             if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
                 debug!("Ran out of space for privileged transactions");
-                // We break here because if we have expired privileged transactions
-                // in the contract, our batch will be rejected if non-privileged txs
-                // are included.
-                break;
+                txs.pop();
+                continue;
             }
             let id = head_tx.nonce();
             if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
