@@ -125,7 +125,7 @@ Pie chart that shows where RPC time is spent across methods over the selected ra
 ### Slowest RPC Methods
 Table listing the highest average-latency methods over the active dashboard range. Use it to prioritise optimisation or caching efforts.
 
-![Slowest RPC Methods](img/slowest_rpc_methods.png) ![alt text](image.png)
+![Slowest RPC Methods](img/slowest_rpc_methods.png)
 
 ### RPC Request Rate by Method
 Timeseries showing request throughput broken down by method, averaged across the selected range. Great for checking load distribution after clients roll out new features.
@@ -135,7 +135,7 @@ Timeseries showing request throughput broken down by method, averaged across the
 ### RPC Latency by Methods
 Short-window latency view (18 s lookback) highlighting real-time spikes per method. Complements the range-based averages above.
 
-![RPC Latency by Methods](img/rpc_latency_by_methods.png)![alt text](image.png)
+![RPC Latency by Methods](img/rpc_latency_by_methods.png)
 
 _**Limitations**: The RPC latency views inherit the same windowing caveats as the Engine charts: averages use the dashboard time range while the live chart relies on an 18 s window._
 
