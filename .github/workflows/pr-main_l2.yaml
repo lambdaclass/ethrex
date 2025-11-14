@@ -5,6 +5,7 @@ on:
   merge_group:
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -145,6 +146,150 @@ jobs:
         with:
           name: ethrex_image_l2
           path: /tmp/ethrex_image_l2.tar
+
+  uniswap-example:
+    name: Uniswap swap_token example
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-docker, build-docker-l2]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Yarn
+        run: npm install -g yarn
+
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
+      - name: Install rex
+        run: |
+          git clone https://github.com/lambdaclass/rex.git /tmp/rex
+          cd /tmp/rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
+          cargo build --release
+          sudo cp target/release/rex /usr/local/bin
+
+      - name: Download ethrex image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load ethrex image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
+
+      - name: Start L1
+        run: |
+          cd crates/l2
+          docker compose up --detach ethrex_l1
+
+      - name: Deploy contracts (including rich account)
+        run: |
+          #
+          # If this step fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
+          touch cmd/.env
+          cd crates/l2
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_L2_VALIDIUM=false \
+          docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "Contract deployer failed"
+            docker logs contract_deployer
+            exit 1
+          fi
+
+      - name: Start L2
+        run: |
+          cd crates/l2
+          export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
+          export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
+
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_L2_VALIDIUM=false \
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          docker compose up --detach --no-deps ethrex_l2
+
+      - name: Wait for rich L2 balance
+        run: |
+          set -euo pipefail
+
+          echo "Waiting until rich account 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e has funds on localhost:1729..."
+          MAX_BALANCE_TRIES=300    # ~10 minutes with BALANCE_SLEEP_SECS=2
+          BALANCE_SLEEP_SECS=2
+          balance_wei=0
+          balance_output=""
+
+          for ((i = 1; i <= MAX_BALANCE_TRIES; i++)); do
+            if ! balance_output=$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e http://localhost:1729 2>/dev/null); then
+              sleep "${BALANCE_SLEEP_SECS}"
+              continue
+            fi
+
+            balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+
+            if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+              echo "Detected L2 balance for rich account: ${balance_wei} wei"
+              break
+            fi
+
+            sleep "${BALANCE_SLEEP_SECS}"
+          done
+
+          if [[ ! "${balance_wei}" =~ ^[0-9]+$ ]] || (( balance_wei == 0 )); then
+            echo "Timed out waiting for non-zero L2 balance for rich account."
+            echo "Last rex balance output:"
+            echo "${balance_output:-<none>}"
+            exit 1
+          fi
+
+      - name: Run Uniswap swap_token
+        run: |
+          echo "Cloning ethrex-l2-contracts-kit (branch add_uniswap_script)..."
+          git clone --branch add_uniswap_script \
+            https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
+            /tmp/ethrex-l2-contracts-kit
+
+          cd /tmp/ethrex-l2-contracts-kit
+
+          echo "Running Uniswap swap_token script..."
+          chmod +x examples/uniswap/swap_token
+          examples/uniswap/swap_token
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
@@ -492,9 +637,15 @@ jobs:
     name: Integration Test L2
     runs-on: ubuntu-latest
     needs:
-      [detect-changes, integration-test, state-diff-test, integration-test-tdx]
+      [
+        detect-changes,
+        integration-test,
+        state-diff-test,
+        integration-test-tdx,
+        uniswap-example,
+      ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-example.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -505,5 +656,10 @@ jobs:
 
           if [ "${{ needs.state-diff-test.result }}" != "success" ]; then
             echo "Job State Reconstruction Tests failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.uniswap-example.result }}" != "success" ]; then
+            echo "Job Uniswap swap_token example failed"
             exit 1
           fi
