@@ -16,6 +16,7 @@ In other words, how do you ensure that:
 - When all **writes** are done to account states or storage slots after execution, the final state matches what the (last executed) block header specified is the state at that block (the header contains the final state MPT root).
 
 ### Stateless execution and execution witness
+
 Ethrex implements a way to execute a block (or a batch of blocks) without having access to the entire blockchain state, but only the necessary subset for that particular execution. This subset is called the *execution witness*, and running a block this way is called *stateless execution* (stateless in the sense that you don't need a database with hundreds of gigabytes of the entire state data to execute).
 
 The execution witness is composed of all MPT nodes which are relevant to the execution, so that for each read and write we have all the nodes that form a path from the root to the relevant leaf. This path is a proof that this particular value we read/wrote is part (or not) of the initial or final state MPT.
@@ -23,6 +24,7 @@ The execution witness is composed of all MPT nodes which are relevant to the exe
 So, before initiating block execution, we can verify each proof for each state value read from. After execution, we can verify each proof for each state value written to. After these steps we authenticated all state data to two MPT root hashes (initial and final state roots), which later can be compared against reference values to check that the execution started from and arrived to the correct state. If you were to change a single bit, this comparison would fail.
 
 ### In a zkVM environment
+
 After stateless execution was done, the initial and final state roots can be committed as public values of the zk proof. By verifying the proof we know that blocks were executed from an initial state and arrived into a final state, and we know the root hashes of the MPT of each one. If the initial root is what we expected (equal to the root of the latest validated state), then we trustlessly verified that the chain advanced its state correctly, and we can authenticate the new, valid state using the final state root.
 
 By proving the execution of L2 blocks and verifying the zk proof (alongside with the initial state root) in an Ethereum smart contract validators attest the new state and the L2 inherits the security of Ethereum (assuming no bugs in the whole pipeline). This is the objective of an Ethereum L2.
@@ -30,12 +32,15 @@ By proving the execution of L2 blocks and verifying the zk proof (alongside with
 Validators themselves could verify L1 block execution proofs to attest Ethereum instead of re-executing.
 
 ## L2 specific checks
+
 Apart from stateless execution, the prover does some extra checks needed for L2 specific features.
 
 ### Data availability
+
 Rollups publish state diffs as blob data to the L1 so that users can reconstruct the L2 state and rescue their funds if the sequencing were to fail or censors data. This published data needs to be part of the zk proof the prover generated. For this it calculates the valid state diffs and verifies a KZG proof, whose commitment can later be compared to the one published to the L1 using the `BLOBHASH` EVM opcode. See [data availability](../l2/fundamentals/data_availability.md) for more details.
 
 ### L1<->L2 messaging
+
 This is a fundamental feature of an L2, used mainly for bridging assets between the L1 and the L2 or between L2s using the ethrex stack. Messages need to be part of the proof to make sure the sequencer included them correctly.
 
 Messages are compressed into a hash or a Merkle tree root which then are stored in an L1 contract together with the rest of the L2 state data. The prover retrieves the transactions or events that the messages produced in the L2, reconstructs the message data and recomputes the hashes or Merkle tree roots, which are then committed as a public input of the zk proof. At verification we can compare these hashes with the ones stored in the L1. This is the same concept used for state data.
@@ -43,4 +48,5 @@ Messages are compressed into a hash or a Merkle tree root which then are stored 
 For more details checkout [deposits](../l2/fundamentals/deposits.md) and [withdrawals](../l2/fundamentals/withdrawals.md)
 
 ## See also
+
 [Guest program](./guest_program.md) for the detailed steps of the program that the prover generates a proof of.
