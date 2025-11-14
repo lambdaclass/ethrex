@@ -1429,6 +1429,7 @@ pub fn validate_requests_hash(
 
     let encoded_requests: Vec<EncodedRequests> = requests.iter().map(|r| r.encode()).collect();
     let computed_requests_hash = compute_requests_hash(&encoded_requests);
+    println!("computed_requests_hash {:?}", computed_requests_hash);
     let valid = header
         .requests_hash
         .map(|requests_hash| requests_hash == computed_requests_hash)
