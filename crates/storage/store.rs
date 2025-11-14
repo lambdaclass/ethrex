@@ -1,8 +1,8 @@
+use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
-use crate::{api::StoreEngine, apply_prefix};
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
@@ -18,7 +18,7 @@ use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
-use std::{collections::hash_map::Entry, sync::Arc};
+use std::{collections::hash_map::Entry, path::PathBuf, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Mutex,
@@ -533,50 +533,43 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
-        let mut nodes = HashMap::new();
-        let mut genesis_state_trie = self.engine.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut account_trie = self.engine.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
+
             // Store account code (as this won't be stored in the trie)
             let code = Code::from_bytecode(account.code);
             let code_hash = code.hash;
             self.add_account_code(code).await?;
+
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
                 .open_direct_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
+
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
-            let (storage_root, new_nodes) = storage_trie.collect_changes_since_last_hash();
-            nodes.insert(H256::from_slice(&hashed_address), new_nodes);
+
+            // TODO(#5195): committing each storage trie individually is inefficient.
+            // We would benefit form a mass storage node insertion method.
+
             // Add account to trie
             let account_state = AccountState {
                 nonce: account.nonce,
                 balance: account.balance,
-                storage_root,
+                storage_root: storage_trie.hash()?,
                 code_hash,
             };
-            genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
-        }
-        let (state_root, state_nodes) = genesis_state_trie.collect_changes_since_last_hash();
 
-        // TODO: replace this with a Store method
-        genesis_state_trie.db().put_batch(
-            nodes
-                .into_iter()
-                .flat_map(|(account_hash, nodes)| {
-                    nodes
-                        .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                })
-                .chain(state_nodes)
-                .collect(),
-        )?;
-        Ok(state_root)
+            account_trie.insert(hashed_address, account_state.encode_to_vec())?;
+        }
+
+        Ok(account_trie.hash()?)
     }
 
     pub async fn add_receipt(
@@ -1371,6 +1364,10 @@ impl Store {
 
     pub async fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
         self.engine.create_checkpoint(path.as_ref()).await
+    }
+
+    pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
+        self.engine.get_store_directory()
     }
 }
 
