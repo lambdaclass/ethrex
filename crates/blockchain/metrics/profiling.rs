@@ -81,18 +81,20 @@ where
             if target.contains("::rpc") {
                 return;
             }
+            let timer = {
+                let extensions = span.extensions();
+                let namespace = extensions
+                    .get::<Namespace>()
+                    .map(|ns| ns.0.as_str())
+                    .unwrap_or("default");
 
-            let extensions = span.extensions();
-            let namespace = extensions
-                .get::<Namespace>()
-                .map(|ns| ns.0.as_str())
-                .unwrap_or("default");
+                let function_name = span.metadata().name();
 
-            let function_name = span.metadata().name();
+                METRICS_BLOCK_PROCESSING_PROFILE
+                    .with_label_values(&[namespace, function_name])
+                    .start_timer()
+            };
 
-            let timer = METRICS_BLOCK_PROCESSING_PROFILE
-                .with_label_values(&[namespace, function_name])
-                .start_timer();
             // PERF: `extensions_mut` uses a Mutex internally (per span)
             span.extensions_mut().insert(ProfileTimer(timer));
         }
