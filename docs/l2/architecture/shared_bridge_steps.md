@@ -28,6 +28,8 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 
 ### Start the first L2
 
+Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs of the previous command
+
 ```bash
 ../../target/release/ethrex \
 	l2 \
@@ -38,8 +40,8 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 	--metrics \
 	--metrics.port 3702 \
 	--datadir dev_ethrex_l2 \
-	--l1.bridge-address 0x74bb68663fc303ac954ef9aed5a2edb0b4887296 \
-	--l1.on-chain-proposer-address 0x84307998a57635ccc4ed1e5dba1e76344dcdfbe6 \
+	--l1.bridge-address <L1_BRIDGE_ADDRESS> \
+	--l1.on-chain-proposer-address <L1_ON_CHAIN_PROPOSER_ADDRESS> \
 	--eth.rpc-url http://localhost:8545 \
 	--osaka-activation-time 1761677592 \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
