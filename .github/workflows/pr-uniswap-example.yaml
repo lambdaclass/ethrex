@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   run-uniswap-example:
-    name: Run Uniswap example script
+    name: Run Uniswap swap_token example
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -30,6 +30,14 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Yarn
+        run: npm install -g yarn
 
       - name: Install solc
         uses: lambdaclass/get-solc@master
@@ -51,7 +59,46 @@ jobs:
         run: |
           cargo build --release --features "l2,l2-sql" --bin ethrex
 
-      - name: Run Uniswap example
+      - name: Run L2 dev node and Uniswap swap_token
+        env:
+          COMPILE_CONTRACTS: "true"
         run: |
-          chmod +x scripts/run_uniswap_example.sh
-          ./scripts/run_uniswap_example.sh
+          set -euo pipefail
+
+          # Start L2 dev mode (runs L1+L2)
+          ./target/release/ethrex \
+            l2 --dev \
+            --osaka-activation-time 1761677592 \
+            --no-monitor &
+          ETHREX_PID=$!
+
+          trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
+
+          echo "Waiting for L2 RPC at http://127.0.0.1:1729..."
+          for i in {1..120}; do
+            if curl -sSf http://127.0.0.1:1729 >/dev/null 2>&1; then
+              echo "L2 RPC is up"
+              break
+            fi
+            sleep 2
+          done
+
+          if ! curl -sSf http://127.0.0.1:1729 >/dev/null 2>&1; then
+            echo "L2 RPC did not become ready in time"
+            exit 1
+          fi
+
+          if ! kill -0 "$ETHREX_PID" 2>/dev/null; then
+            echo "ethrex l2 --dev process exited unexpectedly"
+            exit 1
+          fi
+
+          # Clone ethrex-l2-contracts-kit (branch add_uniswap_script)
+          git clone --branch add_uniswap_script \
+            https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
+            /tmp/ethrex-l2-contracts-kit
+
+          cd /tmp/ethrex-l2-contracts-kit
+
+          chmod +x examples/uniswap/swap_token
+          examples/uniswap/swap_token
