@@ -36,9 +36,19 @@ bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose
   "alloc",
   "experimental",
 ] }
-ark-bn254 = "0.5.0"
-ark-ec = "0.5.0"
-ark-ff = { version = "0.5.0", features = ["asm"] }
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra", branch = "master", features = [
+  "asm",
+] }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra", branch = "master", features = [
+  "parallel",
+] }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra", branch = "master", features = [
+  "asm",
+  "parallel",
+] }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra", branch = "master", features = [
+  "parallel",
+] }
 strum = { version = "0.27.1", features = ["derive"] }
 k256 = "0.13.4"
 substrate-bn = { version = "0.6.0", optional = true }
