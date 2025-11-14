@@ -250,8 +250,7 @@ pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
     if total_len < 56 {
         buf.put_u8(0xc0 + total_len as u8);
     } else {
-        let mut bytes = ArrayVec::<[u8; 8]>::new();
-        bytes.extend_from_slice(&total_len.to_be_bytes());
+        let bytes = total_len.to_be_bytes();
         let start = bytes.iter().position(|&x| x != 0).unwrap();
         let len = bytes.len() - start;
         buf.put_u8(0xf7 + len as u8);
