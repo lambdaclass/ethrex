@@ -262,6 +262,33 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
             buf.put_slice(&tmp_buf);
         }
     }
+
+    fn length(&self) -> usize {
+        if self.is_empty() {
+            // 0xc0 (1 byte)
+            return 1;
+        }
+
+        let mut payload_len = 0usize;
+        for item in self {
+            payload_len += item.length();
+        }
+
+        if payload_len < 56 {
+            // one byte prefix
+            1 + payload_len
+        } else {
+            let be_bytes = payload_len.to_be_bytes();
+            let mut i = 0;
+            while i < be_bytes.len() && be_bytes[i] == 0 {
+                i += 1;
+            }
+            let be_len = be_bytes.len() - i;
+
+            // prefix + big endian length + payload length
+            1 + be_len + payload_len
+        }
+    }
 }
 
 pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
