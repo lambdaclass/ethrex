@@ -148,7 +148,7 @@ jobs:
           path: /tmp/ethrex_image_l2.tar
 
   uniswap-example:
-    name: Uniswap swap_token example
+    name: Uniswap Swap Token Flow
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
@@ -278,7 +278,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run Uniswap swap_token
+      - name: Run Uniswap Swap Token Script
         run: |
           echo "Cloning ethrex-l2-contracts-kit (branch add_uniswap_script)..."
           git clone --branch add_uniswap_script \
