@@ -9,6 +9,8 @@ const OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output.bin"
 
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_elf");
 
+pub struct ProveOutput(pub Vec<u8>);
+
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     // We write the ELF to a temp file because ziskemu currently only accepts
     // ELF files from disk
@@ -56,9 +58,9 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn prove(
-    _input: ProgramInput,
-    _format: ProofFormat,
-) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
+    input: ProgramInput,
+    format: ProofFormat,
+) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     // We write the ELF to a temp file because cargo-zisk prove currently only
     // accepts ELF files from disk
     if !std::path::Path::new(ELF_PATH).exists() {
@@ -103,8 +105,8 @@ pub fn prove(
         duration.as_secs_f64()
     );
 
-    let output_bytes = std::fs::read(OUTPUT_PATH)?;
-    let output: ProgramOutput = rkyv::from_bytes(&output_bytes)?;
+    let proof_bytes = std::fs::read(OUTPUT_PATH)?;
+    let output = ProveOutput(proof_bytes);
     std::fs::remove_file(OUTPUT_PATH)?;
     Ok(output)
 }
@@ -114,8 +116,8 @@ pub fn verify(_output: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>>
 }
 
 pub fn to_batch_proof(
-    _proof: ProgramOutput,
-    _format: ProofFormat,
+    proof: ProveOutput,
+    format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     Err("to_batch_proof is not implemented for ZisK backend".into())
 }
