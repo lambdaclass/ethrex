@@ -17,6 +17,8 @@ use crate::rkyv_utils::H256Wrapper;
     PartialOrd,
     Ord,
     Eq,
+    serde::Serialize,
+    serde::Deserialize,
     rkyv::Serialize,
     rkyv::Deserialize,
     rkyv::Archive,
