@@ -32,9 +32,10 @@ pub fn download_script() {
         output_contracts_path.display()
     );
     let contracts_path = Path::new("../../crates/l2/contracts/src");
+    println!("{}", cfg!(not(feature = "l2")));
+    println!("{:?}", env::var_os("SKIP_COMPILE_CONTRACTS"));
 
-    // If COMPILE_CONTRACTS is not set, skip and write empty files
-    if env::var_os("COMPILE_CONTRACTS").is_none() {
+    if cfg!(not(feature = "l2")) || env::var_os("SKIP_COMPILE_CONTRACTS").is_some() {
         write_empty_bytecode_files(&output_contracts_path);
         return;
     }
@@ -292,9 +293,7 @@ pub enum SystemContractsUpdaterError {
     FailedToWriteModifiedGenesisFile(#[from] std::io::Error),
     #[error("Failed to read path: {0}")]
     InvalidPath(String),
-    #[error(
-        "Contract bytecode not found. Make sure to compile the updater with `COMPILE_CONTRACTS` set."
-    )]
+    #[error("Contract bytecode not found.")]
     BytecodeNotFound,
 }
 
