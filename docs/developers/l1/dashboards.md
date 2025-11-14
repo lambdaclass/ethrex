@@ -92,8 +92,7 @@ _**Limitations**: This panel has the same limitations as the other `by block` pa
 
 Collapsed row that surfaces the `namespace="engine"` Prometheus timers so you can keep an eye on EL <> CL Engine API health. Each panel repeats per instance to be able to compare behaviour across nodes.
 
-### Engine Success/Error Rate
-Stacked requests-per-second timeseries that separates successful Engine API calls from failures, averaged across the active dashboard range. Pair it with the latency charts to quickly identify when errors correlate with performance degradation.
+![Engine API row](img/engine_api_row.png)
 
 ### Engine Request Rate by Method
 Shows how many Engine API calls per second we process, split by JSON-RPC method and averaged across the currently selected dashboard range.
@@ -116,8 +115,7 @@ _**Limitations**: The aggregated panels pull averages across the current dashboa
 
 Another collapsed row focused on the public JSON-RPC surface (`namespace="rpc"`). Expand it when you need to diagnose endpoint hotspots or validate rate limiting. Each panel repeats per instance to be able to compare behaviour across nodes.
 
-### RPC Success/Error Rate
-Stacked requests-per-second view splitting successes and failures, averaged across the active dashboard range so you can spot when endpoints start returning errors under pressure.
+![RPC API row](img/rpc_api_row.png)
 
 ### RPC Time per Method
 Pie chart that shows where RPC time is spent across methods over the selected range. Quickly surfaces which endpoints dominate total processing time.
