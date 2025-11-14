@@ -147,13 +147,10 @@ impl Substate {
         if !self.selfdestruct_set.insert(address) {
             return true;
         }
-        let is_present = self
-            .parent
+        self.parent
             .as_ref()
             .map(|parent| parent.is_selfdestruct(&address))
-            .unwrap_or_default();
-
-        is_present
+            .unwrap_or_default()
     }
 
     /// Return whether an address is already marked as selfdestructed.
@@ -228,13 +225,10 @@ impl Substate {
         if !self.accessed_addresses.insert(address) {
             return true;
         }
-        let is_present = self
-            .parent
+        self.parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or_default();
-
-        is_present
+            .unwrap_or_default()
     }
 
     /// Return whether an address has already been accessed.
@@ -252,13 +246,10 @@ impl Substate {
         if !self.created_accounts.insert(address) {
             return true;
         }
-        let is_present = self
-            .parent
+        self.parent
             .as_ref()
             .map(|parent| parent.is_account_created(&address))
-            .unwrap_or_default();
-
-        is_present
+            .unwrap_or_default()
     }
 
     /// Return whether an address has already been marked as a new account.
