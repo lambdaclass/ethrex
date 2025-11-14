@@ -1427,6 +1427,7 @@ impl Blockchain {
                     "Privileged Transactions are not supported in P2P".to_string(),
                 ));
             }
+            Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
         };
 
         Ok(result)
