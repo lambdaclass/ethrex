@@ -288,7 +288,9 @@ impl Store {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_ribbon_filter(10.0);
+                    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                    block_opts.set_pin_top_level_index_and_filter(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CF_ACCOUNT_FLATKEYVALUE | CF_STORAGE_FLATKEYVALUE => {
