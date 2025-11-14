@@ -13,3 +13,6 @@ run-bench: ## Runs a bench for the current pr. parameters -BENCH_ID: number for 
 	rm -rf ~/.local/share/temp
 	cp -r ~/.local/share/ethrex_$(NETWORK)_bench/ethrex ~/.local/share/temp
 	cd ../.. && cargo r --release -- --network $(NETWORK) --datadir ~/.local/share/temp import-bench ~/.local/share/ethrex_$(NETWORK)_bench/chain.rlp | tee bench-$(BENCH_ID).log
+
+run-benches:
+	./benchmark.sh $(NETWORK) 3
