@@ -256,6 +256,13 @@ impl BranchNode {
         NodeHash::from_encoded(&self.encode_to_vec())
     }
 
+    /// Computes the node's hash
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+        buf.clear();
+        self.encode(buf);
+        NodeHash::from_encoded(buf)
+    }
+
     /// Traverses own subtrie until reaching the node containing `path`
     /// Appends all encoded nodes traversed to `node_path` (including self)
     /// Only nodes with encoded len over or equal to 32 bytes are included

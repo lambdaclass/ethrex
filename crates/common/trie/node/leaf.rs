@@ -131,6 +131,13 @@ impl LeafNode {
         NodeHash::from_encoded(&self.encode_to_vec())
     }
 
+    /// Computes the node's hash
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+        buf.clear();
+        self.encode(buf);
+        NodeHash::from_encoded(buf)
+    }
+
     /// Encodes the node and appends it to `node_path` if the encoded node is 32 or more bytes long
     pub fn get_path(&self, node_path: &mut Vec<Vec<u8>>) -> Result<(), TrieError> {
         let encoded = self.encode_to_vec();

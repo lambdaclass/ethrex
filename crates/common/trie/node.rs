@@ -145,6 +145,13 @@ impl NodeRef {
         }
     }
 
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> &NodeHash {
+        match self {
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash_no_alloc(buf)),
+            NodeRef::Hash(hash) => hash,
+        }
+    }
+
     pub fn memoize_hashes(&self) {
         if let NodeRef::Node(node, hash) = &self
             && hash.get().is_none()
@@ -312,6 +319,16 @@ impl Node {
             Node::Branch(n) => n.compute_hash(),
             Node::Extension(n) => n.compute_hash(),
             Node::Leaf(n) => n.compute_hash(),
+        }
+    }
+
+    /// Computes the node's hash
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+        self.memoize_hashes();
+        match self {
+            Node::Branch(n) => n.compute_hash_no_alloc(buf),
+            Node::Extension(n) => n.compute_hash_no_alloc(buf),
+            Node::Leaf(n) => n.compute_hash_no_alloc(buf),
         }
     }
 
