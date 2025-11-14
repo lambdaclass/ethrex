@@ -277,11 +277,6 @@ impl Node {
         );
         let payload_id = fork_choice_response.payload_id.unwrap();
 
-        // We need this sleep so the get_payload call doesn't return an empty block
-        // As of #5205 we build an empty block first before building a payload with the transactions to avoid missing slots
-        // This can cause issues in these tests if the payload is requested too early, the sleep is there to avoid it
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
         let payload_response = self
             .engine_client
             .engine_get_payload_v5(payload_id)
