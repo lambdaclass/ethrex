@@ -79,13 +79,15 @@ impl TrieDB for RocksDBLockedTrieDB {
         self.last_computed_flatkeyvalue >= key
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let cf = if key.is_leaf() {
+        let is_leaf = key.is_leaf();
+        let cf = if is_leaf {
             &self.cf_flatkeyvalue
         } else {
             &self.cf
         };
-        let db_key = self.make_key(key);
-        let db_key = Store::db_key(&db_key);
+        let fkv_key = self.make_key(key);
+        let trie_key = Store::db_key(&fkv_key);
+        let db_key = if is_leaf { &fkv_key[..] } else { &trie_key[..] };
 
         self.snapshot
             .get_cf(cf, db_key)

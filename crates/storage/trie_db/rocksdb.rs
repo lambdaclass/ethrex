@@ -97,12 +97,14 @@ impl TrieDB for RocksDBTrieDB {
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = self.cf_handle_for_key(&key)?;
-        let db_key = self.make_key(key);
-        let db_key = Store::db_key(&db_key);
+        let is_leaf = key.is_leaf();
+        let fkv_key = self.make_key(key);
+        let trie_key = Store::db_key(&fkv_key);
+        let db_key = if is_leaf { &fkv_key[..] } else { &trie_key[..] };
 
         let res = self
             .db
-            .get_cf(&cf, &db_key)
+            .get_cf(&cf, db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
 
         Ok(res)
@@ -113,8 +115,10 @@ impl TrieDB for RocksDBTrieDB {
 
         for (key, value) in key_values {
             let cf = self.cf_handle_for_key(&key)?;
-            let db_key = self.make_key(key);
-            let db_key = Store::db_key(&db_key);
+            let is_leaf = key.is_leaf();
+            let fkv_key = self.make_key(key);
+            let trie_key = Store::db_key(&fkv_key);
+            let db_key = if is_leaf { &fkv_key[..] } else { &trie_key[..] };
 
             if value.is_empty() {
                 batch.delete_cf(&cf, db_key);
@@ -134,10 +138,12 @@ impl TrieDB for RocksDBTrieDB {
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
 
-        for (hash, node) in key_values {
-            let cf = self.cf_handle_for_key(hash)?;
-            let db_key = self.make_key(hash.clone());
-            let db_key = Store::db_key(&db_key);
+        for (key, node) in key_values {
+            let cf = self.cf_handle_for_key(key)?;
+            let is_leaf = key.is_leaf();
+            let fkv_key = self.make_key(key.clone());
+            let trie_key = Store::db_key(&fkv_key);
+            let db_key = if is_leaf { &fkv_key[..] } else { &trie_key[..] };
             buffer.clear();
             node.encode(&mut buffer);
             batch.put_cf(&cf, db_key, &buffer);

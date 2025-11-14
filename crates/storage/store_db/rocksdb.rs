@@ -850,7 +850,8 @@ impl Store {
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
             let is_account = key.len() <= 65;
-            let db_key = Self::db_key(&key);
+            let trie_key = Store::db_key(&key);
+            let db_key = if is_leaf { &key[..] } else { &trie_key[..] };
 
             if is_leaf && key > last_written {
                 continue;
