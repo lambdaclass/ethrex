@@ -528,6 +528,9 @@ fn get_fee_token_ratio(
         &mut db.clone(),
         vm_type,
     )?;
+    if !execution_result.is_success() || execution_result.output().is_empty() {
+        return Ok(None);
+    }
     Ok(Some(U256::from_big_endian(&execution_result.output())))
 }
 

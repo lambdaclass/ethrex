@@ -8,7 +8,7 @@ contract FeeTokenPricer is IFeeTokenPricer {
     mapping(address => uint256) private ratios;
 
     modifier onlyBridge() {
-        require(msg.sender == BRIDGE, "FeeTokenRegistry: not bridge");
+        require(msg.sender == BRIDGE, "FeeTokenPricer: not bridge");
         _;
     }
 
@@ -32,6 +32,7 @@ contract FeeTokenPricer is IFeeTokenPricer {
             feeToken != address(0),
             "FeeTokenPricer: address cannot be zero"
         );
+        require(ratio != 0, "FeeTokenPricer: ratio cannot be zero");
         ratios[feeToken] = ratio;
         emit FeeTokenRatioSet(feeToken, ratio);
     }
