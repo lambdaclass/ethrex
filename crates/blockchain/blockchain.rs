@@ -32,7 +32,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -511,6 +511,7 @@ impl Blockchain {
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
+        let initial_state_root = trie.hash_no_commit();
 
         let (mut current_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
@@ -684,7 +685,7 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
                 })?;
                 let witness = std::mem::take(&mut *witness);
-                let witness = witness.into_iter().collect::<Vec<_>>();
+                let witness = witness.into_values().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
                 touched_account_storage_slots.entry(address).or_default();
             }
@@ -706,20 +707,22 @@ impl Blockchain {
                 })?
                 .iter()
             {
-                accumulated_state_trie_witness.insert(state_trie_witness.clone());
+                accumulated_state_trie_witness
+                    .insert(*state_trie_witness.0, state_trie_witness.1.clone());
             }
 
             current_trie_witness = new_state_trie_witness;
         }
 
-        used_trie_nodes
-            .extend_from_slice(&Vec::from_iter(accumulated_state_trie_witness.into_iter()));
+        used_trie_nodes.extend_from_slice(&Vec::from_iter(
+            accumulated_state_trie_witness.into_values(),
+        ));
 
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty()
             && let Some(root) = root_node
         {
-            used_trie_nodes.push(root.encode_to_vec());
+            used_trie_nodes.push((*root).clone());
         }
 
         // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
@@ -759,12 +762,8 @@ impl Blockchain {
             block_headers_bytes.push(current_header.encode_to_vec());
         }
 
-        let chain_config = self.storage.get_chain_config();
-
-        let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
-
+        // Create a list of all read/write addresses and storage slots
         let mut keys = Vec::new();
-
         for (address, touched_storage_slots) in touched_account_storage_slots {
             keys.push(address.as_bytes().to_vec());
             for slot in touched_storage_slots.iter() {
@@ -772,12 +771,58 @@ impl Blockchain {
             }
         }
 
+        // Get initial state trie root and embed the rest of the trie into it
+        let nodes: BTreeMap<H256, Node> = used_trie_nodes
+            .into_iter()
+            .map(|node| (node.compute_hash().finalize(), node))
+            .collect();
+        let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+            Trie::get_embedded_root(&nodes, initial_state_root)?
+        {
+            Some((*state_trie_root).clone())
+        } else {
+            None
+        };
+
+        // Get all initial storage trie roots and embed the rest of the trie into it
+        let state_trie = if let Some(state_trie_root) = &state_trie_root {
+            Trie::new_temp_with_root(state_trie_root.clone().into())
+        } else {
+            Trie::new_temp()
+        };
+        let mut storage_trie_roots = BTreeMap::new();
+        for key in &keys {
+            if key.len() != 20 {
+                continue; // not an address
+            }
+            let address = Address::from_slice(key);
+            let hashed_address = hash_address(&address);
+            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+                continue; // empty account, doesn't have a storage trie
+            };
+            let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
+            if storage_root_hash == *EMPTY_TRIE_HASH {
+                continue; // empty storage trie
+            }
+            if !nodes.contains_key(&storage_root_hash) {
+                continue; // storage trie isn't relevant to this execution
+            }
+            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+            let NodeRef::Node(node, _) = node else {
+                return Err(ChainError::Custom(
+                    "execution witness does not contain non-empty storage trie".to_string(),
+                ));
+            };
+            storage_trie_roots.insert(address, (*node).clone());
+        }
+
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: first_block_header.number,
-            chain_config,
-            nodes,
+            chain_config: self.storage.get_chain_config(),
+            state_trie_root,
+            storage_trie_roots,
             keys,
         })
     }
