@@ -236,7 +236,7 @@ jobs:
           if [[ ! "${balance_wei}" =~ ^[0-9]+$ ]] || (( balance_wei == 0 )); then
             echo "Timed out waiting for non-zero L2 balance for rich account."
             echo "Last rex balance output:"
-            echo "${balance_output:-<none>}"
+            echo "${balance_output:-'<none>'}"
             exit 1
           fi
 
