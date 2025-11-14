@@ -60,6 +60,13 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError>;
 
+    async fn seal_batch_with_prover_input(
+        &self,
+        batch: Batch,
+        prover_version: &str,
+        prover_input_data: ProverInputData,
+    ) -> Result<(), RollupStoreError>;
+
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError>;
 
     async fn get_verify_tx_by_batch(
