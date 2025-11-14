@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Signature};
+use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     U256,
@@ -239,6 +240,7 @@ impl Signable for Transaction {
             Transaction::EIP4844Transaction(tx) => tx.sign_inplace(signer).await,
             Transaction::EIP7702Transaction(tx) => tx.sign_inplace(signer).await,
             Transaction::PrivilegedL2Transaction(_) => Err(SignerError::PrivilegedL2TxUnsupported), // Privileged Transactions are not signed
+            Transaction::FeeTokenTransaction(tx) => tx.sign_inplace(signer).await,
         }
     }
 }
@@ -294,6 +296,18 @@ impl Signable for EIP4844Transaction {
 impl Signable for EIP7702Transaction {
     async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
         let mut payload = vec![TxType::EIP7702 as u8];
+        payload.append(self.encode_payload_to_vec().as_mut());
+
+        let signature = signer.sign(payload.into()).await?;
+        (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
+
+        Ok(())
+    }
+}
+
+impl Signable for FeeTokenTransaction {
+    async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
+        let mut payload = vec![TxType::FeeToken as u8];
         payload.append(self.encode_payload_to_vec().as_mut());
 
         let signature = signer.sign(payload.into()).await?;
