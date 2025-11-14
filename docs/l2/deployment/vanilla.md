@@ -19,6 +19,7 @@ ethrex l2 deploy \
   --on-chain-proposer-owner <ON_CHAIN_PROPOSER_OWNER_ADDRESS> \
   --committer.l1-address <L1_COMMITTER_ADDRESS> \
   --proof-sender.l1-address <L1_PROOF_SENDER_ADDRESS> \
+  --env-file-path <PATH_TO_ENV_FILE> \
   --randomize-contract-deployment
 ```
 
@@ -26,11 +27,14 @@ ethrex l2 deploy \
 > Ensure you control the Committer and Proof Sender accounts, as they will be authorized as sequencers. These accounts will have control over the chain state.
 
 > [!IMPORTANT]
-> If you plan to prove your L2 using SP1 or RISC0, add the following extra arguments to the command above:
+> If you plan to prove your L2 using SP1, RISC0, or TDX, add the following extra arguments to the command above:
 > `--sp1 true` to require SP1 proofs for validating batch execution and state settlement.
 > `--sp1.verifier-address` to use an existing verifier instead of deploying one on the public network. Succinct Labs recommends their deployed canonical verifier gateways; see the list here.
 > `--risc0 true` to require RISC0 proofs for validating batch execution and state settlement.
 > `--risc0.verifier-address` to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.
+> `--tdx true` to require TEE proofs for validating batch execution and state settlement.
+> `--tdx.verifier-address` to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.
+> Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the [Run multiple provers](./prover/multi-prover.md) section for more details.
 
 > [!IMPORTANT]
 > Retrieve the deployed contract addresses from the console logs or the .env file generated during deployment (in the directory where you ran the command) for use in the next step.
@@ -42,6 +46,7 @@ ethrex l2 deploy \
 > - Replace `PATH_TO_L2_GENESIS_FILE` with the path to your L2 genesis file. A genesis example is available in the fixtures directory of the [official GitHub repository](https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json). This file initializes the `OnChainProposer` contract with the genesis state root.
 > - The `CommonBridge` and `OnChainProposer` contracts are upgradeable and ownable, with implementations behind proxies initialized during deployment. Replace `COMMON_BRIDGE_OWNER_ADDRESS` and `ON_CHAIN_PROPOSER_OWNER_ADDRESS` with the address of the account you want as the owner. The owner can upgrade implementations or perform administrative actions; for more details, see the Architecture section.
 > - The sequencer components (`L1Committer` and `L1ProofSender`) require funded accounts on the target L1 to advance the network. Replace `L1_COMMITTER_ADDRESS` and `L1_PROOF_SENDER_ADDRESS` with the addresses of those accounts.
+> - Replace `PATH_TO_ENV_FILE` with the path where you want to save the generated environment file. This file contains the deployed contract addresses and other configuration details needed to run the L2 node.
 > - L1 contract deployment uses the `CREATE2` opcode for deterministic addresses. To deploy non-deterministically, include the `--randomize-contract-deployment` flag.
 
 ## 2. Start the L2 node
