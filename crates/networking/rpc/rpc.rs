@@ -308,7 +308,7 @@ pub async fn start_api(
         }
     });
 
-    let authrpc_handler = async move |ctx, auth, body| {
+    let authrpc_handler = move |ctx, auth, body| async move {
         let _ = timer_sender.send(());
         handle_authrpc_request(ctx, auth, body).await
     };
