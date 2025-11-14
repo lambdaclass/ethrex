@@ -1,6 +1,12 @@
 # Generate blobs for the state reconstruction test
 
-The test in `crates/l2/tests/state_reconstruct.rs` replays a fixed set of blobs to reconstruct. If you ever need to regenerate those fixtures, you need to change the files `payload_builder.rs` and `l1_committer.rs`.
+The test in `crates/l2/tests/state_reconstruct.rs` replays a fixed set of blobs to reconstruct. The fixtures need to be regenerated whenever the genesis file changes, because a new genesis alters the hash of the very first block and, by extension, all descendant blocks. Our stored blobs encode parent pointers, so stale hashes make the fixtures unusable. If you ever need to regenerate those blobs, you need to change the files `payload_builder.rs` and `l1_committer.rs` and run the sequencer to capture fresh blobs.
+
+## Summary
+
+1. Limit every block to ten transactions to make the batches predictable.
+2. Store each blob locally whenever the committer submits a batch.
+3. Run the dev stack long enough to capture six blobs and move them into `fixtures/blobs/`.
 
 ## 1. Cap block payloads at 10 transactions
 
