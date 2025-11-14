@@ -18,11 +18,13 @@ use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch, checkpoint::Checkpoint,
 };
+use rustc_hash::FxHashMap;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
+        atomic::AtomicU64,
         mpsc::{SyncSender, sync_channel},
     },
 };
@@ -149,13 +151,34 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
-#[derive(Debug, Clone)]
+type CodeCache = FxHashMap<H256, Code>;
+
+#[derive(Debug)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    account_code_cache: Arc<Mutex<CodeCache>>,
+    account_code_cache_size: AtomicU64,
+}
+
+impl Clone for Store {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            trie_cache: self.trie_cache.clone(),
+            flatkeyvalue_control_tx: self.flatkeyvalue_control_tx.clone(),
+            trie_update_worker_tx: self.trie_update_worker_tx.clone(),
+            last_computed_flatkeyvalue: self.last_computed_flatkeyvalue.clone(),
+            account_code_cache: self.account_code_cache.clone(),
+            account_code_cache_size: AtomicU64::new(
+                self.account_code_cache_size
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        }
+    }
 }
 
 impl Store {
@@ -399,6 +422,8 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            account_code_cache: Arc::new(Mutex::new(FxHashMap::default())),
+            account_code_cache_size: AtomicU64::new(0),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -1363,7 +1388,21 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    /// Get account code by its hash.
+    ///
+    /// Check if the code exists in the cache (attribute `account_code_cache`), if not,
+    /// reads the database, and if it exists, decodes and returns it.
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
+        // check cache first
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)
+        {
+            return Ok(Some(code.clone()));
+        }
+
         let cf = self.cf_handle(CF_ACCOUNT_CODES)?;
         let Some(bytes) = self
             .db
@@ -1378,6 +1417,24 @@ impl StoreEngine for Store {
             bytecode: Bytes::copy_from_slice(bytecode),
             jump_targets: <Vec<_>>::decode(targets)?,
         };
+        // insert into cache
+        self.account_code_cache
+            .lock()
+            .inspect(|cache| {
+                let code_size = code.size();
+                self.account_code_cache_size
+                    .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
+                let cache_len = cache.len() + 1;
+                let current_size = self
+                    .account_code_cache_size
+                    .load(std::sync::atomic::Ordering::SeqCst);
+                info!(
+                    "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+                );
+            })
+            .map_err(|_| StoreError::LockError)?
+            .insert(code_hash, code.clone());
+
         Ok(Some(code))
     }
 
