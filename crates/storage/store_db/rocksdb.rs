@@ -19,6 +19,7 @@ use rocksdb::{
     Options, WriteBatch, checkpoint::Checkpoint,
 };
 use std::{
+    cmp::Ordering,
     collections::HashSet,
     path::Path,
     sync::{
@@ -249,6 +250,15 @@ impl Store {
             }
         }
 
+        fn int_comparator(l: &[u8], r: &[u8]) -> Ordering {
+            unsafe { std::hint::assert_unchecked(16 == l.len() && 16 == r.len()) };
+            let mut buf = [0u8; 16];
+            buf[..l.len()].copy_from_slice(l);
+            let l = u128::from_be_bytes(buf);
+            buf[..r.len()].copy_from_slice(r);
+            let r = u128::from_be_bytes(buf);
+            l.cmp(&r)
+        }
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
             let mut cf_opts = Options::default();
@@ -284,6 +294,10 @@ impl Store {
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    cf_opts.set_comparator(
+                        &[cf_name, "comparator"].join("-"),
+                        Box::new(int_comparator),
+                    );
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
@@ -480,6 +494,29 @@ impl Store {
             .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
     }
 
+    pub fn db_key(key: &[u8]) -> [u8; 16] {
+        let mut nib_buf = [0u8; 256];
+        nib_buf[..key.len()].copy_from_slice(key);
+        let mut key_buf = [0u8; 16];
+        let is_account = key.len() <= 65;
+        if is_account {
+            for i in 0..8 {
+                key_buf[i] = (nib_buf[2 * i] << 4) | nib_buf[2 * i + 1];
+            }
+            key_buf[7] = key.len() as u8;
+            key_buf
+        } else {
+            for i in 0..8 {
+                key_buf[i] = (nib_buf[2 * i] << 4) | nib_buf[2 * i + 1];
+            }
+            for i in 0..8 {
+                key_buf[8 + i] = (nib_buf[66 + 2 * i] << 4) | nib_buf[66 + 2 * i + 1];
+            }
+            key_buf[15] = key.len() as u8;
+            key_buf
+        }
+    }
+
     // Helper method for async writes
     async fn write_async<K, V>(&self, cf_name: &str, key: K, value: V) -> Result<(), StoreError>
     where
@@ -626,7 +663,7 @@ impl Store {
 
         loop {
             let root = self
-                .read_sync(CF_ACCOUNT_TRIE_NODES, [])?
+                .read_sync(CF_ACCOUNT_TRIE_NODES, [0; 16])?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
@@ -813,6 +850,7 @@ impl Store {
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
             let is_account = key.len() <= 65;
+            let db_key = Self::db_key(&key);
 
             if is_leaf && key > last_written {
                 continue;
@@ -829,9 +867,9 @@ impl Store {
                 &cf_storage_trie_nodes
             };
             if value.is_empty() {
-                batch.delete_cf(cf, key);
+                batch.delete_cf(cf, db_key);
             } else {
-                batch.put_cf(cf, key, value);
+                batch.put_cf(cf, db_key, value);
             }
         }
         let result = db.write(batch);
@@ -1919,10 +1957,11 @@ impl StoreEngine for Store {
             for (address_hash, nodes) in storage_trie_nodes {
                 for (node_hash, node_data) in nodes {
                     let key = apply_prefix(Some(address_hash), node_hash);
+                    let db_key = Self::db_key(key.as_ref());
                     if node_data.is_empty() {
-                        batch.delete_cf(&cf, key.as_ref());
+                        batch.delete_cf(&cf, db_key);
                     } else {
-                        batch.put_cf(&cf, key.as_ref(), node_data);
+                        batch.put_cf(&cf, db_key, node_data);
                     }
                 }
             }

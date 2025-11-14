@@ -3,7 +3,7 @@ use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded, SnapshotWithThreadMode};
 use std::sync::Arc;
 
-use crate::trie_db::layering::apply_prefix;
+use crate::{store_db::rocksdb::Store, trie_db::layering::apply_prefix};
 
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
 pub struct RocksDBLockedTrieDB {
@@ -85,6 +85,7 @@ impl TrieDB for RocksDBLockedTrieDB {
             &self.cf
         };
         let db_key = self.make_key(key);
+        let db_key = Store::db_key(&db_key);
 
         self.snapshot
             .get_cf(cf, db_key)

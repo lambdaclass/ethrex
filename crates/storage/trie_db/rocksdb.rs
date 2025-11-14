@@ -4,7 +4,7 @@ use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
-use crate::trie_db::layering::apply_prefix;
+use crate::{store_db::rocksdb::Store, trie_db::layering::apply_prefix};
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
@@ -98,6 +98,7 @@ impl TrieDB for RocksDBTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = self.cf_handle_for_key(&key)?;
         let db_key = self.make_key(key);
+        let db_key = Store::db_key(&db_key);
 
         let res = self
             .db
@@ -113,6 +114,7 @@ impl TrieDB for RocksDBTrieDB {
         for (key, value) in key_values {
             let cf = self.cf_handle_for_key(&key)?;
             let db_key = self.make_key(key);
+            let db_key = Store::db_key(&db_key);
 
             if value.is_empty() {
                 batch.delete_cf(&cf, db_key);
@@ -135,6 +137,7 @@ impl TrieDB for RocksDBTrieDB {
         for (hash, node) in key_values {
             let cf = self.cf_handle_for_key(hash)?;
             let db_key = self.make_key(hash.clone());
+            let db_key = Store::db_key(&db_key);
             buffer.clear();
             node.encode(&mut buffer);
             batch.put_cf(&cf, db_key, &buffer);
