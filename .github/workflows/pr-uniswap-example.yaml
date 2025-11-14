@@ -76,7 +76,7 @@ jobs:
           trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
 
           echo "Waiting for L2 RPC at http://127.0.0.1:1729..."
-          for i in {1..120}; do
+          for _ in {1..120}; do
             if curl -sS -o /dev/null http://127.0.0.1:1729 2>/dev/null; then
               echo "L2 RPC is up"
               break
