@@ -13,7 +13,10 @@ use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, L2Config, error::ChainError, new_evm, vm::StoreVmDatabase,
 };
-use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, Transaction};
+use ethrex_common::types::{
+    Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, Transaction, compute_receipts_root,
+    compute_transactions_root,
+};
 use ethrex_p2p::{
     discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
@@ -856,6 +859,7 @@ pub async fn generate_big_block(
     // We start with a mutable block
     let mut block = chain.remove(0);
     let mut transactions = block.body.transactions;
+    let mut receipts = Vec::new();
     block.body.transactions = Vec::new();
 
     for block in chain {
@@ -867,31 +871,45 @@ pub async fn generate_big_block(
     // We update the header for the proper amount of gas we're going to use
     block.header.gas_limit = 1_000_000_000; // 1 gigagas for this test
 
-    let vm_db = StoreVmDatabase::new(store, block.header.clone());
+    let parent_header = store
+        .get_block_header_by_hash(block.header.parent_hash)
+        .expect("We should be able to read the store")
+        .expect("We should have the paren");
+
+    let vm_db = StoreVmDatabase::new(store.clone(), parent_header.clone());
     let mut vm = new_evm(&BlockchainType::L1, vm_db)?;
     let mut remaining_gas = block.header.gas_limit;
 
     for transaction in transactions {
-        if transaction.gas_limit() > remaining_gas {
+        if transaction.gas_limit() + 100_000_000 > remaining_gas {
             break;
         }
-        if vm
-            .execute_tx(
-                &transaction,
-                &block.header,
-                &mut remaining_gas,
-                transaction
-                    .sender()
-                    .expect("We should have a valid transaction"),
-            )
-            .is_ok()
-        {
+        if let Ok((receipt, _)) = vm.execute_tx(
+            &transaction,
+            &block.header,
+            &mut remaining_gas,
+            transaction
+                .sender()
+                .expect("We should have a valid transaction"),
+        ) {
+            receipts.push(receipt);
             block.body.transactions.push(transaction);
         }
     }
 
     block.header.gas_used = block.header.gas_limit - remaining_gas;
     block.header.blob_gas_used = Some(0);
+    block.header.receipts_root = compute_receipts_root(&receipts);
+    block.header.transactions_root = compute_transactions_root(&block.body.transactions);
+    let account_updates = vm.get_state_transitions().unwrap();
+
+    // Apply the account updates over all blocks and compute the new state root
+    let account_updates_list = store
+        .apply_account_updates_batch(parent_header.hash(), &account_updates)
+        .unwrap()
+        .unwrap();
+
+    block.header.state_root = account_updates_list.state_trie_hash;
     block.header.hash.take();
     println!("{:?}", block.header.hash());
 
