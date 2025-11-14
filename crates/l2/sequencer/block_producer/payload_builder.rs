@@ -101,7 +101,6 @@ pub async fn fill_transactions(
     };
     let mut acc_encoded_size = context.payload.encode_to_vec().len();
     let fee_config_len = fee_config.to_vec().len();
-    let chain_config = store.get_chain_config();
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
