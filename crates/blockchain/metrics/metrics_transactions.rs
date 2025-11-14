@@ -162,6 +162,7 @@ impl MetricsTxType {
             ethrex_common::types::TxType::EIP4844 => "EIP4844",
             ethrex_common::types::TxType::EIP7702 => "EIP7702",
             ethrex_common::types::TxType::Privileged => "Privileged",
+            ethrex_common::types::TxType::FeeToken => "FeeTokenTransaction",
         }
     }
     pub fn all() -> Vec<String> {
@@ -172,6 +173,7 @@ impl MetricsTxType {
             "EIP4844".to_string(),
             "EIP7702".to_string(),
             "Privileged".to_string(),
+            "FeeToken".to_string(),
         ]
     }
 }
