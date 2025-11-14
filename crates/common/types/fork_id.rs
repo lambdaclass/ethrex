@@ -1,7 +1,7 @@
 use crc32fast::Hasher;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -159,6 +159,11 @@ impl RLPEncode for ForkId {
             .encode_field(&self.fork_hash)
             .encode_field(&self.fork_next)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.fork_hash.length() + self.fork_next.length();
+        list_length(payload_len)
     }
 }
 

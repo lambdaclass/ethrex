@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-14
+
+- Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding specialized length methods to each trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
+
 ### 2025-11-13
 
 - Use specialized DUP implementation [#5324](https://github.com/lambdaclass/ethrex/pull/5324)
