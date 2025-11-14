@@ -242,22 +242,21 @@
 <p>Ethrex is a minimalist, stable, modular and fast implementation of the Ethereum protocol in <a href="https://www.rust-lang.org/">Rust</a>.
 The client supports running in two different modes:</p>
 <ul>
-<li>As a regular Ethereum execution client</li>
-<li>As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.</li>
+<li><strong>ethrex L1</strong> - As a regular Ethereum execution client</li>
+<li><strong>ethrex L2</strong> - As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.</li>
 </ul>
-<p>We call the first one "ethrex L1" and the second one "ethrex L2".</p>
 <h2 id="quickstart-l1"><a class="header" href="#quickstart-l1">Quickstart L1</a></h2>
 <p>Follow these steps to sync an ethrex node on the Hoodi testnet.</p>
 <h3 id="macos"><a class="header" href="#macos">MacOS</a></h3>
 <p>Install ethrex and lighthouse:</p>
-<pre><code class="language-sh"># install lightouse and ethrex
-brew install lambdaclass/tap/ethrex
-brew install lighthouse
-
-# create secrets directory and jwt secret
+<pre><code class="language-sh"># create secrets directory and jwt secret
 mkdir -p ethereum/secrets/
 cd ethereum/
 openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
+
+# install lightouse and ethrex
+brew install lambdaclass/tap/ethrex
+brew install lighthouse
 </code></pre>
 <p>On one terminal:</p>
 <pre><code class="language-sh">ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
@@ -267,6 +266,13 @@ openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 </code></pre>
 <h3 id="linux-x86"><a class="header" href="#linux-x86">Linux x86</a></h3>
 <p>Install ethrex and lighthouse:</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>Go to https://github.com/sigp/lighthouse/releases/ and use the latest package there and replace that in the below commands</p>
+</div>
 <pre><code class="language-sh"># create secrets directory and jwt secret
 mkdir -p ethereum/secrets/
 cd ethereum/
@@ -275,8 +281,8 @@ openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 # install lightouse and ethrex
 curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
 chmod +x ethrex
-curl -LO https://github.com/sigp/lighthouse/releases/download/v7.1.0/lighthouse-v7.1.0-x86_64-unknown-linux-gnu.tar.gz
-tar -xvf lighthouse-v7.1.0-x86_64-unknown-linux-gnu.tar.gz
+curl -LO https://github.com/sigp/lighthouse/releases/download/v8.0.0/lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xvf lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
 </code></pre>
 <p>On one terminal:</p>
 <pre><code class="language-sh">./ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
@@ -395,7 +401,7 @@ chmod +x ethrex
 <li><a href="getting-started/installation/./docker_images.html">Docker image</a></li>
 <li><a href="getting-started/installation/./building_from_source.html">Building from source</a></li>
 </ul>
-<p>After following the installation steps you should have a binary that can run an L1 client or a multi-prover ZK-rollup with support for SP1, RISC Zero and TEEs.</p>
+<p>After following the installation steps you should have a binary that can <a href="getting-started/installation/../../l1/running/README.html">run an L1 client</a> or a <a href="getting-started/installation/../../l2/introduction.html">multi-prover ZK-rollup</a> with support for SP1, RISC Zero and TEEs.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -892,7 +898,7 @@ cd ethrex
 <li>Step-by-step instructions for setup and configuration</li>
 <li>Guidance for both new and experienced users</li>
 </ul>
-<p>If you already have a consensus client running, you can skip directly to the node startup instructions. Otherwise, continue to the next section for help setting up a consensus client.</p>
+<p>If you already have a consensus client running, you can skip directly to the <a href="l1/running/./startup.html">node startup instructions</a>. Otherwise, continue to the next section for help <a href="l1/running/./consensus_client.html">setting up a consensus client</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -2428,7 +2434,7 @@ cd ethrex/metrics
 <li>Details on how the sequencer, prover, and other modules interact</li>
 <li>Information about aligned mode, the prover, the sequencer, and more</li>
 </ul>
-<p>Use this section to understand how the different parts of an ethrex L2 fit together.</p>
+<p>Use this section to understand how the different parts of an ethrex L2 fit together.  The <a href="l2/architecture/./overview.html">overview</a> is a good place to start.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -3711,9 +3717,9 @@ sysctl kernel.apparmor_restrict_unprivileged_userns=0
 <h1 id="interacting-with-the-l2"><a class="header" href="#interacting-with-the-l2">Interacting with the L2</a></h1>
 <p>This section explains how to interact with your L2 rollup built with ethrex. Here you'll find guides for:</p>
 <ul>
-<li>Depositing and withdrawing assets</li>
-<li>Connecting wallets like MetaMask</li>
-<li>Deploying smart contracts</li>
+<li><a href="l2/interacting/./deposit.html">Depositing</a> and <a href="l2/interacting/./withdraw.html">withdrawing</a> assets</li>
+<li><a href="l2/interacting/./wallet.html">Connecting wallets</a> like MetaMask</li>
+<li><a href="l2/interacting/./deploy_contracts.html">Deploying</a> smart contracts</li>
 <li>Maintaining and operating the sequencer</li>
 </ul>
 <p>Use these guides to perform common actions and manage your L2 network.</p>
@@ -4185,8 +4191,11 @@ rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; 0xbcdf20249abf0ed6d944c0288f
 <p>For general documentation, see:</p>
 <ul>
 <li><a href="l2/fundamentals/../architecture/overview.html">Architecture overview</a> for a high-level view of the ethrex L2 stack.</li>
-<li><a href="l2/fundamentals/./contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts.</li>
+<li><a href="l2/fundamentals/./contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts including steps to upgrade and transfer ownserhip.</li>
 <li><a href="l2/fundamentals/./based.html">Based sequencing</a> contains ethrex's roadmap for becoming based.</li>
+<li><a href="l2/fundamentals/./state_diffs.html">State diffs</a> explains the mechanism needed to provide data availability.</li>
+<li>How asset <a href="l2/fundamentals/./deposits.html">deposits</a> and <a href="l2/fundamentals/./withdrawals.html">withdrawals</a> work.</li>
+<li></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
