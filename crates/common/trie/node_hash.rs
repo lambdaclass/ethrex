@@ -2,13 +2,29 @@ use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
 
+use crate::rkyv_utils::H256Wrapper;
+
 /// Struct representing a trie node hash
 /// If the encoded node is less than 32 bits, contains the encoded node itself
 // TODO: Check if we can omit the Inline variant, as nodes will always be bigger than 32 bits in our use case
 // TODO: Check if making this `Copy` can make the code less verbose at a reasonable performance cost
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
 pub enum NodeHash {
-    Hashed(H256),
+    Hashed(#[rkyv(with=H256Wrapper)] H256),
     // Inline is always len < 32. We need to store the length of the data, a u8 is enough.
     Inline(([u8; 31], u8)),
 }

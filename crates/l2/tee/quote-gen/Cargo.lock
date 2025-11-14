@@ -2500,6 +2500,7 @@ dependencies = [
  "ethrex-threadpool",
  "hex",
  "lazy_static",
+ "rkyv",
  "rustc-hash",
  "serde 1.0.228",
  "serde_json",
