@@ -1,7 +1,6 @@
 use bytes::{BufMut, Bytes};
 use ethereum_types::U256;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use tinyvec::ArrayVec;
 
 use super::constants::RLP_NULL;
 
@@ -55,7 +54,7 @@ fn impl_encode<const N: usize>(value_be: [u8; N], buf: &mut dyn BufMut) {
         i += 1;
     }
 
-    // zero value
+    // 0, also known as null or the empty string is 0x80
     if i == N {
         buf.put_u8(RLP_NULL);
         return;
@@ -63,13 +62,14 @@ fn impl_encode<const N: usize>(value_be: [u8; N], buf: &mut dyn BufMut) {
 
     let first = value_be[i];
 
-    // single byte [0x00..0x7f]
+    // for a single byte whose value is in the [0x00, 0x7f] range, that byte is its own RLP encoding.
     if i == N - 1 && first <= 0x7f {
         buf.put_u8(first);
         return;
     }
 
-    // multi byte
+    // if a string is 0-55 bytes long, the RLP encoding consists of a
+    // single byte with value RLP_NULL (0x80) plus the length of the string followed by the string.
     let len = N - i;
     buf.put_u8(RLP_NULL + len as u8);
     buf.put_slice(&value_be[i..]);
