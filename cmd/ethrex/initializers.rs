@@ -382,7 +382,11 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir = &opts.datadir;
+    let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
+        &Path::new("/tmp/memory").to_path_buf()
+    } else {
+        &opts.datadir
+    };
     init_datadir(datadir);
 
     let network = get_network(&opts);
