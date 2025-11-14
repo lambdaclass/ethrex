@@ -872,6 +872,9 @@ pub async fn generate_big_block(
     let mut remaining_gas = block.header.gas_limit;
 
     for transaction in transactions {
+        if transaction.gas_limit() > remaining_gas {
+            break;
+        }
         if vm
             .execute_tx(
                 &transaction,
@@ -883,9 +886,6 @@ pub async fn generate_big_block(
             )
             .is_ok()
         {
-            if remaining_gas == 0 {
-                break;
-            }
             block.body.transactions.push(transaction);
         }
     }
