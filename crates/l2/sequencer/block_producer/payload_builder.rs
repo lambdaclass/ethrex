@@ -223,7 +223,7 @@ pub async fn fill_transactions(
             }
         };
 
-        let l2_messages = get_block_l2_messages(&[receipt.clone()]);
+        let l2_messages = get_block_l2_messages(std::slice::from_ref(&receipt));
         let mut found_invalid_message = false;
         for msg in l2_messages {
             if !registered_chains.contains(&msg.chain_id) {

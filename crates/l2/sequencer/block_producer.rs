@@ -101,7 +101,7 @@ impl BlockProducer {
             block_gas_limit,
         } = config;
 
-        let eth_client = EthClient::new_with_multiple_urls(l1_rpc_url.clone())?;
+        let eth_client = EthClient::new_with_multiple_urls(l1_rpc_url)?;
 
         if base_fee_vault_address.is_some_and(|base_fee_vault| base_fee_vault == *coinbase_address)
         {
