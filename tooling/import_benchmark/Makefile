@@ -1,5 +1,6 @@
 BENCH_ID ?= 1
 NETWORK ?= hoodi
+NUM_REPETITIONS ?= 3
 
 help:
 	@printf "run-bench: ## Runs a bench for the current pr. \nParameters:\n -BENCH_ID: number for the log file where it will\
@@ -15,4 +16,4 @@ run-bench: ## Runs a bench for the current pr. parameters -BENCH_ID: number for 
 	cd ../.. && cargo r --release -- --network $(NETWORK) --datadir ~/.local/share/temp import-bench ~/.local/share/ethrex_$(NETWORK)_bench/chain.rlp | tee bench-$(BENCH_ID).log
 
 run-benches:
-	./benchmark.sh $(NETWORK) 3
+	./benchmark.sh $(NETWORK) $(NUM_REPETITIONS)
