@@ -197,4 +197,12 @@ interface ICommonBridge {
 
     /// @notice Allows the owner to unpause the contract
     function unpause() external;
+
+    /// @notice Register a new fee token on the L2.
+    /// @param newFeeToken Address of the token to authorize for fees.
+    function registerNewFeeToken(address newFeeToken) external;
+
+    /// @notice Unregister a fee token on the L2.
+    /// @param existingFeeToken Address of the token to be removed.
+    function unregisterFeeToken(address existingFeeToken) external;
 }

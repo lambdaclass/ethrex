@@ -162,10 +162,8 @@ pub async fn fill_transactions(
         if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
             if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
                 debug!("Ran out of space for privileged transactions");
-                // We break here because if we have expired privileged transactions
-                // in the contract, our batch will be rejected if non-privileged txs
-                // are included.
-                break;
+                txs.pop();
+                continue;
             }
             let id = head_tx.nonce();
             let entry = privileged_nonces
