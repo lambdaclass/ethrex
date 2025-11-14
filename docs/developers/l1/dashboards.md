@@ -72,7 +72,7 @@ Collapsed row that surfaces instrumentation from the `add_block_pipeline` and `e
 ![Block Execution Breakdown](img/block_execution_breakdown.png)
 
 ### Block Execution Breakdown pie
-Repeats a per-instance pie chart showing how execution time splits between storage reads, account reads, and non-database work so you can confirm performance tuning effects.
+Pie chart showing how execution time splits between storage reads, account reads, and non-database work so you can confirm what are the bottlenecks outside of execution itself.
 
 ![Block Execution Breakdown pie](img/block_execution_breakdown_pie.png)
 
@@ -82,7 +82,7 @@ Tracks how much longer we spend merkleizing versus running the execution phase i
 ![Execution vs Merkleization Diff %](img/execution_vs_merkleization_diff.png)
 
 ### Block Execution Deaggregated by Block
-Plots execution-stage timers (storage/account reads, execution without reads, merkleization) against the block number once all selected instances report the same head. Hovering the scatter points reveals the specific block and offers a shortcut to Etherscan for deeper dives. 
+Plots execution-stage timers (storage/account reads, execution without reads, merkleization) against the block number once all selected instances report the same head.
 
 ![Block Execution Deaggregated by Block](img/block_execution_deaggregated_by_block.png)
 
@@ -105,7 +105,7 @@ Bar gauge of the historical average latency per Engine method over the selected 
 ![Engine Latency by Methods](img/engine_latency_by_methods.png)
 
 ### Engine Latency by Method
-Live timeseries view using a 18s sliding window to highlight short spikes in Engine method latency that might be missed in the range-based averages.
+Live timeseries that tries to corralate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.
 
 ![Engine Latency by Method](img/engine_latency_by_method.png)
 
@@ -133,7 +133,7 @@ Timeseries showing request throughput broken down by method, averaged across the
 ![RPC Request Rate by Method](img/rpc_request_rate_by_method.png)
 
 ### RPC Latency by Methods
-Short-window latency view (18 s lookback) highlighting real-time spikes per method. Complements the range-based averages above.
+Live timeseries that tries to corralate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.
 
 ![RPC Latency by Methods](img/rpc_latency_by_methods.png)
 
