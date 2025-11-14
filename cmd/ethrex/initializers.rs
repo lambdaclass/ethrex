@@ -383,7 +383,7 @@ pub async fn init_l1(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
     let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
-        &Path::new("/tmp/memory").to_path_buf()
+        &opts.datadir.join("dev")
     } else {
         &opts.datadir
     };
