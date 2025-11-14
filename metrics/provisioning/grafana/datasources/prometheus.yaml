@@ -9,7 +9,8 @@ datasources:
     isDefault: true
     version: 2 
     jsonData:
-      timeInterval: 10s
+      # Scrape time interval should be 5s.
+      timeInterval: 5s
       httpMethod: POST
     readOnly: false
     editable: true
