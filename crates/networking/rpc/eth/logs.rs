@@ -23,7 +23,7 @@ pub enum AddressFilter {
     Many(Vec<H160>),
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum TopicFilter {
     Topic(Option<H256>),
@@ -63,13 +63,14 @@ impl RpcHandler for LogsFilter {
                     .unwrap_or(BlockIdentifier::Tag(BlockTag::Latest));
                 let address_filters = param
                     .get("address")
-                    .ok_or_else(|| RpcErr::MissingParam("address".to_string()))
-                    .and_then(|address| {
+                    .map(|address| {
                         match serde_json::from_value::<Option<AddressFilter>>(address.clone()) {
                             Ok(filters) => Ok(filters),
                             _ => Err(RpcErr::WrongParam("address".to_string())),
                         }
-                    })?;
+                    })
+                    .transpose()?
+                    .flatten();
                 let topics_filters = param
                     .get("topics")
                     .ok_or_else(|| RpcErr::MissingParam("topics".to_string()))
