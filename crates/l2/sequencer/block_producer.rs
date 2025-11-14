@@ -274,6 +274,10 @@ impl BlockProducer {
     }
 
     async fn get_registered_l2_chain_ids(&self) -> Result<Vec<U256>, BlockProducerError> {
+        if self.router_address == Address::zero() {
+            info!("Router address is zero, no registered L2 chain IDs.");
+            return Ok(Vec::new());
+        }
         let calldata = encode_calldata("getRegisteredChainIds()", &[])?;
 
         let registered_chains = self
