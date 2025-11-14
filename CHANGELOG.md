@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-14
+
+- Optimize set operations in substate [#5362](https://github.com/lambdaclass/ethrex/pull/5362)
+
 ### 2025-11-13
 
 - Avoid recalculating blob base fee while preparing transactions [#5328](https://github.com/lambdaclass/ethrex/pull/5328)
