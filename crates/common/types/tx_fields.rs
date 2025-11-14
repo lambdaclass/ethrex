@@ -32,7 +32,6 @@ pub type AuthorizationList = Vec<AuthorizationTuple>;
 #[serde(rename_all = "camelCase")]
 /// Used in Type-4 transactions. Added in [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702)
 pub struct AuthorizationTuple {
-    #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
     pub chain_id: U256,
     #[rkyv(with = crate::rkyv_utils::H160Wrapper)]
@@ -42,19 +41,12 @@ pub struct AuthorizationTuple {
         deserialize_with = "crate::serde_utils::u64::deser_hex_or_dec_str"
     )]
     pub nonce: u64,
-    #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
     pub y_parity: U256,
-    #[serde(
-        rename = "r",
-        deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str"
-    )]
+    #[serde(rename = "r")]
     #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
     pub r_signature: U256,
-    #[serde(
-        rename = "s",
-        deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str"
-    )]
+    #[serde(rename = "s")]
     #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
     pub s_signature: U256,
 }
