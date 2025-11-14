@@ -119,10 +119,10 @@ uuid = { version = "1.18.1", features = ["v4"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
 indexmap = { version = "2.11.4" }
 
-rocksdb = { version="0.24.0", default-features = false, features = ["bindgen-runtime"] }
-
-[patch.crates-io]
-secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }
+rocksdb = { version = "0.24.0", default-features = false, features = [
+  "bindgen-runtime",
+  "lz4",
+] }
 
 [workspace.lints.clippy]
 redundant_clone = "warn"
