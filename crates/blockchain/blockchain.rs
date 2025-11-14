@@ -180,7 +180,12 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    #[instrument(level = "trace", name = "Execute Block", skip_all)]
+    #[instrument(
+        level = "trace",
+        name = "Execute Block",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     fn execute_block_pipeline(
         &self,
         block: &Block,
@@ -280,7 +285,12 @@ impl Blockchain {
         ))
     }
 
-    #[instrument(level = "trace", name = "Trie update", skip_all)]
+    #[instrument(
+        level = "trace",
+        name = "Trie update",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     fn handle_merkleization(
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
@@ -817,7 +827,12 @@ impl Blockchain {
         })
     }
 
-    #[instrument(level = "trace", name = "Block DB update", skip_all)]
+    #[instrument(
+        level = "trace",
+        name = "Block DB update",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     pub fn store_block(
         &self,
         block: Block,

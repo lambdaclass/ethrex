@@ -3698,6 +3698,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
+ "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
