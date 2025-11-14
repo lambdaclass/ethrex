@@ -101,6 +101,26 @@ Once a token is registered, users can submit fee-token transactions:
 
 Fee locking and distribution happen automatically inside `l2_hook.rs`.
 
+### Minimal `Cargo.toml`
+
+```toml
+[package]
+name = "fee-token-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.86"
+hex = "0.4.3"
+secp256k1 = { version = "0.30.0", default-features = false, features = ["global-context", "recovery", "rand"] }
+tokio = { version = "1.41.1", features = ["macros", "rt-multi-thread"] }
+url = { version = "2.5.4", features = ["serde"] }
+ethrex_l2_sdk = { package = "ethrex-sdk", git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-rpc = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-common = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-l2-rpc = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+```
+
 ```rust
 use anyhow::Result;
 use ethrex_l2_sdk::{build_generic_tx, send_generic_transaction};
