@@ -40,11 +40,13 @@ This will launch Prometheus and Grafana, already set up to scrape ethrex metrics
 
 Metrics from ethrex will be available at `http://localhost:3701/metrics` in Prometheus format if you followed [step 3](#run-ethrex-with-metrics-enabled).
 
+For detailed information on the provided Grafana dashboards, see our [L1 Dashboard document](../../developers/l1/dashboards.md).
+
 ## Custom Configuration
 
 Your ethrex setup may differ from the default configuration. Check your endpoints at `provisioning/prometheus/prometheus_l1_sync_docker.yaml`.
 
-Also if you have a centralized Prometheus or Grafana setup, you can adapt the provided configuration files to fit your environment. or even stop the docker containers that run Prometheus and/or Grafana leaving only the addition `ethereum-metrics-exporter` running alongside ethrex to export the metrics to your existing monitoring stack.
+Also if you have a centralized Prometheus or Grafana setup, you can adapt the provided configuration files to fit your environment. or even stop the docker containers that run Prometheus and/or Grafana leaving only the additional `ethereum-metrics-exporter` running alongside ethrex to export the metrics to your existing monitoring stack.
 
 ```sh
 docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d ethereum-metrics-exporter 
