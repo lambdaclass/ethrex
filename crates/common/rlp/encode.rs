@@ -12,6 +12,23 @@ pub fn encode<T: RLPEncode>(value: T) -> Vec<u8> {
     buf
 }
 
+/// Computes the length needed for a given payload length
+#[inline]
+pub const fn list_length(payload_len: usize) -> usize {
+    if payload_len < 56 {
+        // short prefix
+        1 + payload_len
+    } else {
+        let be = payload_len.to_be_bytes();
+        let mut i = 0;
+        while i < be.len() && be[i] == 0 {
+            i += 1;
+        }
+        let be_len = be.len() - i;
+        1 + be_len + payload_len
+    }
+}
+
 pub trait RLPEncode {
     fn encode(&self, buf: &mut dyn BufMut);
 
@@ -263,6 +280,7 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
         }
     }
 
+    #[inline]
     fn length(&self) -> usize {
         if self.is_empty() {
             // 0xc0 (1 byte)
@@ -274,20 +292,7 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
             payload_len += item.length();
         }
 
-        if payload_len < 56 {
-            // one byte prefix
-            1 + payload_len
-        } else {
-            let be_bytes = payload_len.to_be_bytes();
-            let mut i = 0;
-            while i < be_bytes.len() && be_bytes[i] == 0 {
-                i += 1;
-            }
-            let be_len = be_bytes.len() - i;
-
-            // prefix + big endian length + payload length
-            1 + be_len + payload_len
-        }
+        list_length(payload_len)
     }
 }
 
@@ -310,6 +315,12 @@ impl<S: RLPEncode, T: RLPEncode> RLPEncode for (S, T) {
             .encode_field(&self.1)
             .finish();
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        let payload_len = self.0.length() + self.1.length();
+        list_length(payload_len)
+    }
 }
 
 impl<S: RLPEncode, T: RLPEncode, U: RLPEncode> RLPEncode for (S, T, U) {
@@ -319,6 +330,12 @@ impl<S: RLPEncode, T: RLPEncode, U: RLPEncode> RLPEncode for (S, T, U) {
             .encode_field(&self.1)
             .encode_field(&self.2)
             .finish();
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        let payload_len = self.0.length() + self.1.length() + self.2.length();
+        list_length(payload_len)
     }
 }
 
@@ -330,6 +347,12 @@ impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode> RLPEncode for (S, T
             .encode_field(&self.2)
             .encode_field(&self.3)
             .finish();
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        let payload_len = self.0.length() + self.1.length() + self.2.length() + self.3.length();
+        list_length(payload_len)
     }
 }
 
@@ -345,17 +368,34 @@ impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode, W: RLPEncode> RLPEn
             .encode_field(&self.4)
             .finish();
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        let payload_len =
+            self.0.length() + self.1.length() + self.2.length() + self.3.length() + self.4.length();
+        list_length(payload_len)
+    }
 }
 
 impl RLPEncode for Ipv4Addr {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.octets().encode(buf)
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(&self.octets())
+    }
 }
 
 impl RLPEncode for Ipv6Addr {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.octets().encode(buf)
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(&self.octets())
     }
 }
 
@@ -364,6 +404,14 @@ impl RLPEncode for IpAddr {
         match self {
             IpAddr::V4(ip) => ip.encode(buf),
             IpAddr::V6(ip) => ip.encode(buf),
+        }
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        match self {
+            IpAddr::V4(ipv4_addr) => RLPEncode::length(&ipv4_addr.octets()),
+            IpAddr::V6(ipv6_addr) => RLPEncode::length(&ipv6_addr.octets()),
         }
     }
 }
@@ -380,11 +428,21 @@ impl RLPEncode for ethereum_types::H32 {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
+    }
 }
 
 impl RLPEncode for ethereum_types::H64 {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
     }
 }
 
@@ -392,11 +450,21 @@ impl RLPEncode for ethereum_types::H128 {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
+    }
 }
 
 impl RLPEncode for ethereum_types::Address {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
     }
 }
 
@@ -404,11 +472,21 @@ impl RLPEncode for ethereum_types::H256 {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
+    }
 }
 
 impl RLPEncode for ethereum_types::H264 {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
     }
 }
 
@@ -416,17 +494,32 @@ impl RLPEncode for ethereum_types::H512 {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
+    }
 }
 
 impl RLPEncode for ethereum_types::Signature {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
+    }
 }
 
 impl RLPEncode for ethereum_types::Bloom {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.0.encode(buf)
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(&self.0)
     }
 }
 
