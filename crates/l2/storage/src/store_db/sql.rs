@@ -384,7 +384,8 @@ impl SQLStore {
             batch.number,
             batch.balance_diffs,
             Some(&transaction),
-        ).await?;
+        )
+        .await?;
         self.store_privileged_transactions_hash_by_batch_number_in_tx(
             batch.number,
             batch.privileged_transactions_hash,
