@@ -11,8 +11,8 @@ use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
 use std::{collections::HashMap, fmt};
 
-// u64's that make up an U256
-const U64_PER_U256: usize = 256 / 64;
+/// [`u64`]s that make up a [`U256`]
+const U64_PER_U256: usize = U256::MAX.0.len();
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
