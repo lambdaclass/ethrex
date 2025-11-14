@@ -3,7 +3,7 @@ use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded, SnapshotWithThreadMode};
 use std::sync::Arc;
 
-use crate::trie_db::layering::apply_prefix;
+use crate::{store_db::rocksdb::compact_nibbles, trie_db::layering::apply_prefix};
 
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
 pub struct RocksDBLockedTrieDB {
@@ -56,9 +56,7 @@ impl RocksDBLockedTrieDB {
     }
 
     fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, node_hash)
-            .as_ref()
-            .to_vec()
+        compact_nibbles(apply_prefix(self.address_prefix, node_hash).as_ref())
     }
 }
 

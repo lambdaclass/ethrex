@@ -4,7 +4,7 @@ use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
-use crate::trie_db::layering::apply_prefix;
+use crate::{store_db::rocksdb::compact_nibbles, trie_db::layering::apply_prefix};
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
@@ -72,9 +72,7 @@ impl RocksDBTrieDB {
     }
 
     fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, node_hash)
-            .as_ref()
-            .to_vec()
+        compact_nibbles(apply_prefix(self.address_prefix, node_hash).as_ref())
     }
 
     // Gets the correct column family handle based on whether the key is a leaf or not.

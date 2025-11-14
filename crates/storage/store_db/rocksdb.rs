@@ -659,7 +659,7 @@ impl Store {
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
                 batch.put_cf(&cf_misc, "last_written", path.as_ref());
-                batch.put_cf(&cf_accounts_fkv, path.as_ref(), node.value);
+                batch.put_cf(&cf_accounts_fkv, compact_nibbles(path.as_ref()), node.value);
                 ctr += 1;
                 if ctr > 10_000 {
                     self.db.write(std::mem::take(&mut batch))?;
@@ -683,7 +683,7 @@ impl Store {
                     };
                     let key = apply_prefix(Some(account_hash), path);
                     batch.put_cf(&cf_misc, "last_written", key.as_ref());
-                    batch.put_cf(&cf_storage_fkv, key.as_ref(), node.value);
+                    batch.put_cf(&cf_storage_fkv, compact_nibbles(key.as_ref()), node.value);
                     ctr += 1;
                     if ctr > 10_000 {
                         self.db.write(std::mem::take(&mut batch))?;
@@ -828,6 +828,7 @@ impl Store {
             } else {
                 &cf_storage_trie_nodes
             };
+            let key = compact_nibbles(&key);
             if value.is_empty() {
                 batch.delete_cf(cf, key);
             } else {
@@ -1919,10 +1920,11 @@ impl StoreEngine for Store {
             for (address_hash, nodes) in storage_trie_nodes {
                 for (node_hash, node_data) in nodes {
                     let key = apply_prefix(Some(address_hash), node_hash);
+                    let key = compact_nibbles(key.as_ref());
                     if node_data.is_empty() {
-                        batch.delete_cf(&cf, key.as_ref());
+                        batch.delete_cf(&cf, key);
                     } else {
-                        batch.put_cf(&cf, key.as_ref(), node_data);
+                        batch.put_cf(&cf, key, node_data);
                     }
                 }
             }
@@ -2053,4 +2055,21 @@ fn open_cfs<'a, const N: usize>(
     handles
         .try_into()
         .map_err(|_| StoreError::Custom("Unexpected number of column families".to_string()))
+}
+
+pub fn compact_nibbles(nib: &[u8]) -> Vec<u8> {
+    let nib = if nib.len() > 65 {
+        [&nib[0..64], &nib[66..]].concat()
+    } else {
+        nib.to_vec()
+    }
+    .chunks(2)
+    .map(|chunk| match chunk.len() {
+        1 => chunk[0] << 4,
+        _ => chunk[0] << 4 | chunk[1],
+    })
+    .collect::<Vec<_>>();
+
+    let len = nib.len() as u8;
+    [nib, vec![len]].concat()
 }
