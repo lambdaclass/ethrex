@@ -2058,18 +2058,19 @@ fn open_cfs<'a, const N: usize>(
 }
 
 pub fn compact_nibbles(nib: &[u8]) -> Vec<u8> {
+    let is_leaf = if nib.last() == Some(&16) || nib.last() == Some(&17) { 1 } else { 0 };
+    let len = nib.len() as u8;
     let nib = if nib.len() > 65 {
         [&nib[0..64], &nib[66..]].concat()
     } else {
         nib.to_vec()
-    }
-    .chunks(2)
-    .map(|chunk| match chunk.len() {
-        1 => chunk[0] << 4,
-        _ => chunk[0] << 4 | chunk[1],
-    })
-    .collect::<Vec<_>>();
-
-    let len = nib.len() as u8;
+    };
+    let nib = nib[0..nib.len() - is_leaf]
+        .chunks(2)
+        .map(|chunk| match chunk.len() {
+            1 => chunk[0] << 4,
+            _ => chunk[0] << 4 | chunk[1],
+        })
+        .collect::<Vec<_>>();
     [nib, vec![len]].concat()
 }
