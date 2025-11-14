@@ -22,14 +22,13 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     mem,
     rc::Rc,
 };
-
-pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
@@ -45,10 +44,10 @@ pub enum VMType {
 pub struct Substate {
     parent: Option<Box<Self>>,
 
-    selfdestruct_set: HashSet<Address>,
-    accessed_addresses: HashSet<Address>,
-    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
-    created_accounts: HashSet<Address>,
+    selfdestruct_set: FxHashSet<Address>,
+    accessed_addresses: FxHashSet<Address>,
+    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
+    created_accounts: FxHashSet<Address>,
     pub refunded_gas: u64,
     transient_storage: TransientStorage,
     logs: Vec<Log>,
@@ -56,16 +55,16 @@ pub struct Substate {
 
 impl Substate {
     pub fn from_accesses(
-        accessed_addresses: HashSet<Address>,
-        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+        accessed_addresses: FxHashSet<Address>,
+        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
 
-            selfdestruct_set: HashSet::new(),
+            selfdestruct_set: Default::default(),
             accessed_addresses,
             accessed_storage_slots,
-            created_accounts: HashSet::new(),
+            created_accounts: Default::default(),
             refunded_gas: 0,
             transient_storage: TransientStorage::new(),
             logs: Vec::new(),
@@ -145,13 +144,16 @@ impl Substate {
 
     /// Mark an address as selfdestructed and return whether is was already marked.
     pub fn add_selfdestruct(&mut self, address: Address) -> bool {
+        if !self.selfdestruct_set.insert(address) {
+            return true;
+        }
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_selfdestruct(&address))
             .unwrap_or_default();
 
-        is_present || !self.selfdestruct_set.insert(address)
+        is_present
     }
 
     /// Return whether an address is already marked as selfdestructed.
@@ -194,18 +196,18 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
-        let is_present = self
-            .parent
+        if !self
+            .accessed_storage_slots
+            .entry(address)
+            .or_default()
+            .insert(key)
+        {
+            return true;
+        }
+        self.parent
             .as_ref()
             .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or_default();
-
-        is_present
-            || !self
-                .accessed_storage_slots
-                .entry(address)
-                .or_default()
-                .insert(key)
+            .unwrap_or_default()
     }
 
     /// Return whether an address has already been accessed.
@@ -223,13 +225,16 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
+        if !self.accessed_addresses.insert(address) {
+            return true;
+        }
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
             .unwrap_or_default();
 
-        is_present || !self.accessed_addresses.insert(address)
+        is_present
     }
 
     /// Return whether an address has already been accessed.
@@ -244,13 +249,16 @@ impl Substate {
 
     /// Mark an address as a new account and return whether is was already marked.
     pub fn add_created_account(&mut self, address: Address) -> bool {
+        if !self.created_accounts.insert(address) {
+            return true;
+        }
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_account_created(&address))
             .unwrap_or_default();
 
-        is_present || !self.created_accounts.insert(address)
+        is_present
     }
 
     /// Return whether an address has already been marked as a new account.
@@ -550,8 +558,9 @@ impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = HashSet::new();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        let mut initial_accessed_addresses: FxHashSet<H160> = Default::default();
+        let mut initial_accessed_storage_slots: FxHashMap<H160, FxHashSet<H256>> =
+            Default::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
