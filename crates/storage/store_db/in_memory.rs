@@ -39,7 +39,7 @@ pub struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    trie_cache: Arc<TrieLayerCache>,
+    pub trie_cache: Arc<TrieLayerCache>,
     // Contains account trie nodes
     state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -738,6 +738,10 @@ impl StoreEngine for Store {
         // Checkpoints are not supported for the InMemory DB
         // Silently ignoring the request to create a checkpoint is harmless
         Ok(())
+    }
+
+    fn get_trie_layer_cache(&self) -> Result<Arc<TrieLayerCache>, StoreError> {
+        Ok(self.inner()?.trie_cache.clone())
     }
 }
 

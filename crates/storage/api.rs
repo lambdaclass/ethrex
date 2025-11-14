@@ -4,9 +4,11 @@ use ethrex_common::types::{
     Transaction,
 };
 use std::path::Path;
+use std::sync::Arc;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
+use crate::trie_db::layering::TrieLayerCache;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
@@ -384,4 +386,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn flatkeyvalue_computed(&self, _account: H256) -> Result<bool, StoreError> {
         Ok(false)
     }
+
+    fn get_trie_layer_cache(&self) -> Result<Arc<TrieLayerCache>, StoreError>;
 }

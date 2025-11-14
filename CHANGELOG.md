@@ -10,6 +10,7 @@
 
 ### 2025-11-12
 
+- Removed trie layer cache lock [#5278](https://github.com/lambdaclass/ethrex/pull/5223)
 - Only mark individual values as dirty instead of the whole trie [#5282](https://github.com/lambdaclass/ethrex/pull/5282)
 - Separate Account and storage Column families in rocksdb [#5055](https://github.com/lambdaclass/ethrex/pull/5055)
 - Avoid copying while reading account code [#5289](https://github.com/lambdaclass/ethrex/pull/5289)
