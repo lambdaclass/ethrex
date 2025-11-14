@@ -197,11 +197,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Starting ethrex L2 dev node (output suppressed)..."
+          echo "Starting ethrex L2 dev node (logging to /tmp/ethrex.log)..."
           ./target/release/ethrex \
             l2 --dev \
             --osaka-activation-time 1761677592 \
-            --no-monitor >/dev/null 2>&1 &
+            --no-monitor > /tmp/ethrex.log 2>&1 &
           ETHREX_PID=$!
 
           trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
@@ -249,6 +249,16 @@ jobs:
           echo "Running Uniswap swap_token script..."
           chmod +x examples/uniswap/swap_token
           examples/uniswap/swap_token
+
+      - name: Dump ethrex logs on failure
+        if: ${{ failure() }}
+        run: |
+          echo "===== ethrex logs (/tmp/ethrex.log) ====="
+          if [ -f /tmp/ethrex.log ]; then
+            cat /tmp/ethrex.log
+          else
+            echo "Log file /tmp/ethrex.log not found"
+          fi
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
