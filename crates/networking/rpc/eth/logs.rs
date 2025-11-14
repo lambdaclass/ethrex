@@ -4,7 +4,10 @@
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
-    types::{block_identifier::BlockIdentifier, receipt::RpcLog},
+    types::{
+        block_identifier::{BlockIdentifier, BlockTag},
+        receipt::RpcLog,
+    },
     utils::RpcErr,
 };
 use ethrex_common::{H160, H256};
@@ -12,6 +15,7 @@ use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum AddressFilter {
@@ -49,12 +53,14 @@ impl RpcHandler for LogsFilter {
                     .ok_or(RpcErr::BadParams("Param is not a object".to_owned()))?;
                 let from_block = param
                     .get("fromBlock")
-                    .ok_or_else(|| RpcErr::MissingParam("fromBlock".to_string()))
-                    .and_then(|block_number| BlockIdentifier::parse(block_number.clone(), 0))?;
+                    .map(|block_number| BlockIdentifier::parse(block_number.clone(), 0))
+                    .transpose()?
+                    .unwrap_or(BlockIdentifier::Tag(BlockTag::Latest));
                 let to_block = param
                     .get("toBlock")
-                    .ok_or_else(|| RpcErr::MissingParam("toBlock".to_string()))
-                    .and_then(|block_number| BlockIdentifier::parse(block_number.clone(), 0))?;
+                    .map(|block_number| BlockIdentifier::parse(block_number.clone(), 0))
+                    .transpose()?
+                    .unwrap_or(BlockIdentifier::Tag(BlockTag::Latest));
                 let address_filters = param
                     .get("address")
                     .ok_or_else(|| RpcErr::MissingParam("address".to_string()))
