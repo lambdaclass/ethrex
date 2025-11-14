@@ -1,11 +1,10 @@
 use ethrex_common::H256;
+use ethrex_trie::{Nibbles, TrieDB, TrieError};
 use rustc_hash::FxHashMap;
 use std::{
     sync::{Arc, RwLock},
     time::Instant,
 };
-
-use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
@@ -67,7 +66,7 @@ impl TrieLayerCache {
         &mut self,
         parent: H256,
         state_root: H256,
-        key_values: Vec<(Nibbles, Vec<u8>)>,
+        key_values: Vec<(Vec<u8>, Vec<u8>)>,
     ) {
         if parent == state_root && key_values.is_empty() {
             return;
@@ -81,11 +80,7 @@ impl TrieLayerCache {
         }
         let mut now = Instant::now();
 
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
-            .clone()
-            .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
-            .collect();
+        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values.clone().into_iter().collect();
         tracing::info!("put_batch 1: nodes creation - elapsed {:?}", now.elapsed());
         now = Instant::now();
 
@@ -102,18 +97,14 @@ impl TrieLayerCache {
                     now.elapsed()
                 );
                 now = Instant::now();
-                previous.extend(
-                    key_values
-                        .into_iter()
-                        .map(|(path, _)| (path.into_vec(), state_root)),
-                );
+                previous.extend(key_values.into_iter().map(|(path, _)| (path, state_root)));
                 tracing::info!("put_batch 3: previous extend - elapsed {:?}", now.elapsed());
                 previous
             }
             None => {
                 let a = key_values
                     .into_iter()
-                    .map(|(path, _)| (path.into_vec(), state_root))
+                    .map(|(path, _)| (path, state_root))
                     .collect();
                 tracing::info!("put_batch 4: new layer_map - elapsed {:?}", now.elapsed());
                 a
@@ -134,10 +125,18 @@ impl TrieLayerCache {
 
     pub fn prebuild_clones(&mut self) {
         self.layers.iter_mut().for_each(|(_k, trie_layer)| {
-            let mut t = trie_layer.write().unwrap();
-            if t.prebuilt_clone.is_none() {
-                t.prebuilt_clone = Arc::new(Some(t.layers_map.clone()));
+            let mut mut_layer = trie_layer.write().unwrap();
+            if mut_layer.prebuilt_clone.is_none() {
+                mut_layer.prebuilt_clone = Arc::new(Some(mut_layer.layers_map.clone()));
             }
+        });
+    }
+
+    fn remove_old_refs(&mut self, state_root: &H256) {
+        self.layers.iter_mut().for_each(|(_k, trie_layer)| {
+            let mut mut_layer: std::sync::RwLockWriteGuard<'_, TrieLayer> =
+                trie_layer.write().unwrap();
+            mut_layer.layers_map.retain(|_, b| b != state_root)
         });
     }
 
@@ -151,6 +150,7 @@ impl TrieLayerCache {
         // older layers are useless
         self.layers
             .retain(|_, item| item.read().unwrap().id > layer.id);
+        self.remove_old_refs(&state_root);
         Some(
             parent_nodes
                 .unwrap_or_default()

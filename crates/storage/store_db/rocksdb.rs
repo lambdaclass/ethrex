@@ -747,11 +747,15 @@ impl Store {
         let new_layer = storage_updates
             .into_iter()
             .flat_map(|(account_hash, nodes)| {
-                nodes
-                    .into_iter()
-                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                nodes.into_iter().map(move |(path, node)| {
+                    (apply_prefix(Some(account_hash), path).into_vec(), node)
+                })
             })
-            .chain(account_updates)
+            .chain(
+                account_updates
+                    .into_iter()
+                    .map(|(path, node)| (path.into_vec(), node)),
+            )
             .collect();
         tracing::info!("Update 2: new layer - elapsed {:?}", now.elapsed());
         now = Instant::now();

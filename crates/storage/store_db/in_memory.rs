@@ -134,11 +134,16 @@ impl StoreEngine for Store {
             .storage_updates
             .into_iter()
             .flat_map(|(account_hash, nodes)| {
-                nodes
-                    .into_iter()
-                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                nodes.into_iter().map(move |(path, node)| {
+                    (apply_prefix(Some(account_hash), path).into_vec(), node)
+                })
             })
-            .chain(update_batch.account_updates)
+            .chain(
+                update_batch
+                    .account_updates
+                    .into_iter()
+                    .map(|(path, node)| (path.into_vec(), node)),
+            )
             .collect();
         trie.put_batch(pre_state_root, last_state_root, key_values);
         store.trie_cache = Arc::new(trie);
