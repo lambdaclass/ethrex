@@ -324,6 +324,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
 
+    /// Set the client version for the last completed snap sync
+    async fn set_snap_client_version(&self, version: &str) -> Result<(), StoreError>;
+
+    /// Get the client version for the last completed snap sync
+    async fn get_snap_client_version(&self) -> Result<Option<String>, StoreError>;
+
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
     ///
