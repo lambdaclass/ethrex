@@ -3,7 +3,6 @@ name: Uniswap Example
 on:
   push:
     branches: ["main"]
-  merge_group:
   pull_request:
     branches: ["**"]
   workflow_dispatch:
@@ -75,31 +74,43 @@ jobs:
 
           trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
 
-          echo "Waiting for L2 RPC at http://localhost:1729..."
-          # Up to ~30 seconds: 15 attempts * 2s
-          for _ in {1..15}; do
-            if curl -sS -o /dev/null http://localhost:1729 2>/dev/null; then
-              echo "L2 RPC is up"
-              break
-            fi
-            sleep 2
-          done
-
-          if ! curl -sS -o /dev/null http://localhost:1729 2>/dev/null; then
-            echo "L2 RPC did not become ready in time"
-            exit 1
-          fi
-
           if ! kill -0 "$ETHREX_PID" 2>/dev/null; then
             echo "ethrex l2 --dev process exited unexpectedly"
             exit 1
           fi
 
-          echo "L2 is up. Waiting an additional 2 minutes before running swap_token..."
-          sleep 120
+          echo "Waiting until rich account 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e has funds on the L2..."
+          MAX_BALANCE_TRIES=300
+          BALANCE_SLEEP_SECS=2
+          balance_wei=0
+          balance_output=""
+
+          for ((i = 1; i <= MAX_BALANCE_TRIES; i++)); do
+            if ! balance_output=$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e http://localhost:1729 2>/dev/null); then
+              sleep "${BALANCE_SLEEP_SECS}"
+              continue
+            fi
+
+            balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+
+            if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+              echo "Detected L2 balance for rich account: ${balance_wei} wei"
+              break
+            fi
+
+            sleep "${BALANCE_SLEEP_SECS}"
+          done
+
+          if [[ ! "${balance_wei}" =~ ^[0-9]+$ ]] || (( balance_wei == 0 )); then
+            echo "Timed out waiting for non-zero L2 balance for rich account."
+            echo "Last rex balance output:"
+            echo "${balance_output:-<none>}"
+            exit 1
+          fi
 
           echo "Cloning ethrex-l2-contracts-kit (branch add_uniswap_script)..."
           # Clone ethrex-l2-contracts-kit (branch add_uniswap_script)
+          # TODO: Change for main branch
           git clone --branch add_uniswap_script \
             https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
             /tmp/ethrex-l2-contracts-kit
