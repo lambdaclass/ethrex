@@ -312,6 +312,9 @@ impl Store {
                     cf_opts.set_min_blob_size(32);
                     cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
 
+                    let blob_cache = rocksdb::Cache::new_lru_cache(128 * 1024 * 1024); // 128MB
+                    cf_opts.set_blob_cache(&blob_cache);
+
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
                     cf_opts.set_block_based_table_factory(&block_opts);
