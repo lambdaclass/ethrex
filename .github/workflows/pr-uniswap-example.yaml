@@ -65,25 +65,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Start L2 dev mode (runs L1+L2)
+          echo "Starting ethrex L2 dev node (output suppressed)..."
+          # Start L2 dev mode (runs L1+L2), but silence its logs
           ./target/release/ethrex \
             l2 --dev \
             --osaka-activation-time 1761677592 \
-            --no-monitor &
+            --no-monitor >/dev/null 2>&1 &
           ETHREX_PID=$!
 
           trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
 
           echo "Waiting for L2 RPC at http://127.0.0.1:1729..."
           for i in {1..120}; do
-            if curl -sSf http://127.0.0.1:1729 >/dev/null 2>&1; then
+            if curl -sS -o /dev/null http://127.0.0.1:1729 2>/dev/null; then
               echo "L2 RPC is up"
               break
             fi
             sleep 2
           done
 
-          if ! curl -sSf http://127.0.0.1:1729 >/dev/null 2>&1; then
+          if ! curl -sS -o /dev/null http://127.0.0.1:1729 2>/dev/null; then
             echo "L2 RPC did not become ready in time"
             exit 1
           fi
@@ -93,6 +94,10 @@ jobs:
             exit 1
           fi
 
+          echo "L2 is up. Waiting an additional 2 minutes before running swap_token..."
+          sleep 120
+
+          echo "Cloning ethrex-l2-contracts-kit (branch add_uniswap_script)..."
           # Clone ethrex-l2-contracts-kit (branch add_uniswap_script)
           git clone --branch add_uniswap_script \
             https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
@@ -100,5 +105,6 @@ jobs:
 
           cd /tmp/ethrex-l2-contracts-kit
 
+          echo "Running Uniswap swap_token script..."
           chmod +x examples/uniswap/swap_token
           examples/uniswap/swap_token
