@@ -156,6 +156,10 @@ impl RLPEncode for () {
     fn encode(&self, buf: &mut dyn BufMut) {
         buf.put_u8(RLP_NULL);
     }
+    #[inline]
+    fn length(&self) -> usize {
+        0
+    }
 }
 
 impl RLPEncode for [u8] {
@@ -208,17 +212,32 @@ impl RLPEncode for str {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
+    }
 }
 
 impl RLPEncode for &str {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
+    }
 }
 
 impl RLPEncode for String {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        RLPEncode::length(self.as_bytes())
     }
 }
 
