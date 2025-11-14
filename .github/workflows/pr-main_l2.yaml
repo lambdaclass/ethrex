@@ -371,7 +371,7 @@ jobs:
         run: |
           sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
           sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
-          cd crates/l2/tee/quote-gen
+          cd crates/l2/tee/quote-gen || echo "if fails run in the root of the project: make update-cargo-lock"
           make image.raw
 
       - name: Start L1 & Deploy contracts
