@@ -368,12 +368,23 @@ impl SQLStore {
         }
         self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(transaction))
             .await?;
-        self.store_message_hashes_by_batch_in_tx(
+        self.store_l1_message_hashes_by_batch_in_tx(
             batch.number,
-            batch.message_hashes,
-            Some(transaction),
+            batch.l1_message_hashes,
+            Some(&transaction),
         )
         .await?;
+        self.store_l2_message_hashes_by_batch_in_tx(
+            batch.number,
+            batch.l2_message_hashes,
+            Some(&transaction),
+        )
+        .await?;
+        self.store_balance_diffs_by_batch_in_tx(
+            batch.number,
+            batch.balance_diffs,
+            Some(&transaction),
+        ).await?;
         self.store_privileged_transactions_hash_by_batch_number_in_tx(
             batch.number,
             batch.privileged_transactions_hash,
@@ -807,27 +818,6 @@ impl StoreEngineRollup for SQLStore {
         let conn = self.write_conn.lock().await;
         let transaction = conn.transaction().await?;
 
-        for block_number in blocks.iter() {
-            self.store_batch_number_by_block_in_tx(*block_number, batch.number, Some(&transaction))
-                .await?;
-        }
-        self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(&transaction))
-            .await?;
-        self.store_l1_message_hashes_by_batch_in_tx(
-            batch.l1_message_hashes,
-            Some(&transaction),
-        )
-        .await?;
-        self.store_l2_message_hashes_by_batch_in_tx(
-            batch.number,
-            batch.l2_message_hashes,
-            Some(&transaction),
-        )
-        .await?;
-        self.store_balance_diffs_by_batch_in_tx(
-            batch.number,
-            batch.balance_diffs,
-        ).await?;
         self.seal_batch_in_tx(batch, &transaction).await?;
 
         transaction.commit().await.map_err(RollupStoreError::from)
