@@ -33,7 +33,7 @@ const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 /// The target number of RLPx connections to reach.
 pub const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
-pub const TARGET_CONTACTS: usize = 100_000;
+const TARGET_CONTACTS: usize = 100_000;
 
 #[derive(Debug, Clone)]
 pub struct Contact {

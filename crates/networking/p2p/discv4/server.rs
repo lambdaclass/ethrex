@@ -42,7 +42,7 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
 pub const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
-pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 100 per minute
+pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
