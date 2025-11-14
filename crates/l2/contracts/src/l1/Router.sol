@@ -19,6 +19,8 @@ contract Router is
 {
     mapping(uint256 chainId => address bridge) public bridges;
 
+    uint256[] public registeredChainIds;
+
     function initialize(address owner) public initializer {
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -37,6 +39,7 @@ contract Router is
         }
 
         bridges[chainId] = _commonBridge;
+        registeredChainIds.push(chainId);
 
         emit ChainRegistered(chainId, _commonBridge);
     }
@@ -48,6 +51,7 @@ contract Router is
         }
 
         delete bridges[chainId];
+        removeChainID(chainId);
 
         emit ChainDeregistered(chainId);
     }
@@ -92,5 +96,19 @@ contract Router is
 
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    function removeChainID(uint256 chainId) internal {
+        for (uint i = 0; i < registeredChainIds.length; i++) {
+            if (registeredChainIds[i] == chainId) {
+                registeredChainIds[i] = registeredChainIds[registeredChainIds.length - 1];
+                registeredChainIds.pop();
+                return;
+            }
+        }
+    }
+
+    function getRegisteredChainIds() external view returns (uint256[] memory) {
+        return registeredChainIds;
     }
 }

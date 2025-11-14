@@ -4,10 +4,13 @@ use ethrex_blockchain::{
     constants::TX_GAS_COST,
     payload::{PayloadBuildContext, PayloadBuildResult, TransactionQueue, apply_plain_transaction},
 };
-use ethrex_common::types::{
-    Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction,
+use ethrex_common::{
+    U256,
+    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction},
 };
-use ethrex_l2_common::privileged_transactions::PRIVILEGED_TX_BUDGET;
+use ethrex_l2_common::{
+    messages::get_block_l2_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
+};
 use ethrex_levm::vm::VMType;
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
@@ -31,6 +34,7 @@ pub async fn build_payload(
     store: &Store,
     privileged_nonces: &mut HashMap<u64, Option<u64>>,
     block_gas_limit: u64,
+    registered_chains: Vec<U256>,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -44,6 +48,7 @@ pub async fn build_payload(
         store,
         privileged_nonces,
         block_gas_limit,
+        registered_chains,
     )
     .await?;
     blockchain.finalize_payload(&mut context)?;
@@ -94,6 +99,7 @@ pub async fn fill_transactions(
     store: &Store,
     privileged_nonces: &mut HashMap<u64, Option<u64>>,
     configured_block_gas_limit: u64,
+    registered_chains: Vec<U256>,
 ) -> Result<(), BlockProducerError> {
     let mut privileged_tx_count = 0;
     let VMType::L2(fee_config) = context.vm.vm_type else {
@@ -205,6 +211,7 @@ pub async fn fill_transactions(
         }
 
         // Execute tx
+        let original_context = context.clone();
         let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => receipt,
             Err(e) => {
@@ -215,6 +222,20 @@ pub async fn fill_transactions(
                 continue;
             }
         };
+
+        let l2_messages = get_block_l2_messages(&[receipt.clone()]);
+        let mut found_invalid_message = false;
+        for msg in l2_messages {
+            if !registered_chains.contains(&msg.chain_id) {
+                txs.pop();
+                *context = original_context.clone();
+                found_invalid_message = true;
+                break;
+            }
+        }
+        if found_invalid_message {
+            continue;
+        }
 
         // Check we don't have an excessive number of privileged transactions
 

@@ -155,6 +155,7 @@ pub async fn start_l2(
         blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
+        cfg.l1_watcher.router_address,
     )
     .await
     .inspect_err(|err| {
