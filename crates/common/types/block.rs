@@ -13,6 +13,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
+use ethrex_rlp::encode::list_length;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -57,6 +58,24 @@ impl RLPEncode for Block {
             .encode_field(&self.body.ommers)
             .encode_optional_field(&self.body.withdrawals)
             .finish();
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        let mut payload_len = 0usize;
+
+        payload_len += self.header.length();
+        payload_len += self.body.transactions.length();
+        payload_len += self.body.ommers.length();
+
+        payload_len += self
+            .body
+            .withdrawals
+            .as_ref()
+            .map(|w| w.length())
+            .unwrap_or(1);
+
+        list_length(payload_len)
     }
 }
 
@@ -170,6 +189,58 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.parent_beacon_block_root)
             .encode_optional_field(&self.requests_hash)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let mut payload_len = 0usize;
+
+        payload_len += self.parent_hash.length();
+        payload_len += self.ommers_hash.length();
+        payload_len += self.coinbase.length();
+        payload_len += self.state_root.length();
+        payload_len += self.transactions_root.length();
+        payload_len += self.receipts_root.length();
+        payload_len += self.logs_bloom.length();
+        payload_len += self.difficulty.length();
+        payload_len += self.number.length();
+        payload_len += self.gas_limit.length();
+        payload_len += self.gas_used.length();
+        payload_len += self.timestamp.length();
+        payload_len += self.extra_data.length();
+        payload_len += self.prev_randao.length();
+        payload_len += self.nonce.to_be_bytes().length();
+
+        payload_len += match &self.base_fee_per_gas {
+            Some(v) => v.length(),
+            None => 1,
+        };
+
+        payload_len += match &self.withdrawals_root {
+            Some(v) => v.length(),
+            None => 1,
+        };
+
+        payload_len += match &self.blob_gas_used {
+            Some(v) => v.length(),
+            None => 1,
+        };
+
+        payload_len += match &self.excess_blob_gas {
+            Some(v) => v.length(),
+            None => 1,
+        };
+
+        payload_len += match &self.parent_beacon_block_root {
+            Some(v) => v.length(),
+            None => 1,
+        };
+
+        payload_len += match &self.requests_hash {
+            Some(v) => v.length(),
+            None => 1,
+        };
+
+        list_length(payload_len)
     }
 }
 
@@ -297,6 +368,18 @@ impl RLPEncode for BlockBody {
             .encode_optional_field(&self.withdrawals)
             .finish();
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        let mut payload_len = 0usize;
+
+        payload_len += self.transactions.length();
+        payload_len += self.ommers.length();
+
+        payload_len += self.withdrawals.as_ref().map(|w| w.length()).unwrap_or(1);
+
+        list_length(payload_len)
+    }
 }
 
 impl RLPDecode for BlockBody {
@@ -351,6 +434,16 @@ impl RLPEncode for Withdrawal {
             .encode_field(&self.address)
             .encode_field(&self.amount)
             .finish();
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        let payload_len = self.index.length()
+            + self.validator_index.length()
+            + self.address.length()
+            + self.amount.length();
+
+        list_length(payload_len)
     }
 }
 

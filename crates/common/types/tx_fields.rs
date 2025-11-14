@@ -1,7 +1,7 @@
 use crate::{Address, H256, U256};
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -57,6 +57,24 @@ impl RLPEncode for AuthorizationTuple {
             .encode_field(&self.r_signature)
             .encode_field(&self.s_signature)
             .finish();
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        let payload_len = self.chain_id.length()
+            + self.address.length()
+            + self.nonce.length()
+            + self.y_parity.length()
+            + self.r_signature.length()
+            + self.s_signature.length();
+
+        list_length(payload_len)
+    }
+
+    fn encode_to_vec(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.encode(&mut buf);
+        buf
     }
 }
 

@@ -29,6 +29,32 @@ pub const fn list_length(payload_len: usize) -> usize {
     }
 }
 
+/// Computes the length needed for a given bytes length and first byte
+#[inline]
+pub const fn bytes_length(bytes_len: usize, first_byte: u8) -> usize {
+    if bytes_len == 0 {
+        return 1;
+    }
+
+    if bytes_len == 1 && first_byte <= 0x7f {
+        return 1;
+    }
+
+    if bytes_len < 56 {
+        return 1 + bytes_len; // prefix (0x80 + len) + payload
+    }
+
+    // long (>=56 bytes)
+    let be = bytes_len.to_be_bytes();
+    let mut i = 0;
+    while i < be.len() && be[i] == 0 {
+        i += 1;
+    }
+    let be_len = be.len() - i;
+
+    1 + be_len + bytes_len // prefix + len(len) + payload
+}
+
 pub trait RLPEncode {
     fn encode(&self, buf: &mut dyn BufMut);
 
@@ -200,28 +226,20 @@ impl RLPEncode for [u8] {
     }
 
     fn length(&self) -> usize {
-        const U8_MAX_PLUS_ONE: usize = u8::MAX as usize + 1;
-        const U16_MAX_PLUS_ONE: usize = u16::MAX as usize + 1;
-
-        match self.len() {
-            0 => 1,                                                  // encodes to RLP_NULL
-            1 if self[0] < 0x80 => 1,                                // `self` is its own encoding
-            1..56 => 1 + self.len(),                                 // single byte prefix
-            56..U8_MAX_PLUS_ONE => 1 + 1 + self.len(), // single byte prefix + payload len bytes
-            U8_MAX_PLUS_ONE..U16_MAX_PLUS_ONE => 1 + 2 + self.len(), // single byte prefix + payload len bytes
-            _ => {
-                // fallback if `self` is longer than 2^16 - 1 bytes
-                let payload_len_bytes =
-                    ((usize::BITS - self.len().leading_zeros()) as usize).div_ceil(8);
-                1 + payload_len_bytes + self.len()
-            }
+        if self.is_empty() {
+            return 1;
         }
+        bytes_length(self.len(), self[0])
     }
 }
 
 impl<const N: usize> RLPEncode for [u8; N] {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_ref().encode(buf)
+    }
+
+    fn length(&self) -> usize {
+        self.as_ref().length()
     }
 }
 
@@ -263,6 +281,22 @@ impl RLPEncode for U256 {
         let leading_zeros_in_bytes: usize = (self.leading_zeros() / 8) as usize;
         let bytes = self.to_big_endian();
         bytes[leading_zeros_in_bytes..].encode(buf)
+    }
+
+    fn length(&self) -> usize {
+        let bits = 256 - self.leading_zeros() as usize;
+        let sig_len = (bits + 7) / 8;
+        let first_byte = if sig_len == 0 {
+            0
+        } else {
+            let shift = 8 * (sig_len - 1);
+            ((self >> shift) & U256::from(0xff)).as_u32() as u8
+        };
+
+        let is_nonzero_mask = (sig_len != 0) as usize;
+        let is_multibyte_mask = ((sig_len > 1) as usize) | ((first_byte > 0x7f) as usize);
+
+        1 + (sig_len * is_nonzero_mask * is_multibyte_mask)
     }
 }
 
@@ -419,6 +453,10 @@ impl RLPEncode for IpAddr {
 impl RLPEncode for Bytes {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_ref().encode(buf)
+    }
+
+    fn length(&self) -> usize {
+        self.as_ref().length()
     }
 }
 
