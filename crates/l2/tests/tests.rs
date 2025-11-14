@@ -1109,7 +1109,7 @@ async fn test_deposit(
     println!("test_deposit: Waiting for L1 deposit transaction receipt");
 
     let deposit_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, l1_client, 1000).await?;
+        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, l1_client, 5).await?;
 
     let gas_used = deposit_tx_receipt.tx_info.gas_used;
 
