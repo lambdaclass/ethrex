@@ -38,11 +38,14 @@ ethrex l2 deploy \
     --tdx.verifier-address <TDX_VERIFIER_ADDRESS> \
     --aligned.aggregator-address <ALIGNED_AGGREGATOR_ADDRESS> \
     --on-chain-proposer-owner <OWNER_ADDRESS> \
-    --bridge-owner <OWNER_ADDRESS> \
+    --bridge-owner <BRIDGE_OWNER_ADDRESS> \
     --randomize-contract-deployment
 ```
 
 You can find a genesis example in the [repo](https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json).
+
+`--bridge-owner` must point to the address that will ultimately control the CommonBridge upgrades.  
+If you also need the deployer to accept the transfer on that owner’s behalf, pass `--bridge-owner-pk <PRIVATE_KEY>` in the same command; otherwise the owner can accept later.
 
 Verifier addresses can be set to `0x00000000000000000000000000000000000000AA` in case you don't want to use some prover. The same applies to Aligned.
 
