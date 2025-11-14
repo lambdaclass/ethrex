@@ -620,6 +620,6 @@ jobs:
           fi
 
           if [ "${{ needs.uniswap-swap.result }}" != "success" ]; then
-            echo "Job Uniswap swap failed"
+            echo "Job Uniswap Swap Token Flow failed"
             exit 1
           fi
