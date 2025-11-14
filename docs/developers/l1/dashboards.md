@@ -105,11 +105,11 @@ Bar gauge of the historical average latency per Engine method over the selected 
 ![Engine Latency by Methods](img/engine_latency_by_methods.png)
 
 ### Engine Latency by Method
-Live timeseries that tries to corralate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.
+Live timeseries that tries to correlate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.
 
 ![Engine Latency by Method](img/engine_latency_by_method.png)
 
-_**Limitations**: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window for calculate the average, which should be near-exact per-block executions but we can lost some intermediary measure._
+_**Limitations**: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window for calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure._
 
 ## RPC API
 
@@ -133,7 +133,7 @@ Timeseries showing request throughput broken down by method, averaged across the
 ![RPC Request Rate by Method](img/rpc_request_rate_by_method.png)
 
 ### RPC Latency by Methods
-Live timeseries that tries to corralate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.
+Live timeseries that tries to correlate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.
 
 ![RPC Latency by Methods](img/rpc_latency_by_methods.png)
 
