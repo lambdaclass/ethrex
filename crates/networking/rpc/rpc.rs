@@ -55,6 +55,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
+use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -191,7 +192,28 @@ pub trait RpcHandler: Sized {
 
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(context).await
+        let namespace = match req.namespace() {
+            Ok(RpcNamespace::Engine) => "engine",
+            _ => "rpc",
+        };
+        let method = req.method.as_str();
+
+        let result =
+            record_async_duration(
+                namespace,
+                method,
+                async move { request.handle(context).await },
+            )
+            .await;
+
+        let outcome = if result.is_ok() {
+            RpcOutcome::Success
+        } else {
+            RpcOutcome::Error
+        };
+        record_rpc_outcome(namespace, method, outcome);
+
+        result
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
