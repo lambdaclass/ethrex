@@ -220,3 +220,26 @@ pub(crate) async fn fetch_logs_with_filter(
 
     Ok(filtered_logs)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_get_logs_with_defaults() {
+        let params = Some(vec![json!({"topics": H256::zero().to_string()})]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert!(request.address_filters.is_none(), "{request:?}");
+        assert!(
+            matches!(request.from_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert!(
+            matches!(request.to_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::zero()))]);
+    }
+}
