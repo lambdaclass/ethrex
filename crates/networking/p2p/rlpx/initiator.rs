@@ -1,8 +1,9 @@
+use crate::discv4::peer_table::TARGET_PEERS;
 use crate::types::Node;
 use crate::{
     discv4::{
-        peer_table::{PeerTableError, TARGET_CONTACTS},
-        server::LOOKUP_INTERVAL,
+        peer_table::PeerTableError,
+        server::{INITIAL_LOOKUP_INTERVAL, LOOKUP_INTERVAL},
     },
     metrics::METRICS,
     network::P2PContext,
@@ -26,7 +27,9 @@ pub struct RLPxInitiator {
     context: P2PContext,
 
     /// The interval between peer lookups, incremets as the number of peers
+    /// The initial interval between peer lookups, until the number of peers
     /// reaches [target_peers](RLPxInitiatorState::target_peers).
+    initial_lookup_interval: Duration,
     lookup_interval: Duration,
 
     /// The target number of RLPx connections to reach.
@@ -38,7 +41,7 @@ impl RLPxInitiator {
         Self {
             context,
             // We use the same lookup intervals as Discovery to try to get both process to check at the same rate
-            // We store the initial lookup interval value and then calculate its current value if needed.
+            initial_lookup_interval: INITIAL_LOOKUP_INTERVAL,
             lookup_interval: LOOKUP_INTERVAL,
             target_peers: 50,
         }
@@ -66,17 +69,14 @@ impl RLPxInitiator {
 
     async fn get_lookup_interval(&mut self) -> Duration {
         let num_peers = self.context.table.peer_count().await.unwrap_or(0) as u64;
-        let num_contacts = self.context.table.contact_count().await.unwrap_or(0) as u64;
 
-        let progress = ((num_peers + num_contacts) as f32)
-            / ((TARGET_CONTACTS + self.target_peers as usize) as f32).clamp(1.0, 6.0);
-        self.lookup_interval = self.lookup_interval * progress as u32;
+        let progress = (num_peers / (TARGET_PEERS) as u64).min(1);
 
-        if num_peers + num_contacts > self.target_peers + TARGET_CONTACTS as u64 {
-            debug!(
-                "Reached target number of peers. Using longer lookup interval of {:?} ms.",
-                self.lookup_interval
-            );
+        self.lookup_interval +=
+            (self.lookup_interval - self.initial_lookup_interval) * progress as u32;
+
+        if num_peers > self.target_peers {
+            debug!("Reached target number of peers. Using longer lookup interval.");
         }
 
         self.lookup_interval
