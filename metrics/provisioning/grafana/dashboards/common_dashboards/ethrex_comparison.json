@@ -136,6 +136,19 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.5\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth mainnet p50",
+              "range": true,
+              "refId": "E"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
               "expr": "nethermind_mgas_per_sec{instance=\"eth-mainnet-rpc-1:6060\"} * 1000000",
               "hide": false,
               "instant": false,
@@ -249,7 +262,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 79
+            "y": 13
           },
           "id": 2,
           "options": {
@@ -465,7 +478,7 @@
             "h": 13,
             "w": 12,
             "x": 12,
-            "y": 79
+            "y": 13
           },
           "id": 3,
           "options": {
@@ -695,7 +708,7 @@
             "h": 14,
             "w": 24,
             "x": 0,
-            "y": 2
+            "y": 27
           },
           "id": 6,
           "options": {
@@ -860,7 +873,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 17
+            "y": 3
           },
           "id": 1,
           "options": {
@@ -891,6 +904,19 @@
               "legendFormat": "reth hoodi p99.9",
               "range": true,
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.5\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth hoodi p50",
+              "range": true,
+              "refId": "D"
             },
             {
               "datasource": {
@@ -998,7 +1024,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 30
+            "y": 16
           },
           "id": 9,
           "options": {
@@ -1196,7 +1222,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 44
+            "y": 4
           },
           "id": 11,
           "options": {
@@ -1227,6 +1253,19 @@
               "legendFormat": "reth sepolia p99.9",
               "range": true,
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.5\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth sepolia p50",
+              "range": true,
+              "refId": "D"
             },
             {
               "datasource": {
@@ -1334,7 +1373,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 57
+            "y": 17
           },
           "id": 12,
           "options": {
@@ -1531,5 +1570,5 @@
   "timezone": "browser",
   "title": "Ethrex Comparison",
   "uid": "ads9rd7",
-  "version": 2
+  "version": 3
 }
