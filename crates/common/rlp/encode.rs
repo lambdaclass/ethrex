@@ -47,39 +47,44 @@ impl RLPEncode for bool {
 
 // integer types impls
 
+#[inline]
 fn impl_encode<const N: usize>(value_be: [u8; N], buf: &mut dyn BufMut) {
-    let mut is_multi_byte_case = false;
-
-    for n in value_be.iter().take(N - 1) {
-        // If we encounter a non 0 byte pattern before the last byte, we are
-        // at the multi byte case
-        if *n != 0 {
-            is_multi_byte_case = true;
-            break;
-        }
+    // count leading zeros
+    let mut i = 0;
+    while i < N && value_be[i] == 0 {
+        i += 1;
     }
 
-    match value_be[N - 1] {
-        // 0, also known as null or the empty string is 0x80
-        0 if !is_multi_byte_case => buf.put_u8(RLP_NULL),
-        // for a single byte whose value is in the [0x00, 0x7f] range, that byte is its own RLP encoding.
-        n @ 1..=0x7f if !is_multi_byte_case => buf.put_u8(n),
-        // if a string is 0-55 bytes long, the RLP encoding consists of a
-        // single byte with value RLP_NULL (0x80) plus the length of the string followed by the string.
-        _ => {
-            let mut bytes = ArrayVec::<[u8; 8]>::new();
-            bytes.extend_from_slice(&value_be);
-            let start = bytes.iter().position(|&x| x != 0).unwrap();
-            let len = bytes.len() - start;
-            buf.put_u8(RLP_NULL + len as u8);
-            buf.put_slice(&bytes[start..]);
-        }
+    // zero value
+    if i == N {
+        buf.put_u8(RLP_NULL);
+        return;
     }
+
+    let first = value_be[i];
+
+    // single byte [0x00..0x7f]
+    if i == N - 1 && first <= 0x7f {
+        buf.put_u8(first);
+        return;
+    }
+
+    // multi byte
+    let len = N - i;
+    buf.put_u8(RLP_NULL + len as u8);
+    buf.put_slice(&value_be[i..]);
 }
 
 impl RLPEncode for u8 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        1usize
+            + (((8 - self.leading_zeros() as usize + 7) / 8)
+                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
 
@@ -87,11 +92,24 @@ impl RLPEncode for u16 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
     }
+    #[inline]
+    fn length(&self) -> usize {
+        1usize
+            + (((16 - self.leading_zeros() as usize + 7) / 8)
+                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
+    }
 }
 
 impl RLPEncode for u32 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        1usize
+            + (((32 - self.leading_zeros() as usize + 7) / 8)
+                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
 
@@ -99,17 +117,38 @@ impl RLPEncode for u64 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        1usize
+            + (((64 - self.leading_zeros() as usize + 7) / 8)
+                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
+    }
 }
 
 impl RLPEncode for usize {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
     }
+
+    #[inline]
+    fn length(&self) -> usize {
+        1usize
+            + (((usize::BITS as usize - self.leading_zeros() as usize + 7) / 8)
+                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
+    }
 }
 
 impl RLPEncode for u128 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
+    }
+
+    #[inline]
+    fn length(&self) -> usize {
+        1usize
+            + (((128 - self.leading_zeros() as usize + 7) / 8)
+                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
 
