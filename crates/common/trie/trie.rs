@@ -4,6 +4,7 @@ pub mod logger;
 mod nibbles;
 pub mod node;
 mod node_hash;
+pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
@@ -303,7 +304,7 @@ impl Trie {
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
     pub fn get_embedded_root(
-        all_nodes: &BTreeMap<H256, Vec<u8>>,
+        all_nodes: &BTreeMap<H256, Node>,
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
@@ -316,21 +317,19 @@ impl Trie {
         })?;
 
         fn get_embedded_node(
-            all_nodes: &BTreeMap<H256, Vec<u8>>,
-            cur_node_rlp: &[u8],
+            all_nodes: &BTreeMap<H256, Node>,
+            cur_node: &Node,
         ) -> Result<Node, TrieError> {
-            let cur_node = Node::decode(cur_node_rlp)?;
-
-            Ok(match cur_node {
+            Ok(match cur_node.clone() {
                 Node::Branch(mut node) => {
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
+                            continue;
                         };
 
                         if hash.is_valid() {
                             *choice = match all_nodes.get(&hash.finalize()) {
-                                Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
+                                Some(node) => get_embedded_node(all_nodes, node)?.into(),
                                 None => hash.into(),
                             };
                         }
@@ -340,11 +339,11 @@ impl Trie {
                 }
                 Node::Extension(mut node) => {
                     let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
+                        return Ok(node.into());
                     };
 
                     node.child = match all_nodes.get(&hash.finalize()) {
-                        Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
+                        Some(node) => get_embedded_node(all_nodes, node)?.into(),
                         None => hash.into(),
                     };
 
@@ -367,7 +366,7 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
+        state_nodes: &BTreeMap<H256, Node>,
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
         let root = Self::get_embedded_root(state_nodes, root_hash)?;
@@ -512,9 +511,19 @@ impl Trie {
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
-    fn new_temp() -> Self {
+    pub fn new_temp() -> Self {
         let db = InMemoryTrieDB::new(Default::default());
         Trie::new(Box::new(db))
+    }
+
+    /// Creates a new Trie based on a temporary InMemory DB, with a specified root
+    ///
+    /// This is usually used to create a Trie from a root that was embedded with the rest of the nodes.
+    pub fn new_temp_with_root(root: NodeRef) -> Self {
+        let db = InMemoryTrieDB::new(Default::default());
+        let mut trie = Trie::new(Box::new(db));
+        trie.root = root;
+        trie
     }
 }
 

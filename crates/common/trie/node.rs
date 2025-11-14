@@ -8,16 +8,42 @@ pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
+use rkyv::{
+    de::Pooling,
+    rancor::Source,
+    ser::{Allocator, Sharing, Writer},
+    validation::{ArchiveContext, SharedContext},
+    with::Skip,
+};
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
 /// A reference to a node.
-#[derive(Clone, Debug)]
+///
+/// Explicit rkyv bounds are needed because this is a recursive type, whose
+/// bounds can't be automatically resolved.
+#[derive(
+    Clone,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
+#[rkyv(serialize_bounds(__S: Writer + Allocator + Sharing, __S::Error: Source))]
+#[rkyv(deserialize_bounds(__D: Pooling, __D::Error: Source))]
+#[rkyv(bytecheck(bounds(__C: ArchiveContext + SharedContext)))]
 pub enum NodeRef {
     /// The node is embedded within the reference.
-    Node(Arc<Node>, OnceLock<NodeHash>),
+    Node(
+        #[rkyv(omit_bounds)] Arc<Node>,
+        #[rkyv(with = Skip)]
+        #[serde(skip)]
+        OnceLock<NodeHash>,
+    ),
     /// The node is in the database, referenced by its hash.
     Hash(NodeHash),
 }
@@ -190,6 +216,12 @@ impl From<NodeHash> for NodeRef {
     }
 }
 
+impl From<Arc<Node>> for NodeRef {
+    fn from(value: Arc<Node>) -> Self {
+        Self::Node(value, OnceLock::new())
+    }
+}
+
 impl PartialEq for NodeRef {
     fn eq(&self, other: &Self) -> bool {
         let mut buf = Vec::new();
@@ -214,12 +246,31 @@ impl From<NodeHash> for ValueOrHash {
     }
 }
 
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    rkyv::Archive,
+)]
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
-#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Branch(Box<BranchNode>),
     Extension(ExtensionNode),
     Leaf(LeafNode),
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        // empty leaf node as a placeholder
+        Self::Leaf(LeafNode {
+            partial: Nibbles::from_bytes(&[]),
+            value: Vec::new(),
+        })
+    }
 }
 
 impl From<Box<BranchNode>> for Node {
@@ -346,6 +397,31 @@ impl Node {
             Node::Extension(n) => n.child.memoize_hashes(buf),
             _ => {}
         }
+    }
+
+    /// Recursively encodes all embedded nodes of the subtrie that has
+    /// `self` as root.
+    ///
+    /// This won't encode nodes which are not embedded in `self`.
+    pub fn encode_subtrie(&self, encoded: &mut Vec<NodeRLP>) -> Result<(), TrieError> {
+        match self {
+            Node::Branch(node) => {
+                for choice in &node.choices {
+                    if let NodeRef::Node(choice, _) = choice {
+                        choice.encode_subtrie(encoded)?;
+                    }
+                }
+            }
+            Node::Extension(node) => {
+                if let NodeRef::Node(child, _) = &node.child {
+                    child.encode_subtrie(encoded)?;
+                }
+            }
+            Node::Leaf(_) => {}
+        };
+
+        encoded.push(self.encode_to_vec());
+        Ok(())
     }
 }
 
