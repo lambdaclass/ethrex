@@ -24,7 +24,10 @@ use crate::{
     initializers::{
         get_network, init_blockchain, init_store, init_tracing, load_store, regenerate_head_state,
     },
-    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
+    utils::{
+        self, default_datadir, get_client_version, get_minimal_client_version, init_datadir,
+        parse_datadir,
+    },
 };
 
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
@@ -61,13 +64,12 @@ pub struct Options {
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
         help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
-        default_value = default_datadir().into_os_string(),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: PathBuf,
+    pub datadir: Option<PathBuf>,
     #[arg(
         long = "force",
         help = "Force remove the database",
@@ -258,7 +260,7 @@ impl Options {
     pub fn default_l1() -> Self {
         Self {
             network: Some(Network::LocalDevnet),
-            datadir: DB_ETHREX_DEV_L1.into(),
+            datadir: Some(DB_ETHREX_DEV_L1.into()),
             dev: true,
             http_addr: "0.0.0.0".to_string(),
             http_port: "8545".to_string(),
@@ -425,7 +427,7 @@ impl Subcommand {
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&parse_datadir(opts.datadir.clone(), opts.dev), opts.force);
                 }
 
                 let network = get_network(opts);
@@ -437,7 +439,7 @@ impl Subcommand {
                 };
                 import_blocks(
                     &path,
-                    &opts.datadir,
+                    &parse_datadir(opts.datadir.clone(), opts.dev),
                     genesis,
                     BlockchainOptions {
                         max_mempool_size: opts.mempool_max_size,
@@ -449,7 +451,7 @@ impl Subcommand {
             }
             Subcommand::ImportBench { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&parse_datadir(opts.datadir.clone(), opts.dev), opts.force);
                 }
                 info!("ethrex version: {}", get_client_version());
 
@@ -462,7 +464,7 @@ impl Subcommand {
                 };
                 import_blocks_bench(
                     &path,
-                    &opts.datadir,
+                    &parse_datadir(opts.datadir.clone(), opts.dev),
                     genesis,
                     BlockchainOptions {
                         r#type: blockchain_type,
@@ -473,7 +475,13 @@ impl Subcommand {
                 .await?;
             }
             Subcommand::Export { path, first, last } => {
-                export_blocks(&path, &opts.datadir, first, last).await
+                export_blocks(
+                    &path,
+                    &parse_datadir(opts.datadir.clone(), opts.dev),
+                    first,
+                    last,
+                )
+                .await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;

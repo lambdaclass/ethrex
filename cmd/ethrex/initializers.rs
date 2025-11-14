@@ -1,8 +1,8 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
-        read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_client_version, init_datadir, parse_datadir,
+        parse_socket_addr, read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -143,7 +143,7 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
-    init_datadir(&opts.datadir);
+    init_datadir(&parse_datadir(opts.datadir.clone(), opts.dev));
 
     let syncmode = if opts.dev {
         &SyncMode::Full
@@ -158,7 +158,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        opts.datadir.clone(),
+        parse_datadir(opts.datadir.clone(), opts.dev),
     )
     .await;
 
@@ -382,12 +382,8 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
-        &Path::new("/tmp/memory").to_path_buf()
-    } else {
-        &opts.datadir
-    };
-    init_datadir(datadir);
+    let datadir = parse_datadir(opts.datadir.clone(), opts.dev);
+    init_datadir(&datadir);
 
     let network = get_network(&opts);
 
@@ -398,7 +394,7 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(&datadir, genesis).await;
     if opts.syncmode == SyncMode::Full {
         store.generate_flatkeyvalue()?;
     }
@@ -417,11 +413,11 @@ pub async fn init_l1(
 
     regenerate_head_state(&store, &blockchain).await?;
 
-    let signer = get_signer(datadir);
+    let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
+    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
     let peer_table = PeerTable::spawn(opts.target_peers);
 
@@ -472,7 +468,7 @@ pub async fn init_l1(
         init_network(
             &opts,
             &network,
-            datadir,
+            &datadir,
             peer_handler.clone(),
             tracker.clone(),
             blockchain.clone(),

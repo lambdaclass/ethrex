@@ -99,6 +99,19 @@ pub fn default_datadir() -> PathBuf {
     project_dir.data_local_dir().to_path_buf()
 }
 
+pub fn parse_datadir(datadir: Option<PathBuf>, dev_mode: bool) -> PathBuf {
+    match datadir {
+        Some(path) => {
+            if dev_mode && cfg!(feature = "dev") {
+                Path::new("/tmp/memory").to_path_buf()
+            } else {
+                path
+            }
+        }
+        None => default_datadir(),
+    }
+}
+
 /// Ensures that the provided data directory exists and is a directory.
 ///
 /// # Panics
