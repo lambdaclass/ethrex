@@ -1,12 +1,7 @@
 use crate::input::ProgramInput;
 use crate::output::ProgramOutput;
-use crate::report_cycles;
 
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::{
-    validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
-    validate_state_root,
-};
 use ethrex_common::types::AccountUpdate;
 #[cfg(not(feature = "l2"))]
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
@@ -21,7 +16,7 @@ use ethrex_common::{H256, types::Block};
 use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
@@ -135,6 +130,10 @@ pub fn stateless_validation_l1(
     execution_witness: ExecutionWitness,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
+    use std::collections::BTreeMap;
+
+    use crate::report_cycles;
+
     let guest_program_state: GuestProgramState =
         report_cycles("guest_program_state_initialization", || {
             execution_witness
@@ -194,7 +193,7 @@ pub fn stateless_validation_l1(
     for block in blocks.iter() {
         // Validate the block
         report_cycles("validate_block", || {
-            validate_block(
+            ethrex_blockchain::validate_block(
                 block,
                 parent_block_header,
                 &chain_config,
@@ -235,19 +234,23 @@ pub fn stateless_validation_l1(
         }
 
         report_cycles("validate_gas_and_receipts", || {
-            validate_gas_used(&result.receipts, &block.header)
+            ethrex_blockchain::validate_gas_used(&result.receipts, &block.header)
                 .map_err(StatelessExecutionError::GasValidationError)
         })?;
 
         report_cycles("validate_receipts_root", || {
-            validate_receipts_root(&block.header, &result.receipts)
+            ethrex_blockchain::validate_receipts_root(&block.header, &result.receipts)
                 .map_err(StatelessExecutionError::ReceiptsRootValidationError)
         })?;
 
         // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
         report_cycles("validate_requests_hash", || {
-            validate_requests_hash(&block.header, &chain_config, &result.requests)
-                .map_err(StatelessExecutionError::RequestsRootValidationError)
+            ethrex_blockchain::validate_requests_hash(
+                &block.header,
+                &chain_config,
+                &result.requests,
+            )
+            .map_err(StatelessExecutionError::RequestsRootValidationError)
         })?;
 
         non_privileged_count += block.body.transactions.len();
@@ -266,7 +269,7 @@ pub fn stateless_validation_l1(
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
 
     report_cycles("validate_state_root", || {
-        validate_state_root(&last_block.header, final_state_root)
+        ethrex_blockchain::validate_state_root(&last_block.header, final_state_root)
             .map_err(|_chain_err| StatelessExecutionError::InvalidFinalStateTrie)
     })?;
 
@@ -406,7 +409,7 @@ fn execute_stateless(
 
     for (i, block) in blocks.iter().enumerate() {
         // Validate the block
-        validate_block(
+        ethrex_blockchain::validate_block(
             block,
             parent_block_header,
             &chain_config,
@@ -451,12 +454,12 @@ fn execute_stateless(
         non_privileged_count += block.body.transactions.len()
             - get_block_privileged_transactions(&block.body.transactions).len();
 
-        validate_gas_used(&receipts, &block.header)
+        ethrex_blockchain::validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
-        validate_receipts_root(&block.header, &receipts)
+        ethrex_blockchain::validate_receipts_root(&block.header, &receipts)
             .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
         // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
-        validate_requests_hash(&block.header, &chain_config, &result.requests)
+        ethrex_blockchain::validate_requests_hash(&block.header, &chain_config, &result.requests)
             .map_err(StatelessExecutionError::RequestsRootValidationError)?;
         acc_receipts.push(receipts);
 
