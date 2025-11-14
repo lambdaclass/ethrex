@@ -218,9 +218,11 @@ impl RLPEncode for BlobsBundle {
         let payload_len = self.blobs.length()
             + self.commitments.length()
             + self.proofs.length()
-            + (self.version != 0)
-                .then(|| self.version.length())
-                .unwrap_or(1);
+            + if self.version != 0 {
+                self.version.length()
+            } else {
+                1
+            };
 
         list_length(payload_len)
     }

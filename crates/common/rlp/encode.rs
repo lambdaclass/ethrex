@@ -285,7 +285,7 @@ impl RLPEncode for U256 {
 
     fn length(&self) -> usize {
         let bits = 256 - self.leading_zeros() as usize;
-        let sig_len = (bits + 7) / 8;
+        let sig_len = bits.div_ceil(8);
         let first_byte = if sig_len == 0 {
             0
         } else {
