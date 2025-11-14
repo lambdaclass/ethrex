@@ -49,7 +49,7 @@ jobs:
         run: |
           git clone https://github.com/lambdaclass/rex.git /tmp/rex
           cd /tmp/rex
-          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
+          git checkout f853445
           cargo build --release
           sudo cp target/release/rex /usr/local/bin
 
@@ -75,16 +75,17 @@ jobs:
 
           trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
 
-          echo "Waiting for L2 RPC at http://127.0.0.1:1729..."
-          for _ in {1..120}; do
-            if curl -sS -o /dev/null http://127.0.0.1:1729 2>/dev/null; then
+          echo "Waiting for L2 RPC at http://localhost:1729..."
+          # Up to ~30 seconds: 15 attempts * 2s
+          for _ in {1..15}; do
+            if curl -sS -o /dev/null http://localhost:1729 2>/dev/null; then
               echo "L2 RPC is up"
               break
             fi
             sleep 2
           done
 
-          if ! curl -sS -o /dev/null http://127.0.0.1:1729 2>/dev/null; then
+          if ! curl -sS -o /dev/null http://localhost:1729 2>/dev/null; then
             echo "L2 RPC did not become ready in time"
             exit 1
           fi
