@@ -5,7 +5,8 @@ use crate::initializers::{
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
-    NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
+    NodeConfigFile, get_client_version, init_datadir, parse_datadir, read_jwtsecret_file,
+    store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
 use ethrex_common::fd_limit::raise_fd_limit;
@@ -50,7 +51,7 @@ async fn init_rpc_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
 ) {
-    init_datadir(&opts.datadir);
+    init_datadir(&parse_datadir(opts.datadir.clone(), opts.dev));
 
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
@@ -163,8 +164,8 @@ pub async fn init_l2(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
     raise_fd_limit()?;
-    let datadir = opts.node_opts.datadir.clone();
-    init_datadir(&opts.node_opts.datadir);
+    let datadir = parse_datadir(opts.node_opts.datadir.clone(), opts.node_opts.dev);
+    init_datadir(&datadir);
 
     let rollup_store_dir = datadir.join("rollup_store");
 
@@ -260,7 +261,7 @@ pub async fn init_l2(
             cancel_token.clone(),
             blockchain.clone(),
             store.clone(),
-            opts.node_opts.datadir.clone(),
+            parse_datadir(opts.node_opts.datadir.clone(), opts.node_opts.dev),
         )
         .await;
 

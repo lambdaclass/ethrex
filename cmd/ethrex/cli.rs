@@ -279,7 +279,7 @@ impl Options {
     pub fn default_l2() -> Self {
         Self {
             network: Some(Network::LocalDevnetL2),
-            datadir: DB_ETHREX_DEV_L2.into(),
+            datadir: Some(DB_ETHREX_DEV_L2.into()),
             metrics_port: "3702".into(),
             metrics_enabled: true,
             dev: true,
