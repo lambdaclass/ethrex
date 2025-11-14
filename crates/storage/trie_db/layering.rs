@@ -132,32 +132,55 @@ impl TrieLayerCache {
         });
     }
 
-    fn remove_old_refs(&mut self, state_root: &H256) {
-        self.layers.iter_mut().for_each(|(_k, trie_layer)| {
-            let mut mut_layer: std::sync::RwLockWriteGuard<'_, TrieLayer> =
-                trie_layer.write().unwrap();
-            mut_layer.layers_map.retain(|_, b| b != state_root)
-        });
+    fn remove_old_refs(&mut self, state_roots: &Vec<H256>) {
+        state_roots.into_iter().for_each( | state_root | 
+            self.layers.iter_mut().for_each(|(_k, trie_layer)| {
+                let mut mut_layer: std::sync::RwLockWriteGuard<'_, TrieLayer> =
+                    trie_layer.write().unwrap();
+                mut_layer.layers_map.retain(|_, b| b != state_root)
+        }));
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
-            Ok(layer) => layer.into_inner().unwrap(),
-            Err(layer) => TrieLayer::clone(&layer.read().unwrap()),
-        };
-        // ensure parents are commited
-        let parent_nodes = self.commit(layer.parent);
+//         let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
+//             Ok(layer) => layer.into_inner().unwrap(),
+//             Err(layer) => TrieLayer::clone(&layer.read().unwrap()),
+//         };
+//         // ensure parents are commited
+//         let parent_nodes = self.commit(layer.parent);
+//         // older layers are useless
+//         self.layers
+//             .retain(|_, item| item.read().unwrap().id > layer.id);
+//         self.remove_old_refs(&state_root);
+//         Some(
+//             parent_nodes
+//                 .unwrap_or_default()
+//                 .into_iter()
+//                 .chain(layer.nodes)
+//                 .collect(),
+//         )
+        let mut layers_to_commit = vec![];
+        let mut roots_to_delete = vec![];
+        let mut current_state_root = state_root;
+        while let Some(layer) = self.layers.remove(&current_state_root) {
+            roots_to_delete.push(current_state_root);
+            let layer = match Arc::try_unwrap(layer) {
+                Ok(layer) => layer.into_inner().unwrap(),
+                Err(layer) => TrieLayer::clone(&layer.read().unwrap()),
+            };
+            current_state_root = layer.parent;
+            layers_to_commit.push(layer);
+        }
+        let top_layer_id = layers_to_commit.first()?.id;
         // older layers are useless
-        self.layers
-            .retain(|_, item| item.read().unwrap().id > layer.id);
-        self.remove_old_refs(&state_root);
-        Some(
-            parent_nodes
-                .unwrap_or_default()
-                .into_iter()
-                .chain(layer.nodes)
-                .collect(),
-        )
+        self.layers.retain(|_, item| item.read().unwrap().id > top_layer_id);
+        self.remove_old_refs(&roots_to_delete);
+        let nodes_to_commit = layers_to_commit
+            .into_iter()
+            .rev()
+            .flat_map(|layer| layer.nodes)
+            .collect();
+        Some(nodes_to_commit)
     }
 }
 

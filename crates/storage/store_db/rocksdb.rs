@@ -303,7 +303,21 @@ impl Store {
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_RECEIPTS | CF_ACCOUNT_CODES => {
+                CF_ACCOUNT_CODES => {
+                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+
+                    cf_opts.set_enable_blob_files(true);
+                    // Small bytecodes should go inline (mainly for delegation indicators)
+                    cf_opts.set_min_blob_size(32);
+                    cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(32 * 1024); // 32KB
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                CF_RECEIPTS => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
