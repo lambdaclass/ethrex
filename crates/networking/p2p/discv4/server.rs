@@ -5,7 +5,9 @@ use crate::{
             ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
             PacketDecodeErr, PingMessage, PongMessage,
         },
-        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
+        peer_table::{
+            Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError, TARGET_PEERS,
+        },
     },
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
@@ -36,11 +38,11 @@ const EXPIRATION_SECONDS: u64 = 20;
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
 /// Interval between revalidations.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
-/// The initial interval between peer lookups, until the number of peers reaches
+/// The interval between peer lookups increments as the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
-/// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
-pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
+/// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts)
+/// up to 600 millisenconds (100 per minute)
+pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -255,12 +257,10 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        if !self.peer_table.target_reached().await.unwrap_or(false) {
-            INITIAL_LOOKUP_INTERVAL
-        } else {
-            trace!("Reached target number of peers or contacts. Using longer lookup interval.");
-            LOOKUP_INTERVAL
-        }
+        let count_peers_contacts = self.peer_table.peer_count().await.unwrap_or(0);
+        let progress = ((count_peers_contacts / TARGET_PEERS) - 1) / (5 - 1);
+
+        LOOKUP_INTERVAL + (LOOKUP_INTERVAL * progress as u32)
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
