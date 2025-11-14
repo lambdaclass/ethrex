@@ -79,6 +79,6 @@ jobs:
       contents: write
       actions: write
     secrets:
-      APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
-      APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
-      APT_SSH_BOT_COMMIT_KEY: ${{ secrets.APT_SSH_BOT_COMMIT_KEY }}
+      APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+      APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+      APT_SSH_COMMIT_KEY: ${{ secrets.APT_SSH_COMMIT_KEY }}
