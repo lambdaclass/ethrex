@@ -293,6 +293,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Format name
         run: |
           # For branch builds (main) we want docker images tagged as 'main'. For tag pushes
