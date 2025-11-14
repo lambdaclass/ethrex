@@ -6,6 +6,7 @@ on:
   merge_group:
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -54,4 +55,3 @@ jobs:
         run: |
           chmod +x scripts/run_uniswap_example.sh
           ./scripts/run_uniswap_example.sh
-
