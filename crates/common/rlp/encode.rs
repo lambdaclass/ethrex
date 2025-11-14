@@ -168,8 +168,7 @@ impl RLPEncode for [u8] {
             if len < 56 {
                 buf.put_u8(RLP_NULL + len as u8);
             } else {
-                let mut bytes = ArrayVec::<[u8; 8]>::new();
-                bytes.extend_from_slice(&len.to_be_bytes());
+                let bytes = len.to_be_bytes();
                 let start = bytes.iter().position(|&x| x != 0).unwrap();
                 let len = bytes.len() - start;
                 buf.put_u8(0xb7 + len as u8);
