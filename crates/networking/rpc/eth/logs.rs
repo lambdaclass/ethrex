@@ -23,6 +23,15 @@ pub enum AddressFilter {
     Many(Vec<H160>),
 }
 
+impl AsRef<[H160]> for AddressFilter {
+    fn as_ref(&self) -> &[H160] {
+        match self {
+            AddressFilter::Single(address) => std::slice::from_ref(address),
+            AddressFilter::Many(addresses) => addresses.as_ref(),
+        }
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum TopicFilter {
@@ -229,10 +238,38 @@ mod tests {
 
     #[test]
     fn test_get_logs_with_defaults() {
-        let params = Some(vec![json!({"topics": H256::zero().to_string()})]);
+        let params = Some(vec![
+            json!({"topics": ["0x0000000000000000000000000000000000000000000000000000000000000000"]}),
+        ]);
         let request = LogsFilter::parse(&params).unwrap();
 
         assert!(request.address_filters.is_none(), "{request:?}");
+        assert!(
+            matches!(request.from_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert!(
+            matches!(request.to_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::zero()))]);
+    }
+
+    #[test]
+    fn test_get_logs_multiple_addresses() {
+        let params = Some(vec![json!({
+            "address": [
+                "0x0000000000000000000000000000000000000001",
+                "0x0000000000000000000000000000000000000002"
+            ],
+            "topics": ["0x0000000000000000000000000000000000000000000000000000000000000000"]
+        })]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert_eq!(
+            request.address_filters.as_ref().unwrap().as_ref(),
+            [H160::from_low_u64_be(1), H160::from_low_u64_be(2)],
+        );
         assert!(
             matches!(request.from_block, BlockIdentifier::Tag(BlockTag::Latest)),
             "{request:?}"
