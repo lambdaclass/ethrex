@@ -101,14 +101,14 @@ pub fn default_datadir() -> PathBuf {
 
 pub fn parse_datadir(datadir: Option<PathBuf>, dev_mode: bool) -> PathBuf {
     match datadir {
-        Some(path) => {
+        Some(path) => path,
+        None => {
             if dev_mode && cfg!(feature = "dev") {
                 Path::new("/tmp/memory").to_path_buf()
             } else {
-                path
+                default_datadir()
             }
         }
-        None => default_datadir(),
     }
 }
 
