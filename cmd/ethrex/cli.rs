@@ -865,11 +865,11 @@ pub async fn generate_big_block(
     transactions.retain(|tx| !matches!(tx, Transaction::EIP4844Transaction(_)));
 
     // We update the header for the proper amount of gas we're going to use
-    block.header.gas_limit = 1_000_000_000; // 1 gigagas for this test
+    block.header.gas_limit = 2_000_000_000; // 1 gigagas for this test
 
     let vm_db = StoreVmDatabase::new(store, block.header.clone());
     let mut vm = new_evm(&BlockchainType::L1, vm_db)?;
-    let mut remaining_gas = block.header.gas_limit - 100_000_000;
+    let mut remaining_gas = block.header.gas_limit / 2;
 
     for transaction in transactions {
         if vm
@@ -887,7 +887,7 @@ pub async fn generate_big_block(
         }
     }
 
-    block.header.gas_used = block.header.gas_limit - remaining_gas - 100_000_000;
+    block.header.gas_used = block.header.gas_limit - remaining_gas - 1_000_000_000;
     block.header.blob_gas_used = Some(0);
 
     // We finish here with a payload
