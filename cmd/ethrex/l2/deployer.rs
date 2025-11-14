@@ -16,6 +16,7 @@ use ethrex_common::{
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::{calldata::Value, prover::ProverType, utils::get_address_from_secret_key};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
+use ethrex_l2_sdk::register_fee_token;
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode,
     deploy_with_proxy_from_bytecode, initialize_contract, send_generic_transaction,
@@ -256,7 +257,7 @@ pub struct DeployerOptions {
         env = "ETHREX_L2_VALIDIUM",
         action = ArgAction::Set,
         help_heading = "Deployer options",
-        help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
+        help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1."
     )]
     pub validium: bool,
     #[arg(
@@ -275,6 +276,16 @@ pub struct DeployerOptions {
         help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
     )]
     pub bridge_owner: Address,
+    #[arg(
+        long,
+        value_name = "PRIVATE_KEY",
+        value_parser = parse_private_key,
+        env = "ETHREX_BRIDGE_OWNER_PK",
+        help_heading = "Deployer options",
+        help = "Private key of the owner of the CommonBridge contract. If set, the deployer will send a transaction to accept the ownership.",
+        requires = "bridge_owner"
+    )]
+    pub bridge_owner_pk: Option<SecretKey>,
     #[arg(
         long,
         value_name = "PRIVATE_KEY",
@@ -336,6 +347,14 @@ pub struct DeployerOptions {
         help = "Genesis data is extracted at compile time, used for development"
     )]
     pub use_compiled_genesis: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_INITIAL_FEE_TOKEN",
+        help_heading = "Deployer options",
+        help = "This address will be registered as an initial fee token"
+    )]
+    pub initial_fee_token: Option<Address>,
 }
 
 impl Default for DeployerOptions {
@@ -396,6 +415,17 @@ impl Default for DeployerOptions {
                 0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
             ]),
+            // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
+            bridge_owner_pk: Some(
+                SecretKey::from_slice(
+                    H256::from_str(
+                        "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e",
+                    )
+                    .expect("Bridge owner private key is a valid hex string")
+                    .as_bytes(),
+                )
+                .expect("Bridge owner private key is valid"),
+            ),
             on_chain_proposer_owner_pk: None,
             sp1_vk_path: None,
             risc0_vk_path: None,
@@ -403,6 +433,7 @@ impl Default for DeployerOptions {
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
+            initial_fee_token: None,
         }
     }
 }
@@ -977,7 +1008,7 @@ async fn initialize_contracts(
     info!("Initializing CommonBridge");
     let initialize_tx_hash = {
         let calldata_values = vec![
-            Value::Address(opts.bridge_owner),
+            Value::Address(initializer.address()),
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
         ];
@@ -993,6 +1024,56 @@ async fn initialize_contracts(
         .await?
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+
+    if let Some(fee_token) = opts.initial_fee_token {
+        register_fee_token(
+            eth_client,
+            contract_addresses.bridge_address,
+            fee_token,
+            initializer,
+        )
+        .await?;
+        info!(?fee_token, "CommonBridge initial fee token registered");
+    }
+
+    if opts.bridge_owner != initializer.address() {
+        let transfer_calldata = encode_calldata(
+            TRANSFER_OWNERSHIP_SIGNATURE,
+            &[Value::Address(opts.bridge_owner)],
+        )?;
+        let transfer_tx_hash = initialize_contract(
+            contract_addresses.bridge_address,
+            transfer_calldata,
+            initializer,
+            eth_client,
+        )
+        .await?;
+        if let Some(owner_pk) = opts.bridge_owner_pk {
+            let signer = Signer::Local(LocalSigner::new(owner_pk));
+            let accept_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
+            let accept_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                contract_addresses.bridge_address,
+                opts.bridge_owner,
+                accept_calldata.into(),
+                Overrides::default(),
+            )
+            .await?;
+            let accept_tx_hash = send_generic_transaction(eth_client, accept_tx, &signer).await?;
+            wait_for_transaction_receipt(accept_tx_hash, eth_client, 100).await?;
+            info!(
+                transfer_tx_hash = %format!("{transfer_tx_hash:#x}"),
+                accept_tx_hash = %format!("{accept_tx_hash:#x}"),
+                "CommonBridge ownership transferred and accepted"
+            );
+        } else {
+            info!(
+                transfer_tx_hash = %format!("{transfer_tx_hash:#x}"),
+                "CommonBridge ownership transfer pending acceptance"
+            );
+        }
+    }
 
     trace!("Contracts initialized");
     Ok(())
@@ -1030,6 +1111,8 @@ async fn make_deposits(
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.trim().to_string())
         .collect();
+
+    let mut last_hash = None;
 
     for pk in private_keys.iter() {
         let secret_key = parse_private_key(pk).map_err(|_| {
@@ -1070,6 +1153,7 @@ async fn make_deposits(
 
         match send_generic_transaction(eth_client, build, &signer).await {
             Ok(hash) => {
+                last_hash = Some(hash);
                 info!(
                     address =? signer.address(),
                     ?value_to_deposit,
@@ -1084,6 +1168,9 @@ async fn make_deposits(
         }
     }
     trace!("Deposits finished");
+    if let Some(hash) = last_hash {
+        wait_for_transaction_receipt(hash, eth_client, 100).await?;
+    }
     Ok(())
 }
 
