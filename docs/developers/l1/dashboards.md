@@ -123,12 +123,12 @@ Pie chart that shows where RPC time is spent across methods over the selected ra
 ![RPC Time per Method](img/rpc_time_per_method.png)
 
 ### Slowest RPC Methods
-Table listing the highest average-latency methods over the active dashboard range. Use it to prioritise optimisation or caching efforts.
+Table listing the highest average-latency methods over the active dashboard range. Used to prioritise optimisation or caching efforts.
 
 ![Slowest RPC Methods](img/slowest_rpc_methods.png)
 
 ### RPC Request Rate by Method
-Timeseries showing request throughput broken down by method, averaged across the selected range. Great for checking load distribution after clients roll out new features.
+Timeseries showing request throughput broken down by method, averaged across the selected range.
 
 ![RPC Request Rate by Method](img/rpc_request_rate_by_method.png)
 
