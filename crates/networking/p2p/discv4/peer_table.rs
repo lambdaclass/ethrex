@@ -280,14 +280,6 @@ impl PeerTable {
         Ok(())
     }
 
-    /// Return the amount of contacts
-    pub async fn contact_count(&mut self) -> Result<usize, PeerTableError> {
-        match self.handle.call(CallMessage::ContactCount).await? {
-            OutMessage::ContactCount(contact_count) => Ok(contact_count),
-            _ => unreachable!(),
-        }
-    }
-
     /// Return the amount of connected peers
     pub async fn peer_count(&mut self) -> Result<usize, PeerTableError> {
         match self.handle.call(CallMessage::PeerCount).await? {
@@ -809,7 +801,6 @@ enum CastMessage {
 
 #[derive(Clone, Debug)]
 enum CallMessage {
-    ContactCount,
     PeerCount,
     PeerCountByCapabilities { capabilities: Vec<Capability> },
     TargetReached,
@@ -831,7 +822,6 @@ enum CallMessage {
 
 #[derive(Debug)]
 pub enum OutMessage {
-    ContactCount(usize),
     PeerCount(usize),
     FoundPeer {
         node_id: H256,
@@ -879,9 +869,6 @@ impl GenServer for PeerTableServer {
         _handle: &GenServerHandle<PeerTableServer>,
     ) -> CallResponse<Self> {
         match message {
-            CallMessage::ContactCount => {
-                CallResponse::Reply(Self::OutMsg::PeerCount(self.contacts.len()))
-            }
             CallMessage::PeerCount => {
                 CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()))
             }
