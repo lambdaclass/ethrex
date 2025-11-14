@@ -620,13 +620,13 @@ impl Store {
         }
 
         self.db
-            .delete_range_cf(&cf_accounts_fkv, &last_written, vec![0xff].as_ref())?;
+            .delete_range_cf(&cf_accounts_fkv, compact_nibbles(&last_written), vec![0xff; 128])?;
         self.db
-            .delete_range_cf(&cf_storage_fkv, &last_written, vec![0xff].as_ref())?;
+            .delete_range_cf(&cf_storage_fkv, compact_nibbles(&last_written), vec![0xff; 128])?;
 
         loop {
             let root = self
-                .read_sync(CF_ACCOUNT_TRIE_NODES, [])?
+                .read_sync(CF_ACCOUNT_TRIE_NODES, compact_nibbles(&[]))?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
