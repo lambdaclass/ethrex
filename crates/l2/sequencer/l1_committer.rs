@@ -363,10 +363,7 @@ impl L1Committer {
         let batch_checkpoint_name = batch_checkpoint_name(batch.number);
         let expected_checkpoint_path = self.checkpoints_dir.join(&batch_checkpoint_name);
 
-        let current_checkpoint_path = self
-            .store
-            .get_store_directory()?
-            .join(batch_checkpoint_name);
+        let current_checkpoint_path = self.current_checkpoint_store.get_store_directory()?;
 
         if current_checkpoint_path == expected_checkpoint_path {
             info!(
@@ -381,7 +378,8 @@ impl L1Committer {
                 "Checkpoint for batch {} not found locally, generating it by re-executing the blocks in the batch",
                 batch.number
             );
-            self.generate_checkpoint_for_batch(batch).await?;
+            self.current_checkpoint_store = self.generate_checkpoint_for_batch(batch).await?;
+            return Ok(());
         }
 
         info!(
@@ -405,7 +403,10 @@ impl L1Committer {
     }
 
     /// Generate the checkpoint for the given batch by re-executing the blocks in the batch
-    async fn generate_checkpoint_for_batch(&mut self, batch: &Batch) -> Result<(), CommitterError> {
+    async fn generate_checkpoint_for_batch(
+        &mut self,
+        batch: &Batch,
+    ) -> Result<Store, CommitterError> {
         let (one_time_checkpoint_path, one_time_checkpoint_store, one_time_checkpoint_blockchain) =
             self.generate_one_time_checkpoint(batch.number).await?;
 
@@ -423,7 +424,7 @@ impl L1Committer {
         let new_checkpoint_path = self
             .checkpoints_dir
             .join(batch_checkpoint_name(batch.number));
-        let _ = self
+        let (new_checkpoint, _) = self
             .create_checkpoint(
                 &one_time_checkpoint_store,
                 &new_checkpoint_path,
@@ -433,7 +434,7 @@ impl L1Committer {
 
         // Clean up one-time checkpoint
         self.remove_one_time_checkpoint(&one_time_checkpoint_path)?;
-        Ok(())
+        Ok(new_checkpoint)
     }
 
     async fn execute_batch_to_generate_checkpoint(
