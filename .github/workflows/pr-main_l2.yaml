@@ -147,10 +147,10 @@ jobs:
           name: ethrex_image_l2
           path: /tmp/ethrex_image_l2.tar
 
-  uniswap-example:
+  uniswap-swap:
     name: Uniswap Swap Token Flow
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-docker, build-docker-l2]
+    needs: [detect-changes]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     timeout-minutes: 60
     steps:
@@ -185,72 +185,34 @@ jobs:
           cargo build --release
           sudo cp target/release/rex /usr/local/bin
 
-      - name: Download ethrex image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ethrex_image
-          path: /tmp
-
-      - name: Load ethrex image
+      - name: Build ethrex with L2 features and contracts
+        env:
+          COMPILE_CONTRACTS: "true"
         run: |
-          docker load --input /tmp/ethrex_image.tar
+          cargo build --release --features "l2,l2-sql" --bin ethrex
 
-      - name: Download ethrex L2 image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ethrex_image_l2
-          path: /tmp
-
-      - name: Load ethrex L2 image
-        run: |
-          docker load --input /tmp/ethrex_image_l2.tar
-
-      - name: Start L1
-        run: |
-          cd crates/l2
-          docker compose up --detach ethrex_l1
-
-      - name: Deploy contracts (including rich account)
-        run: |
-          #
-          # If this step fails due to connection refused to ethrex_l1 consider increasing the failure retries
-          # in the contract_deployer service in crates/l2/docker-compose.yaml
-          #
-          touch cmd/.env
-          cd crates/l2
-          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_L2_VALIDIUM=false \
-          docker compose up contract_deployer
-
-          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
-          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
-            echo "Contract deployer failed"
-            docker logs contract_deployer
-            exit 1
-          fi
-
-      - name: Start L2
-        run: |
-          cd crates/l2
-          export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
-          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
-          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
-          export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
-
-          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_L2_VALIDIUM=false \
-          ETHREX_WATCHER_BLOCK_DELAY=0 \
-          ETHREX_COMMITTER_COMMIT_TIME=15000 \
-          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          docker compose up --detach --no-deps ethrex_l2
-
-      - name: Wait for rich L2 balance
+      - name: Run L2 dev node and Uniswap Swap Token Script
+        env:
+          COMPILE_CONTRACTS: "true"
         run: |
           set -euo pipefail
 
-          echo "Waiting until rich account 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e has funds on localhost:1729..."
-          MAX_BALANCE_TRIES=300    # ~10 minutes with BALANCE_SLEEP_SECS=2
+          echo "Starting ethrex L2 dev node (output suppressed)..."
+          ./target/release/ethrex \
+            l2 --dev \
+            --osaka-activation-time 1761677592 \
+            --no-monitor >/dev/null 2>&1 &
+          ETHREX_PID=$!
+
+          trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
+
+          if ! kill -0 "$ETHREX_PID" 2>/dev/null; then
+            echo "ethrex l2 --dev process exited unexpectedly"
+            exit 1
+          fi
+
+          echo "Waiting until rich account 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e has funds on the L2..."
+          MAX_BALANCE_TRIES=300
           BALANCE_SLEEP_SECS=2
           balance_wei=0
           balance_output=""
@@ -278,8 +240,6 @@ jobs:
             exit 1
           fi
 
-      - name: Run Uniswap Swap Token Script
-        run: |
           echo "Cloning ethrex-l2-contracts-kit (branch add_uniswap_script)..."
           git clone --branch add_uniswap_script \
             https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
@@ -642,10 +602,10 @@ jobs:
         integration-test,
         state-diff-test,
         integration-test-tdx,
-        uniswap-example,
+        uniswap-swap,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-example.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-swap.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -659,7 +619,7 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ needs.uniswap-example.result }}" != "success" ]; then
-            echo "Job Uniswap swap_token example failed"
+          if [ "${{ needs.uniswap-swap.result }}" != "success" ]; then
+            echo "Job Uniswap swap failed"
             exit 1
           fi
