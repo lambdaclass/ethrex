@@ -99,21 +99,20 @@ impl RLPDecode for Node {
             rlp_items_len += 1;
         }
         if !decoder.is_done() {
-            return Err(RLPDecodeError::Custom(format!(
-                "Invalid arg count for Node, expected 2 or 17, got >17"
-            )));
+            return Err(RLPDecodeError::Custom(
+                "Invalid arg count for Node, expected 2 or 17, got more than 17".to_string(),
+            ));
         }
         // Deserialize into node depending on the available fields
         let node = match rlp_items_len {
             // Leaf or Extension Node
             2 => {
-                let (path, _) =
-                    decode_bytes(&rlp_items[0].expect("we already checked the length"))?;
+                let (path, _) = decode_bytes(rlp_items[0].expect("we already checked the length"))?;
                 let path = Nibbles::decode_compact(path);
                 if path.is_leaf() {
                     // Decode as Leaf
                     let (value, _) =
-                        decode_bytes(&rlp_items[1].expect("we already checked the length"))?;
+                        decode_bytes(rlp_items[1].expect("we already checked the length"))?;
                     LeafNode {
                         partial: path,
                         value: value.to_vec(),
@@ -123,7 +122,7 @@ impl RLPDecode for Node {
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
-                        child: decode_child(&rlp_items[1].expect("we already checked the length"))
+                        child: decode_child(rlp_items[1].expect("we already checked the length"))
                             .into(),
                     }
                     .into()
@@ -132,10 +131,10 @@ impl RLPDecode for Node {
             // Branch Node
             17 => {
                 let choices = array::from_fn(|i| {
-                    decode_child(&rlp_items[i].expect("we already checked the length")).into()
+                    decode_child(rlp_items[i].expect("we already checked the length")).into()
                 });
                 let (value, _) =
-                    decode_bytes(&rlp_items[16].expect("we already checked the length"))?;
+                    decode_bytes(rlp_items[16].expect("we already checked the length"))?;
                 BranchNode {
                     choices,
                     value: value.to_vec(),

@@ -3126,7 +3126,7 @@ dependencies = [
  "const-hex",
  "elliptic-curve",
  "ethabi",
- "generic-array 0.14.9",
+ "generic-array 0.14.7",
  "k256",
  "num_enum 0.7.5",
  "once_cell",
