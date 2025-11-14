@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting started - Ethrex</title>
+        <title>Hardware requirements - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "";
+            const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,99 +237,43 @@
 }
 
 </style>
-<h1 id="getting-started"><a class="header" href="#getting-started">Getting started</a></h1>
-<p>Ethrex is a minimalist, stable, modular and fast implementation of the Ethereum protocol in <a href="https://www.rust-lang.org/">Rust</a>.
-The client supports running in two different modes:</p>
+<h1 id="hardware-requirements"><a class="header" href="#hardware-requirements">Hardware Requirements</a></h1>
+<blockquote>
+<p>NOTE: The guidance in this document applies to running an L1 (Ethereum) node. L2 deployments (sequencers, provers and related infra) have different hardware profiles and operational requirements — see the "L2" section below for details.</p>
+</blockquote>
+<p>Hardware requirements depend primarily on the <strong>network</strong> you’re running — for example, <strong>Hoodi</strong>, <strong>Sepolia</strong>, or <strong>Mainnet</strong>.</p>
+<h2 id="general-recommendations"><a class="header" href="#general-recommendations">General Recommendations</a></h2>
+<p>Across all networks, the following apply:</p>
 <ul>
-<li><strong>ethrex L1</strong> - As a regular Ethereum execution client</li>
-<li><strong>ethrex L2</strong> - As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.</li>
+<li><strong>Disk Type:</strong> Use <strong>high-performance NVMe SSDs</strong>. For multi-disk setups, <strong>software RAID 0</strong> is recommended to maximize speed and capacity. <strong>Avoid hardware RAID</strong>, which can limit NVMe performance.</li>
+<li><strong>RAM:</strong> Sufficient memory minimizes sync bottlenecks and improves stability under load.</li>
+<li><strong>CPU:</strong> 4-8 Cores.
+<ul>
+<li>x86-64 bit Processors must be compatible with the instruction set AVX2.</li>
 </ul>
-<h2 id="quickstart-l1"><a class="header" href="#quickstart-l1">Quickstart L1</a></h2>
-<p>Follow these steps to sync an ethrex node on the Hoodi testnet.</p>
-<h3 id="macos"><a class="header" href="#macos">MacOS</a></h3>
-<p>Install ethrex and lighthouse:</p>
-<pre><code class="language-sh"># create secrets directory and jwt secret
-mkdir -p ethereum/secrets/
-cd ethereum/
-openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
-
-# install lightouse and ethrex
-brew install lambdaclass/tap/ethrex
-brew install lighthouse
-</code></pre>
-<p>On one terminal:</p>
-<pre><code class="language-sh">ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
-</code></pre>
-<p>and on another one:</p>
-<pre><code class="language-sh">lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
-</code></pre>
-<h3 id="linux-x86"><a class="header" href="#linux-x86">Linux x86</a></h3>
-<p>Install ethrex and lighthouse:</p>
-<div class="mdbook-alerts mdbook-alerts-note">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  note
-</p>
-<p>Go to https://github.com/sigp/lighthouse/releases/ and use the latest package there and replace that in the below commands</p>
+</li>
+</ul>
+<hr />
+<h2 id="disk-and-memory-requirements-by-network"><a class="header" href="#disk-and-memory-requirements-by-network">Disk and Memory Requirements by Network</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Network</th><th>Disk (Minimum)</th><th>Disk (Recommended)</th><th>RAM (Minimum)</th><th>RAM (Recommended)</th></tr></thead><tbody>
+<tr><td><strong>Ethereum Mainnet</strong></td><td>500 GB</td><td>1 TB</td><td>32 GB</td><td>64 GB</td></tr>
+<tr><td><strong>Ethereum Sepolia</strong></td><td>200 GB</td><td>400 GB</td><td>32 GB</td><td>64 GB</td></tr>
+<tr><td><strong>Ethereum Hoodi</strong></td><td>50 GB</td><td>100 GB</td><td>32 GB</td><td>64 GB</td></tr>
+</tbody></table>
 </div>
-<pre><code class="language-sh"># create secrets directory and jwt secret
-mkdir -p ethereum/secrets/
-cd ethereum/
-openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
-
-# install lightouse and ethrex
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
-chmod +x ethrex
-curl -LO https://github.com/sigp/lighthouse/releases/download/v8.0.0/lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
-tar -xvf lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
-</code></pre>
-<p>On one terminal:</p>
-<pre><code class="language-sh">./ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
-</code></pre>
-<p>and on another one:</p>
-<pre><code class="language-sh">./lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
-</code></pre>
-<p>For other CPU architectures, see the <a href="https://github.com/lambdaclass/ethrex/releases/">releases page</a>.</p>
-<h2 id="quickstart-l2"><a class="header" href="#quickstart-l2">Quickstart L2</a></h2>
-<p>Follow these steps to quickly launch a local L2 node. For advanced options and real deployments, see the links at the end.</p>
-<h3 id="macos-1"><a class="header" href="#macos-1">MacOS</a></h3>
-<pre><code class="language-sh"># install ethrex
-brew install lambdaclass/tap/ethrex
-ethrex l2 --dev
-</code></pre>
-<h3 id="linux-x86-1"><a class="header" href="#linux-x86-1">Linux x86</a></h3>
-<pre><code class="language-sh"># install ethrex
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
-chmod +x ethrex
-./ethrex l2 --dev
-</code></pre>
-<p>For other CPU architectures, see the <a href="https://github.com/lambdaclass/ethrex/releases/">releases page</a>.</p>
-<h2 id="where-to-start"><a class="header" href="#where-to-start">Where to Start</a></h2>
-<ul>
-<li>
-<p><strong>Want to run ethrex in production as an execution client?</strong></p>
-<p>See <a href="../l1/running">Node operation</a> for setup, configuration, monitoring, and best practices.</p>
-</li>
-<li>
-<p><strong>Interested in deploying your own L2?</strong></p>
-<p>See <a href="../l2/deploy.html">L2 rollup deployment</a> for launching your own rollup, deploying contracts, and interacting with your L2.</p>
-</li>
-<li>
-<p><strong>Looking to contribute or develop?</strong></p>
-<p>Visit the <a href="../developers">Developer resources</a> for local dev mode, testing, debugging, advanced CLI usage, and the <a href="../CLI.html">CLI reference</a>.</p>
-</li>
-<li>
-<p><strong>Want to understand how ethrex works?</strong></p>
-<p>Explore <a href="../l1/fundamentals">L1 fundamentals</a> and <a href="../l2/architecture">L2 Architecture</a> for deep dives into ethrex's design, sync modes, networking, and more.</p>
-</li>
-</ul>
+<hr />
+<h2 id="l2"><a class="header" href="#l2">L2</a></h2>
+<p>TBD</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../getting-started/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
 
-                            <a rel="next prefetch" href="getting-started/hardware_requirements.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../getting-started/installation/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -339,8 +283,11 @@ chmod +x ethrex
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../getting-started/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
 
-                    <a rel="next prefetch" href="getting-started/hardware_requirements.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../getting-started/installation/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -355,17 +302,17 @@ chmod +x ethrex
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid.min.js"></script>
-        <script src="mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
 
 
     </div>
