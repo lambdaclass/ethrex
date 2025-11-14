@@ -104,7 +104,10 @@ async fn ask_peer_head_number(
     retries: i32,
 ) -> Result<u64, PeerHandlerError> {
     // TODO: Better error handling
-    trace!("Sync Log 11: Requesting sync head block number from peer {peer_id}");
+    trace!(
+        ?peer_id,
+        "ask_peer_head_number: Requesting sync head block number from peer"
+    );
     let request_id = rand::random();
     let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
         id: request_id,
@@ -114,7 +117,7 @@ async fn ask_peer_head_number(
         reverse: false,
     });
 
-    debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
+    debug!(retry=retries, ?sync_head, %peer_id, "Requesting sync head from peer");
 
     match PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
         .await
@@ -129,7 +132,9 @@ async fn ask_peer_head_number(
                     .ok_or(PeerHandlerError::BlockHeaders)?
                     .number;
                 trace!(
-                    "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}"
+                    %peer_id,
+                    sync_head_number,
+                    "ask_peer_head_number: Received sync head block headers from peer"
                 );
                 Ok(sync_head_number)
             } else {
@@ -196,7 +201,7 @@ impl PeerHandler {
 
         let sync_head_number_retrieval_start = SystemTime::now();
 
-        info!("Retrieving sync head block number from peers");
+        debug!("Retrieving sync head block number from peers");
 
         let mut retries = 1;
 
@@ -228,7 +233,9 @@ impl PeerHandler {
                     }
                     Err(err) => {
                         debug!(
-                            "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
+                            error=?err,
+                            %peer_id,
+                            "request_block_headers: Failed to retrieve sync head block number from peer"
                         );
                     }
                 }
@@ -245,7 +252,7 @@ impl PeerHandler {
             .elapsed()
             .unwrap_or_default();
 
-        info!("Sync head block number retrieved");
+        debug!("Sync head block number retrieved");
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
@@ -279,7 +286,7 @@ impl PeerHandler {
         let mut current_show = 0;
 
         // 3) create tasks that will request a chunk of headers from a peer
-
+        // Useful info for the user
         info!("Starting to download block headers from peers");
 
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
@@ -292,7 +299,7 @@ impl PeerHandler {
                 if headers.is_empty() {
                     self.peer_table.record_failure(&peer_id).await?;
 
-                    debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
+                    debug!(%peer_id, "Failed to download chunk from peer. Downloader freed");
 
                     // reinsert the task to the queue
                     tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
@@ -307,10 +314,11 @@ impl PeerHandler {
                 let batch_show = downloaded_count / 10_000;
 
                 if current_show < batch_show {
-                    debug!(
-                        "Downloaded {} headers from peer {} (current count: {downloaded_count})",
-                        headers.len(),
-                        peer_id
+                    trace!(
+                        header_count=headers.len(),
+                        current_count=downloaded_count,
+                        peer_id=%peer_id,
+                        "Downloaded headers from peer",
                     );
                     current_show += 1;
                 }
@@ -325,15 +333,16 @@ impl PeerHandler {
 
                     let new_chunk_limit = previous_chunk_limit - headers.len() as u64;
 
-                    debug!(
-                        "Task for ({startblock}, {new_chunk_limit}) was not completed, re-adding to the queue, {new_chunk_limit} remaining headers"
+                    trace!(
+                        startblock,
+                        new_chunk_limit, "Task was not completed, re-adding to the queue"
                     );
 
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
                 self.peer_table.record_success(&peer_id).await?;
-                debug!("Downloader {peer_id} freed");
+                trace!(%peer_id, "Downloader freed");
             }
             let Some((peer_id, mut connection)) = self
                 .peer_table
@@ -346,6 +355,7 @@ impl PeerHandler {
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
+                    // Useful info for the user
                     info!("All headers downloaded successfully");
                     break;
                 }
@@ -359,13 +369,15 @@ impl PeerHandler {
                 continue;
             };
             let tx = task_sender.clone();
-            debug!("Downloader {peer_id} is now busy");
+            trace!(%peer_id, "Downloader is now busy");
             let mut peer_table = self.peer_table.clone();
 
             // run download_chunk_from_peer in a different Tokio task
             tokio::spawn(async move {
                 trace!(
-                    "Sync Log 5: Requesting block headers from peer {peer_id}, chunk_limit: {chunk_limit}"
+                    %peer_id,
+                    %chunk_limit,
+                    "request_block_headers: Requesting block headers"
                 );
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
@@ -375,48 +387,44 @@ impl PeerHandler {
                     chunk_limit,
                 )
                 .await
-                .inspect_err(|err| trace!("Sync Log 6: {peer_id} failed to download chunk: {err}"))
+                .inspect_err(|err| trace!(%peer_id, error=?err, "download_chunk_from_peer: failed to download chunk"))
                 .unwrap_or_default();
 
                 tx.send((headers, peer_id, connection, startblock, chunk_limit))
                     .await
-                    .inspect_err(|err| {
-                        error!("Failed to send headers result through channel. Error: {err}")
-                    })
+                    .inspect_err(
+                        |err| debug!(error=?err, "Failed to send headers result through channel"),
+                    )
             });
         }
 
         let elapsed = start_time.elapsed().unwrap_or_default();
-
-        debug!(
-            "Downloaded {} headers in {} seconds",
-            ret.len(),
-            format_duration(elapsed)
-        );
 
         {
             let downloaded_headers = ret.len();
             let unique_headers = ret.iter().map(|h| h.hash()).collect::<HashSet<_>>();
 
             debug!(
-                "Downloaded {} headers, unique: {}, duplicates: {}",
                 downloaded_headers,
-                unique_headers.len(),
-                downloaded_headers - unique_headers.len()
+                unique = unique_headers.len(),
+                duplicates = downloaded_headers - unique_headers.len(),
+                time_elapsed_s = format_duration(elapsed),
+                "Downloaded headers"
             );
 
             match downloaded_headers.cmp(&unique_headers.len()) {
                 std::cmp::Ordering::Equal => {
-                    info!("All downloaded headers are unique");
+                    trace!("All downloaded headers are unique");
                 }
                 std::cmp::Ordering::Greater => {
-                    warn!(
+                    debug!(
                         "Downloaded headers contain duplicates, {} duplicates found",
                         downloaded_headers - unique_headers.len()
                     );
                 }
                 std::cmp::Ordering::Less => {
-                    warn!("Downloaded headers are less than unique headers, something went wrong");
+                    // This means something is very wrong, we don't expect it
+                    error!("Downloaded headers are less than unique headers, something went wrong");
                 }
             }
         }
@@ -462,14 +470,16 @@ impl PeerHandler {
                         {
                             return Ok(Some(block_headers));
                         } else {
-                            warn!(
-                                "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
+                            debug!(
+                                %peer_id,
+                                "[SYNCING] Received empty/invalid headers from peer, penalizing peer"
                             );
                         }
                     }
                     // Timeouted
-                    warn!(
-                        "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
+                    debug!(
+                        %peer_id,
+                        "[SYNCING] Didn't receive block headers from peer, penalizing peer"
                     );
                 }
             }
@@ -487,7 +497,7 @@ impl PeerHandler {
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
-        debug!("Requesting block headers from peer {peer_id}");
+        debug!(%peer_id, "Requesting block headers from peer");
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
@@ -506,7 +516,7 @@ impl PeerHandler {
             if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
                 Ok(block_headers)
             } else {
-                warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
+                debug!(%peer_id, "[SYNCING] Received invalid headers from peer");
                 Err(PeerHandlerError::InvalidHeaders)
             }
         } else {
@@ -549,8 +559,9 @@ impl PeerHandler {
                         return Ok(Some((block_bodies, peer_id)));
                     }
                 }
-                warn!(
-                    "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
+                debug!(
+                    %peer_id,
+                    "[SYNCING] Didn't receive block bodies from peer, penalizing peer"
                 );
                 self.peer_table.record_failure(&peer_id).await?;
                 Ok(None)
@@ -595,8 +606,10 @@ impl PeerHandler {
             let mut validation_success = true;
             for (header, body) in block_headers[..block_bodies.len()].iter().zip(block_bodies) {
                 if let Err(e) = validate_block_body(header, &body) {
-                    warn!(
-                        "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
+                    debug!(
+                        %peer_id,
+                        error=?e,
+                        "Invalid block body, discarding peer and retrying"
                     );
                     validation_success = false;
                     self.peer_table.record_critical_failure(&peer_id).await?;
@@ -862,8 +875,8 @@ impl PeerHandler {
             dump_accounts_to_file(&path, account_state_chunk)
                 .inspect_err(|err| {
                     error!(
-                        "We had an error dumping the last accounts to disk {}",
-                        err.error
+                        error=%err.error,
+                        "We had an error dumping the last accounts to disk",
                     )
                 })
                 .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
@@ -888,7 +901,10 @@ impl PeerHandler {
         tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
     ) -> Result<(), PeerHandlerError> {
         debug!(
-            "Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
+            %peer_id,
+            ?chunk_start,
+            ?chunk_end,
+            "Requesting account range from peer"
         );
         let request_id = rand::random();
         let request = RLPxMessage::GetAccountRange(GetAccountRange {
@@ -939,7 +955,7 @@ impl PeerHandler {
                 tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                     .await
                     .ok();
-                tracing::error!("Received invalid account range");
+                debug!("Received invalid account range");
                 return Ok(());
             };
 
@@ -972,7 +988,7 @@ impl PeerHandler {
             .await
             .ok();
         } else {
-            tracing::debug!("Failed to get account range");
+            debug!("Failed to get account range");
             tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                 .await
                 .ok();
@@ -1044,8 +1060,10 @@ impl PeerHandler {
                 } = result;
 
                 debug!(
-                    "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
-                    bytecodes.len(),
+                    bytecodes_count=bytecodes.len(),
+                    %peer_id,
+                    current_count=downloaded_count,
+                    "Downloaded bytecodes from peer",
                 );
 
                 if remaining_start < remaining_end {
@@ -1102,7 +1120,10 @@ impl PeerHandler {
                     remaining_end: chunk_end,
                 };
                 debug!(
-                    "Requesting bytecode from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
+                    %peer_id,
+                    ?chunk_start,
+                    ?chunk_end,
+                    "Requesting bytecode from peer"
                 );
                 let request_id = rand::random();
                 let request = RLPxMessage::GetByteCodes(GetByteCodes {
@@ -1142,7 +1163,7 @@ impl PeerHandler {
                     };
                     tx.send(result).await.ok();
                 } else {
-                    tracing::debug!("Failed to get bytecode");
+                    debug!("Failed to get bytecode");
                     tx.send(empty_task_result).await.ok();
                 }
             });
@@ -1152,8 +1173,8 @@ impl PeerHandler {
             .downloaded_bytecodes
             .fetch_add(downloaded_count, Ordering::Relaxed);
         info!(
-            "Finished downloading bytecodes, total bytecodes: {}",
-            all_bytecode_hashes.len()
+            total_bytecodes = all_bytecode_hashes.len(),
+            "Finished downloading bytecodes",
         );
 
         Ok(Some(all_bytecodes))
@@ -1267,7 +1288,7 @@ impl PeerHandler {
                         .expect("Shouldn't be empty")
                         .expect("Shouldn't have a join error")
                         .inspect_err(|err| {
-                            error!("We found this error while dumping to file {err:?}")
+                            error!(error=?err.error, "We found this error while dumping to file")
                         })
                         .map_err(PeerHandlerError::DumpError)?;
                 }
@@ -1309,7 +1330,7 @@ impl PeerHandler {
                 }
 
                 if remaining_start < remaining_end {
-                    debug!("Failed to download entire chunk from peer {peer_id}");
+                    debug!(%peer_id, "Failed to download entire chunk from peer");
                     if hash_start.is_zero() {
                         // Task is common storage range request
                         let task = StorageTask {
@@ -1470,7 +1491,7 @@ impl PeerHandler {
                                     tasks_queue_not_started.push_back(task);
                                     task_count += 1;
                                 }
-                                debug!("Split big storage account into {chunk_count} chunks.");
+                                debug!(chunk_count, "Split big storage account into chunks.");
                             }
                         } else {
                             account_storage_roots.accounts_with_storage_root.insert(
@@ -1506,7 +1527,7 @@ impl PeerHandler {
                                 tasks_queue_not_started.push_back(task);
                                 task_count += 1;
                             }
-                            debug!("Split big storage account into {chunk_count} chunks.");
+                            debug!(chunk_count, "Split big storage account into chunks.");
                         }
                     }
                 }
@@ -1543,10 +1564,14 @@ impl PeerHandler {
                     .storage_leaves_downloaded
                     .inc_by(effective_slots as u64);
 
-                debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(
-                    "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
-                    tasks_queue_not_started.len()
+                    downloaded_storages=n_storages,
+                    downloaded_slots=n_slots,
+                    %peer_id,
+                    task_count,
+                    completed_tasks,
+                    queued_tasks=tasks_queue_not_started.len(),
+                    "Downloaded Storage Ranges"
                 );
                 // THEN: update insert to read with the correct structure and reuse
                 // tries, only changing the prefix for insertion.
@@ -1576,7 +1601,7 @@ impl PeerHandler {
             }
 
             if block_is_stale(pivot_header) {
-                info!("request_storage_ranges became stale, breaking");
+                debug!("request_storage_ranges became stale, breaking");
                 break;
             }
 
@@ -1606,9 +1631,10 @@ impl PeerHandler {
 
             if task_count - completed_tasks < 30 {
                 debug!(
-                    "Assigning task: {task:?}, account_hash: {}, storage_root: {}",
-                    chunk_account_hashes.first().unwrap_or(&H256::zero()),
-                    chunk_storage_roots.first().unwrap_or(&H256::zero()),
+                    ?task,
+                    account_hash=?chunk_account_hashes.first().unwrap_or(&H256::zero()),
+                    storage_root=?chunk_storage_roots.first().unwrap_or(&H256::zero()),
+                    "Assigning task"
                 );
             }
             let peer_table = self.peer_table.clone();
@@ -1644,8 +1670,9 @@ impl PeerHandler {
             .await
             .into_iter()
             .map(|result| {
-                result
-                    .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
+                result.inspect_err(
+                    |err| error!(error=?err.error, "We found this error while dumping to file"),
+                )
             })
             .collect::<Result<Vec<()>, DumpError>>()
             .map_err(PeerHandlerError::DumpError)?;
@@ -1709,13 +1736,13 @@ impl PeerHandler {
         )
         .await
         else {
-            tracing::debug!("Failed to get storage range");
+            debug!("Failed to get storage range");
             tx.send(empty_task_result).await.ok();
             return Ok(());
         };
         if slots.is_empty() && proof.is_empty() {
             tx.send(empty_task_result).await.ok();
-            tracing::debug!("Received empty storage range");
+            debug!("Received empty storage range");
             return Ok(());
         }
         // Check we got some data and no more than the requested amount
@@ -1748,7 +1775,7 @@ impl PeerHandler {
                 Some(root) => root,
                 None => {
                     tx.send(empty_task_result.clone()).await.ok();
-                    error!("No storage root for account {i}");
+                    error!(index = i, "No storage root for account");
                     return Err(PeerHandlerError::NoStorageRoots);
                 }
             };
@@ -1876,8 +1903,8 @@ impl PeerHandler {
         for (index, node) in nodes.iter().enumerate() {
             if node.compute_hash().finalize() != paths[index].hash {
                 error!(
-                    "A peer is sending wrong data for the state trie node {:?}",
-                    paths[index].path
+                    path=?paths[index].path,
+                    "A peer is sending wrong data for the state trie node",
                 );
                 return Err(RequestStateTrieNodesError::InvalidHash);
             }
@@ -1949,7 +1976,7 @@ impl PeerHandler {
             skip: 0,
             reverse: false,
         });
-        info!("get_block_header: requesting header with number {block_number}");
+        debug!(block_number, "get_block_header: requesting header");
         match PeerHandler::make_request(
             &mut self.peer_table,
             peer_id,
