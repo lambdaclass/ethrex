@@ -13,6 +13,49 @@ pub enum NodeHash {
     Inline(([u8; 31], u8)),
 }
 
+impl bincode::Encode for NodeHash {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        match self {
+            NodeHash::Hashed(h256) => {
+                bincode::Encode::encode(&true, encoder)?;
+                bincode::Encode::encode(&h256.0, encoder)?;
+            }
+            NodeHash::Inline(data) => {
+                bincode::Encode::encode(&false, encoder)?;
+                bincode::Encode::encode(&data, encoder)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<Context> bincode::Decode<Context> for NodeHash {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let tag: bool = bincode::Decode::decode(decoder)?;
+
+        let value = if tag {
+            Self::Hashed(H256(bincode::Decode::decode(decoder)?))
+        } else {
+            Self::Inline(bincode::Decode::decode(decoder)?)
+        };
+
+        Ok(value)
+    }
+}
+
+impl<'de, T> bincode::BorrowDecode<'de, T> for NodeHash {
+    fn borrow_decode<D: bincode::de::Decoder<Context = T>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        bincode::Decode::decode(decoder)
+    }
+}
+
 impl AsRef<[u8]> for NodeHash {
     fn as_ref(&self) -> &[u8] {
         match self {

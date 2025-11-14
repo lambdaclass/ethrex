@@ -24,6 +24,7 @@ digest = "0.10.6"
 lazy_static.workspace = true
 crossbeam.workspace = true
 rustc-hash.workspace = true
+bincode.workspace = true
 
 [features]
 default = []

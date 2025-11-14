@@ -11,7 +11,7 @@ use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, bincode::Encode, bincode::Decode)]
 pub struct BranchNode {
     pub choices: [NodeRef; 16],
     pub value: ValueRLP,

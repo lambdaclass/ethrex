@@ -22,6 +22,74 @@ pub enum NodeRef {
     Hash(NodeHash),
 }
 
+impl bincode::Encode for NodeRef {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        match self {
+            NodeRef::Node(node, once) => {
+                bincode::Encode::encode(&0u8, encoder)?; // tag
+                node.encode(encoder)?; // encode Node
+
+                // encode OnceLock<NodeHash>
+                match once.get() {
+                    Some(h) => {
+                        bincode::Encode::encode(&true, encoder)?; //  initialized
+                        bincode::Encode::encode(h, encoder)?;
+                    }
+                    None => {
+                        bincode::Encode::encode(&false, encoder)?; // not initialized
+                    }
+                }
+                Ok(())
+            }
+            NodeRef::Hash(h) => {
+                bincode::Encode::encode(&1u8, encoder)?; // tag
+                bincode::Encode::encode(h, encoder)?;
+                Ok(())
+            }
+        }
+    }
+}
+
+impl<T> bincode::Decode<T> for NodeRef {
+    fn decode<D: bincode::de::Decoder<Context = T>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let tag: u8 = bincode::Decode::decode(decoder)?;
+
+        match tag {
+            0 => {
+                let node: Node = bincode::Decode::decode(decoder)?;
+
+                let has_hash: bool = bincode::Decode::decode(decoder)?;
+                let once = OnceLock::new();
+
+                if has_hash {
+                    let h: NodeHash = bincode::Decode::decode(decoder)?;
+                    once.set(h).unwrap();
+                }
+
+                Ok(NodeRef::Node(Arc::new(node), once))
+            }
+            1 => {
+                let h: NodeHash = bincode::Decode::decode(decoder)?;
+                Ok(NodeRef::Hash(h))
+            }
+            _ => Err(bincode::error::DecodeError::Other("invalid enum tag").into()),
+        }
+    }
+}
+
+impl<'de, T> bincode::BorrowDecode<'de, T> for NodeRef {
+    fn borrow_decode<D: bincode::de::Decoder<Context = T>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        bincode::Decode::decode(decoder)
+    }
+}
+
 impl NodeRef {
     /// Gets a shared reference to the inner node.
     /// Requires that the trie is in a consistent state, ie that all leaves being pointed are in the database.
@@ -207,7 +275,7 @@ impl From<NodeHash> for ValueOrHash {
 }
 
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, bincode::Encode, bincode::Decode)]
 pub enum Node {
     Branch(Box<BranchNode>),
     Extension(ExtensionNode),
