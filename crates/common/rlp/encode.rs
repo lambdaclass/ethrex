@@ -83,7 +83,7 @@ impl RLPEncode for u8 {
     #[inline]
     fn length(&self) -> usize {
         1usize
-            + (((8 - self.leading_zeros() as usize + 7) / 8)
+            + ((8 - self.leading_zeros() as usize).div_ceil(8)
                 * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
@@ -95,7 +95,7 @@ impl RLPEncode for u16 {
     #[inline]
     fn length(&self) -> usize {
         1usize
-            + (((16 - self.leading_zeros() as usize + 7) / 8)
+            + ((16 - self.leading_zeros() as usize).div_ceil(8)
                 * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
@@ -108,7 +108,7 @@ impl RLPEncode for u32 {
     #[inline]
     fn length(&self) -> usize {
         1usize
-            + (((32 - self.leading_zeros() as usize + 7) / 8)
+            + ((32 - self.leading_zeros() as usize).div_ceil(8)
                 * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
@@ -121,7 +121,7 @@ impl RLPEncode for u64 {
     #[inline]
     fn length(&self) -> usize {
         1usize
-            + (((64 - self.leading_zeros() as usize + 7) / 8)
+            + ((64 - self.leading_zeros() as usize).div_ceil(8)
                 * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
@@ -134,7 +134,7 @@ impl RLPEncode for usize {
     #[inline]
     fn length(&self) -> usize {
         1usize
-            + (((usize::BITS as usize - self.leading_zeros() as usize + 7) / 8)
+            + ((usize::BITS as usize - self.leading_zeros() as usize).div_ceil(8)
                 * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
@@ -147,7 +147,7 @@ impl RLPEncode for u128 {
     #[inline]
     fn length(&self) -> usize {
         1usize
-            + (((128 - self.leading_zeros() as usize + 7) / 8)
+            + ((128 - self.leading_zeros() as usize).div_ceil(8)
                 * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
