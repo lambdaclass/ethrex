@@ -883,6 +883,9 @@ pub async fn generate_big_block(
             )
             .is_ok()
         {
+            if remaining_gas == 0 {
+                break;
+            }
             block.body.transactions.push(transaction);
         }
     }
