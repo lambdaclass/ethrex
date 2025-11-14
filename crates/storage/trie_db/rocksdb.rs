@@ -100,7 +100,12 @@ impl TrieDB for RocksDBTrieDB {
         let is_leaf = key.is_leaf();
         let fkv_key = self.make_key(key);
         let trie_key = Store::db_key(&fkv_key);
-        let db_key = if is_leaf { &fkv_key[..] } else { &trie_key[..] };
+        let db_key = if is_leaf {
+            &fkv_key[..]
+        } else {
+            let is_account = fkv_key.len() <= 65;
+            &trie_key[..!is_account as usize * 8 + 8]
+        };
 
         let res = self
             .db
@@ -118,7 +123,12 @@ impl TrieDB for RocksDBTrieDB {
             let is_leaf = key.is_leaf();
             let fkv_key = self.make_key(key);
             let trie_key = Store::db_key(&fkv_key);
-            let db_key = if is_leaf { &fkv_key[..] } else { &trie_key[..] };
+            let db_key = if is_leaf {
+                &fkv_key[..]
+            } else {
+                let is_account = fkv_key.len() <= 65;
+                &trie_key[..!is_account as usize * 8 + 8]
+            };
 
             if value.is_empty() {
                 batch.delete_cf(&cf, db_key);
@@ -143,7 +153,12 @@ impl TrieDB for RocksDBTrieDB {
             let is_leaf = key.is_leaf();
             let fkv_key = self.make_key(key.clone());
             let trie_key = Store::db_key(&fkv_key);
-            let db_key = if is_leaf { &fkv_key[..] } else { &trie_key[..] };
+            let db_key = if is_leaf {
+                &fkv_key[..]
+            } else {
+                let is_account = fkv_key.len() <= 65;
+                &trie_key[..!is_account as usize * 8 + 8]
+            };
             buffer.clear();
             node.encode(&mut buffer);
             batch.put_cf(&cf, db_key, &buffer);

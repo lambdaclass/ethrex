@@ -87,7 +87,12 @@ impl TrieDB for RocksDBLockedTrieDB {
         };
         let fkv_key = self.make_key(key);
         let trie_key = Store::db_key(&fkv_key);
-        let db_key = if is_leaf { &fkv_key[..] } else { &trie_key[..] };
+        let db_key = if is_leaf {
+            &fkv_key[..]
+        } else {
+            let is_account = fkv_key.len() <= 65;
+            &trie_key[..!is_account as usize * 8 + 8]
+        };
 
         self.snapshot
             .get_cf(cf, db_key)

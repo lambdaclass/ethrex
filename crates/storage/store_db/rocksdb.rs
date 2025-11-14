@@ -481,22 +481,20 @@ impl Store {
             .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
     }
 
+    #[inline(always)]
     pub fn db_key(key: &[u8]) -> [u8; 16] {
         let mut nib_buf = [0u8; 256];
         nib_buf[..key.len()].copy_from_slice(key);
         let mut key_buf = [0u8; 16];
         let is_account = key.len() <= 65;
+        for i in 0..8 {
+            key_buf[i] = (nib_buf[2 * i] << 4) | nib_buf[2 * i + 1];
+        }
         if is_account {
-            for i in 0..8 {
-                key_buf[i] = (nib_buf[2 * i] << 4) | nib_buf[2 * i + 1];
-            }
             key_buf[7] = key.len() as u8;
             key_buf
         } else {
-            for i in 0..8 {
-                key_buf[i] = (nib_buf[2 * i] << 4) | nib_buf[2 * i + 1];
-            }
-            for i in 0..8 {
+            for i in 0..7 {
                 key_buf[8 + i] = (nib_buf[66 + 2 * i] << 4) | nib_buf[66 + 2 * i + 1];
             }
             key_buf[15] = key.len() as u8;
@@ -838,7 +836,11 @@ impl Store {
             let is_leaf = key.len() == 65 || key.len() == 131;
             let is_account = key.len() <= 65;
             let trie_key = Store::db_key(&key);
-            let db_key = if is_leaf { &key[..] } else { &trie_key[..] };
+            let db_key = if is_leaf {
+                &key[..]
+            } else {
+                &trie_key[..!is_account as usize * 8 + 8]
+            };
 
             if is_leaf && key > last_written {
                 continue;
