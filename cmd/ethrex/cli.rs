@@ -893,7 +893,7 @@ pub async fn generate_big_block(
     block.header.gas_used = block.header.gas_limit - remaining_gas;
     block.header.blob_gas_used = Some(0);
     block.header.hash.take();
-    println("{:?}", block.header.hash());
+    println!("{:?}", block.header.hash());
 
     // We finish here with a payload
     let payload = ExecutionPayload::from_block(block);
