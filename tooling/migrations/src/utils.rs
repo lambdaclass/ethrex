@@ -1,7 +1,7 @@
 use ethrex_common::types::{
     AuthorizationTuple, BlockBody, BlockHeader, EIP1559Transaction, EIP2930Transaction,
     EIP4844Transaction, EIP7702Transaction, LegacyTransaction, PrivilegedL2Transaction,
-    SourceChainId, Transaction, TxKind, Withdrawal,
+    Transaction, TxKind, Withdrawal,
 };
 use ethrex_common_libmdbx::types::{
     BlockBody as LibmdbxBlockBody, BlockHeader as LibmdbxBlockHeader,
@@ -179,7 +179,6 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
                 access_list: tx.access_list,
                 from: tx.from,
                 inner_hash: tx.inner_hash,
-                source_chain_id: SourceChainId::L1,
             })
         }
     }
