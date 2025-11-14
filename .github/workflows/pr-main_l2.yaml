@@ -240,9 +240,8 @@ jobs:
             exit 1
           fi
 
-          echo "Cloning ethrex-l2-contracts-kit (branch add_uniswap_script)..."
-          git clone --branch add_uniswap_script \
-            https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
+          echo "Cloning ethrex-l2-contracts-kit..."
+          git clone https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
             /tmp/ethrex-l2-contracts-kit
 
           cd /tmp/ethrex-l2-contracts-kit
