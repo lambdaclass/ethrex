@@ -2072,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -2093,7 +2093,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -2121,7 +2121,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -2132,7 +2132,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
@@ -2142,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "aligned-sdk",
  "axum",
@@ -2218,7 +2218,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2239,7 +2239,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "axum",
  "bytes",
@@ -2268,7 +2268,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2299,7 +2299,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "axum",
  "ethrex-common",
@@ -2314,7 +2314,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "aes",
  "async-trait",
@@ -2355,7 +2355,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2368,7 +2368,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -2406,7 +2406,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2431,7 +2431,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "thiserror 2.0.16",
  "tracing",
@@ -2439,7 +2439,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2462,7 +2462,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2488,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2511,7 +2511,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -2887,7 +2887,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
@@ -4842,7 +4842,7 @@ dependencies = [
 
 [[package]]
 name = "quote-gen"
-version = "0.1.0"
+version = "7.0.0"
 dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",
