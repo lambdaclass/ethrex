@@ -130,7 +130,12 @@ impl Trie {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
         self.dirty.insert(path.clone());
-        let bulk_db = db::BulkTrieDB::new(self.db.as_ref(), path.clone());
+        // Cap the path to 14 nibbles. Rationale:
+        // - Keccak256 collision in 7 or more bytes is considered impossibly low;
+        // - Any branch at position `p` requires a collision of at least `p` nibbles;
+        // - Any extension at position `p` requires a branch at position `q > p`.
+        let bulk_path = path.slice(0, 14.min(path.len()));
+        let bulk_db = db::BulkTrieDB::new(self.db.as_ref(), bulk_path);
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
