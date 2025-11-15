@@ -103,7 +103,7 @@ For other CPU architectures, see the [releases page](https://github.com/lambdacl
 
 - **Interested in deploying your own L2?**
 
-  See [L2 rollup deployment](../l2/deploy.md) for launching your own rollup, deploying contracts, and interacting with your L2.
+  See [L2 rollup deployment](../l2/deployment/overview.md) for launching your own rollup, deploying contracts, and interacting with your L2.
 
 - **Looking to contribute or develop?**
 
