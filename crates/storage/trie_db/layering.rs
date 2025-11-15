@@ -209,6 +209,26 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
 
+    fn get_nodes_in_path(
+        &self,
+        key: Nibbles,
+        start: usize,
+    ) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
+        let key = apply_prefix(self.prefix, key);
+        let start = start + apply_prefix(self.prefix, Nibbles::default()).len();
+        let end = key.len();
+        let mut values = match self.inner.get(self.state_root, key.as_ref()) {
+            Some(_) => vec![None; end - start], // If we have the FKV key then we have the nodes
+            None => self.db.get_nodes_in_path(key.clone(), start)?,
+        };
+        for (i, j) in (start..end).enumerate() {
+            if let Some(value) = self.inner.get(self.state_root, &key.as_ref()[..j]) {
+                values[i] = Some(value);
+            }
+        }
+        Ok(values)
+    }
+
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // TODO: Get rid of this.
         unimplemented!("This function should not be called");
