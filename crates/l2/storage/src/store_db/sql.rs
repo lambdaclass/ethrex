@@ -371,19 +371,19 @@ impl SQLStore {
         self.store_l1_message_hashes_by_batch_in_tx(
             batch.number,
             batch.l1_message_hashes,
-            Some(&transaction),
+            Some(transaction),
         )
         .await?;
         self.store_l2_message_hashes_by_batch_in_tx(
             batch.number,
             batch.l2_message_hashes,
-            Some(&transaction),
+            Some(transaction),
         )
         .await?;
         self.store_balance_diffs_by_batch_in_tx(
             batch.number,
             batch.balance_diffs,
-            Some(&transaction),
+            Some(transaction),
         )
         .await?;
         self.store_privileged_transactions_hash_by_batch_number_in_tx(
