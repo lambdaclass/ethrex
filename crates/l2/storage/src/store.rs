@@ -230,6 +230,18 @@ impl Store {
         self.engine.seal_batch(batch).await
     }
 
+    /// Seals a batch along with its prover input data in one atomic operation.
+    pub async fn seal_batch_with_prover_input(
+        &self,
+        batch: Batch,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .seal_batch_with_prover_input(batch, prover_version, prover_input)
+            .await
+    }
+
     pub async fn update_operations_count(
         &self,
         transaction_inc: u64,
