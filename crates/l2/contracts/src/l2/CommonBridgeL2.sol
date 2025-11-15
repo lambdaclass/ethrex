@@ -16,6 +16,8 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
+    mapping(uint256 chainId => uint256 tx_id) public transactionIds;
+
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
     modifier onlySelf() {
         require(
@@ -98,5 +100,44 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(
             keccak256(abi.encodePacked(tokenL1, tokenL2, destination, amount))
         );
+    }
+    /// @inheritdoc ICommonBridgeL2
+    function sendToL2(
+        uint256 chainId,
+        address to,
+        uint256 destGasLimit,
+        bytes calldata data
+    ) external payable override {
+        _burnGas(destGasLimit);
+        if (msg.value > 0) {
+            IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2(
+                chainId,
+                address(this),
+                address(this),
+                destGasLimit,
+                transactionIds[chainId],
+                msg.value,
+                abi.encodeCall(ICommonBridgeL2.mintETH,(msg.sender))
+            );
+            transactionIds[chainId] += 1;
+        }
+        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2(
+            chainId,
+            msg.sender,
+            to,
+            destGasLimit,
+            transactionIds[chainId],
+            msg.value,
+            data
+        );
+        transactionIds[chainId] += 1;
+        (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
+        require(success, "Failed to burn Ether");
+    }
+
+    /// Burns at least {amount} gas
+    function _burnGas(uint256 amount) private view {
+        uint256 startingGas = gasleft();
+        while (startingGas - gasleft() < amount) {}
     }
 }
