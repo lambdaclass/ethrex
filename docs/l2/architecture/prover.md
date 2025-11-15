@@ -23,6 +23,6 @@ sequenceDiagram
     ProofCoordinator-->>-Prover: ProofData::SubmitAck(batch number)
 ```
 
-For running the prover, see [Deploy an L2](../../l2/deploy.md).
+For running the prover, see [Deploy an L2](../../l2/deployment/overview.md).
 For developer-focused setup and run instructions, see [Running the Prover](../../developers/l2/prover.md).
 For comprehensive details on the internals of the prover, see [ethrex-prover](../../prover/prover.md).

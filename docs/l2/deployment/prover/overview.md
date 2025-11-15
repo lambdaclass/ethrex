@@ -11,7 +11,7 @@ En esta seccion, vamos a cubrir como correr uno o varios provers de ethrex L2.
 > [!NOTE]
 > This section focuses solely on the step-by-step process for running an ethrex L2 prover in any of its forms. For a deeper understanding of this works under the hood, refer to the Fundamentals section. To learn more about the architecture of each mode, see the Architecture section.
 
-Before proceeding, note that this guide assumes you have ethrex installed. If you haven't installed it yet, follow one of the methods in the [Installation Guide](../../../getting-started/installation/README.md). If you're looking to build from source, don't skip this section—we'll cover that method here, as it is independent of the deployment approach you choose later.
+Before proceeding, note that this guide assumes you have ethrex installed. If you haven't installed it yet, follow one of the methods in the [Installation Guide](../../getting-started/installation/README.md). If you're looking to build from source, don't skip this section—we'll cover that method here, as it is independent of the deployment approach you choose later.
 
 ## Building from source (skip if ethrex is already installed)
 

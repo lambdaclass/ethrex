@@ -4,7 +4,7 @@ This section provides step-by-step guides for deploying different types of ethre
 
 Use this section to choose the deployment method that best fits your needs and follow the instructions accordingly.
 
-- [Overview](./l2/deployment/overview.md)
-- [Deploying a vanilla ethrex L2](./l2/deployment/vanilla.md)
-- [Deploying a validium ethrex L2](./l2/deployment/validium.md)
-- [Deploying a based ethrex L2](./l2/deployment/based.md)
+- [Overview](./overview.md)
+- [Deploying a vanilla ethrex L2](./vanilla.md)
+- [Deploying a validium ethrex L2](./validium.md)
+- [Deploying a based ethrex L2](./based.md)

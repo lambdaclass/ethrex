@@ -41,7 +41,7 @@
   - [Run an ethrex SP1 prover](./l2/deployment/prover/sp1.md)
   - [Run an ethrex RISC0 prover](./l2/deployment/prover/risc0.md)
   - [Run an ethrex TDX prover](./l2/deployment/prover/tdx.md)
-  - [Run multiple provers](./l2/deployment/prover/multi-provers.md)
+  - [Run multiple provers](./l2/deployment/prover/multi-prover.md)
 - [Monitoring and metrics](./l2/monitoring.md)
 - [Admin server](./l2/admin.md)
 - [Ethrex <> Aligned](./l2/aligned_integration.md)
