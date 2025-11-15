@@ -56,6 +56,8 @@
   - [Withdraw assets](./l2/interacting/withdraw.md)
   - [Connect a wallet](./l2/interacting/wallet.md)
   - [Deploy a contract](./l2/interacting/deploy_contracts.md)
+  - [Blockscout for ethrex L2](./l2/interacting/blockscout.md)
+  - [L2 Hub](./l2/interacting/l2_hub.md)
 - [Fundamentals](./l2/fundamentals/README.md)
   - [State diffs](./l2/fundamentals/state_diffs.md)
   - [Block vs StateDiff](./l2/fundamentals/block_vs_state_diff_measurements.md)
