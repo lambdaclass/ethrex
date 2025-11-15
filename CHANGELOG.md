@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-17
+
+- Configure BlobDB cache for account bytecodes [#5366](https://github.com/lambdaclass/ethrex/pull/5366)
+
 ### 2025-11-13
 
 - Use specialized DUP implementation [#5324](https://github.com/lambdaclass/ethrex/pull/5324)
