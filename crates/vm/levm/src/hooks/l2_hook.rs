@@ -127,19 +127,26 @@ fn finalize_non_privileged_execution(
 
     default_hook::delete_self_destruct_accounts(vm)?;
 
+    let fee_token_ratio = vm.env.fee_ratio.map(|ratio| ratio.as_u64()).unwrap_or(1u64);
+
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
-        pay_to_l1_fee_vault(vm, l1_gas, l1_fee_config, use_fee_token)?;
+        pay_to_l1_fee_vault(
+            vm,
+            l1_gas.saturating_mul(fee_token_ratio),
+            l1_fee_config,
+            use_fee_token,
+        )?;
     }
 
     if use_fee_token {
-        refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas)?;
+        refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas, fee_token_ratio)?;
     } else {
         default_hook::refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
     }
 
     pay_coinbase_l2(
         vm,
-        actual_gas_used,
+        actual_gas_used.saturating_mul(fee_token_ratio),
         &fee_config.operator_fee_config,
         use_fee_token,
     )?;
@@ -149,13 +156,28 @@ fn finalize_non_privileged_execution(
     // to the zero address because it is an ERC20.
     // If not an ERC20 the fees are burned not by a transaction.
     if let Some(base_fee_vault) = fee_config.base_fee_vault {
-        pay_base_fee_vault(vm, actual_gas_used, base_fee_vault, use_fee_token)?;
+        pay_base_fee_vault(
+            vm,
+            actual_gas_used.saturating_mul(fee_token_ratio),
+            base_fee_vault,
+            use_fee_token,
+        )?;
     } else if use_fee_token {
-        pay_base_fee_vault(vm, actual_gas_used, Address::zero(), use_fee_token)?;
+        pay_base_fee_vault(
+            vm,
+            actual_gas_used.saturating_mul(fee_token_ratio),
+            Address::zero(),
+            use_fee_token,
+        )?;
     }
 
     if let Some(operator_fee_config) = fee_config.operator_fee_config {
-        pay_operator_fee(vm, actual_gas_used, operator_fee_config, use_fee_token)?;
+        pay_operator_fee(
+            vm,
+            actual_gas_used.saturating_mul(fee_token_ratio),
+            operator_fee_config,
+            use_fee_token,
+        )?;
     }
 
     ctx_result.gas_used = total_gas;
@@ -398,6 +420,8 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
         ));
     }
 
+    let fee_token_ratio = vm.env.fee_ratio.unwrap_or(U256::one());
+
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
@@ -424,7 +448,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // NOT CHECKED: the blob price does not matter, fee token transactions do not support blobs
 
     // (3) INSUFFICIENT_ACCOUNT_FUNDS
-    deduct_caller_fee_token(vm, gaslimit_price_product)?;
+    deduct_caller_fee_token(vm, gaslimit_price_product.saturating_mul(fee_token_ratio))?;
 
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
     default_hook::validate_sufficient_max_fee_per_gas(vm)?;
@@ -633,6 +657,7 @@ fn refund_sender_fee_token(
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
     actual_gas_used: u64,
+    fee_token_ratio: u64,
 ) -> Result<(), VMError> {
     // c. Update gas used and refunded.
     ctx_result.gas_used = actual_gas_used;
@@ -652,7 +677,11 @@ fn refund_sender_fee_token(
         .ok_or(InternalError::Overflow)?;
     let sender_address = vm.env.origin;
 
-    pay_fee_token(vm, sender_address, erc20_return_amount)?;
+    pay_fee_token(
+        vm,
+        sender_address,
+        erc20_return_amount.saturating_mul(fee_token_ratio.into()),
+    )?;
 
     Ok(())
 }

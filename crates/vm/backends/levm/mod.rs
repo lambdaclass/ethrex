@@ -8,6 +8,8 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::H160;
+use ethrex_common::types::TxType;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
@@ -36,6 +38,12 @@ use ethrex_levm::{
 use std::cmp::min;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+// getFeeTokenRatio(address feeToken) external view override returns (uint256)
+const GET_FEE_TOKEN_RATIO_SELECTOR: [u8; 4] = [0xc6, 0xab, 0x85, 0xd8];
+pub const FEE_TOKEN_RATIO_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfb,
+]);
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -206,6 +214,13 @@ impl LEVM {
             block_header.base_fee_per_gas.unwrap_or_default(),
             &vm_type,
         )?;
+        let fee_ratio = if let Some(fee_token) = tx.fee_token()
+            && tx.tx_type() == TxType::FeeToken
+        {
+            get_fee_token_ratio(block_header, db, vm_type, chain_config, fee_token)?
+        } else {
+            None
+        };
 
         let block_excess_blob_gas = block_header.excess_blob_gas.map(U256::from);
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
@@ -232,6 +247,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
+            fee_ratio,
         };
 
         Ok(env)
@@ -492,6 +508,35 @@ impl LEVM {
     }
 }
 
+fn get_fee_token_ratio(
+    block_header: &BlockHeader,
+    db: &mut GeneralizedDatabase,
+    vm_type: VMType,
+    chain_config: ethrex_common::types::ChainConfig,
+    fee_token: ethrex_common::H160,
+) -> Result<Option<U256>, EvmError> {
+    let mut data = GET_FEE_TOKEN_RATIO_SELECTOR.to_vec();
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(fee_token.as_bytes());
+    let tx_query = EIP1559Transaction {
+        to: TxKind::Call(FEE_TOKEN_RATIO_ADDRESS),
+        chain_id: chain_config.chain_id,
+        data: Bytes::from(data),
+        gas_limit: 1_000_000,
+        ..Default::default()
+    };
+    let execution_result = LEVM::simulate_tx_from_generic(
+        &GenericTransaction::from(tx_query),
+        block_header,
+        &mut db.clone(),
+        vm_type,
+    )?;
+    if !execution_result.is_success() || execution_result.output().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(U256::from_big_endian(&execution_result.output())))
+}
+
 pub fn generic_system_contract_levm(
     block_header: &BlockHeader,
     calldata: Bytes,
@@ -716,6 +761,7 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
+        fee_ratio: None,
     })
 }
 
