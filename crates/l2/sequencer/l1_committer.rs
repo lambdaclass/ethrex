@@ -569,6 +569,7 @@ impl L1Committer {
 
                         let tx_hash =
                             send_generic_transaction(&self.eth_client, tx, &self.signer).await?;
+                        println!("[L1 Committer] Transferring ETH withdrawal on L1 ({tx_hash:#x})",);
                         info!(?to, %value, ?tx_hash, "Sending Transfer transaction");
                     } else if event_signature == ERC20_WITHDRAWAL_SIGNATURE {
                         let token = Address::from_slice(
@@ -604,6 +605,9 @@ impl L1Committer {
 
                         let tx_hash =
                             send_generic_transaction(&self.eth_client, tx, &self.signer).await?;
+                        println!(
+                            "[L1 Committer] Transferring ERC20 withdrawal on L1 ({tx_hash:#x})",
+                        );
                         info!(?to, ?token, %value, ?tx_hash, "Sending ERC20 Transfer transaction");
                     }
                 }

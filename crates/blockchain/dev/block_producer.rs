@@ -127,22 +127,30 @@ pub async fn start_block_producer(
             .into_block(Some(parent_beacon_block_root), None)
             .expect("failed to build block from execution payload");
 
-        println!(
-            "[L1 Builder] Block {} ({:#x}) {{",
-            block.header.number,
-            block.hash(),
-        );
-        println!(
-            "{}",
-            block
-                .body
-                .transactions
-                .iter()
-                .map(|tx| format!("\t{:#x}", tx.hash()))
-                .collect::<Vec<String>>()
-                .join("\n")
-        );
-        println!("}}");
+        if block.body.transactions.is_empty() {
+            println!(
+                "[L1 Builder] Block {} ({:#x}) {{}}",
+                block.header.number,
+                block.hash(),
+            );
+        } else {
+            println!(
+                "[L1 Builder] Block {} ({:#x}) {{",
+                block.header.number,
+                block.hash(),
+            );
+            println!(
+                "{}",
+                block
+                    .body
+                    .transactions
+                    .iter()
+                    .map(|tx| format!("\t{:#x}", tx.hash()))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            );
+            println!("}}");
+        }
 
         head_block_hash = produced_block_hash;
     }

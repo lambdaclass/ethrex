@@ -607,12 +607,15 @@ impl Blockchain {
                 let vm_db = StoreVmDatabase::new(self.storage.clone(), block_header.clone());
                 let mut vm = self.new_evm(vm_db).inspect_err(|e| error!("{e}"))?;
 
-                let sim = vm
-                    .simulate_tx_from_generic(&head_tx.tx.clone().into(), &block_header)
-                    .inspect_err(|e| {
-                        error!("{e}");
-                        println!("[L1 Builder] Simulation failed for head tx: {tx_hash:#x}");
-                    })?;
+                let sim =
+                    match vm.simulate_tx_from_generic(&head_tx.tx.clone().into(), &block_header) {
+                        Ok(sim_result) => sim_result,
+                        Err(e) => {
+                            error!("{e}");
+                            println!("[L1 Builder] Simulation failed for head tx: {tx_hash:#x}");
+                            continue;
+                        }
+                    };
 
                 for log in sim.logs() {
                     if log.address == COMMON_BRIDGE_ADDRESS
@@ -798,8 +801,6 @@ impl Blockchain {
                             from: from,
                             inner_hash: Default::default(),
                         })).await.unwrap();
-                        tracing::info!("DEPOSIT");
-                        println!("[L1 Builder] Inserted deposit transaction into L2 mempool");
                     }
 
                     txs.shift()?;

@@ -273,24 +273,33 @@ impl BlockProducer {
             METRICS_TX.set_transactions_per_second(tps);
         );
 
-        println!(
-            "[L2 Builder] Block {} ({:#x}) {{",
-            block.header.number,
-            block.hash(),
-        );
-        println!(
-            "{}",
-            block
-                .body
-                .transactions
-                .iter()
-                .map(|tx| format!("\t{:#x}", tx.hash()))
-                .collect::<Vec<String>>()
-                .join("\n")
-        );
-        println!("}}");
+        if block.body.transactions.is_empty() {
+            println!(
+                "[L2 Builder] Block {} ({:#x}) {{}}",
+                block.header.number,
+                block.hash(),
+            );
+        } else {
+            println!(
+                "[L2 Builder] Block {} ({:#x}) {{",
+                block.header.number,
+                block.hash(),
+            );
+            println!(
+                "{}",
+                block
+                    .body
+                    .transactions
+                    .iter()
+                    .map(|tx| format!("\t{:#x}", tx.hash()))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            );
+            println!("}}");
+        }
 
         if force_commitment {
+            println!("[L2 Builder] Forcing commitment");
             self.committer
                 .cast(l1_committer::InMessage::ForceCommit)
                 .await?;
