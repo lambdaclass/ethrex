@@ -609,7 +609,11 @@ impl Blockchain {
 
                 let sim = vm
                     .simulate_tx_from_generic(&head_tx.tx.clone().into(), &block_header)
-                    .inspect_err(|e| error!("{e}"))?;
+                    .inspect_err(|e| {
+                        error!("{e}");
+                        println!("[L1 Builder] Simulation failed for head tx: {tx_hash:#x}");
+                    })?;
+
                 for log in sim.logs() {
                     if log.address == COMMON_BRIDGE_ADDRESS
                         && log.topics.contains(
@@ -619,6 +623,8 @@ impl Blockchain {
                             .unwrap(),
                         )
                     {
+                        println!("[L1 Builder] Detected call to CommonBridge");
+
                         let from = Address::from_slice(log.data.get(0x20 - 20..0x20).unwrap());
                         let to = Address::from_slice(log.data.get(0x40 - 20..0x40).unwrap());
                         let value = U256::from_big_endian(log.data.get(0x40..0x60).unwrap());
@@ -637,6 +643,8 @@ impl Blockchain {
                             ..Default::default()
                         };
 
+                        println!("[L1 Builder] Simulating transaction in L2");
+
                         let result = simulate_tx(
                             &transaction,
                             &block_header,
@@ -644,7 +652,10 @@ impl Blockchain {
                             l2.clone(),
                         )
                         .await
-                        .inspect_err(|e| error!("SIMULATE ERROR: {e}"))?;
+                        .inspect_err(|e| {
+                            error!("SIMULATE ERROR: {e}");
+                            println!("[L1 Builder] L2 Simulation failed: {e}");
+                        })?;
 
                         // 0x57272f8e
                         // keccak(to || data)
@@ -729,6 +740,11 @@ impl Blockchain {
                             tip: 0,
                         };
 
+                        println!(
+                            "[L1 Builder] Presetting L2 response: {:#x}",
+                            head_tx.tx.hash()
+                        );
+
                         let receipt = match self.apply_transaction(&head_tx, context) {
                             Ok(receipt) => {
                                 println!(
@@ -783,6 +799,7 @@ impl Blockchain {
                             inner_hash: Default::default(),
                         })).await.unwrap();
                         tracing::info!("DEPOSIT");
+                        println!("[L1 Builder] Inserted deposit transaction into L2 mempool");
                     }
 
                     txs.shift()?;
