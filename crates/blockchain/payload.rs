@@ -598,24 +598,38 @@ impl Blockchain {
                 continue;
             }
 
-            {
+            // Skip simulating calls to the OnChainProposer contract
+            // We only want to simulate transactions that would require L2 simulation,
+            // and this is not the case for OnChainProposer calls
+            //
+            // CAUTION: not skipping simulating these transactions would lead to
+            // a simulation failure in some cases like during L2 withdrawals.
+            if head_tx.to() != TxKind::Call(ON_CHAIN_PROPOSER_ADDRESS) {
+                let mut sub_context = PayloadBuildContext::new(
+                    context.payload.clone(),
+                    &context.store,
+                    &self.options.r#type,
+                )?;
+
                 let block_header = self
                     .storage
                     .get_block_header_by_hash(context.parent_hash())
                     .inspect_err(|e| error!("{e}"))?
                     .unwrap();
-                let vm_db = StoreVmDatabase::new(self.storage.clone(), block_header.clone());
-                let mut vm = self.new_evm(vm_db).inspect_err(|e| error!("{e}"))?;
 
-                let sim =
-                    match vm.simulate_tx_from_generic(&head_tx.tx.clone().into(), &block_header) {
-                        Ok(sim_result) => sim_result,
-                        Err(e) => {
-                            error!("{e}");
-                            println!("[L1 Builder] Simulation failed for head tx: {tx_hash:#x}");
-                            continue;
-                        }
-                    };
+                let sim = match sub_context
+                    .vm
+                    .simulate_tx_from_generic(&head_tx.tx.clone().into(), &block_header)
+                {
+                    Ok(sim_result) => sim_result,
+                    Err(e) => {
+                        error!("{e}");
+                        println!(
+                            "[L1 Builder] Head transaction simulation failed ({tx_hash:#x}): {e}"
+                        );
+                        continue;
+                    }
+                };
 
                 for log in sim.logs() {
                     if log.address == COMMON_BRIDGE_ADDRESS
