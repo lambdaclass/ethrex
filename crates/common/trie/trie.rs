@@ -130,12 +130,7 @@ impl Trie {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
         self.dirty.insert(path.clone());
-        // Cap the path to 14 nibbles. Rationale:
-        // - Keccak256 collision in 7 or more bytes is considered impossibly low;
-        // - Any branch at position `p` requires a collision of at least `p` nibbles;
-        // - Any extension at position `p` requires a branch at position `q > p`.
-        let bulk_path = path.slice(0, 14.min(path.len()));
-        let bulk_db = db::BulkTrieDB::new(self.db.as_ref(), bulk_path);
+        let bulk_db = db::BulkTrieDB::new(self.db.as_ref(), path.clone());
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -162,15 +157,17 @@ impl Trie {
             return Ok(None);
         }
         self.pending_removal.insert(Nibbles::from_bytes(path));
+        let path = Nibbles::from_bytes(path);
+        let bulk_db = db::BulkTrieDB::new(self.db.as_ref(), path.clone());
 
         // If the trie is not empty, call the root node's removal logic.
         let (is_trie_empty, value) = self
             .root
-            .get_node_mut(self.db.as_ref(), Nibbles::default())?
+            .get_node_mut(&bulk_db, Nibbles::default())?
             .ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
             })?
-            .remove(self.db.as_ref(), Nibbles::from_bytes(path))?;
+            .remove(&bulk_db, path)?;
         if is_trie_empty {
             self.root = NodeRef::default();
         } else {

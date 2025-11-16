@@ -19,9 +19,10 @@ pub trait TrieDB: Send + Sync {
         &self,
         key: Nibbles,
         start: usize,
+        count: usize,
     ) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
-        let keys = (start..key.len()).map(|i| key.slice(0, i));
-        let mut values = Vec::with_capacity(key.len());
+        let keys = (start..start + count).map(|i| key.slice(0, i));
+        let mut values = Vec::with_capacity(count);
         for key in keys {
             values.push(self.get(key)?);
         }
@@ -51,6 +52,7 @@ pub(crate) struct BulkTrieDB<'a> {
     nodes: AtomicPtr<Option<Vec<u8>>>,
     nodes_count: AtomicUsize,
     nodes_cap: AtomicUsize,
+    first_idx: AtomicUsize,
 }
 
 impl<'a> BulkTrieDB<'a> {
@@ -65,10 +67,11 @@ impl<'a> BulkTrieDB<'a> {
             nodes_count: AtomicUsize::default(),
             // NOTE: needed to meet the invariants for freeing
             nodes_cap: AtomicUsize::default(),
+            first_idx: AtomicUsize::default(),
         }
     }
 
-    fn get_nodes(&self, first: usize) -> Result<&'a [Option<Vec<u8>>], TrieError> {
+    fn get_nodes(&self, first: usize, count: usize) -> Result<&'a [Option<Vec<u8>>], TrieError> {
         // NOTE: in theory, `leak` could produce a `NULL` pointer if the vector
         // is empty. Using `with_capacity` guarantees it's not `NULL` because it
         // forces preallocation. So, in this initial version that call to
@@ -80,12 +83,13 @@ impl<'a> BulkTrieDB<'a> {
             let nodes = unsafe { std::slice::from_raw_parts(nodes_ptr, count) };
             return Ok(nodes);
         }
-        let encoded_nodes = self.db.get_nodes_in_path(self.path.clone(), first)?;
+        let encoded_nodes = self.db.get_nodes_in_path(self.path.clone(), first, count)?;
         let cap = encoded_nodes.capacity();
         let encoded_nodes = encoded_nodes.leak();
         self.nodes_count.store(encoded_nodes.len(), Relaxed);
         self.nodes_cap.store(cap, Relaxed);
         self.nodes.store(encoded_nodes.as_ptr().cast_mut(), Relaxed);
+        self.first_idx.store(first, Relaxed);
         Ok(encoded_nodes)
     }
 }
@@ -107,10 +111,11 @@ impl<'a> TrieDB for BulkTrieDB<'a> {
             // key not in path
             return Ok(None);
         }
-        let nodes = self.get_nodes(key.len())?;
+        let count = 14; //self.path.len().saturating_sub(key.len()).min(14);
+        let nodes = self.get_nodes(key.len(), count)?;
         // Because we skip some nodes, we need to offset the relative position
         // by the difference between the full path and what we actually have.
-        let index = key.len() - (self.path.len() - nodes.len());
+        let index = key.len() - self.first_idx.load(std::sync::atomic::Ordering::Relaxed);
         Ok(nodes.get(index).cloned().flatten())
     }
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {

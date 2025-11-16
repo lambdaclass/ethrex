@@ -77,6 +77,52 @@ impl TrieLayerCache {
         None
     }
 
+    /// Returns tuple containing a vector of `count` optional nodes (None if absent) in matching
+    /// starting at `path[..start]` and a boolean indicating whether the DB needs to be queried.
+    /// The vector is empty if none of the nodes can be found.
+    pub fn get_nodes_in_path(
+        &self,
+        state_root: H256,
+        path: &[u8],
+        start: usize,
+        count: usize,
+    ) -> (Vec<Option<Vec<u8>>>, bool) {
+        let mut nodes = vec![None; count];
+        if let Some(filter) = &self.bloom
+            && !filter.contains(&path[..start])
+        {
+            // The queried node is not in the diff layers, so none of the children can be.
+            return (nodes, true);
+        }
+        let mut rem: Vec<_> = (start..start + count)
+            .rev()
+            .filter(|i| self.bloom.as_ref().is_none_or(|f| f.contains(&path[..*i])))
+            .collect();
+        let mut has_value = false;
+        let maybe_has_value = self.bloom.as_ref().is_none_or(|f| f.contains(path));
+        let mut current_state_root = state_root;
+        while let Some(layer) = self.layers.get(&current_state_root) {
+            let mut new_size = rem.len();
+            for (i, j) in rem.iter_mut().enumerate().rev() {
+                let key = &path[..*j];
+                if let Some(value) = layer.nodes.get(key) {
+                    new_size = i;
+                    nodes[*j - start] = Some(value.clone());
+                }
+            }
+            rem.truncate(new_size);
+            if maybe_has_value && layer.nodes.contains_key(path) {
+                has_value = true;
+                break;
+            }
+            if rem.is_empty() {
+                break;
+            }
+            current_state_root = layer.parent;
+        }
+        (nodes, !has_value)
+    }
+
     // TODO: use finalized hash to know when to commit
     pub fn get_commitable(&self, mut state_root: H256, commit_threshold: usize) -> Option<H256> {
         let mut counter = 0;
@@ -213,18 +259,19 @@ impl TrieDB for TrieWrapper {
         &self,
         key: Nibbles,
         start: usize,
+        count: usize,
     ) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
         let start = start + apply_prefix(self.prefix, Nibbles::default()).len();
-        let end = key.len();
-        let mut values = match self.inner.get(self.state_root, key.as_ref()) {
-            Some(_) => vec![None; end - start], // If we have the FKV key then we have the nodes
-            None => self.db.get_nodes_in_path(key.clone(), start)?,
-        };
-        for (i, j) in (start..end).enumerate() {
-            if let Some(value) = self.inner.get(self.state_root, &key.as_ref()[..j]) {
-                values[i] = Some(value);
-            }
+        let (mut values, query_db) =
+            self.inner
+                .get_nodes_in_path(self.state_root, key.as_ref(), start, count);
+        if query_db {
+            let db_count = values.iter().rev().take_while(|v| v.is_none()).count();
+            let db_start = start + count - db_count;
+            let db_nodes = self.db.get_nodes_in_path(key, db_start, db_count)?;
+            values.truncate(values.len() - db_count);
+            values.extend(db_nodes);
         }
         Ok(values)
     }

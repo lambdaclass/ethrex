@@ -111,12 +111,12 @@ impl TrieDB for RocksDBTrieDB {
         &self,
         key: Nibbles,
         start: usize,
+        count: usize,
     ) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
         let cf = self.cf_handle()?;
         let mut res = Vec::with_capacity(key.len());
         let key = self.make_key(key);
-        let end = key.len();
-        let keys = (start..end).map(|i| &key[..i]);
+        let keys = (start..start + count).map(|i| &key[..i]);
         let values = self.db.batched_multi_get_cf(&cf, keys, true);
         for value in values {
             let value = value
