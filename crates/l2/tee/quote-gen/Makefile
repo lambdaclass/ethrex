@@ -7,12 +7,12 @@ GIT_REV := $(shell git rev-parse --short=7 HEAD)
 NIX_BUILD_ARGS = --no-out-link -I nixpkgs=$(NIXPKGS_URL) --argstr gitRev "$(GIT_REV)"
 
 image.raw:
-	$(eval IMAGE := $(shell nix-build image.nix ${NIX_BUILD_ARGS})/${IMAGE_NAME})
+	$(eval IMAGE := $(shell env SKIP_COMPILE_CONTRACTS=1 nix-build image.nix ${NIX_BUILD_ARGS})/${IMAGE_NAME})
 	cp $(IMAGE) image.raw
 	chmod u+rw image.raw
 
 run: image.raw
-	$(eval RUN_QEMU := $(shell nix-build hypervisor.nix ${NIX_BUILD_ARGS})/bin/run-qemu)
+	$(eval RUN_QEMU := $(shell env SKIP_COMPILE_CONTRACTS=1 nix-build hypervisor.nix ${NIX_BUILD_ARGS})/bin/run-qemu)
 	$(RUN_QEMU) image.raw
 
 clean:

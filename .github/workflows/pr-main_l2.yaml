@@ -53,6 +53,8 @@ jobs:
     # "Lint L2" is a required check, don't change the name
     name: Lint L2
     runs-on: ubuntu-latest
+    env:
+      SKIP_COMPILE_CONTRACTS: "1"
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
@@ -358,7 +360,6 @@ jobs:
           cd crates/l2
           if  [ "${{ matrix.based }}" = true ]; then
             export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
-            export COMPILE_CONTRACTS=true
           fi
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
@@ -483,6 +484,7 @@ jobs:
 
       - name: Build prover
         run: |
+          export SKIP_COMPILE_CONTRACTS=true
           sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
           sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
           cd crates/l2/tee/quote-gen
@@ -578,7 +580,6 @@ jobs:
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          COMPILE_CONTRACTS=true \
           docker compose up contract_deployer
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)

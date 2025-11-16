@@ -17,6 +17,8 @@ jobs:
   lint_zk:
     name: Lint ${{ matrix.backend }} backend
     runs-on: ubuntu-latest
+    env:
+      SKIP_COMPILE_CONTRACTS: "1"
     strategy:
       matrix:
         backend: ["sp1", "risc0"]
@@ -59,6 +61,8 @@ jobs:
   lint_exec:
     name: Lint exec backend
     runs-on: ubuntu-latest
+    env:
+      SKIP_COMPILE_CONTRACTS: "1"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -75,6 +79,8 @@ jobs:
   lint_tdx:
     name: Lint tdx backend
     runs-on: ubuntu-latest
+    env:
+      SKIP_COMPILE_CONTRACTS: "1"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
