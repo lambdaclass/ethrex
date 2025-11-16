@@ -46,6 +46,8 @@ interface ICommonBridge {
         bytes data;
     }
 
+    function scopedCall(address to, bytes memory _calldata) external payable returns (bytes memory);
+
     function transfer(address to, uint256 value) external;
 
     function transferERC20(address token, address to, uint256 value) external;

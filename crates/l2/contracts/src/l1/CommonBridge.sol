@@ -95,12 +95,31 @@ contract CommonBridge is
     /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
     uint256 private pendingPrivilegedTxIndex;
 
+    mapping(bytes32 => bytes) private responses;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
             "CommonBridge: caller is not the OnChainProposer"
         );
         _;
+    }
+
+    event ScopedCall(address from, address to, uint256 value, bytes _calldata);
+
+    function scopedCall(address to, bytes memory _calldata) public override payable returns (bytes memory) {
+        bytes32 key = keccak256(abi.encodePacked(to, _calldata));
+        emit ScopedCall(msg.sender, to, msg.value, _calldata);
+
+        if (responses[key].length != 0) {
+            return responses[key];
+        }
+
+        return bytes("");
+    }
+
+    function setResponse(bytes32 key, bytes memory response) public {
+        responses[key] = response;
     }
 
     function transfer(address to, uint256 value) public override onlyOnChainProposer nonReentrant {

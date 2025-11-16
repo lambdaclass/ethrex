@@ -5,26 +5,29 @@ use std::{
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
+    u64,
 };
 
 use ethrex_common::{
-    Address, Bloom, Bytes, H160, H256, U256,
+    Address, Bloom, Bytes, H160, H256, Secret, Signature, U256,
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, GenericTransaction, MempoolTransaction, PrivilegedL2Transaction, Receipt,
-        Transaction, TxKind, TxType, Withdrawal, bloom_from_logs, calc_excess_blob_gas,
-        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_transactions_root, compute_withdrawals_root,
+        ChainConfig, EIP1559Transaction, GenericTransaction, MempoolTransaction,
+        PrivilegedL2Transaction, Receipt, Transaction, TxKind, TxType, Withdrawal, bloom_from_logs,
+        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
+        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
+    utils::keccak,
 };
 
-use ethrex_vm::{Evm, EvmError};
+use ethrex_vm::{Evm, EvmError, ExecutionResult};
 
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::encode::{PayloadRLPEncode, RLPEncode};
 use ethrex_storage::{Store, error::StoreError};
 
+use secp256k1::{Message, SECP256K1, SecretKey};
 use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
@@ -33,12 +36,11 @@ use ethrex_metrics::metrics;
 use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
-use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     Blockchain, BlockchainType, MAX_PAYLOADS,
-    constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
+    constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, POST_OSAKA_GAS_LIMIT_CAP, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
@@ -46,17 +48,17 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 // 0x7c2626d2e35561138288bbc1a7307fa04d8ba6b7
 const ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
     0x7c, 0x26, 0x26, 0xd2, 0xe3, 0x55, 0x61, 0x13, 0x82, 0x88, 0xbb, 0xc1, 0xa7, 0x30, 0x7f, 0xa0,
     0x4d, 0x8b, 0xa6, 0xb7,
 ]);
-// 0x45db4d1505ebf801b50aa767d15d7c7d00dec37b
+// 0x67cad0d689b799f385d2ebcf3a626254a9074e12
 const COMMON_BRIDGE_ADDRESS: Address = H160([
-    0x45, 0xdb, 0x4d, 0x15, 0x05, 0xeb, 0xf8, 0x01, 0xb5, 0x0a, 0xa7, 0x67, 0xd1, 0x5d, 0x7c, 0x7d,
-    0x00, 0xde, 0xc3, 0x7b,
+    0x67, 0xca, 0xd0, 0xd6, 0x89, 0xb7, 0x99, 0xf3, 0x85, 0xd2, 0xeb, 0xcf, 0x3a, 0x62, 0x62, 0x54,
+    0xa9, 0x07, 0x4e, 0x12,
 ]);
 
 #[derive(Debug)]
@@ -535,37 +537,7 @@ impl Blockchain {
         // Fetch mempool transactions
         let (mut plain_txs, mut blob_txs) = self.fetch_mempool_transactions(context)?;
         // Execute and add transactions to payload (if suitable)
-        let mut deposits = false;
         loop {
-            if deposits {
-                let mut new_plain_txs = self
-                    .mempool
-                    .filter_transactions_with_filter_fn(&|tx: &Transaction| -> bool {
-                        tx.to() == TxKind::Call(ON_CHAIN_PROPOSER_ADDRESS)
-                            && tx.tx_type() == TxType::EIP1559
-                    })
-                    .unwrap();
-                let mut new_blob_txs = self
-                    .mempool
-                    .filter_transactions_with_filter_fn(&|tx: &Transaction| -> bool {
-                        tx.to() == TxKind::Call(ON_CHAIN_PROPOSER_ADDRESS)
-                            && tx.tx_type() == TxType::EIP4844
-                    })
-                    .unwrap();
-
-                if !new_plain_txs.is_empty() {
-                    new_plain_txs.extend(plain_txs.txs);
-                    plain_txs = TransactionQueue::new(new_plain_txs, None).unwrap();
-                    deposits = false;
-                }
-
-                if !new_blob_txs.is_empty() {
-                    new_blob_txs.extend(blob_txs.txs);
-                    blob_txs = TransactionQueue::new(new_blob_txs, None).unwrap();
-                    deposits = false;
-                }
-            }
-
             // Check if we have enough gas to run more transactions
             if context.remaining_gas < TX_GAS_COST {
                 debug!("No more gas to run transactions");
@@ -578,16 +550,7 @@ impl Blockchain {
             }
             // Fetch the next transactions
             let (head_tx, is_blob) = match (plain_txs.peek(), blob_txs.peek()) {
-                (None, None) => {
-                    if deposits {
-                        // If there's no more transactions but there were deposits, wait
-                        // for the settlement transaction instead of finish the block
-                        sleep(Duration::from_millis(100)).await;
-                        continue;
-                    } else {
-                        break;
-                    }
-                }
+                (None, None) => break,
                 (None, Some(tx)) => (tx, true),
                 (Some(tx), None) => (tx, false),
                 (Some(a), Some(b)) if b < a => (b, true),
@@ -635,6 +598,143 @@ impl Blockchain {
                 continue;
             }
 
+            {
+                let block_header = self
+                    .storage
+                    .get_block_header_by_hash(context.parent_hash())
+                    .inspect_err(|e| error!("{e}"))?
+                    .unwrap();
+                let vm_db = StoreVmDatabase::new(self.storage.clone(), block_header.clone());
+                let mut vm = self.new_evm(vm_db).inspect_err(|e| error!("{e}"))?;
+
+                let sim = vm
+                    .simulate_tx_from_generic(&head_tx.tx.clone().into(), &block_header)
+                    .inspect_err(|e| error!("{e}"))?;
+                for log in sim.logs() {
+                    if log.address == COMMON_BRIDGE_ADDRESS
+                        && log.topics.contains(
+                            &H256::from_str(
+                                "b0e76942d2929d9dcf5c6b8e32bf27df13e118fcaab4cef2e90257551bba0270",
+                            )
+                            .unwrap(),
+                        )
+                    {
+                        let from = Address::from_slice(log.data.get(0x20 - 20..0x20).unwrap());
+                        let to = Address::from_slice(log.data.get(0x40 - 20..0x40).unwrap());
+                        let value = U256::from_big_endian(log.data.get(0x40..0x60).unwrap());
+                        let data_len =
+                            U256::from_big_endian(log.data.get(0x80..0xa0).unwrap()).as_usize();
+                        let data = &log.data.iter().as_slice()[0xa0..0xa0 + data_len];
+
+                        let l2 = l2_blockchain.as_ref().unwrap();
+
+                        let transaction = GenericTransaction {
+                            r#type: TxType::EIP1559,
+                            to: TxKind::Call(to),
+                            from,
+                            value,
+                            input: Bytes::copy_from_slice(data),
+                            ..Default::default()
+                        };
+
+                        let result = simulate_tx(
+                            &transaction,
+                            &block_header,
+                            l2.storage.clone(),
+                            l2.clone(),
+                        )
+                        .await
+                        .inspect_err(|e| error!("SIMULATE ERROR: {e}"))?;
+
+                        // 0x57272f8e
+                        // keccak(to || data)
+                        // 0x40
+                        // response_length
+                        // response || padding
+                        let response_len = result.output().len();
+                        let padding = response_len % 32;
+
+                        let data = [
+                            &[0x57, 0x27, 0x2f, 0x8e],
+                            keccak([to.as_bytes(), data].concat()).as_bytes(),
+                            H256::from_str(
+                                "0x0000000000000000000000000000000000000000000000000000000000000040",
+                            )
+                            .unwrap()
+                            .as_bytes(),
+                            U256::from_big_endian(&response_len.to_be_bytes())
+                                .to_big_endian()
+                                .as_slice(),
+                            result.output().iter().as_slice(),
+                            &vec![0; padding],
+                        ]
+                        .concat();
+
+                        let pk = SecretKey::from_str(
+                            "5a10921bc5815991dd35f29b4a11177c10a1f3f0493f9b6baee20cb7a8187f4e",
+                        )
+                        .unwrap();
+                        let address =
+                            Address::from_str("0001a2c749FE0Ab1C09f1131BA17530f9D764fBC").unwrap();
+
+                        let mut tx = EIP1559Transaction {
+                            chain_id: self.storage.chain_config.chain_id,
+                            nonce: self
+                                .storage
+                                .get_nonce_by_account_address(
+                                    self.storage.get_latest_block_number().await.unwrap(),
+                                    address,
+                                )
+                                .await
+                                .unwrap()
+                                .unwrap(),
+                            max_priority_fee_per_gas: 1000000000000,
+                            max_fee_per_gas: 1000000000000,
+                            gas_limit: POST_OSAKA_GAS_LIMIT_CAP - 1,
+                            to: TxKind::Call(COMMON_BRIDGE_ADDRESS),
+                            value: U256::zero(),
+                            data: data.into(),
+                            access_list: vec![],
+                            signature_y_parity: false,
+                            signature_r: U256::zero(),
+                            signature_s: U256::zero(),
+                            inner_hash: Default::default(),
+                        };
+                        let mut payload = vec![TxType::EIP1559 as u8];
+                        payload.append(tx.encode_payload_to_vec().as_mut());
+
+                        let hash = keccak(payload);
+                        let msg = Message::from_digest(hash.0);
+                        let (recovery_id, signature) = SECP256K1
+                            .sign_ecdsa_recoverable(&msg, &pk)
+                            .serialize_compact();
+
+                        let signature = Signature::from_slice(
+                            &[
+                                signature.as_slice(),
+                                &[Into::<i32>::into(recovery_id) as u8],
+                            ]
+                            .concat(),
+                        );
+                        (tx.signature_r, tx.signature_s, tx.signature_y_parity) = (
+                            U256::from_big_endian(&signature[..32]),
+                            U256::from_big_endian(&signature[32..64]),
+                            signature[64] != 0 && signature[64] != 27,
+                        );
+
+                        let mempool_tx =
+                            MempoolTransaction::new(Transaction::EIP1559Transaction(tx), address);
+                        let head_tx = HeadTransaction {
+                            tx: mempool_tx,
+                            tip: 0,
+                        };
+
+                        if let Err(e) = self.apply_transaction(&head_tx, context) {
+                            error!("ERROR: {e}");
+                        }
+                    }
+                }
+            }
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
@@ -663,7 +763,7 @@ impl Blockchain {
                             from: from,
                             inner_hash: Default::default(),
                         })).await.unwrap();
-                        deposits = true;
+                        tracing::info!("DEPOSIT");
                     }
 
                     txs.shift()?;
@@ -925,8 +1025,8 @@ impl Ord for HeadTransaction {
             _ => (),
         };
         match (self.to(), other.to()) {
-            (TxKind::Call(to), _) if to == ON_CHAIN_PROPOSER_ADDRESS => return Ordering::Less,
-            (_, TxKind::Call(to)) if to == ON_CHAIN_PROPOSER_ADDRESS => return Ordering::Greater,
+            (TxKind::Call(to), _) if to == ON_CHAIN_PROPOSER_ADDRESS => return Ordering::Greater,
+            (_, TxKind::Call(to)) if to == ON_CHAIN_PROPOSER_ADDRESS => return Ordering::Less,
             _ => (),
         };
         match other.tip.cmp(&self.tip) {
@@ -940,4 +1040,16 @@ impl PartialOrd for HeadTransaction {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
+}
+
+async fn simulate_tx(
+    transaction: &GenericTransaction,
+    block_header: &BlockHeader,
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+) -> Result<ExecutionResult, EvmError> {
+    let vm_db = StoreVmDatabase::new(storage, block_header.clone());
+    let mut vm = blockchain.new_evm(vm_db)?;
+
+    vm.simulate_tx_from_generic(transaction, block_header)
 }

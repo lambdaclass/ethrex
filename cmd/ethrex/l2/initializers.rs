@@ -225,7 +225,10 @@ pub async fn init_supernode(
     let contract_addresses = deploy_l1_contracts(DeployerOptions {
         deposit_rich: false,
         committer_l1_address: Address::from_slice(
-            &hex::decode("D8F3183DEF51A987222D845be228e0Bbb932C222").unwrap(),
+            &hex::decode("65D08a056c17Ae13370565B04cF77D2AfA1cB9FA").unwrap(),
+        ),
+        proof_sender_l1_address: Address::from_slice(
+            &hex::decode("F61E98E7D47aB884C244E39E031978E33162ff4b").unwrap(),
         ),
         validium: true,
         ..Default::default()

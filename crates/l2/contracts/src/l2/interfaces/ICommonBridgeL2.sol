@@ -6,6 +6,8 @@ pragma solidity =0.8.29;
 /// @notice A CommonBridge contract is a contract that allows L1<->L2 communication
 /// It handles user withdrawals and message sending to L1.
 interface ICommonBridgeL2 {
+    function NATIVE_TOKEN_L2() external returns (address);
+
     /// @notice An ETH deposit was successfully processed
     /// @dev Event emitted when an ETH deposit is processed.
     /// @param receiver the address that received the ETH
