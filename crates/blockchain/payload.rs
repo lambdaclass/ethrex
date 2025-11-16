@@ -729,9 +729,28 @@ impl Blockchain {
                             tip: 0,
                         };
 
-                        if let Err(e) = self.apply_transaction(&head_tx, context) {
-                            error!("ERROR: {e}");
-                        }
+                        let receipt = match self.apply_transaction(&head_tx, context) {
+                            Ok(receipt) => {
+                                println!(
+                                    "[L1 Builder] L2 response preset successfully ({:#x})",
+                                    head_tx.tx.hash()
+                                );
+                                receipt
+                            }
+                            Err(e) => {
+                                error!("ERROR: {e}");
+                                panic!(
+                                    "[L1 Builder] Failed to preset L2 response ({:#x}): {e}",
+                                    head_tx.tx.hash()
+                                );
+                            }
+                        };
+
+                        // Add transaction to block
+                        debug!("Adding transaction: {} to payload", head_tx.tx.hash());
+                        context.payload.body.transactions.push(head_tx.into());
+                        // Save receipt for hash calculation
+                        context.receipts.push(receipt);
                     }
                 }
             }
