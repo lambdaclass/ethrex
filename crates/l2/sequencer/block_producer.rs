@@ -252,7 +252,7 @@ impl BlockProducer {
         let block_hash = block.hash();
         self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
-            .store_block(block, account_updates_list, execution_result)?;
+            .store_block(block.clone(), account_updates_list, execution_result)?;
         info!(
             "Stored new block {:x}, transaction_count {}",
             block_hash, transactions_count
@@ -272,6 +272,23 @@ impl BlockProducer {
             let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
         );
+
+        println!(
+            "[L2 Builder] Block {} ({:#x}) {{",
+            block.header.number,
+            block.hash(),
+        );
+        println!(
+            "{}",
+            block
+                .body
+                .transactions
+                .iter()
+                .map(|tx| format!("\t{:#x}", tx.hash()))
+                .collect::<Vec<String>>()
+                .join("\n")
+        );
+        println!("}}");
 
         if force_commitment {
             self.committer

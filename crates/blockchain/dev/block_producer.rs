@@ -79,7 +79,7 @@ pub async fn start_block_producer(
         };
         let payload_status = match engine_client
             .engine_new_payload_v4(
-                execution_payload_response.execution_payload,
+                execution_payload_response.execution_payload.clone(),
                 execution_payload_response
                     .blobs_bundle
                     .unwrap_or_default()
@@ -121,6 +121,28 @@ pub async fn start_block_producer(
             continue;
         };
         tracing::info!("Produced block {produced_block_hash:#x}");
+
+        let block = execution_payload_response
+            .execution_payload
+            .into_block(Some(parent_beacon_block_root), None)
+            .expect("failed to build block from execution payload");
+
+        println!(
+            "[L1 Builder] Block {} ({:#x}) {{",
+            block.header.number,
+            block.hash(),
+        );
+        println!(
+            "{}",
+            block
+                .body
+                .transactions
+                .iter()
+                .map(|tx| format!("\t{:#x}", tx.hash()))
+                .collect::<Vec<String>>()
+                .join("\n")
+        );
+        println!("}}");
 
         head_block_hash = produced_block_hash;
     }

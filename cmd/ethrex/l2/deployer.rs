@@ -605,6 +605,12 @@ async fn deploy_contracts(
         on_chain_proposer_deployment.implementation_address,
         on_chain_proposer_deployment.implementation_tx_hash,
     );
+    println!(
+        "[Deployer] OnChainProposer deployed at: {:#x} (proxy: {:#x}, impl: {:#x})",
+        on_chain_proposer_deployment.proxy_address,
+        on_chain_proposer_deployment.proxy_tx_hash,
+        on_chain_proposer_deployment.implementation_tx_hash
+    );
 
     info!("Deploying CommonBridge");
 
@@ -618,6 +624,13 @@ async fn deploy_contracts(
         bridge_deployment.proxy_tx_hash,
         bridge_deployment.implementation_address,
         bridge_deployment.implementation_tx_hash,
+    );
+
+    println!(
+        "[Deployer] CommonBridge deployed at: {:#x} (proxy: {:#x}, impl: {:#x})",
+        bridge_deployment.proxy_address,
+        bridge_deployment.proxy_tx_hash,
+        bridge_deployment.implementation_tx_hash
     );
 
     let sequencer_registry_deployment = if opts.deploy_based_contracts {
@@ -934,6 +947,8 @@ async fn initialize_contracts(
         )
         .await?;
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+
+        println!("[Deployer] OnChainProposer initialized ({initialize_tx_hash:#x})",);
     }
 
     let initialize_bridge_address_tx_hash = {
@@ -953,6 +968,10 @@ async fn initialize_contracts(
     info!(
         tx_hash = %format!("{initialize_bridge_address_tx_hash:#x}"),
         "OnChainProposer bridge address initialized"
+    );
+
+    println!(
+        "[Deployer] OnChainProposer bridge address initialized ({initialize_bridge_address_tx_hash:#x})",
     );
 
     if opts.on_chain_proposer_owner != initializer.address() {
@@ -990,12 +1009,20 @@ async fn initialize_contracts(
             info!(
                 transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
                 accept_tx_hash = %format!("{accept_tx_hash:#x}"),
-                "OnChainProposer ownership transfered"
+                "OnChainProposer ownership transferred"
             );
+
+            println!(
+                "[Deployer] OnChainProposer ownership transferred ({transfer_ownership_tx_hash:#x})",
+            );
+            println!("[Deployer] OnChainProposer ownership accepted ({accept_tx_hash:#x})",);
         } else {
             info!(
                 transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
-                "OnChainProposer ownership transfered but not accepted yet"
+                "OnChainProposer ownership transferred but not accepted yet"
+            );
+            println!(
+                "[Deployer] OnChainProposer ownership transferred but not accepted yet ({transfer_ownership_tx_hash:#x})",
             );
         }
     }
@@ -1020,6 +1047,8 @@ async fn initialize_contracts(
         .await?
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+
+    println!("[Deployer] CommonBridge initialized ({initialize_tx_hash:#x})");
 
     trace!("Contracts initialized");
     Ok(())
@@ -1174,6 +1203,8 @@ async fn make_deposits(
                     ?hash,
                     "Deposit transaction sent to L1"
                 );
+
+                println!("[Deployer] Deposit ({hash:#x})");
             }
             Err(e) => {
                 error!(address =? signer.address(), ?value_to_deposit, "Failed to deposit");

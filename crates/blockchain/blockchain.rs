@@ -1186,6 +1186,13 @@ impl Blockchain {
         // Add transaction and blobs bundle to storage
         self.mempool
             .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+        println!(
+            "[{} Mempool] Added blob transaction: {hash:#x}",
+            match self.options.r#type {
+                BlockchainType::L1 => "L1",
+                BlockchainType::L2(_) => "L2",
+            }
+        );
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         Ok(hash)
     }
@@ -1212,6 +1219,14 @@ impl Blockchain {
         // Add transaction to storage
         self.mempool
             .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+
+        println!(
+            "[{} Mempool] Added transaction: {hash:#x}",
+            match self.options.r#type {
+                BlockchainType::L1 => "L1",
+                BlockchainType::L2(_) => "L2",
+            }
+        );
 
         Ok(hash)
     }

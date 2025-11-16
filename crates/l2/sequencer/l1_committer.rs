@@ -1178,6 +1178,11 @@ impl L1Committer {
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 
+        println!(
+            "[L2 Committer] Commitment {} sent: {commit_tx_hash:#x}",
+            batch.number
+        );
+
         Ok(commit_tx_hash)
     }
 

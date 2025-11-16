@@ -9,7 +9,7 @@ use crate::{
     },
     utils::RpcErr,
 };
-use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
+use ethrex_blockchain::{Blockchain, BlockchainType, vm::StoreVmDatabase};
 use ethrex_common::{
     H256, U256,
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
@@ -603,6 +603,14 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        println!(
+            "[{} RPC] Received transaction: {:#x}",
+            match context.super_blockchain.main_blockchain.options.r#type {
+                BlockchainType::L1 => "L1",
+                BlockchainType::L2(_) => "L2",
+            },
+            self.to_transaction().hash()
+        );
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             context
                 .super_blockchain
