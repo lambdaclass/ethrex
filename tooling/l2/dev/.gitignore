@@ -2,3 +2,4 @@ stats-db-data/
 logs/
 blockscout-db-data/
 dets/
+redis-data/
