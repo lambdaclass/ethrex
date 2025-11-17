@@ -85,7 +85,7 @@ pub fn prove(
         .arg("--output-dir")
         .arg(OUTPUT_PATH)
         .arg("--unlock-mapped-memory")
-        .arg("--aggregate")
+        .arg("--aggregation")
         .arg("--final-snark")
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit())
