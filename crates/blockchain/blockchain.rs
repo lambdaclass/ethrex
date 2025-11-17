@@ -388,7 +388,14 @@ impl Blockchain {
             }
         }
         drop(workers_tx);
-        let mut real_root = BranchNode::default();
+        let mut real_root = Node::decode(
+            &self
+                .storage
+                .open_state_trie(parent_header.state_root)?
+                .db()
+                .get(Nibbles::default())?
+                .unwrap_or_default(),
+        )?;
         for (choice, worker) in workers_handles.into_iter().enumerate() {
             let worker_result = worker
                 .join()
@@ -397,16 +404,12 @@ impl Blockchain {
                 continue;
             };
             let root_node = Node::decode(root_node)?;
-            match root_node {
-                Node::Branch(mut branch) => {
-                    real_root.choices[choice] = std::mem::take(&mut branch.choices[choice]);
+            match (&mut real_root, root_node) {
+                (Node::Branch(trie_branch), Node::Branch(mut subtrie_branch)) => {
+                    trie_branch.choices[choice] =
+                        std::mem::take(&mut subtrie_branch.choices[choice]);
                 }
-                Node::Extension(_extension) => {
-                    todo!()
-                }
-                Node::Leaf(_leaf) => {
-                    todo!()
-                }
+                _ => todo!(),
             }
             code_updates.extend(worker_result.code_updates);
             storage_updates_map.extend(worker_result.storage_updates);
