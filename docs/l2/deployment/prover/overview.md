@@ -1,12 +1,12 @@
 # Run an ethrex prover
 
-Deployar los contratos de ethrex L2 en la L1 y levantar el nodo no lo es todo a la hora de levantar tu ethrex L2 stack.
+Deploying the ethrex L2 contracts on L1 and starting the node isn't everything when it comes to setting up your full ethrex L2 stack.
 
-Si venis siguiendo la guia de deployment, ya tendrias que tener un nodo ethrex L2 corriendo y conectado a la L1. Si este no es el caso, te recomiendo volver a esa guia antes de continuar.
+If you've been following the deployment guide, you should already have an ethrex L2 node running and connected to L1. If that's not the case, I recommend reviewing that guide before proceeding.
 
-El siguiente paso es correr el prover, que es el componente encargado de generar las pruebas ZK para los bloques de la L2. Pruebas que luego seran enviadas a la L1 para su verificacion y asi dar por finalizado el estado de tu L2.
+The next step is to run the prover—the component responsible for generating ZK proofs for the L2 blocks. These proofs will then be sent to L1 for verification, finalizing the state of your L2.
 
-En esta seccion, vamos a cubrir como correr uno o varios provers de ethrex L2.
+In this section, we'll cover how to run one or more ethrex L2 provers.
 
 > [!NOTE]
 > This section focuses solely on the step-by-step process for running an ethrex L2 prover in any of its forms. For a deeper understanding of this works under the hood, refer to the Fundamentals section. To learn more about the architecture of each mode, see the Architecture section.
