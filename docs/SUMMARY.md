@@ -76,6 +76,7 @@
 - [L2](./developers/l2/introduction.md)
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
   - [Integration tests](./developers/l2/integration-tests.md)
+  - [Generate blobs for the state reconstruction test](./developers/l2/state-reconstruction-blobs.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
   - [FAQ](./ethrex_replay/faq.md)
