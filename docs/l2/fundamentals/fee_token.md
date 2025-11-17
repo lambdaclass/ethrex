@@ -51,6 +51,8 @@ rex deploy 0 <PRIVATE_KEY> \
     -- "constructor(address)" 0000000000000000000000000000000000000000
 ```
 
+Deployment mints tokens to the address derived from `<PRIVATE_KEY>`, and that same address can be use to cover the fees for fee-token transactions.
+
 ## Operator Workflow
 
 Operators decide which ERC-20s are valid fee tokens:
