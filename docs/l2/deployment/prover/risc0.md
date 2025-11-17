@@ -4,7 +4,7 @@ In this section, we'll guide you through the steps to run an ethrex L2 prover th
 
 ## Prerequisites
 
-- This guide assumes that you have ethrex installed and available in your PATH. If you haven't installed it yet, follow one of the methods in the Installation Guide. If you want to build the binary from source, refer to the [Building from source](./overview.md#building-from-source-skip-if-ethrex-is-already-installed) section and select the appropriate build option.
+- This guide assumes that you have ethrex installed with the RISC0 feature and available in your PATH. If you haven't installed it yet, follow one of the methods in the Installation Guide. If you want to build the binary from source, refer to the [Building from source](./overview.md#building-from-source-skip-if-ethrex-is-already-installed) section and select the appropriate build option.
 - This guide also assumes that you have already deployed an ethrex L2 with RISC0 enabled. If you haven't done so yet, please refer to one of the [Deploying an ethrex L2](../overview.md) guides.
 
 ## Start an ethrex L2 RISC0 prover
