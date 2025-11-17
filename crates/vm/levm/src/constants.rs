@@ -1,4 +1,6 @@
 use ethrex_common::{H256, U256};
+#[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
+use k256::elliptic_curve::bigint::Encoding;
 use p256::{
     FieldElement as P256FieldElement, NistP256,
     elliptic_curve::{Curve, bigint::U256 as P256Uint, ff::PrimeField},
@@ -70,10 +72,8 @@ pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
 
 // EIP7702 - EOA Load Code
-#[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
 pub static SECP256K1_ORDER: std::sync::LazyLock<U256> =
-    std::sync::LazyLock::new(|| U256::from_big_endian(&secp256k1::constants::CURVE_ORDER));
-#[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
+    std::sync::LazyLock::new(|| U256::from_big_endian(&k256::Secp256k1::ORDER.to_be_bytes()));
 pub static SECP256K1_ORDER_OVER2: std::sync::LazyLock<U256> =
     std::sync::LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
 pub const MAGIC: u8 = 0x05;
