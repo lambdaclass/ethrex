@@ -391,7 +391,7 @@ impl Blockchain {
         let mut real_root = Node::decode(
             &self
                 .storage
-                .open_state_trie(parent_header.state_root)?
+                .open_state_trie(parent_header.hash())?
                 .db()
                 .get(Nibbles::default())?
                 .unwrap_or_default(),
