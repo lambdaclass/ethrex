@@ -387,6 +387,7 @@ impl Blockchain {
                     .map_err(|e| StoreError::Custom(format!("send failed: {e}")))?;
             }
         }
+        drop(workers_tx);
         let mut real_root = BranchNode::default();
         for (choice, worker) in workers_handles.into_iter().enumerate() {
             let worker_result = worker
