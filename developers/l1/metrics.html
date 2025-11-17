@@ -238,32 +238,14 @@
 
 </style>
 <h1 id="metrics"><a class="header" href="#metrics">Metrics</a></h1>
+<h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
+<p>For a high level quickstart guide, please refer to <a href="../../l1/running/monitoring.html">Monitoring</a>.</p>
 <h2 id="ethereum-metrics-exporter"><a class="header" href="#ethereum-metrics-exporter">Ethereum Metrics Exporter</a></h2>
-<p>We use the <a href="https://github.com/ethpandaops/ethereum-metrics-exporter">Ethereum Metrics Exporter</a>, a Prometheus metrics exporter for Ethereum execution and consensus nodes, to gather metrics during syncing for L1. The exporter uses the prometheus data source to create a Grafana dashboard and display the metrics. For the syncing to work there must be a consensus node running along with the execution node.</p>
-<p>Currently we have two make targets to easily start an execution node and a consensus node on either hoodi or holesky, and display the syncing metrics. In both cases we use a lighthouse consensus node.</p>
-<h3 id="quickstart-guide"><a class="header" href="#quickstart-guide">Quickstart guide</a></h3>
-<p>Make sure you have your docker daemon running.</p>
-<ul>
-<li>
-<p><strong>Code Location</strong>: The targets are defined in <code>tooling/sync/Makefile</code>.</p>
-</li>
-<li>
-<p><strong>How to Run</strong>:</p>
-<pre><code class="language-bash"># Navigate to tooling/sync directory
-cd tooling/sync
-
-# Run target for hoodi
-make start-hoodi-metrics-docker
-
- # Run target for holesky
-make start-holesky-metrics-docker
-</code></pre>
-</li>
-</ul>
-<p>To see the dashboards go to <a href="http://localhost:3001">http://localhost:3001</a>. Use “admin” for user and password. Select the Dashboards menu and go to Ethereum Metrics Exporter (Single) to see the exported metrics.</p>
-<p>To see the prometheus exported metrics and its respective requests with more detail in case you need to debug go to <a href="http://localhost:9093/metrics">http://localhost:9093/metrics</a>.</p>
+<p>We use the <a href="https://github.com/ethpandaops/ethereum-metrics-exporter">Ethereum Metrics Exporter</a>, a Prometheus metrics exporter for Ethereum execution and consensus nodes, as an additional tool to gather metrics during L1 execution. The exporter uses the prometheus data source to create a Grafana dashboard and display the metrics.</p>
+<h2 id="l1-metrics-dashboard"><a class="header" href="#l1-metrics-dashboard">L1 Metrics Dashboard</a></h2>
+<p>We provide a pre-configured Grafana dashboard to monitor Ethrex L1 nodes. For detailed information on the provided dashboard, see our <a href="./dashboards.html">L1 Dashboard document</a>.</p>
 <h3 id="running-the-execution-node-on-other-networks-with-metrics-enabled"><a class="header" href="#running-the-execution-node-on-other-networks-with-metrics-enabled">Running the execution node on other networks with metrics enabled</a></h3>
-<p>A <code>docker-compose</code> is used to bundle prometheus and grafana services, the <code>*overrides</code> files define the ports and mounts the prometheus' configuration file.
+<p>As shown in <a href="../../l1/running/monitoring.html">Monitoring</a> <code>docker-compose</code> is used to bundle prometheus and grafana services, the <code>*overrides</code> files define the ports and mounts the prometheus' configuration file.
 If a new dashboard is designed, it can be mounted only in that <code>*overrides</code> file.
 A consensus node must be running for the syncing to work.</p>
 <p>To run the execution node on any network with metrics, the next steps should be followed:</p>
@@ -275,7 +257,7 @@ A consensus node must be running for the syncing to work.</p>
 <p>Enable metrics by using the <code>--metrics</code> flag when starting the node.</p>
 </li>
 <li>
-<p>Set the <code>--metrics.port</code> cli arg of the ethrex binary to match the port defined in <code>metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml</code></p>
+<p>Set the <code>--metrics.port</code> cli arg of the ethrex binary to match the port defined in <code>metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml</code>, which is <code>3701</code> right now.</p>
 </li>
 <li>
 <p>Run the docker containers:</p>
@@ -285,7 +267,6 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 </code></pre>
 </li>
 </ol>
-<p>For more details on running a sync go to <code>tooling/sync/readme.md</code>.</p>
 
                     </main>
 

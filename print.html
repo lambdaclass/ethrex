@@ -1374,7 +1374,7 @@ docker compose up
 
 </style>
 <h1 id="monitoring-and-metrics"><a class="header" href="#monitoring-and-metrics">Monitoring and Metrics</a></h1>
-<p>Ethrex exposes metrics in Prometheus format on port <code>9090</code> by default. The easiest way to monitor your node is to use the provided Docker Compose stack, which includes Prometheus and Grafana preconfigured.</p>
+<p>Ethrex exposes metrics in Prometheus format on port <code>9090</code> by default. But the easiest way to monitor your node is to use the provided Docker Compose stack, which includes Prometheus and Grafana preconfigured. For that we are currently using port <code>3701</code>, this will match the default in the future but for now if running the containers we expected to have the ethrex metrics exposed on port <code>3701</code>.</p>
 <h2 id="quickstart-monitoring-stack-with-docker-compose"><a class="header" href="#quickstart-monitoring-stack-with-docker-compose">Quickstart: Monitoring Stack with Docker Compose</a></h2>
 <ol>
 <li>
@@ -1385,7 +1385,18 @@ cd ethrex/metrics
 </li>
 <li>
 <p><strong>Start the monitoring stack:</strong></p>
-<pre><code class="language-sh">docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+<pre><code class="language-sh"># Optional: if you have updated from a previous version, stop first the docker compose.
+# docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml down
+docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+</code></pre>
+</li>
+</ol>
+<p><em><strong>Note:</strong> You might want to restart the docker containers in case of an update from a previous ethrex version to make sure the latest provisioned configurations are applied:</em></p>
+<ol start="3">
+<li>
+<p><strong>Run ethrex with metrics enabled:</strong></p>
+<p>Make sure to start ethrex with the <code>--metrics</code> flag and set the port to <code>3701</code>:</p>
+<pre><code class="language-sh">ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi --metrics --metrics.port 3701
 </code></pre>
 </li>
 </ol>
@@ -1401,9 +1412,13 @@ cd ethrex/metrics
 </ul>
 </li>
 </ul>
-<p>Metrics from ethrex will be available at <code>http://localhost:9090/metrics</code> in Prometheus format.</p>
+<p>Metrics from ethrex will be available at <code>http://localhost:3701/metrics</code> in Prometheus format if you followed <a href="l1/running/monitoring.html#run-ethrex-with-metrics-enabled">step 3</a>.</p>
+<p>For detailed information on the provided Grafana dashboards, see our <a href="l1/running/../../developers/l1/dashboards.html">L1 Dashboard document</a>.</p>
 <h2 id="custom-configuration"><a class="header" href="#custom-configuration">Custom Configuration</a></h2>
 <p>Your ethrex setup may differ from the default configuration. Check your endpoints at <code>provisioning/prometheus/prometheus_l1_sync_docker.yaml</code>.</p>
+<p>Also if you have a centralized Prometheus or Grafana setup, you can adapt the provided configuration files to fit your environment. or even stop the docker containers that run Prometheus and/or Grafana leaving only the additional <code>ethereum-metrics-exporter</code> running alongside ethrex to export the metrics to your existing monitoring stack.</p>
+<pre><code class="language-sh">docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d ethereum-metrics-exporter 
+</code></pre>
 <hr />
 <p>For manual setup or more details, see the <a href="https://prometheus.io/docs/introduction/overview/">Prometheus documentation</a> and <a href="https://grafana.com/docs/">Grafana documentation</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
@@ -7274,32 +7289,14 @@ fn get_account_code(&amp;self, code_hash: H256) -&gt; Result&lt;Bytes, EvmError&
 
 </style>
 <h1 id="metrics"><a class="header" href="#metrics">Metrics</a></h1>
+<h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
+<p>For a high level quickstart guide, please refer to <a href="developers/l1/../../l1/running/monitoring.html">Monitoring</a>.</p>
 <h2 id="ethereum-metrics-exporter"><a class="header" href="#ethereum-metrics-exporter">Ethereum Metrics Exporter</a></h2>
-<p>We use the <a href="https://github.com/ethpandaops/ethereum-metrics-exporter">Ethereum Metrics Exporter</a>, a Prometheus metrics exporter for Ethereum execution and consensus nodes, to gather metrics during syncing for L1. The exporter uses the prometheus data source to create a Grafana dashboard and display the metrics. For the syncing to work there must be a consensus node running along with the execution node.</p>
-<p>Currently we have two make targets to easily start an execution node and a consensus node on either hoodi or holesky, and display the syncing metrics. In both cases we use a lighthouse consensus node.</p>
-<h3 id="quickstart-guide"><a class="header" href="#quickstart-guide">Quickstart guide</a></h3>
-<p>Make sure you have your docker daemon running.</p>
-<ul>
-<li>
-<p><strong>Code Location</strong>: The targets are defined in <code>tooling/sync/Makefile</code>.</p>
-</li>
-<li>
-<p><strong>How to Run</strong>:</p>
-<pre><code class="language-bash"># Navigate to tooling/sync directory
-cd tooling/sync
-
-# Run target for hoodi
-make start-hoodi-metrics-docker
-
- # Run target for holesky
-make start-holesky-metrics-docker
-</code></pre>
-</li>
-</ul>
-<p>To see the dashboards go to <a href="http://localhost:3001">http://localhost:3001</a>. Use “admin” for user and password. Select the Dashboards menu and go to Ethereum Metrics Exporter (Single) to see the exported metrics.</p>
-<p>To see the prometheus exported metrics and its respective requests with more detail in case you need to debug go to <a href="http://localhost:9093/metrics">http://localhost:9093/metrics</a>.</p>
+<p>We use the <a href="https://github.com/ethpandaops/ethereum-metrics-exporter">Ethereum Metrics Exporter</a>, a Prometheus metrics exporter for Ethereum execution and consensus nodes, as an additional tool to gather metrics during L1 execution. The exporter uses the prometheus data source to create a Grafana dashboard and display the metrics.</p>
+<h2 id="l1-metrics-dashboard"><a class="header" href="#l1-metrics-dashboard">L1 Metrics Dashboard</a></h2>
+<p>We provide a pre-configured Grafana dashboard to monitor Ethrex L1 nodes. For detailed information on the provided dashboard, see our <a href="developers/l1/./dashboards.html">L1 Dashboard document</a>.</p>
 <h3 id="running-the-execution-node-on-other-networks-with-metrics-enabled"><a class="header" href="#running-the-execution-node-on-other-networks-with-metrics-enabled">Running the execution node on other networks with metrics enabled</a></h3>
-<p>A <code>docker-compose</code> is used to bundle prometheus and grafana services, the <code>*overrides</code> files define the ports and mounts the prometheus' configuration file.
+<p>As shown in <a href="developers/l1/../../l1/running/monitoring.html">Monitoring</a> <code>docker-compose</code> is used to bundle prometheus and grafana services, the <code>*overrides</code> files define the ports and mounts the prometheus' configuration file.
 If a new dashboard is designed, it can be mounted only in that <code>*overrides</code> file.
 A consensus node must be running for the syncing to work.</p>
 <p>To run the execution node on any network with metrics, the next steps should be followed:</p>
@@ -7311,7 +7308,7 @@ A consensus node must be running for the syncing to work.</p>
 <p>Enable metrics by using the <code>--metrics</code> flag when starting the node.</p>
 </li>
 <li>
-<p>Set the <code>--metrics.port</code> cli arg of the ethrex binary to match the port defined in <code>metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml</code></p>
+<p>Set the <code>--metrics.port</code> cli arg of the ethrex binary to match the port defined in <code>metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml</code>, which is <code>3701</code> right now.</p>
 </li>
 <li>
 <p>Run the docker containers:</p>
@@ -7321,7 +7318,6 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 </code></pre>
 </li>
 </ol>
-<p>For more details on running a sync go to <code>tooling/sync/readme.md</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -7390,7 +7386,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 }
 
 </style>
-<h1 id="ethrex-l1-performance-dashboard-oct-2025"><a class="header" href="#ethrex-l1-performance-dashboard-oct-2025">Ethrex L1 Performance Dashboard (Oct 2025)</a></h1>
+<h1 id="ethrex-l1-performance-dashboard-nov-2025"><a class="header" href="#ethrex-l1-performance-dashboard-nov-2025">Ethrex L1 Performance Dashboard (Nov 2025)</a></h1>
 <p>Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is <code>prometheus</code>, and the <code>job</code> variable defaults to <code>ethrex L1</code>, which is the job configured by default in our provisioning.</p>
 <p><img src="developers/l1/img/overview.png" alt="Overview" /></p>
 <h2 id="how-to-use-it"><a class="header" href="#how-to-use-it">How to use it</a></h2>
@@ -7432,8 +7428,47 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <p><img src="developers/l1/img/block_time.png" alt="Block Time" /></p>
 <p><em><strong>Limitations</strong>: This panel has the same limitations as the "Ggas/s by Block" panel above, as it relies on the same logic to align blocks across instances.</em></p>
 <h2 id="block-execution-breakdown"><a class="header" href="#block-execution-breakdown">Block execution breakdown</a></h2>
-<p>This row repeats a pie chart for each instance showing how execution time splits between storage reads, account reads, and non-database work so you can confirm performance tuning effects.</p>
+<p>Collapsed row that surfaces instrumentation from the <code>add_block_pipeline</code> and <code>execute_block_pipeline</code> timer series so you can understand how each instance spends time when processing blocks. Every panel repeats per instance vertically to facilitate comparisons.</p>
 <p><img src="developers/l1/img/block_execution_breakdown.png" alt="Block Execution Breakdown" /></p>
+<h3 id="block-execution-breakdown-pie"><a class="header" href="#block-execution-breakdown-pie">Block Execution Breakdown pie</a></h3>
+<p>Pie chart showing how execution time splits between storage reads, account reads, and non-database work so you can confirm what are the bottlenecks outside of execution itself.</p>
+<p><img src="developers/l1/img/block_execution_breakdown_pie.png" alt="Block Execution Breakdown pie" /></p>
+<h3 id="execution-vs-merkleization-diff-"><a class="header" href="#execution-vs-merkleization-diff-">Execution vs Merkleization Diff %</a></h3>
+<p>Tracks how much longer we spend merkleizing versus running the execution phase inside <code>execute_block_pipeline</code>. Values above zero mean merkleization dominates; negative readings flag when pure execution becomes the bottleneck (which should be extremely rare). Both run concurrently and merkleization depends on execution, 99% of the actual <code>execute_block_pipeline</code> time is just the max of both.</p>
+<p><img src="developers/l1/img/execution_vs_merkleization_diff.png" alt="Execution vs Merkleization Diff %" /></p>
+<h3 id="block-execution-deaggregated-by-block"><a class="header" href="#block-execution-deaggregated-by-block">Block Execution Deaggregated by Block</a></h3>
+<p>Plots execution-stage timers (storage/account reads, execution without reads, merkleization) against the block number once all selected instances report the same head.</p>
+<p><img src="developers/l1/img/block_execution_deaggregated_by_block.png" alt="Block Execution Deaggregated by Block" /></p>
+<p><em><strong>Limitations</strong>: This panel has the same limitations as the other <code>by block</code> panels, as it relies on the same logic to align blocks across instances. Can look odd during multi-slot reorgs</em></p>
+<h2 id="engine-api"><a class="header" href="#engine-api">Engine API</a></h2>
+<p>Collapsed row that surfaces the <code>namespace="engine"</code> Prometheus timers so you can keep an eye on EL &lt;&gt; CL Engine API health. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
+<p><img src="developers/l1/img/engine_api_row.png" alt="Engine API row" /></p>
+<h3 id="engine-request-rate-by-method"><a class="header" href="#engine-request-rate-by-method">Engine Request Rate by Method</a></h3>
+<p>Shows how many Engine API calls per second we process, split by JSON-RPC method and averaged across the currently selected dashboard range.</p>
+<p><img src="developers/l1/img/engine_request_rate_by_method.png" alt="Engine Request Rate by Method" /></p>
+<h3 id="engine-latency-by-methods-avg-duration"><a class="header" href="#engine-latency-by-methods-avg-duration">Engine Latency by Methods (Avg Duration)</a></h3>
+<p>Bar gauge of the historical average latency per Engine method over the selected time range.</p>
+<p><img src="developers/l1/img/engine_latency_by_methods.png" alt="Engine Latency by Methods" /></p>
+<h3 id="engine-latency-by-method"><a class="header" href="#engine-latency-by-method">Engine Latency by Method</a></h3>
+<p>Live timeseries that tries to correlate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.</p>
+<p><img src="developers/l1/img/engine_latency_by_method.png" alt="Engine Latency by Method" /></p>
+<p><em><strong>Limitations</strong>: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window for calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure.</em></p>
+<h2 id="rpc-api"><a class="header" href="#rpc-api">RPC API</a></h2>
+<p>Another collapsed row focused on the public JSON-RPC surface (<code>namespace="rpc"</code>). Expand it when you need to diagnose endpoint hotspots or validate rate limiting. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
+<p><img src="developers/l1/img/rpc_api_row.png" alt="RPC API row" /></p>
+<h3 id="rpc-time-per-method"><a class="header" href="#rpc-time-per-method">RPC Time per Method</a></h3>
+<p>Pie chart that shows where RPC time is spent across methods over the selected range. Quickly surfaces which endpoints dominate total processing time.</p>
+<p><img src="developers/l1/img/rpc_time_per_method.png" alt="RPC Time per Method" /></p>
+<h3 id="slowest-rpc-methods"><a class="header" href="#slowest-rpc-methods">Slowest RPC Methods</a></h3>
+<p>Table listing the highest average-latency methods over the active dashboard range. Used to prioritise optimisation or caching efforts.</p>
+<p><img src="developers/l1/img/slowest_rpc_methods.png" alt="Slowest RPC Methods" /></p>
+<h3 id="rpc-request-rate-by-method"><a class="header" href="#rpc-request-rate-by-method">RPC Request Rate by Method</a></h3>
+<p>Timeseries showing request throughput broken down by method, averaged across the selected range.</p>
+<p><img src="developers/l1/img/rpc_request_rate_by_method.png" alt="RPC Request Rate by Method" /></p>
+<h3 id="rpc-latency-by-methods"><a class="header" href="#rpc-latency-by-methods">RPC Latency by Methods</a></h3>
+<p>Live timeseries that tries to correlate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.</p>
+<p><img src="developers/l1/img/rpc_latency_by_methods.png" alt="RPC Latency by Methods" /></p>
+<p><em><strong>Limitations</strong>: The RPC latency views inherit the same windowing caveats as the Engine charts: averages use the dashboard time range while the live chart relies on an 18 s window.</em></p>
 <h2 id="process-and-server-info"><a class="header" href="#process-and-server-info">Process and server info</a></h2>
 <p>Row panels showing process-level and host-level metrics to help you monitor resource usage and spot potential issues.</p>
 <p><img src="developers/l1/img/process_and_server_info_row.png" alt="Process &amp; Server info row" /></p>

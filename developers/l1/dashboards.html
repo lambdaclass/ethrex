@@ -237,7 +237,7 @@
 }
 
 </style>
-<h1 id="ethrex-l1-performance-dashboard-oct-2025"><a class="header" href="#ethrex-l1-performance-dashboard-oct-2025">Ethrex L1 Performance Dashboard (Oct 2025)</a></h1>
+<h1 id="ethrex-l1-performance-dashboard-nov-2025"><a class="header" href="#ethrex-l1-performance-dashboard-nov-2025">Ethrex L1 Performance Dashboard (Nov 2025)</a></h1>
 <p>Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is <code>prometheus</code>, and the <code>job</code> variable defaults to <code>ethrex L1</code>, which is the job configured by default in our provisioning.</p>
 <p><img src="img/overview.png" alt="Overview" /></p>
 <h2 id="how-to-use-it"><a class="header" href="#how-to-use-it">How to use it</a></h2>
@@ -279,8 +279,47 @@
 <p><img src="img/block_time.png" alt="Block Time" /></p>
 <p><em><strong>Limitations</strong>: This panel has the same limitations as the "Ggas/s by Block" panel above, as it relies on the same logic to align blocks across instances.</em></p>
 <h2 id="block-execution-breakdown"><a class="header" href="#block-execution-breakdown">Block execution breakdown</a></h2>
-<p>This row repeats a pie chart for each instance showing how execution time splits between storage reads, account reads, and non-database work so you can confirm performance tuning effects.</p>
+<p>Collapsed row that surfaces instrumentation from the <code>add_block_pipeline</code> and <code>execute_block_pipeline</code> timer series so you can understand how each instance spends time when processing blocks. Every panel repeats per instance vertically to facilitate comparisons.</p>
 <p><img src="img/block_execution_breakdown.png" alt="Block Execution Breakdown" /></p>
+<h3 id="block-execution-breakdown-pie"><a class="header" href="#block-execution-breakdown-pie">Block Execution Breakdown pie</a></h3>
+<p>Pie chart showing how execution time splits between storage reads, account reads, and non-database work so you can confirm what are the bottlenecks outside of execution itself.</p>
+<p><img src="img/block_execution_breakdown_pie.png" alt="Block Execution Breakdown pie" /></p>
+<h3 id="execution-vs-merkleization-diff-"><a class="header" href="#execution-vs-merkleization-diff-">Execution vs Merkleization Diff %</a></h3>
+<p>Tracks how much longer we spend merkleizing versus running the execution phase inside <code>execute_block_pipeline</code>. Values above zero mean merkleization dominates; negative readings flag when pure execution becomes the bottleneck (which should be extremely rare). Both run concurrently and merkleization depends on execution, 99% of the actual <code>execute_block_pipeline</code> time is just the max of both.</p>
+<p><img src="img/execution_vs_merkleization_diff.png" alt="Execution vs Merkleization Diff %" /></p>
+<h3 id="block-execution-deaggregated-by-block"><a class="header" href="#block-execution-deaggregated-by-block">Block Execution Deaggregated by Block</a></h3>
+<p>Plots execution-stage timers (storage/account reads, execution without reads, merkleization) against the block number once all selected instances report the same head.</p>
+<p><img src="img/block_execution_deaggregated_by_block.png" alt="Block Execution Deaggregated by Block" /></p>
+<p><em><strong>Limitations</strong>: This panel has the same limitations as the other <code>by block</code> panels, as it relies on the same logic to align blocks across instances. Can look odd during multi-slot reorgs</em></p>
+<h2 id="engine-api"><a class="header" href="#engine-api">Engine API</a></h2>
+<p>Collapsed row that surfaces the <code>namespace="engine"</code> Prometheus timers so you can keep an eye on EL &lt;&gt; CL Engine API health. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
+<p><img src="img/engine_api_row.png" alt="Engine API row" /></p>
+<h3 id="engine-request-rate-by-method"><a class="header" href="#engine-request-rate-by-method">Engine Request Rate by Method</a></h3>
+<p>Shows how many Engine API calls per second we process, split by JSON-RPC method and averaged across the currently selected dashboard range.</p>
+<p><img src="img/engine_request_rate_by_method.png" alt="Engine Request Rate by Method" /></p>
+<h3 id="engine-latency-by-methods-avg-duration"><a class="header" href="#engine-latency-by-methods-avg-duration">Engine Latency by Methods (Avg Duration)</a></h3>
+<p>Bar gauge of the historical average latency per Engine method over the selected time range.</p>
+<p><img src="img/engine_latency_by_methods.png" alt="Engine Latency by Methods" /></p>
+<h3 id="engine-latency-by-method"><a class="header" href="#engine-latency-by-method">Engine Latency by Method</a></h3>
+<p>Live timeseries that tries to correlate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.</p>
+<p><img src="img/engine_latency_by_method.png" alt="Engine Latency by Method" /></p>
+<p><em><strong>Limitations</strong>: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window for calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure.</em></p>
+<h2 id="rpc-api"><a class="header" href="#rpc-api">RPC API</a></h2>
+<p>Another collapsed row focused on the public JSON-RPC surface (<code>namespace="rpc"</code>). Expand it when you need to diagnose endpoint hotspots or validate rate limiting. Each panel repeats per instance to be able to compare behaviour across nodes.</p>
+<p><img src="img/rpc_api_row.png" alt="RPC API row" /></p>
+<h3 id="rpc-time-per-method"><a class="header" href="#rpc-time-per-method">RPC Time per Method</a></h3>
+<p>Pie chart that shows where RPC time is spent across methods over the selected range. Quickly surfaces which endpoints dominate total processing time.</p>
+<p><img src="img/rpc_time_per_method.png" alt="RPC Time per Method" /></p>
+<h3 id="slowest-rpc-methods"><a class="header" href="#slowest-rpc-methods">Slowest RPC Methods</a></h3>
+<p>Table listing the highest average-latency methods over the active dashboard range. Used to prioritise optimisation or caching efforts.</p>
+<p><img src="img/slowest_rpc_methods.png" alt="Slowest RPC Methods" /></p>
+<h3 id="rpc-request-rate-by-method"><a class="header" href="#rpc-request-rate-by-method">RPC Request Rate by Method</a></h3>
+<p>Timeseries showing request throughput broken down by method, averaged across the selected range.</p>
+<p><img src="img/rpc_request_rate_by_method.png" alt="RPC Request Rate by Method" /></p>
+<h3 id="rpc-latency-by-methods"><a class="header" href="#rpc-latency-by-methods">RPC Latency by Methods</a></h3>
+<p>Live timeseries that tries to correlate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.</p>
+<p><img src="img/rpc_latency_by_methods.png" alt="RPC Latency by Methods" /></p>
+<p><em><strong>Limitations</strong>: The RPC latency views inherit the same windowing caveats as the Engine charts: averages use the dashboard time range while the live chart relies on an 18 s window.</em></p>
 <h2 id="process-and-server-info"><a class="header" href="#process-and-server-info">Process and server info</a></h2>
 <p>Row panels showing process-level and host-level metrics to help you monitor resource usage and spot potential issues.</p>
 <p><img src="img/process_and_server_info_row.png" alt="Process &amp; Server info row" /></p>
