@@ -18,7 +18,6 @@
 
 - A fresh-cloned ethrex repository.
 - `rex` installed and available in your PATH. If you haven't installed it yet, follow one of the methods in the [rex repository](https://github.com/lambdaclass/rex?tab=readme-ov-file#rex-cli).
-- `cast` installed and available in your PATH. If you haven't installed it yet, follow the instructions in the [Foundry Book](https://book.getfoundry.sh/getting-started/installation).
 
 ### Run a supernode
 
@@ -28,11 +27,11 @@ The following command will:
 2. Start an ethrex supernode, i.e. an L1 execution client embedded with an L2 sequencer node.
 
 ```shell
-rm -rf dev_ethrex_l*; RUSTFLAGS="-Awarnings" COMPILE_CONTRACTS=true RUST_LOG=off cargo run -r -F l2,l2-sql -- l2 --supernode --block-producer.coinbase-address $(cast az) --committer.l1-private-key 0x850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c --proof-coordinator.l1-private-key 0xf296c7802555da2a5a662be70e078cbd38b44f96f8615ae529da41122ce8db05 --eth.rpc-url http://localhost:8545 --validium --no-monitor --datadir dev_ethrex_l2 --network ./fixtures/genesis/l2.json --http.port 1729 --committer.commit-time 86400000
+rm -rf dev_ethrex_l*; RUSTFLAGS="-Awarnings" COMPILE_CONTRACTS=true RUST_LOG=off cargo run -r -F l2,l2-sql -- l2 --supernode --block-producer.coinbase-address $(rex a -z) --committer.l1-private-key 0x850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c --proof-coordinator.l1-private-key 0xf296c7802555da2a5a662be70e078cbd38b44f96f8615ae529da41122ce8db05 --eth.rpc-url http://localhost:8545 --validium --no-monitor --datadir dev_ethrex_l2 --network ./fixtures/genesis/l2.json --http.port 1729 --committer.commit-time 86400000
 
 # Same but enabling logs
 
-rm -rf dev_ethrex_l*; RUSTFLAGS="-Awarnings" COMPILE_CONTRACTS=true RUST_LOG=info,ethrex_p2p=error,ethrex_l2::sequencer::l1_committer=debug cargo run -r -F l2,l2-sql -- l2 --supernode --block-producer.coinbase-address $(cast az) --committer.l1-private-key 0x850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c --proof-coordinator.l1-private-key 0xf296c7802555da2a5a662be70e078cbd38b44f96f8615ae529da41122ce8db05 --eth.rpc-url http://localhost:8545 --validium --no-monitor --datadir dev_ethrex_l2 --network ./fixtures/genesis/l2.json --http.port 1729 --committer.commit-time 86400000
+rm -rf dev_ethrex_l*; RUSTFLAGS="-Awarnings" COMPILE_CONTRACTS=true RUST_LOG=info,ethrex_p2p=error,ethrex_l2::sequencer::l1_committer=debug cargo run -r -F l2,l2-sql -- l2 --supernode --block-producer.coinbase-address $(rex a -z) --committer.l1-private-key 0x850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c --proof-coordinator.l1-private-key 0xf296c7802555da2a5a662be70e078cbd38b44f96f8615ae529da41122ce8db05 --eth.rpc-url http://localhost:8545 --validium --no-monitor --datadir dev_ethrex_l2 --network ./fixtures/genesis/l2.json --http.port 1729 --committer.commit-time 86400000
 ```
 
 ### Testing L1 -> L2 synchronous composability
@@ -52,7 +51,7 @@ rex deploy --contract-path crates/l2/contracts/src/example/Counter.sol 0 0x41443
 
 # Update that contract state by statically calling a contract in the L2
 
-cast send --private-key 0x41443995d9eb6c6d6df51e55db2b188b12fe0f80d32817e57e11c64acff1feb8 --gas-limit 10000000 0x9638cc7b356b0e3ffe5aaf792ab468d36df6d88b 'update(address)' 0x67cad0d689b799f385d2ebcf3a626254a9074e12 --async
+rex send 0x3fe21258005ca065695d205aac21168259e58155 "update(address)" 0x67cad0d689b799f385d2ebcf3a626254a9074e12 --private-key 0x41443995d9eb6c6d6df51e55db2b188b12fe0f80d32817e57e11c64acff1feb8
 ```
 
 ### Testing L2 -> L1 synchronous composability
