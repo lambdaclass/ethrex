@@ -91,57 +91,39 @@ impl StoreEngine for Store {
         let mut store = self.inner()?;
 
         // Store trie updates
-        let mut trie = TrieLayerCache::clone(&store.trie_cache);
-        let parent = update_batch
-            .blocks
-            .first()
-            .ok_or(StoreError::UpdateBatchNoBlocks)?
-            .header
-            .parent_hash;
+        let nodes = {
+            let trie = Arc::make_mut(&mut store.trie_cache);
 
-        let pre_state_root = store
-            .headers
-            .get(&parent)
-            .map(|header| header.state_root)
-            .unwrap_or_default();
+            let nodes = trie.commit();
+            trie.put_iter(
+                update_batch
+                    .storage_updates
+                    .into_iter()
+                    .flat_map(|(account_hash, nodes)| {
+                        nodes
+                            .into_iter()
+                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                    })
+                    .chain(update_batch.account_updates)
+                    .map(|(key, value)| (key.into_vec(), value)),
+            );
 
-        let last_state_root = update_batch
-            .blocks
-            .last()
-            .ok_or(StoreError::UpdateBatchNoBlocks)?
-            .header
-            .state_root;
+            nodes
+        };
 
         {
             let mut state_trie = store
                 .state_trie_nodes
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
-
-            if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
-                let nodes = trie.commit(root).unwrap_or_default();
-                for (key, value) in nodes {
-                    if value.is_empty() {
-                        state_trie.remove(&key);
-                    } else {
-                        state_trie.insert(key, value);
-                    }
+            for (key, value) in nodes {
+                if value.is_empty() {
+                    state_trie.remove(&key);
+                } else {
+                    state_trie.insert(key, value);
                 }
             }
         }
-
-        let key_values = update_batch
-            .storage_updates
-            .into_iter()
-            .flat_map(|(account_hash, nodes)| {
-                nodes
-                    .into_iter()
-                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-            })
-            .chain(update_batch.account_updates)
-            .collect();
-        trie.put_batch(pre_state_root, last_state_root, key_values);
-        store.trie_cache = Arc::new(trie);
 
         for block in update_batch.blocks {
             // store block
