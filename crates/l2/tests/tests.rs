@@ -308,6 +308,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         contracts_path,
         Path::new("contracts/src/l2/CommonBridgeL2.sol"),
         false,
+        false,
         Some(&remappings),
         &[contracts_path],
     )?;
@@ -560,6 +561,7 @@ async fn test_erc20_roundtrip(
     compile_contract(
         contracts_path,
         &contracts_path.join("src/example/L2ERC20.sol"),
+        false,
         false,
         Some(&remappings),
         &[contracts_path],
@@ -2018,6 +2020,7 @@ async fn test_fee_token(
     compile_contract(
         fee_token_path,
         &fee_token_path.join("FeeToken.sol"),
+        false,
         false,
         Some(&remappings),
         &allow_paths,

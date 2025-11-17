@@ -41,6 +41,7 @@ fn main() {
         &contracts_path,
         &proxy_contract_path,
         false,
+        false,
         None,
         &[&contracts_path],
     )
