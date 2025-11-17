@@ -221,7 +221,7 @@ impl RLPEncode for BlobsBundle {
             + if self.version != 0 {
                 self.version.length()
             } else {
-                1
+                0
             };
 
         list_length(payload_len)

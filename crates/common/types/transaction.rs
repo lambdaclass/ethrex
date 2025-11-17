@@ -202,7 +202,7 @@ impl RLPEncode for WrappedEIP4844Transaction {
             .wrapper_version
             .as_ref()
             .map(|v| v.length())
-            .unwrap_or(1);
+            .unwrap_or(0);
 
         payload_len += self.blobs_bundle.blobs.length();
         payload_len += self.blobs_bundle.commitments.length();

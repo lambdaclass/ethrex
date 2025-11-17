@@ -212,32 +212,32 @@ impl RLPEncode for BlockHeader {
 
         payload_len += match &self.base_fee_per_gas {
             Some(v) => v.length(),
-            None => 1,
+            None => 0,
         };
 
         payload_len += match &self.withdrawals_root {
             Some(v) => v.length(),
-            None => 1,
+            None => 0,
         };
 
         payload_len += match &self.blob_gas_used {
             Some(v) => v.length(),
-            None => 1,
+            None => 0,
         };
 
         payload_len += match &self.excess_blob_gas {
             Some(v) => v.length(),
-            None => 1,
+            None => 0,
         };
 
         payload_len += match &self.parent_beacon_block_root {
             Some(v) => v.length(),
-            None => 1,
+            None => 0,
         };
 
         payload_len += match &self.requests_hash {
             Some(v) => v.length(),
-            None => 1,
+            None => 0,
         };
 
         list_length(payload_len)
@@ -376,7 +376,7 @@ impl RLPEncode for BlockBody {
         payload_len += self.transactions.length();
         payload_len += self.ommers.length();
 
-        payload_len += self.withdrawals.as_ref().map(|w| w.length()).unwrap_or(1);
+        payload_len += self.withdrawals.as_ref().map(|w| w.length()).unwrap_or(0);
 
         list_length(payload_len)
     }
