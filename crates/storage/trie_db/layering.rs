@@ -135,7 +135,11 @@ impl TrieLayerCache {
         tracing::info!("Layers to remove:  {:?}", state_roots);
         tracing::info!("Layers to remove: Layers amount {}", self.layers.len());
         self.layers.iter().for_each(|(_k, trie_layer)| {
-            trie_layer.write().unwrap().layers_map.retain(|_, b| !state_roots.contains(b))});
+            let mut t = trie_layer.write().unwrap();
+            tracing::info!("Layers to remove: Layer {}, size before: {}", t.id, t.layers_map.len());
+            t.layers_map.retain(|_, b| !state_roots.contains(b));
+            tracing::info!("Layers to remove: Layer {}, size after: {}", t.id, t.layers_map.len());
+        })
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
