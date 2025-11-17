@@ -41,11 +41,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         .stderr(Stdio::inherit());
 
     let duration = start.elapsed();
-    let output = command.output();
-
-    // Remove input file before any early return
-    std::fs::remove_file(INPUT_PATH)?;
-    let output = output?;
+    let output = command.output()?;
 
     if !output.status.success() {
         return Err(format!(
@@ -97,11 +93,7 @@ pub fn prove(
         .stderr(Stdio::inherit());
 
     let duration = start.elapsed();
-    let output = command.output();
-
-    // Remove input file before any early return
-    std::fs::remove_file(INPUT_PATH)?;
-    let output = output?;
+    let output = command.output()?;
 
     if !output.status.success() {
         return Err(format!(
