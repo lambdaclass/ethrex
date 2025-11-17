@@ -1,13 +1,240 @@
 services:
+  # L1 Blockscout Services
+  redis-db-l1:
+    image: 'redis:alpine'
+    container_name: redis-db-l1
+    command: redis-server
+    volumes:
+      - ./l1-redis-data:/data
+
+  db-init-l1:
+    image: postgres:17
+    container_name: db-init-l1
+    volumes:
+      - ./l1-blockscout-db-data:/var/lib/postgresql/data
+    entrypoint:
+      - sh
+      - -c
+      - |
+        chown -R 2000:2000 /var/lib/postgresql/data
+
+  db-l1:
+    image: postgres:17
+    user: 2000:2000
+    shm_size: 256m
+    restart: always
+    container_name: 'db-l1'
+    command: postgres -c 'max_connections=200' -c 'client_connection_check_interval=60000'
+    environment:
+        POSTGRES_DB: 'blockscout'
+        POSTGRES_USER: 'blockscout'
+        POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
+    ports:
+      - target: 5432
+        published: 7434
+    volumes:
+      - ./l1-blockscout-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      db-init-l1:
+        condition: service_completed_successfully
+
+  backend-l1:
+    image: ghcr.io/lambdaclass/blockscout-private:9.2.2.commit.763c41da
+    platform: linux/arm64
+    pull_policy: always
+    depends_on:
+      db-l1:
+        condition: service_healthy
+      redis-db-l1:
+        condition: service_started
+    links:
+      - db-l1:database
+    stop_grace_period: 5m
+    container_name: 'backend-l1'
+    command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - ./l1-logs/:/app/logs/
+      - ./l1-dets/:/app/dets/
+    environment:
+        ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8545/
+        ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:8545/
+        CHAIN_ID: '9'
+        ETHEREUM_JSONRPC_VARIANT: geth
+        DISABLE_FILE_LOGGING: false
+        DATABASE_URL: postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db-l1:5432/blockscout
+        ETHEREUM_JSONRPC_TRANSPORT: http
+        ETHEREUM_JSONRPC_DISABLE_ARCHIVE_BALANCES: false
+        SECRET_KEY_BASE: 56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN
+        PORT: 4000
+        COIN_NAME: Ether
+        COIN: ETH
+        DISABLE_MARKET: true
+        POOL_SIZE: 80
+        POOL_SIZE_API: 10
+        ECTO_USE_SSL: false
+        HEART_BEAT_TIMEOUT: 30
+        RELEASE_LINK: "prague,default"
+        ADMIN_PANEL_ENABLED: false
+        API_V1_READ_METHODS_DISABLED: false
+        API_V1_WRITE_METHODS_DISABLED: false
+        TXS_STATS_DAYS_TO_COMPILE_AT_INIT: 10
+        COIN_BALANCE_HISTORY_DAYS: 90
+        RE_CAPTCHA_DISABLED: false
+        MICROSERVICE_SC_VERIFIER_TYPE: eth_bytecode_db
+        MICROSERVICE_VISUALIZE_SOL2UML_ENABLED: true
+        MICROSERVICE_VISUALIZE_SOL2UML_URL: http://visualizer-l1:8050/
+        MICROSERVICE_SIG_PROVIDER_ENABLED: true
+        MICROSERVICE_SIG_PROVIDER_URL: http://sig-provider-l1:8050/
+        MICROSERVICE_ACCOUNT_ABSTRACTION_URL: http://user-ops-indexer:8050/
+        DECODE_NOT_A_CONTRACT_CALLS: true
+        ACCOUNT_ENABLED: false
+        ACCOUNT_REDIS_URL: redis://redis-db-l1:6379
+        NFT_MEDIA_HANDLER_ENABLED: false
+        NFT_MEDIA_HANDLER_REMOTE_DISPATCHER_NODE_MODE_ENABLED: false
+        NFT_MEDIA_HANDLER_BUCKET_FOLDER: /folder_1
+        RELEASE_NODE: producer@172.18.0.4
+        RELEASE_DISTRIBUTION: name
+        RELEASE_COOKIE: secret_cookie
+
+  visualizer-l1:
+    image: ghcr.io/blockscout/visualizer:${VISUALIZER_DOCKER_TAG:-latest}
+    pull_policy: always
+    platform: linux/amd64
+    restart: always
+    container_name: 'visualizer-l1'
+    environment:
+        VISUALIZER__SERVER__GRPC__ENABLED: false
+
+  sig-provider-l1:
+    image: ghcr.io/blockscout/sig-provider:${SIG_PROVIDER_DOCKER_TAG:-latest}
+    pull_policy: always
+    platform: linux/amd64
+    restart: always
+    container_name: 'sig-provider-l1'
+
+  frontend-l1:
+    image: ghcr.io/lambdaclass/frontend-private:test
+    platform: linux/amd64
+    pull_policy: always
+    container_name: 'frontend-l1'
+    depends_on:
+      - backend-l1
+    environment:
+        NEXT_PUBLIC_API_HOST: localhost:8083
+        NEXT_PUBLIC_API_PROTOCOL: http
+        NEXT_PUBLIC_STATS_API_HOST: http://localhost:8084
+        NEXT_PUBLIC_NETWORK_NAME: Ethrex L1
+        NEXT_PUBLIC_NETWORK_SHORT_NAME: Ethrex L1
+        NEXT_PUBLIC_NETWORK_ID: 9
+        NEXT_PUBLIC_NETWORK_CURRENCY_NAME: Ether
+        NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
+        NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: 18
+        NEXT_PUBLIC_API_BASE_PATH: /
+        NEXT_PUBLIC_APP_HOST: localhost:8083
+        NEXT_PUBLIC_APP_PROTOCOL: http
+        NEXT_PUBLIC_HOMEPAGE_CHARTS: "['daily_txs']"
+        NEXT_PUBLIC_VISUALIZE_API_HOST: http://localhost:8085
+        NEXT_PUBLIC_IS_TESTNET: true
+        NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
+        NEXT_PUBLIC_API_SPEC_URL: https://raw.githubusercontent.com/blockscout/blockscout-api-v2-swagger/main/swagger.yaml
+        NEXT_PUBLIC_AD_BANNER_PROVIDER: none
+        NEXT_PUBLIC_AD_TEXT_PROVIDER: none
+        NEXT_PUBLIC_MARKETPLACE_ENABLED: false
+        NEXT_PUBLIC_PROMOTE_BLOCKSCOUT_IN_TITLE: false
+
+  stats-db-init-l1:
+    image: postgres:17
+    container_name: stats-db-init-l1
+    volumes:
+      - ./l1-stats-db-data:/var/lib/postgresql/data
+    entrypoint:
+      - sh
+      - -c
+      - |
+        chown -R 2000:2000 /var/lib/postgresql/data
+
+  stats-db-l1:
+    image: postgres:17
+    user: 2000:2000
+    shm_size: 256m
+    restart: always
+    container_name: 'stats-db-l1'
+    command: postgres -c 'max_connections=200'
+    environment:
+        POSTGRES_DB: 'stats'
+        POSTGRES_USER: 'stats'
+        POSTGRES_PASSWORD: 'n0uejXPl61ci6ldCuE2gQU5Y'
+    ports:
+      - target: 5432
+        published: 7435
+    volumes:
+      - ./l1-stats-db-data:/var/lib/postgresql/data
+    depends_on:
+      stats-db-init-l1:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  stats-l1:
+    image: ghcr.io/blockscout/stats:${STATS_DOCKER_TAG:-latest}
+    pull_policy: always
+    platform: linux/amd64
+    restart: always
+    container_name: 'stats-l1'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    depends_on:
+      - stats-db-l1
+      - backend-l1
+    environment:
+      - STATS__DB_URL=${STATS__DB_URL:-postgres://stats:n0uejXPl61ci6ldCuE2gQU5Y@stats-db-l1:5432/stats}
+      - STATS__BLOCKSCOUT_DB_URL=${STATS__BLOCKSCOUT_DB_URL:-postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db-l1:5432/blockscout}
+      - STATS__CREATE_DATABASE=${STATS__CREATE_DATABASE:-true}
+      - STATS__RUN_MIGRATIONS=${STATS__RUN_MIGRATIONS:-true}
+      - STATS__BLOCKSCOUT_API_URL=${STATS__BLOCKSCOUT_API_URL:-http://host.docker.internal:8083}
+      - STATS__SERVER__HTTP__CORS__ENABLED=${STATS__SERVER__HTTP__CORS__ENABLED:-false}
+      - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=${STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN}
+      - STATS__CONDITIONAL_START__USER_OPS_PAST_INDEXING_FINISHED__ENABLED=${STATS__CONDITIONAL_START__USER_OPS_PAST_INDEXING_FINISHED__ENABLED:-false}
+      - STATS__SERVER__HTTP__ENABLED=true
+      - STATS__SERVER__HTTP__ADDR=0.0.0.0:8050
+      - STATS__SERVER__HTTP__MAX_BODY_SIZE=2097152
+      - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=http://localhost:8084
+      - STATS__SERVER__GRPC__ENABLED=false
+      - STATS__SERVER__GRPC__ADDR=0.0.0.0:8051
+      - STATS__DEFAULT_SCHEDULE=0 0 1 * * * *
+      - STATS__FORCE_UPDATE_ON_START=false
+      - STATS__METRICS__ENABLED=false
+      - STATS__METRICS__ADDR=0.0.0.0:6060
+      - STATS__METRICS__ROUTE=/metrics
+      - STATS__JAEGER__ENABLED=false
+      - STATS__JAEGER__AGENT_ENDPOINT=localhost:6831
+      - STATS__TRACING__ENABLED=true
+      - STATS__TRACING__FORMAT=default
+
+  # L2 Blockscout Services
   redis-db:
     image: 'redis:alpine'
     container_name: redis-db
     command: redis-server
+    volumes:
+      - ./redis-data:/data
 
   db-init:
     image: postgres:17
     volumes:
-      - blockscout-db-data:/var/lib/postgresql/data
+      - ./blockscout-db-data:/var/lib/postgresql/data
     entrypoint:
       - sh
       - -c
@@ -29,7 +256,7 @@ services:
       - target: 5432
         published: 7432
     volumes:
-      - blockscout-db-data:/var/lib/postgresql/data
+      - ./blockscout-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
       interval: 10s
@@ -39,14 +266,16 @@ services:
     depends_on:
       db-init:
         condition: service_completed_successfully
-    
+
   backend:
     image: ghcr.io/lambdaclass/blockscout-private:9.2.2.commit.763c41da
     platform: linux/arm64
     pull_policy: always
     depends_on:
-      - db
-      - redis-db
+      db:
+        condition: service_healthy
+      redis-db:
+        condition: service_started
     links:
       - db:database
     stop_grace_period: 5m
@@ -54,6 +283,9 @@ services:
     command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
     extra_hosts:
       - 'host.docker.internal:host-gateway'
+    volumes:
+      - ./logs/:/app/logs/
+      - ./dets/:/app/dets/
     environment:
         ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:1729/
         ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:1729/
@@ -94,7 +326,7 @@ services:
         RELEASE_NODE: producer@172.18.0.4
         RELEASE_DISTRIBUTION: name
         RELEASE_COOKIE: secret_cookie
-  
+
   visualizer:
     image: ghcr.io/blockscout/visualizer:${VISUALIZER_DOCKER_TAG:-latest}
     pull_policy: always
@@ -141,10 +373,11 @@ services:
         NEXT_PUBLIC_MARKETPLACE_ENABLED: false
         NEXT_PUBLIC_PROMOTE_BLOCKSCOUT_IN_TITLE: false
 
+
   stats-db-init:
     image: postgres:17
     volumes:
-      - stats-db-data:/var/lib/postgresql/data
+      - ./stats-db-data:/var/lib/postgresql/data
     entrypoint:
       - sh
       - -c
@@ -166,7 +399,7 @@ services:
       - target: 5432
         published: 7433
     volumes:
-      - stats-db-data:/var/lib/postgresql/data
+      - ./stats-db-data:/var/lib/postgresql/data
     depends_on:
       stats-db-init:
         condition: service_completed_successfully
@@ -195,11 +428,12 @@ services:
       - STATS__RUN_MIGRATIONS=${STATS__RUN_MIGRATIONS:-true}
       - STATS__BLOCKSCOUT_API_URL=${STATS__BLOCKSCOUT_API_URL:-http://host.docker.internal:8082}
       - STATS__SERVER__HTTP__CORS__ENABLED=${STATS__SERVER__HTTP__CORS__ENABLED:-false}
-      - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=${STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN:-}
-      - STATS__CONDITIONAL_START__USER_OPS_PAST_INDEXING_FINISHED__ENABLED=${STATS__CONDITIONAL_START__USER_OPS_PAST_INDEXING_FINISHED__ENABLED:-false}      
+      - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=${STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN}
+      - STATS__CONDITIONAL_START__USER_OPS_PAST_INDEXING_FINISHED__ENABLED=${STATS__CONDITIONAL_START__USER_OPS_PAST_INDEXING_FINISHED__ENABLED:-false}
       - STATS__SERVER__HTTP__ENABLED=true
       - STATS__SERVER__HTTP__ADDR=0.0.0.0:8050
       - STATS__SERVER__HTTP__MAX_BODY_SIZE=2097152
+      # - STATS__SERVER__HTTP__CORS__ENABLED=true
       - STATS__SERVER__HTTP__CORS__ALLOWED_ORIGIN=http://localhost:8080
       - STATS__SERVER__GRPC__ENABLED=false
       - STATS__SERVER__GRPC__ADDR=0.0.0.0:8051
@@ -220,24 +454,31 @@ services:
       - backend
       - frontend
       - stats
+      - backend-l1
+      - frontend-l1
+      - stats-l1
     image: nginx
     container_name: proxy
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     configs:
       - source: nginx_conf
-        target: /etc/nginx/templates/default.conf.template
-    environment:
-      BACK_PROXY_PASS: ${BACK_PROXY_PASS:-http://backend:4000}
-      FRONT_PROXY_PASS: ${FRONT_PROXY_PASS:-http://frontend:3000}
+        target: /etc/nginx/conf.d/default.conf
     ports:
-      - target: 80
+      - target: 8082
         published: 8082
       - target: 8080
         published: 8080
       - target: 8081
         published: 8081
+      - target: 8083
+        published: 8083
+      - target: 8084
+        published: 8084
+      - target: 8085
+        published: 8085
 
+  # Ethrex Services
   ethrex-dev:
     container_name: ethrex-dev
     image: "ghcr.io/lambdaclass/ethrex:latest-l2"
@@ -260,34 +501,6 @@ services:
     command: >
       l2 prover --proof-coordinators tcp://ethrex-dev:3900
 
-  ethrex-delegation-contracts:
-    image: ghcr.io/lambdaclass/rex:7.0.0-rc.0
-    platform: linux/amd64
-    depends_on:
-      - ethrex-dev
-    entrypoint: >
-      sh -c "
-        set -e
-        echo 'Waiting for L2...'
-        until rex block-number http://ethrex-dev:1729 >/dev/null 2>&1; do
-          echo 'Not ready, retrying...'
-          sleep 2
-        done
-        echo 'L2 is ready!'
-        while true; do
-          BAL=\$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e http://ethrex-dev:1729)
-          if [ \"$$BAL\" != \"0\" ]; then
-            echo 'Account has funds'
-            break
-          fi
-          echo 'Balance still zero, retrying...'
-          sleep 2
-        done
-
-        rex deploy --bytecode 0x60a0604052738bfcc50961f2f9c4f2f247eea04293f72088435f6080523480156026575f5ffd5b5060805161068061005a5f395f818160f20152818161016a015281816101f9015281816102b8015261034701526106805ff3fe608060405234801561000f575f5ffd5b5060043610610060575f3560e01c8063089fe6aa1461006457806324153422146100865780632da3276a146100a7578063ad5c4648146100ba578063c31c9c07146100ed578063f8989c3614610114575b5f5ffd5b61006d610bb881565b60405162ffffff90911681526020015b60405180910390f35b610099610094366004610589565b61012f565b60405190815260200161007d565b6100996100b5366004610589565b61027d565b6100d57336ccfc7163a2c2cdf7a6d6da202eb9c7aa18e4ea81565b6040516001600160a01b03909116815260200161007d565b6100d57f000000000000000000000000000000000000000000000000000000000000000081565b6100d573b66dd10f098f62141a536e92f6e8f7f9633893e281565b5f61015073b66dd10f098f62141a536e92f6e8f7f9633893e2333085610384565b61018f73b66dd10f098f62141a536e92f6e8f7f9633893e27f00000000000000000000000000000000000000000000000000000000000000008461048e565b6040805160e08101825273b66dd10f098f62141a536e92f6e8f7f9633893e281527336ccfc7163a2c2cdf7a6d6da202eb9c7aa18e4ea6020820152610bb881830152336060820152608081018490525f60a0820181905260c082015290516304e45aaf60e01b81527f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316906304e45aaf906102369084906004016105a0565b6020604051808303815f875af1158015610252573d5f5f3e3d5ffd5b505050506040513d601f19601f8201168201806040525081019061027691906105fe565b9392505050565b5f61029e7336ccfc7163a2c2cdf7a6d6da202eb9c7aa18e4ea333085610384565b6102dd7336ccfc7163a2c2cdf7a6d6da202eb9c7aa18e4ea7f00000000000000000000000000000000000000000000000000000000000000008461048e565b6040805160e0810182527336ccfc7163a2c2cdf7a6d6da202eb9c7aa18e4ea815273b66dd10f098f62141a536e92f6e8f7f9633893e26020820152610bb881830152336060820152608081018490525f60a0820181905260c082015290516304e45aaf60e01b81527f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316906304e45aaf906102369084906004016105a0565b604080516001600160a01b0385811660248301528481166044830152606480830185905283518084039091018152608490920183526020820180516001600160e01b03166323b872dd60e01b17905291515f928392908816916103e79190610615565b5f604051808303815f865af19150503d805f8114610420576040519150601f19603f3d011682016040523d82523d5f602084013e610425565b606091505b509150915081801561044f57508051158061044f57508080602001905181019061044f919061062b565b6104865760405162461bcd60e51b815260206004820152600360248201526229aa2360e91b60448201526064015b60405180910390fd5b505050505050565b604080516001600160a01b038481166024830152604480830185905283518084039091018152606490920183526020820180516001600160e01b031663095ea7b360e01b17905291515f928392908716916104e99190610615565b5f604051808303815f865af19150503d805f8114610522576040519150601f19603f3d011682016040523d82523d5f602084013e610527565b606091505b5091509150818015610551575080511580610551575080806020019051810190610551919061062b565b6105825760405162461bcd60e51b8152602060048201526002602482015261534160f01b604482015260640161047d565b5050505050565b5f60208284031215610599575f5ffd5b5035919050565b81516001600160a01b03908116825260208084015182169083015260408084015162ffffff16908301526060808401518216908301526080808401519083015260a0838101519083015260c092830151169181019190915260e00190565b5f6020828403121561060e575f5ffd5b5051919050565b5f82518060208501845e5f920191825250919050565b5f6020828403121561063b575f5ffd5b81518015158114610276575f5ffdfea2646970667358221220afe9b86bf500762c58f6f4b5fcd680670bafd1bd1c86ed371bd325ebba5aa5ad64736f6c634300081d0033 0 0xe4f7dc8b199fdaac6693c9c412ea68aed9e1584d193e1c3478d30a6f01f26057 --rpc-url http://ethrex-dev:1729
-        rex deploy --bytecode 0x6080604052346100275761001161015e565b61001961002c565b610d6c6103e98239610d6c90f35b610032565b60405190565b5f80fd5b601f801991011690565b634e487b7160e01b5f52604160045260245ffd5b9061005e90610036565b810190811060018060401b0382111761007657604052565b610040565b9061008e61008761002c565b9283610054565b565b60018060401b0381116100ac576100a8602091610036565b0190565b610040565b906100c36100be83610090565b61007b565b918252565b5f7f54657374546f6b656e0000000000000000000000000000000000000000000000910152565b6100f960096100b1565b90610106602083016100c8565b565b6101106100ef565b90565b5f7f54544f4b00000000000000000000000000000000000000000000000000000000910152565b61014460046100b1565b9061015160208301610113565b565b61015b61013a565b90565b610177610169610108565b610171610153565b906103d0565b565b5190565b634e487b7160e01b5f52602260045260245ffd5b90600160028304921680156101b1575b60208310146101ac57565b61017d565b91607f16916101a1565b5f5260205f2090565b601f602091010490565b1b90565b919060086101ed9102916101e75f19846101ce565b926101ce565b9181191691161790565b90565b90565b61021161020c610216926101f7565b6101fa565b6101f7565b90565b90565b919061023261022d61023a936101fd565b610219565b9083546101d2565b9055565b5f90565b6102549161024e61023e565b9161021c565b565b5b818110610262575050565b8061026f5f600193610242565b01610257565b9190601f8111610285575b505050565b6102916102b6936101bb565b90602061029d846101c4565b830193106102be575b6102af906101c4565b0190610256565b5f8080610280565b91506102af819290506102a6565b1c90565b906102e0905f19906008026102cc565b191690565b816102ef916102d0565b906002021790565b9061030181610179565b9060018060401b0382116103bf576103238261031d8554610191565b85610275565b602090601f831160011461035757918091610346935f9261034b575b50506102e5565b90555b565b90915001515f8061033f565b601f19831691610366856101bb565b925f5b8181106103a75750916002939185600196941061038d575b50505002019055610349565b61039d910151601f8416906102d0565b90555f8080610381565b91936020600181928787015181550195019201610369565b610040565b906103ce916102f7565b565b906103df6103e69260036103c4565b60046103c4565b56fe60806040526004361015610013575b6104e7565b61001d5f356100bc565b806306fdde03146100b7578063095ea7b3146100b257806318160ddd146100ad57806323b872dd146100a8578063313ce567146100a357806340c10f191461009e57806370a082311461009957806395d89b4114610094578063a9059cbb1461008f5763dd62ed3e0361000e576104b1565b61044e565b610419565b6103e4565b610392565b610358565b6102fa565b61028b565b610233565b61014a565b60e01c90565b60405190565b5f80fd5b5f80fd5b5f9103126100da57565b6100cc565b5190565b60209181520190565b90825f9392825e0152565b601f801991011690565b61012061012960209361012e93610117816100df565b938480936100e3565b958691016100ec565b6100f7565b0190565b6101479160208201915f818403910152610101565b90565b3461017a5761015a3660046100d0565b610176610165610644565b61016d6100c2565b91829182610132565b0390f35b6100c8565b60018060a01b031690565b6101939061017f565b90565b61019f8161018a565b036101a657565b5f80fd5b905035906101b782610196565b565b90565b6101c5816101b9565b036101cc57565b5f80fd5b905035906101dd826101bc565b565b919060408382031261020757806101fb610204925f86016101aa565b936020016101d0565b90565b6100cc565b151590565b61021a9061020c565b9052565b9190610231905f60208501940190610211565b565b346102645761026061024f6102493660046101df565b9061065e565b6102576100c2565b9182918261021e565b0390f35b6100c8565b610272906101b9565b9052565b9190610289905f60208501940190610269565b565b346102bb5761029b3660046100d0565b6102b76102a66106ad565b6102ae6100c2565b91829182610276565b0390f35b6100c8565b90916060828403126102f5576102f26102db845f85016101aa565b936102e981602086016101aa565b936040016101d0565b90565b6100cc565b3461032b576103276103166103103660046102c0565b916106c3565b61031e6100c2565b9182918261021e565b0390f35b6100c8565b60ff1690565b61033f90610330565b9052565b9190610356905f60208501940190610336565b565b34610388576103683660046100d0565b610384610373610718565b61037b6100c2565b91829182610343565b0390f35b6100c8565b5f0190565b346103c1576103ab6103a53660046101df565b9061072e565b6103b36100c2565b806103bd8161038d565b0390f35b6100c8565b906020828203126103df576103dc915f016101aa565b90565b6100cc565b34610414576104106103ff6103fa3660046103c6565b610784565b6104076100c2565b91829182610276565b0390f35b6100c8565b34610449576104293660046100d0565b6104456104346107a2565b61043c6100c2565b91829182610132565b0390f35b6100c8565b3461047f5761047b61046a6104643660046101df565b906107b8565b6104726100c2565b9182918261021e565b0390f35b6100c8565b91906040838203126104ac57806104a06104a9925f86016101aa565b936020016101aa565b90565b6100cc565b346104e2576104de6104cd6104c7366004610484565b906107f0565b6104d56100c2565b91829182610276565b0390f35b6100c8565b5f80fd5b606090565b634e487b7160e01b5f52602260045260245ffd5b9060016002830492168015610524575b602083101461051f57565b6104f0565b91607f1691610514565b60209181520190565b5f5260205f2090565b905f929180549061055a61055383610504565b809461052e565b916001811690815f146105b15750600114610575575b505050565b6105829192939450610537565b915f925b81841061059957505001905f8080610570565b60018160209295939554848601520191019290610586565b92949550505060ff19168252151560200201905f8080610570565b906105d691610540565b90565b634e487b7160e01b5f52604160045260245ffd5b906105f7906100f7565b810190811067ffffffffffffffff82111761061157604052565b6105d9565b9061063661062f926106266100c2565b938480926105cc565b03836105ed565b565b61064190610616565b90565b61064c6104eb565b506106576003610638565b90565b5f90565b61067b9161066a61065a565b5061067361081c565b919091610829565b600190565b5f90565b5f1c90565b90565b61069861069d91610684565b610689565b90565b6106aa905461068c565b90565b6106b5610680565b506106c060026106a0565b90565b916106ed926106d061065a565b506106e56106dc61081c565b82908491610886565b919091610952565b600190565b5f90565b90565b90565b61071061070b610715926106f6565b6106f9565b610330565b90565b6107206106f2565b5061072b60126106fc565b90565b90610738916109ef565b565b61074e6107496107539261017f565b6106f9565b61017f565b90565b61075f9061073a565b90565b61076b90610756565b90565b9061077890610762565b5f5260205260405f2090565b61079a61079f91610793610680565b505f61076e565b6106a0565b90565b6107aa6104eb565b506107b56004610638565b90565b6107d5916107c461065a565b506107cd61081c565b919091610952565b600190565b906107e490610762565b5f5260205260405f2090565b6108159161080b61081092610803610680565b5060016107da565b61076e565b6106a0565b90565b5f90565b610824610818565b503390565b916108379291600192610aa7565b565b6108429061018a565b9052565b60409061086f610876949695939661086560608401985f850190610839565b6020830190610269565b0190610269565b565b9061088391036101b9565b90565b9291926108948183906107f0565b90816108a96108a35f196101b9565b916101b9565b106108b6575b5050509050565b816108c96108c3876101b9565b916101b9565b106108ef576108e693946108de919392610878565b905f92610aa7565b805f80806108af565b5061090e849291925f938493637dc7a0d960e11b855260048501610846565b0390fd5b90565b61092961092461092e92610912565b6106f9565b61017f565b90565b61093a90610915565b90565b9190610950905f60208501940190610839565b565b918261096e6109686109635f610931565b61018a565b9161018a565b146109c8578161098e6109886109835f610931565b61018a565b9161018a565b146109a15761099f92919091610bfd565b565b6109c46109ad5f610931565b5f91829163ec442f0560e01b83526004830161093d565b0390fd5b6109eb6109d45f610931565b5f918291634b637e8f60e11b83526004830161093d565b0390fd5b80610a0a610a046109ff5f610931565b61018a565b9161018a565b14610a2657610a2491610a1c5f610931565b919091610bfd565b565b610a49610a325f610931565b5f91829163ec442f0560e01b83526004830161093d565b0390fd5b5f1b90565b90610a5e5f1991610a4d565b9181191691161790565b610a7c610a77610a81926101b9565b6106f9565b6101b9565b90565b90565b90610a9c610a97610aa392610a68565b610a84565b8254610a52565b9055565b909281610ac4610abe610ab95f610931565b61018a565b9161018a565b14610b8f5783610ae4610ade610ad95f610931565b61018a565b9161018a565b14610b6857610b0883610b03610afc600186906107da565b879061076e565b610a87565b610b12575b505050565b919091610b5d610b4b610b457f8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b92593610762565b93610762565b93610b546100c2565b91829182610276565b0390a35f8080610b0d565b610b8b610b745f610931565b5f918291634a1406b160e11b83526004830161093d565b0390fd5b610bb2610b9b5f610931565b5f91829163e602df0560e01b83526004830161093d565b0390fd5b634e487b7160e01b5f52601160045260245ffd5b610bd9610bdf919392936101b9565b926101b9565b8201809211610bea57565b610bb6565b90610bfa91016101b9565b90565b91909180610c1b610c15610c105f610931565b61018a565b9161018a565b145f14610cfc57610c3f610c3883610c3360026106a0565b610bca565b6002610a87565b5b82610c5b610c55610c505f610931565b61018a565b9161018a565b145f14610cd057610c7f610c7883610c7360026106a0565b610878565b6002610a87565b5b919091610ccb610cb9610cb37fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef93610762565b93610762565b93610cc26100c2565b91829182610276565b0390a3565b610cf782610cf1610ce25f879061076e565b91610cec836106a0565b610bef565b90610a87565b610c80565b610d0f610d0a5f839061076e565b6106a0565b80610d22610d1c856101b9565b916101b9565b10610d4a57610d35610d45918490610878565b610d405f849061076e565b610a87565b610c40565b90610d689091925f93849363391434e360e21b855260048501610846565b0390fd 0 0xe4f7dc8b199fdaac6693c9c412ea68aed9e1584d193e1c3478d30a6f01f26057 --rpc-url http://ethrex-dev:1729
-        "
-
 configs:
   nginx_conf:
     content: |
@@ -296,13 +509,14 @@ configs:
         ''      close;
       }
 
+      # L2 Blockscout - Main API/Frontend
       server {
-          listen       80;
-          server_name  localhost:8082;
+          listen 8082;
+          server_name localhost;
           proxy_http_version 1.1;
 
           location ~ ^/(api(?!-docs$$)|socket|sitemap.xml|auth/auth0|auth/auth0/callback|auth/logout) {
-              proxy_pass            $${BACK_PROXY_PASS};
+              proxy_pass            http://backend:4000;
               proxy_http_version    1.1;
               proxy_set_header      Host "$$host";
               proxy_set_header      X-Real-IP "$$remote_addr";
@@ -314,7 +528,7 @@ configs:
           }
 
           location / {
-              proxy_pass            $${FRONT_PROXY_PASS};
+              proxy_pass            http://frontend:3000;
               proxy_http_version    1.1;
               proxy_set_header      Host "$$host";
               proxy_set_header      X-Real-IP "$$remote_addr";
@@ -326,9 +540,10 @@ configs:
           }
       }
 
+      # L2 Stats
       server {
         listen 8080;
-        server_name localhost:8082;
+        server_name localhost;
         proxy_http_version 1.1;
         proxy_hide_header Access-Control-Allow-Origin;
         proxy_hide_header Access-Control-Allow-Methods;
@@ -341,9 +556,10 @@ configs:
         }
       }
 
+      # L2 Visualizer
       server {
         listen 8081;
-        server_name localhost:8082;
+        server_name localhost;
         proxy_http_version 1.1;
         proxy_hide_header Access-Control-Allow-Origin;
         proxy_hide_header Access-Control-Allow-Methods;
@@ -357,6 +573,66 @@ configs:
         }
       }
 
-volumes:
-  blockscout-db-data:
-  stats-db-data:
+      # L1 Blockscout - Main API/Frontend
+      server {
+          listen 8083;
+          server_name localhost;
+          proxy_http_version 1.1;
+
+          location ~ ^/(api(?!-docs$$)|socket|sitemap.xml|auth/auth0|auth/auth0/callback|auth/logout) {
+              proxy_pass            http://backend-l1:4000;
+              proxy_http_version    1.1;
+              proxy_set_header      Host "$$host";
+              proxy_set_header      X-Real-IP "$$remote_addr";
+              proxy_set_header      X-Forwarded-For "$$proxy_add_x_forwarded_for";
+              proxy_set_header      X-Forwarded-Proto "$$scheme";
+              proxy_set_header      Upgrade "$$http_upgrade";
+              proxy_set_header      Connection $$connection_upgrade;
+              proxy_cache_bypass    $$http_upgrade;
+          }
+
+          location / {
+              proxy_pass            http://frontend-l1:3000;
+              proxy_http_version    1.1;
+              proxy_set_header      Host "$$host";
+              proxy_set_header      X-Real-IP "$$remote_addr";
+              proxy_set_header      X-Forwarded-For "$$proxy_add_x_forwarded_for";
+              proxy_set_header      X-Forwarded-Proto "$$scheme";
+              proxy_set_header      Upgrade "$$http_upgrade";
+              proxy_set_header      Connection $$connection_upgrade;
+              proxy_cache_bypass    $$http_upgrade;
+          }
+      }
+
+      # L1 Stats
+      server {
+        listen 8084;
+        server_name localhost;
+        proxy_http_version 1.1;
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Methods;
+        add_header 'Access-Control-Allow-Origin' 'http://localhost:8083' always;
+        add_header 'Access-Control-Allow-Credentials' 'true' always;
+        add_header 'Access-Control-Allow-Methods' 'PUT, GET, POST, OPTIONS, DELETE, PATCH' always;
+
+        location / {
+          proxy_pass http://stats-l1:8050/;
+        }
+      }
+
+      # L1 Visualizer
+      server {
+        listen 8085;
+        server_name localhost;
+        proxy_http_version 1.1;
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Methods;
+        add_header 'Access-Control-Allow-Origin' 'http://localhost:8083' always;
+        add_header 'Access-Control-Allow-Credentials' 'true' always;
+        add_header 'Access-Control-Allow-Methods' 'PUT, GET, POST, OPTIONS, DELETE, PATCH' always;
+        add_header 'Access-Control-Allow-Headers' 'DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,x-csrf-token' always;
+
+        location / {
+          proxy_pass http://visualizer-l1:8050/;
+        }
+      }
