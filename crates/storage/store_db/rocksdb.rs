@@ -14,11 +14,12 @@ use ethrex_common::{
     },
 };
 use ethrex_trie::{Nibbles, Node, Trie};
+use lru::LruCache;
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch, checkpoint::Checkpoint,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::FxBuildHasher;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -151,7 +152,9 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
-type CodeCache = FxHashMap<H256, Code>;
+// 64mb
+const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
+type CodeCache = LruCache<H256, Code, FxBuildHasher>;
 
 #[derive(Debug)]
 pub struct Store {
@@ -422,7 +425,9 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
-            account_code_cache: Arc::new(Mutex::new(FxHashMap::default())),
+            account_code_cache: Arc::new(Mutex::new(LruCache::unbounded_with_hasher(
+                FxBuildHasher,
+            ))),
             account_code_cache_size: AtomicU64::new(0),
         };
         let store_clone = store.clone();
@@ -1417,23 +1422,34 @@ impl StoreEngine for Store {
             bytecode: Bytes::copy_from_slice(bytecode),
             jump_targets: <Vec<_>>::decode(targets)?,
         };
-        // insert into cache
-        self.account_code_cache
-            .lock()
-            .inspect(|cache| {
-                let code_size = code.size();
-                self.account_code_cache_size
-                    .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
-                let cache_len = cache.len() + 1;
-                let current_size = self
-                    .account_code_cache_size
-                    .load(std::sync::atomic::Ordering::SeqCst);
-                info!(
-                    "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
-                );
-            })
-            .map_err(|_| StoreError::LockError)?
-            .insert(code_hash, code.clone());
+
+        // insert into cache and evict if needed
+        {
+            let mut cache = self
+                .account_code_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            let code_size = code.size();
+            self.account_code_cache_size
+                .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
+            let cache_len = cache.len() + 1;
+            let mut current_size = self
+                .account_code_cache_size
+                .load(std::sync::atomic::Ordering::SeqCst);
+            info!(
+                "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+            );
+
+            while current_size > CODE_CACHE_MAX_SIZE {
+                if let Some(popped) = cache.pop_lru() {
+                    current_size -= popped.1.bytecode.len() as u64;
+                } else {
+                    break;
+                }
+            }
+
+            cache.get_or_insert(code_hash, || code.clone());
+        }
 
         Ok(Some(code))
     }
