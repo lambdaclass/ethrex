@@ -11,8 +11,6 @@ pub mod metrics_transactions;
 #[cfg(feature = "api")]
 pub mod profiling;
 #[cfg(feature = "api")]
-pub mod registry;
-#[cfg(feature = "api")]
 pub mod rpc;
 
 /// A macro to conditionally enable metrics-related code.
@@ -73,4 +71,25 @@ pub enum MetricsError {
     TryInto(#[from] std::num::TryFromIntError),
     #[error("MetricsL2Error {0}")]
     FromUtf8Error(#[from] std::string::FromUtf8Error),
+}
+
+#[cfg(feature = "api")]
+/// Returns all metrics currently registered in Prometheus' default registry.
+///
+/// Both profiling and RPC metrics register with this default registry, and the
+/// metrics API surfaces them by calling this helper.
+pub fn gather_default_metrics() -> Result<String, MetricsError> {
+    use prometheus::{Encoder, TextEncoder};
+
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+
+    let mut buffer = Vec::new();
+    encoder
+        .encode(&metric_families, &mut buffer)
+        .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+
+    let res = String::from_utf8(buffer)?;
+
+    Ok(res)
 }
