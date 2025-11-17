@@ -55,7 +55,18 @@ pub fn initialize_rpc_metrics() {
     METRICS_RPC_DURATION.reset();
 }
 
-/// Records the duration of an async RPC operation using the shared function duration histogram.
+/// Records the duration of an async operation in the function profiling histogram.
+///
+/// This provides a lightweight alternative to the `#[instrument]` attribute when you need
+/// manual control over timing instrumentation, such as in RPC handlers.
+///
+/// # Parameters
+/// * `namespace` - Category for the metric (e.g., "rpc", "engine", "block_execution")
+/// * `function_name` - Name identifier for the operation being timed
+/// * `future` - The async operation to time
+///
+/// Use this function when you need to instrument an async operation for duration metrics,
+/// but cannot or do not want to use the `#[instrument]` attribute (for example, in RPC handlers).
 pub async fn record_async_duration<Fut, T>(namespace: &str, function_name: &str, future: Fut) -> T
 where
     Fut: Future<Output = T>,

@@ -1606,108 +1606,6 @@
                 "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
-                "axisLabel": "Requests/sec",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 15,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "pointSize": 4,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "showValues": false,
-                "spanNulls": true,
-                "stacking": {
-                  "group": "A",
-                  "mode": "normal"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  }
-                ]
-              },
-              "unit": "reqps"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 13,
-            "w": 4,
-            "x": 0,
-            "y": 28
-          },
-          "id": 116,
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true,
-              "sortBy": "Mean",
-              "sortDesc": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "12.2.1",
-          "repeat": "instance",
-          "repeatDirection": "v",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "sum by (outcome) (rate(rpc_requests_total{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__range]))",
-              "legendFormat": "{{outcome}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Engine Success/Error Rate - $instance",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
@@ -1757,9 +1655,9 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 13,
-            "w": 4,
-            "x": 4,
+            "h": 14,
+            "w": 7,
+            "x": 0,
             "y": 28
           },
           "id": 113,
@@ -1804,7 +1702,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Average duration of Engine methods",
+          "description": "",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1829,9 +1727,9 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 13,
-            "w": 4,
-            "x": 8,
+            "h": 14,
+            "w": 5,
+            "x": 7,
             "y": 28
           },
           "id": 115,
@@ -1879,7 +1777,7 @@
               "refId": "A"
             }
           ],
-          "title": "Engine Latency by Methods - $instance",
+          "title": "Engine Latency by Methods (AVG Duration) - $instance",
           "type": "bargauge"
         },
         {
@@ -1945,7 +1843,7 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 13,
+            "h": 14,
             "w": 12,
             "x": 12,
             "y": 28
@@ -2130,17 +2028,17 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 12,
-            "w": 4,
-            "x": 4,
+            "h": 14,
+            "w": 7,
+            "x": 0,
             "y": 29
           },
           "id": 103,
           "options": {
             "displayLabels": [],
             "legend": {
-              "displayMode": "list",
-              "placement": "bottom",
+              "displayMode": "table",
+              "placement": "right",
               "showLegend": true,
               "values": [
                 "percent"
@@ -2178,7 +2076,7 @@
               "refId": "A"
             }
           ],
-          "title": "RPC Time per Method - $instance",
+          "title": "RPC Average Time per Method - $instance",
           "type": "piechart"
         },
         {
@@ -2186,7 +2084,6 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Slowest RPC methods by average duration",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2239,9 +2136,9 @@
             ]
           },
           "gridPos": {
-            "h": 12,
+            "h": 14,
             "w": 5,
-            "x": 8,
+            "x": 7,
             "y": 29
           },
           "id": 104,
@@ -2273,7 +2170,7 @@
               "refId": "A"
             }
           ],
-          "title": "Slowest RPC Methods - $instance",
+          "title": "Slowest RPC Methods (Avg Duration) - $instance",
           "transformations": [
             {
               "id": "organize",
@@ -2353,9 +2250,9 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 12,
-            "w": 5,
-            "x": 13,
+            "h": 14,
+            "w": 6,
+            "x": 12,
             "y": 29
           },
           "id": 101,
@@ -2455,7 +2352,7 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 12,
+            "h": 14,
             "w": 6,
             "x": 18,
             "y": 29
@@ -3487,7 +3384,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 1575
+            "y": 1438
           },
           "id": 56,
           "options": {
@@ -3586,7 +3483,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 1575
+            "y": 1438
           },
           "id": 57,
           "options": {
@@ -3686,7 +3583,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 1575
+            "y": 1438
           },
           "id": 58,
           "options": {
