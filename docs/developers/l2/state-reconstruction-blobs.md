@@ -25,15 +25,6 @@ That guarantees we have transactions in each block for at least 6 batches.
 
 Still in the sequencer, open `crates/l2/sequencer/l1_committer.rs`:
 
-- At the end of `send_commitment` (after logging the transaction hash) dump the blob that was just submitted:
-
-  ```rust
-  // Rest of the code ...
-  info!("Commitment sent: {commit_tx_hash:#x}");
-  store_blobs(batch.blobs_bundle.blobs.clone(), batch.number);
-  Ok(commit_tx_hash)
-  ```
-
 - Add this helper function:
 
   ```rust
@@ -42,6 +33,14 @@ Still in the sequencer, open `crates/l2/sequencer/l1_committer.rs`:
       fs::write(format!("{current_blob}-1.blob"), blob).unwrap();
   }
   ```
+
+- At the end of `send_commitment` (after logging the transaction hash) dump the blob that was just submitted:
+
+  ```rust
+  // Rest of the code ...
+  info!("Commitment sent: {commit_tx_hash:#x}");
+  store_blobs(batch.blobs_bundle.blobs.clone(), batch.number);
+  Ok(commit_tx_hash)  ```
 
 Running the node with the deposits of the rich accounts will create `N-1.blob` files (you can move them into `fixtures/blobs/` afterwards).
 
