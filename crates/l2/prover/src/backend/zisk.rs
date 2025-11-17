@@ -85,7 +85,7 @@ pub fn prove(
         .arg("--output-dir")
         .arg(OUTPUT_PATH)
         .arg("--unlock-mapped-memory")
-        .arg("--proving-key")
+        //.arg("--proving-key")
         .arg("--final-snark")
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit())
