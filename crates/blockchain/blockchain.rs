@@ -418,6 +418,7 @@ impl Blockchain {
         }
         let root_node = real_root.encode_to_vec();
         let state_trie_hash = keccak(&root_node);
+        state_updates_map.insert(Nibbles::default(), root_node);
         let state_updates = state_updates_map.into_iter().collect();
         let storage_updates = storage_updates_map
             .into_iter()
