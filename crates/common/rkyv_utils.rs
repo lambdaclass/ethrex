@@ -41,6 +41,7 @@ impl From<U256Wrapper> for U256 {
 
 #[derive(Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[rkyv(remote = H160)]
+#[rkyv(derive(Ord, PartialOrd))]
 pub struct H160Wrapper([u8; 20]);
 
 impl From<H160Wrapper> for H160 {
