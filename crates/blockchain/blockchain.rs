@@ -33,7 +33,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::node::BranchNode;
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
