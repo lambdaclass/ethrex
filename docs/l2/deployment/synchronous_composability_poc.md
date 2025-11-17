@@ -1,4 +1,4 @@
-# Synchronous Composability
+# Synchronous Composability (PoC)
 
 ## Status
 
