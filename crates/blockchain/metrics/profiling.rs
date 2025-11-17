@@ -12,6 +12,7 @@ pub static METRICS_BLOCK_PROCESSING_PROFILE: LazyLock<HistogramVec> =
 
 // Metrics defined in this module register into the Prometheus default registry.
 // The metrics API exposes them by calling `gather_default_metrics()`.
+
 fn initialize_histogram_vec() -> HistogramVec {
     register_histogram_vec!(
         "function_duration_seconds",
