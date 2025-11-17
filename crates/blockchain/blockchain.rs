@@ -25,13 +25,15 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_common::utils::keccak;
+use ethrex_common::{Address, H160, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::node::BranchNode;
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -107,6 +109,12 @@ impl Default for BlockchainOptions {
             r#type: BlockchainType::default(),
         }
     }
+}
+
+struct PartialMerkleizationResults {
+    state_updates: FxHashMap<Nibbles, Vec<u8>>,
+    storage_updates: StoreUpdatesMap,
+    code_updates: FxHashMap<H256, Code>,
 }
 
 #[derive(Debug, Clone)]
@@ -242,12 +250,14 @@ impl Blockchain {
                     Ok((execution_result, exec_end_instant))
                 })
                 .expect("Failed to spawn block_executor exec thread");
+            let parent_header_ref = &parent_header; // Avoid moving to thread
             let merkleize_handle = std::thread::Builder::new()
                 .name("block_executor_merkleizer".to_string())
                 .spawn_scoped(s, move || -> Result<_, StoreError> {
                     let account_updates_list = self.handle_merkleization(
+                        s,
                         rx,
-                        &parent_header,
+                        parent_header_ref,
                         queue_length_ref,
                         max_queue_length_ref,
                     )?;
@@ -285,32 +295,21 @@ impl Blockchain {
         ))
     }
 
-    #[instrument(
-        level = "trace",
-        name = "Trie update",
-        skip_all,
-        fields(namespace = "block_execution")
-    )]
-    fn handle_merkleization(
+    fn handle_merkleization_subtrie(
         &self,
-        rx: Receiver<Vec<AccountUpdate>>,
+        rx: Receiver<Vec<(H256, AccountUpdate)>>,
         parent_header: &BlockHeader,
-        queue_length: &AtomicUsize,
-        max_queue_length: &mut usize,
-    ) -> Result<AccountUpdatesList, StoreError> {
+    ) -> Result<PartialMerkleizationResults, StoreError> {
         let mut state_trie = self
             .storage
             .state_trie(parent_header.hash())?
             .ok_or(StoreError::MissingStore)?;
-        let mut state_trie_hash = H256::default();
         let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         let mut account_states: FxHashMap<H256, AccountState> = Default::default();
         for updates in rx {
-            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
-            *max_queue_length = current_length.max(*max_queue_length);
-            state_trie_hash = Self::process_incoming_update_message(
+            Self::process_incoming_update_message(
                 &self.storage,
                 &mut state_trie,
                 updates,
@@ -321,6 +320,99 @@ impl Blockchain {
                 &mut account_states,
             )?;
         }
+
+        Ok(PartialMerkleizationResults {
+            state_updates: state_updates_map,
+            storage_updates: storage_updates_map,
+            code_updates,
+        })
+    }
+
+    #[instrument(
+        level = "trace",
+        name = "Trie update",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    fn handle_merkleization<'a, 's, 'b>(
+        &'a self,
+        scope: &'s std::thread::Scope<'s, '_>,
+        rx: Receiver<Vec<AccountUpdate>>,
+        parent_header: &'b BlockHeader,
+        queue_length: &AtomicUsize,
+        max_queue_length: &mut usize,
+    ) -> Result<AccountUpdatesList, StoreError>
+    where
+        'a: 's,
+        'b: 's,
+    {
+        // FIXME: for now, we assume the state root to be a branch node.
+        // For all currently live networks that's innocent and sane, but for
+        // new networks we'll need to consider other cases.
+        let mut workers_tx = Vec::with_capacity(16);
+        let mut workers_handles = Vec::with_capacity(16);
+        for i in 0..16 {
+            let (tx, rx) = channel();
+            let handle = std::thread::Builder::new()
+                .name(format!("block_executor_merkleization_shard_worker_{i}"))
+                .spawn_scoped(scope, move || {
+                    self.handle_merkleization_subtrie(rx, parent_header)
+                })
+                .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}",)))?;
+            workers_handles.push(handle);
+            workers_tx.push(tx);
+        }
+        let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
+        let mut storage_updates_map: StoreUpdatesMap = Default::default();
+        let mut code_updates: FxHashMap<H256, Code> = Default::default();
+        let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
+        for updates in rx {
+            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
+            *max_queue_length = current_length.max(*max_queue_length);
+            let mut hashed_updates: Vec<_> = updates
+                .into_iter()
+                .map(|u| {
+                    let hashed_address = hashed_address_cache
+                        .entry(u.address)
+                        .or_insert_with(|| keccak(u.address));
+                    (*hashed_address, u)
+                })
+                .collect();
+            hashed_updates.sort_by_key(|(h, _)| h.0[0]);
+            for sharded_update in hashed_updates.chunk_by(|l, r| l.0.0[0] & 0xf0 == r.0.0[0] & 0xf0)
+            {
+                let shard_message = sharded_update.to_vec();
+                workers_tx[(shard_message[0].0.0[0] >> 4) as usize]
+                    .send(shard_message)
+                    .map_err(|e| StoreError::Custom(format!("send failed: {e}")))?;
+            }
+        }
+        let mut real_root = BranchNode::default();
+        for (choice, worker) in workers_handles.into_iter().enumerate() {
+            let worker_result = worker
+                .join()
+                .map_err(|e| StoreError::Custom(format!("join failed: {e:?}",)))??;
+            let Some(root_node) = worker_result.state_updates.get(&Nibbles::default()) else {
+                continue;
+            };
+            let root_node = Node::decode(root_node)?;
+            match root_node {
+                Node::Branch(mut branch) => {
+                    real_root.choices[choice] = std::mem::take(&mut branch.choices[choice]);
+                }
+                Node::Extension(_extension) => {
+                    todo!()
+                }
+                Node::Leaf(_leaf) => {
+                    todo!()
+                }
+            }
+            code_updates.extend(worker_result.code_updates);
+            storage_updates_map.extend(worker_result.storage_updates);
+            state_updates_map.extend(worker_result.state_updates);
+        }
+        let root_node = real_root.encode_to_vec();
+        let state_trie_hash = keccak(&root_node);
         let state_updates = state_updates_map.into_iter().collect();
         let storage_updates = storage_updates_map
             .into_iter()
@@ -342,18 +434,17 @@ impl Blockchain {
     fn process_incoming_update_message(
         storage: &Store,
         state_trie: &mut Trie,
-        updates: Vec<AccountUpdate>,
+        updates: Vec<(H256, AccountUpdate)>,
         storage_updates_map: &mut StoreUpdatesMap,
         parent_header: &BlockHeader,
         state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
         code_updates: &mut FxHashMap<H256, Code>,
         account_states: &mut FxHashMap<H256, AccountState>,
-    ) -> Result<H256, StoreError> {
+    ) -> Result<(), StoreError> {
         trace!("Execute block pipeline: Received {} updates", updates.len());
         // Apply the account updates over the last block's state and compute the new state root
-        for update in updates {
-            let hashed_address = hash_address(&update.address);
-            let hashed_address_h256 = H256::from_slice(&hashed_address);
+        for (hashed_address_h256, update) in updates {
+            let hashed_address = hashed_address_h256.0.to_vec();
             trace!(
                 "Execute block pipeline: Update cycle for {}",
                 hex::encode(&hashed_address)
@@ -461,9 +552,9 @@ impl Blockchain {
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (_, state_updates) = state_trie.collect_changes_since_last_hash();
         state_updates_map.extend(state_updates);
-        Ok(state_trie_hash)
+        Ok(())
     }
 
     /// Executes a block from a given vm instance an does not clear its state
