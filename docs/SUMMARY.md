@@ -36,6 +36,7 @@
   - [Deploying a vanilla ethrex L2](./l2/deployment/vanilla.md)
   - [Deploying a validium ethrex L2](./l2/deployment/validium.md)
   - [Deploying a based ethrex L2](./l2/deployment/based.md)
+  - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
 - [Run a prover](./l2/deployment/prover/README.md)
   - [Overview](./l2/deployment/prover/overview.md)
   - [Run an ethrex SP1 prover](./l2/deployment/prover/sp1.md)
