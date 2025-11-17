@@ -2,6 +2,7 @@ use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 use rustc_hash::FxHashMap;
 use std::{
+    mem::take,
     sync::{Arc, RwLock},
     time::Instant,
 };
@@ -9,7 +10,7 @@ use std::{
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
-    prebuilt_clone: Arc<Option<FxHashMap<Vec<u8>, H256>>>,
+    prebuilt_clone: Option<FxHashMap<Vec<u8>, H256>>,
     layers_map: FxHashMap<Vec<u8>, H256>,
     parent: H256,
     id: usize,
@@ -89,9 +90,7 @@ impl TrieLayerCache {
         let layers_map = match self.layers.get(&parent) {
             Some(trie_layer) => {
                 let mut t = trie_layer.write().unwrap();
-                let previous_arc = t.prebuilt_clone.clone();
-                t.prebuilt_clone = Arc::new(None);
-                let mut previous = Arc::try_unwrap(previous_arc).unwrap().unwrap();
+                let mut previous = take(&mut t.prebuilt_clone).unwrap();
                 tracing::info!(
                     "put_batch 2: layers_map.clone - elapsed {:?}",
                     now.elapsed()
@@ -114,7 +113,7 @@ impl TrieLayerCache {
 
         let entry = TrieLayer {
             nodes,
-            prebuilt_clone: Arc::new(None),
+            prebuilt_clone: None,
             layers_map,
             parent,
             id: self.last_id,
@@ -127,53 +126,57 @@ impl TrieLayerCache {
         self.layers.iter_mut().for_each(|(_k, trie_layer)| {
             let mut mut_layer = trie_layer.write().unwrap();
             if mut_layer.prebuilt_clone.is_none() {
-                mut_layer.prebuilt_clone = Arc::new(Some(mut_layer.layers_map.clone()));
+                mut_layer.prebuilt_clone = Some(mut_layer.layers_map.clone());
             }
         });
     }
 
     fn remove_old_refs(&mut self, state_roots: &Vec<H256>) {
-        state_roots.into_iter().for_each( | state_root | 
-            self.layers.iter_mut().for_each(|(_k, trie_layer)| {
-                let mut mut_layer: std::sync::RwLockWriteGuard<'_, TrieLayer> =
-                    trie_layer.write().unwrap();
-                mut_layer.layers_map.retain(|_, b| b != state_root)
-        }));
+        tracing::info!("Layers to remove:  {:?}", state_roots);
+        tracing::info!("Layers to remove: Layers amount {}", self.layers.len());
+        self.layers.iter().for_each(|(_k, trie_layer)| {
+            trie_layer.write().unwrap().layers_map.retain(|_, b| !state_roots.contains(b))});
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-//         let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
-//             Ok(layer) => layer.into_inner().unwrap(),
-//             Err(layer) => TrieLayer::clone(&layer.read().unwrap()),
-//         };
-//         // ensure parents are commited
-//         let parent_nodes = self.commit(layer.parent);
-//         // older layers are useless
-//         self.layers
-//             .retain(|_, item| item.read().unwrap().id > layer.id);
-//         self.remove_old_refs(&state_root);
-//         Some(
-//             parent_nodes
-//                 .unwrap_or_default()
-//                 .into_iter()
-//                 .chain(layer.nodes)
-//                 .collect(),
-//         )
+        //         let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
+        //             Ok(layer) => layer.into_inner().unwrap(),
+        //             Err(layer) => TrieLayer::clone(&layer.read().unwrap()),
+        //         };
+        //         // ensure parents are commited
+        //         let parent_nodes = self.commit(layer.parent);
+        //         // older layers are useless
+        //         self.layers
+        //             .retain(|_, item| item.read().unwrap().id > layer.id);
+        //         self.remove_old_refs(&state_root);
+        //         Some(
+        //             parent_nodes
+        //                 .unwrap_or_default()
+        //                 .into_iter()
+        //                 .chain(layer.nodes)
+        //                 .collect(),
+        //         )
         let mut layers_to_commit = vec![];
         let mut roots_to_delete = vec![];
         let mut current_state_root = state_root;
+        tracing::info!("commit 1: Layers amount {}", self.layers.len());
         while let Some(layer) = self.layers.remove(&current_state_root) {
-            roots_to_delete.push(current_state_root);
+            tracing::info!("commit 2: removing {current_state_root}");
             let layer = match Arc::try_unwrap(layer) {
                 Ok(layer) => layer.into_inner().unwrap(),
                 Err(layer) => TrieLayer::clone(&layer.read().unwrap()),
             };
+            roots_to_delete.push(current_state_root);
             current_state_root = layer.parent;
             layers_to_commit.push(layer);
         }
+        tracing::info!("commit 3: Layers amount {}", self.layers.len());
         let top_layer_id = layers_to_commit.first()?.id;
         // older layers are useless
-        self.layers.retain(|_, item| item.read().unwrap().id > top_layer_id);
+        tracing::info!("commit 4: Layers amount {}", self.layers.len());
+        self.layers
+            .retain(|_, item| item.read().unwrap().id > top_layer_id);
+        tracing::info!("commit 5: Layers amount {}", self.layers.len());
         self.remove_old_refs(&roots_to_delete);
         let nodes_to_commit = layers_to_commit
             .into_iter()
