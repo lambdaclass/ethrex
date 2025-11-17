@@ -1687,7 +1687,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (function_name) (\n  rate(function_duration_seconds_count{\n    job=\"$job\",\n    instance=~\"$instance(:\\\\d+)?$\",\n    namespace=\"engine\"\n  }[$__range])\n)",
+              "expr": "sum by (function_name) (\n  rate(rpc_request_duration_seconds_count{\n    job=\"$job\",\n    instance=~\"$instance(:\\\\d+)?$\",\n    namespace=\"engine\"\n  }[$__range])\n)",
               "instant": false,
               "legendFormat": "{{function_name}}",
               "range": true,
@@ -1769,7 +1769,7 @@
               },
               "editorMode": "code",
               "exemplar": false,
-              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__range])) \n/ sum by (function_name) (increase(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__range]))",
+              "expr": "sum by (function_name) (increase(rpc_request_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__range])) \n/ sum by (function_name) (increase(rpc_request_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__range]))",
               "instant": false,
               "interval": "",
               "legendFormat": "__auto",
@@ -1877,7 +1877,7 @@
               },
               "editorMode": "code",
               "exemplar": false,
-              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[18s])) \n/ sum by (function_name) (increase(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[18s]))",
+              "expr": "sum by (function_name) (increase(rpc_request_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[18s])) \n/ sum by (function_name) (increase(rpc_request_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[18s]))",
               "instant": false,
               "interval": "",
               "legendFormat": "__auto",
@@ -2069,7 +2069,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]))",
+              "expr": "sum by (function_name) (increase(rpc_request_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]))",
               "instant": true,
               "legendFormat": "{{function_name}}",
               "range": false,
@@ -2162,7 +2162,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "rate(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]) / rate(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range])",
+              "expr": "rate(rpc_request_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]) / rate(rpc_request_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range])",
               "format": "table",
               "instant": true,
               "legendFormat": "__auto",
@@ -2284,7 +2284,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (function_name) (rate(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]))",
+              "expr": "sum by (function_name) (rate(rpc_request_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[$__range]))",
               "legendFormat": "{{function_name}}",
               "range": true,
               "refId": "A"
@@ -2384,7 +2384,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (function_name) (increase(function_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[18s])) \n/ sum by (function_name) (increase(function_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[18s]))",
+              "expr": "sum by (function_name) (increase(rpc_request_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[18s])) \n/ sum by (function_name) (increase(rpc_request_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"rpc\"}[18s]))",
               "legendFormat": "{{ function_name }}",
               "range": true,
               "refId": "A"
