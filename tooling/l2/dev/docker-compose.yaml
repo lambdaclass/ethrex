@@ -501,6 +501,24 @@ services:
     command: >
       l2 prover --proof-coordinators tcp://ethrex-dev:3900
 
+  ethrex-l2-hub:
+    container_name: l2-hub
+    image: "ghcr.io/lambdaclass/ethrex_l2_hub:merge"
+    pull_policy: always
+    depends_on:
+      - ethrex-dev
+    environment:
+      VITE_L1_NAME: "Ethrex L1 Local"
+      VITE_L1_RPC_URL: "http://host.docker.internal:8545"
+      VITE_L1_CHAIN_ID: 9
+      VITE_L1_BRIDGE_ADDRESS: "0xebc31Eff9D9f5F63F65A68734816b7De1256845B"
+      VITE_L2_NAME: "Ethrex L2 Local"
+      VITE_L2_RPC_URL: "http://host.docker.internal:1729"
+      VITE_L2_CHAIN_ID: 65536999
+      VITE_L2_BRIDGE_ADDRESS: "0x000000000000000000000000000000000000ffff"
+      VITE_DELEGATION_CONTRACT_ADDRESS: "0x00e29d532f1c62a923ee51ee439bfc1500b1ce4d"
+      VITE_TEST_TOKEN_CONTRACT_ADDRESS: "0x24b5bff0cdd611f6e5dea6f971a8f1d4c28c7a1a"
+
 configs:
   nginx_conf:
     content: |
