@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Debugging solidity with ethrex - Ethrex</title>
+        <title>Generate blobs for the state reconstruction test - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,19 +237,68 @@
 }
 
 </style>
-<h3 id="debug-mode"><a class="header" href="#debug-mode">Debug Mode</a></h3>
-<p>Debug mode currently enables printing in solidity by using a <code>print()</code> function that does an <code>MSTORE</code> with a specific offset to toggle the "print mode". If the VM is in debug mode it will recognize the offset as the "key" for enabling/disabling print mode. If print mode is enabled, MSTORE opcode stores into a buffer the data that the user wants to print, and when there is no more data left to read it prints it and disables the print mode so that execution continues normally.
-You can find the solidity code in the <a href="https://github.com/lambdaclass/ethrex/blob/4e0ed9cc3b4ccb818dbc37afb305726cc01cec55/fixtures/contracts/levm_print/Print.sol">fixtures</a> of this repository. It can be tested with the <code>PrintTest</code> contract and it can be imported into another contracts.</p>
+<h1 id="generate-blobs-for-the-state-reconstruction-test"><a class="header" href="#generate-blobs-for-the-state-reconstruction-test">Generate blobs for the state reconstruction test</a></h1>
+<p>The test in <code>crates/l2/tests/state_reconstruct.rs</code> replays a fixed set of blobs to reconstruct. The fixtures need to be regenerated whenever the genesis file changes, because a new genesis alters the hash of the very first block and, by extension, all descendant blocks. Our stored blobs encode parent pointers, so stale hashes make the fixtures unusable. If you ever need to regenerate those blobs, you need to change the files <code>payload_builder.rs</code> and <code>l1_committer.rs</code> and run the sequencer to capture fresh blobs.</p>
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<ol>
+<li>Limit every block to ten transactions to make the batches predictable.</li>
+<li>Store each blob locally whenever the committer submits a batch.</li>
+<li>Run the dev stack long enough to capture six blobs and move them into <code>fixtures/blobs/</code>.</li>
+</ol>
+<h2 id="1-cap-block-payloads-at-10-transactions"><a class="header" href="#1-cap-block-payloads-at-10-transactions">1. Cap block payloads at 10 transactions</a></h2>
+<p>Edit <code>crates/l2/sequencer/block_producer/payload_builder.rs</code> and, inside the <code>fill_transactions</code> loop, add the early exit that forces every L2 block to contain at most ten transactions:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>if context.payload.body.transactions.len() &gt;= 10 {
+    println!("Reached max transactions per block limit");
+    break;
+}
+<span class="boring">}</span></code></pre></pre>
+<p>That guarantees we have transactions in each block for at least 6 batches.</p>
+<h2 id="2-persist-every-blob-locally-when-the-committer-sends-a-batch"><a class="header" href="#2-persist-every-blob-locally-when-the-committer-sends-a-batch">2. Persist every blob locally when the committer sends a batch</a></h2>
+<p>Still in the sequencer, open <code>crates/l2/sequencer/l1_committer.rs</code>:</p>
+<ul>
+<li>
+<p>Add this helper function:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>fn store_blobs(blobs: Vec&lt;Blob&gt;, current_blob: u64) {
+    let blob = blobs.first().unwrap();
+    fs::write(format!("{current_blob}-1.blob"), blob).unwrap();
+}
+<span class="boring">}</span></code></pre></pre>
+</li>
+<li>
+<p>At the end of <code>send_commitment</code> (after logging the transaction hash) dump the blob that was just submitted:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Rest of the code ...
+info!("Commitment sent: {commit_tx_hash:#x}");
+store_blobs(batch.blobs_bundle.blobs.clone(), batch.number);
+Ok(commit_tx_hash)  ```
+
+<span class="boring">}</span></code></pre></pre>
+</li>
+</ul>
+<p>Running the node with the deposits of the rich accounts will create <code>N-1.blob</code> files (you can move them into <code>fixtures/blobs/</code> afterwards).</p>
+<h2 id="3-run-the-l2-and-capture-six-blobs"><a class="header" href="#3-run-the-l2-and-capture-six-blobs">3. Run the L2 and capture six blobs</a></h2>
+<p>Start the local L2 with a 20 seconds per commit so we have at least 6 batches with transactions:</p>
+<pre><code class="language-sh">COMPILE_CONTRACTS=true cargo run --release --bin ethrex --features l2,l2-sql -- l2 --dev --no-monitor --committer.commit-time 20000
+</code></pre>
+<p>In another terminal run:</p>
+<pre><code class="language-sh">make init-prover-exec
+</code></pre>
+<p>Once the sequencer has produced six batches you will see six files named <code>1-1.blob</code> through <code>6-1.blob</code>. Copy them into <code>fixtures/blobs/</code> (overwriting the existing files).</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../developers/l2/state-reconstruction-blobs.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../developers/l2/integration-tests.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../ethrex_replay/ethrex_replay.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../vm/levm/debug.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -259,11 +308,11 @@ You can find the solidity code in the <a href="https://github.com/lambdaclass/et
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../developers/l2/state-reconstruction-blobs.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../developers/l2/integration-tests.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../ethrex_replay/ethrex_replay.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../vm/levm/debug.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
