@@ -46,3 +46,31 @@ Cross-chain messages are planned to be forcibly included in recipient chains (th
 ### Proving
 
 Batch proving encompasses several tasks, including recomputing the Merkle root of cross-chain messages within the batch and the associated balance diffs. These values are returned as part of the guest program execution output and serve as public inputs for on-chain proof verification.
+
+## Downsides
+
+Below we list some of the known issues for the current implementation.
+
+### Enforce execution
+
+Currently, no mechanism exists to force the receiving L2 to execute a transaction initiated by the originating L2. Consequently, a malicious L2 could refuse to process incoming cross-chain transactions while continuing to retain the funds locked in its bridge.
+
+### Rollbacks
+
+It is necessary to introduce a rollback mechanism for cross-chain transactions in scenarios where the destination L2 either cannot or elects not to execute the transaction. Such a mechanism would ensure that assets can be safely reverted in the absence of successful execution.
+
+### Retrieval of Messages from L1
+
+In situations where the destination L2 is unable to retrieve the relevant messages directly, it becomes necessary to obtain them by scanning L1. Although the messages are already made available on L1, a system for reliably identifying and retrieving them has yet to be implemented.
+
+## Future Work
+
+The following are things we will tackle in the future
+
+- Execution Enforcement
+- Rollbacks
+- L1 message retrieval
+
+## Recommendations
+
+We advice not to register more than 100 chains, since this will enquire a high cost when verifying a batch (About 1.6M gas), due to the transfers between bridges.
