@@ -1441,8 +1441,12 @@ impl StoreEngine for Store {
             );
 
             while current_size > CODE_CACHE_MAX_SIZE {
-                if let Some(popped) = cache.pop_lru() {
-                    current_size -= popped.1.bytecode.len() as u64;
+                if let Some((_, code)) = cache.pop_lru() {
+                    self.account_code_cache_size
+                        .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
+                    current_size = self
+                        .account_code_cache_size
+                        .load(std::sync::atomic::Ordering::SeqCst);
                 } else {
                     break;
                 }
