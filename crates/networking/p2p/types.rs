@@ -188,8 +188,7 @@ impl Node {
     }
 
     pub fn from_enr_url(enr: &str) -> Result<Self, NodeError> {
-        let base64_decoded = ethrex_common::base64::decode(&enr.as_bytes()[4..]);
-        let record = NodeRecord::decode(&base64_decoded).map_err(NodeError::from)?;
+        let record = NodeRecord::from_enr_url(enr)?;
         let pairs = record.decode_pairs();
         let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
             "public key not found in record".into(),
@@ -288,7 +287,7 @@ pub struct NodeRecordPairs {
     pub udp_port: Option<u16>,
     pub secp256k1: Option<H264>,
     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
-    pub eth: Option<ForkId>,
+    pub eth: Option<EthEnrEntry>,
     // TODO implement ipv6 specific ports
 }
 
@@ -316,19 +315,9 @@ impl NodeRecord {
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
                 "eth" => {
-                    // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
-                    // entry-value = [[ forkHash, forkNext ], ...]
-                    let Ok(decoder) = Decoder::new(&value) else {
-                        continue;
-                    };
-                    // Here we decode fork-id = [ forkHash, forkNext ]
                     // TODO(#3494): here we decode as optional to ignore any errors,
                     // but we should return an error if we can't decode it
-                    let (fork_id, decoder) = decoder.decode_optional_field();
-
-                    // As per the spec, we should ignore any additional list elements in entry-value
-                    decoder.finish_unchecked();
-                    decoded_pairs.eth = fork_id;
+                    decoded_pairs.eth = EthEnrEntry::decode(&value).ok();
                 }
                 _ => {}
             }
@@ -347,6 +336,11 @@ impl NodeRecord {
         Ok(result)
     }
 
+    pub fn from_enr_url(enr: &str) -> Result<Self, NodeError> {
+        let base64_decoded = ethrex_common::base64::decode(&enr.as_bytes()[4..]);
+        NodeRecord::decode(&base64_decoded).map_err(NodeError::from)
+    }
+
     pub fn from_node(
         node: &Node,
         seq: u64,
@@ -357,6 +351,15 @@ impl NodeRecord {
             seq,
             ..Default::default()
         };
+        if let Some(fork_id) = fork_id {
+            let eth_enr = EthEnrEntry {
+                fork_id,
+                rest: vec![],
+            };
+            record
+                .pairs
+                .push(("eth".into(), eth_enr.encode_to_vec().into()));
+        }
         record
             .pairs
             .push(("id".into(), "v4".encode_to_vec().into()));
@@ -377,11 +380,11 @@ impl NodeRecord {
             .pairs
             .push(("udp".into(), node.udp_port.encode_to_vec().into()));
 
-        if let Some(fork_id) = fork_id {
-            record
-                .pairs
-                .push(("eth".into(), fork_id.encode_to_vec().into()));
-        }
+        //TODO: Maybe we should sort the pairs based on key values? 
+        //e.g. record.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
+        //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
+        //Otherwise we get `record key/value pairs are not sorted by key` in hive tests.
 
         record.signature = record.sign_record(signer)?;
 
@@ -504,13 +507,43 @@ impl RLPEncode for Node {
     }
 }
 
+// https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
+// entry-value = [[ forkHash, forkNext ], ...]
+#[derive(Debug, Default, PartialEq)]
+pub struct EthEnrEntry {
+    fork_id: ForkId, // Fork identifier per EIP-2124
+    // Ignore additional fields (for forward compatibility).
+    rest: Vec<(Bytes, Bytes)>,
+}
+
+impl RLPEncode for EthEnrEntry {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        structs::Encoder::new(buf)
+            .encode_field(&self.fork_id)
+            .encode_key_value_list::<Bytes>(&self.rest)
+            .finish();
+    }
+}
+
+impl RLPDecode for EthEnrEntry {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        // Here we decode fork-id = [ forkHash, forkNext ]
+        let (fork_id, decoder) = decoder.decode_field("forkId")?;
+        let (rest, decoder) = decode_node_record_optional_fields(vec![], decoder)?;
+        let remaining = decoder.finish()?;
+        Ok((EthEnrEntry { fork_id, rest }, remaining))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        types::{Node, NodeRecord},
+        types::{EthEnrEntry, Node, NodeRecord, NodeRecordPairs},
         utils::public_key_from_signing_key,
     };
-    use ethrex_common::H512;
+    use ethrex_common::{H512, types::ForkId};
+    use ethrex_rlp::decode::RLPDecode;
     use ethrex_storage::{EngineType, Store};
     use secp256k1::SecretKey;
     use std::{net::SocketAddr, str::FromStr};
@@ -600,5 +633,43 @@ mod tests {
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);
+    }
+
+    #[tokio::test]
+    async fn encode_decode_node_record_with_forkid() {
+        let signer = SecretKey::from_slice(&[
+            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
+            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+        ])
+        .unwrap();
+        let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
+
+        let mut storage =
+            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        storage
+            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
+            .await
+            .expect("Failed to build test genesis");
+
+        let node = Node::new(
+            addr.ip(),
+            addr.port(),
+            addr.port(),
+            public_key_from_signing_key(&signer),
+        );
+        let fork_id = storage.get_fork_id().await.unwrap();
+        let eth_enr = EthEnrEntry {
+            fork_id: fork_id.clone(),
+            rest: vec![],
+        };
+
+        let mut record = NodeRecord::from_node(&node, 1, &signer, Some(fork_id.clone())).unwrap();
+        record.sign_record(&signer).unwrap();
+
+        let enr_url = record.enr_url().unwrap();
+        let parsed_record = NodeRecord::from_enr_url(&enr_url).unwrap();
+        let pairs = parsed_record.decode_pairs();
+
+        assert_eq!(pairs.eth, Some(eth_enr));
     }
 }

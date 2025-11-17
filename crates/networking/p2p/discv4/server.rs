@@ -78,7 +78,7 @@ pub enum OutMessage {
 
 #[derive(Debug)]
 pub struct DiscoveryServer {
-    storage: Store,
+    _storage: Store,
     local_node: Node,
     local_node_record: NodeRecord,
     signer: SecretKey,
@@ -104,7 +104,7 @@ impl DiscoveryServer {
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer, fork_id)
             .expect("Failed to create local node record");
         let mut discovery_server = Self {
-            storage,
+            _storage: storage,
             local_node: local_node.clone(),
             local_node_record,
             signer,
