@@ -1,5 +1,4 @@
 use ethrex_common::{H256, U256};
-#[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
 use k256::elliptic_curve::bigint::Encoding;
 use p256::{
     FieldElement as P256FieldElement, NistP256,
