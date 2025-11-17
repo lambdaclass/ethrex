@@ -21,7 +21,7 @@ use rocksdb::{
 use rustc_hash::FxHashMap;
 use std::{
     collections::HashSet,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::AtomicU64,
@@ -2084,6 +2084,11 @@ impl StoreEngine for Store {
         })?;
 
         Ok(())
+    }
+
+    fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
+        let path = self.db.path();
+        Ok(path.to_path_buf())
     }
 
     fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {

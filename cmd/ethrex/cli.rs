@@ -205,10 +205,17 @@ pub struct Options {
     #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetFalse, help_heading = "P2P options")]
     pub p2p_disabled: bool,
     #[arg(
+        long = "p2p.addr",
+        value_name = "ADDRESS",
+        help = "Listening address for the P2P protocol.",
+        help_heading = "P2P options"
+    )]
+    pub p2p_addr: Option<String>,
+    #[arg(
         long = "p2p.port",
         default_value = "30303",
         value_name = "PORT",
-        help = "TCP port for P2P protocol.",
+        help = "TCP port for the P2P protocol.",
         help_heading = "P2P options"
     )]
     pub p2p_port: String,
@@ -308,6 +315,7 @@ impl Default for Options {
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
             p2p_disabled: Default::default(),
+            p2p_addr: None,
             p2p_port: Default::default(),
             discovery_port: Default::default(),
             network: Default::default(),
