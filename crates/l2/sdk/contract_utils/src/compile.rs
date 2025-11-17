@@ -29,7 +29,7 @@ pub fn compile_contract(
     cmd.arg(bin_flag);
 
     if abi_json {
-        cmd.args(["--combined-json", "abi"]);
+        cmd.arg("--abi");
     }
 
     apply_remappings(&mut cmd, remappings)?;
