@@ -5,7 +5,7 @@ use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramO
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 
-const OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output.bin");
+const OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output/");
 
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_elf");
 
