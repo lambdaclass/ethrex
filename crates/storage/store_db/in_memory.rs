@@ -14,7 +14,7 @@ use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
     collections::HashMap,
     fmt::Debug,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -743,6 +743,10 @@ impl StoreEngine for Store {
         // Checkpoints are not supported for the InMemory DB
         // Silently ignoring the request to create a checkpoint is harmless
         Ok(())
+    }
+
+    fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
+        Ok(PathBuf::from("in_memory_store"))
     }
 }
 
