@@ -28,7 +28,7 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 
 ### Start the first L2
 
-Replace `L1_BRIDGE_ADDRESS`, `L1_ON_CHAIN_PROPOSER_ADDRESS` and `ROUTER_ADDRESS` with the outputs of the previous command
+Replace `L1_BRIDGE_ADDRESS`, `L1_ON_CHAIN_PROPOSER_ADDRESS` and `ROUTER_ADDRESS` with the outputs of the previous command, you can also check it under `cmd/.env`.
 
 ```bash
 ../../target/release/ethrex \
@@ -81,7 +81,7 @@ Replace `ROUTER_ADDRESS` with the outputs of the first deploy
 
 ### Start the second L2
 
-Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs of the previous command
+Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs of the previous command, you can also check it under `cmd/.env`.
 And `ROUTER_ADDRESS` with the outputs of the first deploy
 
 
