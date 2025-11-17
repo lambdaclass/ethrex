@@ -32,10 +32,6 @@ pub const fn list_length(payload_len: usize) -> usize {
 /// Computes the length needed for a given bytes length and first byte
 #[inline]
 pub const fn bytes_length(bytes_len: usize, first_byte: u8) -> usize {
-    if bytes_len == 0 {
-        return 1;
-    }
-
     if bytes_len == 1 && first_byte <= 0x7f {
         return 1;
     }
