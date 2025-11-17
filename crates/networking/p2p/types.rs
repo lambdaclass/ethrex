@@ -380,7 +380,7 @@ impl NodeRecord {
             .pairs
             .push(("udp".into(), node.udp_port.encode_to_vec().into()));
 
-        //TODO: Maybe we should sort the pairs based on key values? 
+        //TODO: Maybe we should sort the pairs based on key values?
         //e.g. record.pairs.sort_by(|a, b| a.0.cmp(&b.0));
         //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
         //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
@@ -539,11 +539,10 @@ impl RLPDecode for EthEnrEntry {
 #[cfg(test)]
 mod tests {
     use crate::{
-        types::{EthEnrEntry, Node, NodeRecord, NodeRecordPairs},
+        types::{EthEnrEntry, Node, NodeRecord},
         utils::public_key_from_signing_key,
     };
-    use ethrex_common::{H512, types::ForkId};
-    use ethrex_rlp::decode::RLPDecode;
+    use ethrex_common::H512;
     use ethrex_storage::{EngineType, Store};
     use secp256k1::SecretKey;
     use std::{net::SocketAddr, str::FromStr};
@@ -663,8 +662,7 @@ mod tests {
             rest: vec![],
         };
 
-        let mut record = NodeRecord::from_node(&node, 1, &signer, Some(fork_id.clone())).unwrap();
-        record.sign_record(&signer).unwrap();
+        let record = NodeRecord::from_node(&node, 1, &signer, Some(fork_id)).unwrap();
 
         let enr_url = record.enr_url().unwrap();
         let parsed_record = NodeRecord::from_enr_url(&enr_url).unwrap();
