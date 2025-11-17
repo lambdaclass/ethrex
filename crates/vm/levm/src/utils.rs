@@ -26,6 +26,7 @@ use ethrex_common::{
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
+use k256::ecdsa::VerifyingKey;
 use std::collections::{BTreeMap, HashMap};
 pub type Storage = HashMap<U256, H256>;
 
@@ -348,9 +349,60 @@ pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError
 
 #[cfg(any(feature = "zisk", feature = "risc0", feature = "sp1"))]
 pub fn eip7702_recover_address(
-    _auth_tuple: &AuthorizationTuple,
+    auth_tuple: &AuthorizationTuple,
 ) -> Result<Option<Address>, VMError> {
-    todo!()
+    use ethrex_rlp::encode::RLPEncode;
+    use sha2::Digest;
+    use sha3::Keccak256;
+
+    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+        return Ok(None);
+    }
+    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+        return Ok(None);
+    }
+    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
+        return Ok(None);
+    }
+
+    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
+
+    let mut digest = Keccak256::new();
+    digest.update([MAGIC]);
+    digest.update(rlp_buf);
+
+    let bytes = [
+        auth_tuple.r_signature.to_big_endian(),
+        auth_tuple.s_signature.to_big_endian(),
+    ]
+    .concat();
+
+    let Ok(recovery_id) = k256::ecdsa::RecoveryId::try_from(
+        TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
+    ) else {
+        return Ok(None);
+    };
+
+    let Ok(signature) = k256::ecdsa::Signature::from_slice(&bytes) else {
+        return Ok(None);
+    };
+
+    let Ok(authority) = VerifyingKey::recover_from_digest(digest, &signature, recovery_id) else {
+        return Ok(None);
+    };
+
+    let public_key = authority.to_encoded_point(false).to_bytes();
+    let mut hasher = Keccak256::new();
+    hasher.update(public_key.get(1..).ok_or(InternalError::Slicing)?);
+    let address_hash = hasher.finalize();
+
+    // Get the last 20 bytes of the hash -> Address
+    let authority_address_bytes: [u8; 20] = address_hash
+        .get(12..32)
+        .ok_or(InternalError::Slicing)?
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
 
 #[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]

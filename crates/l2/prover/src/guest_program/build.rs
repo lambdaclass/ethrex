@@ -113,7 +113,7 @@ fn build_zisk_program() {
         .args([
             "rom-setup",
             "-e",
-            "target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program"
+            "target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
         ])
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
