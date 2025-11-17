@@ -23,6 +23,9 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     // We write the input to a temp file because ziskemu currently only accepts
     // input files from disk
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
+    dbg!(INPUT_PATH);
+    dbg!(OUTPUT_PATH);
+    dbg!(ELF_PATH);
 
     let mut cmd = Command::new("ziskemu");
 
