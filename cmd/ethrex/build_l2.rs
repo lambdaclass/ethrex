@@ -125,6 +125,10 @@ pub fn download_script() {
             &Path::new("../../crates/l2/contracts/src/l2/L2Upgradeable.sol"),
             "UpgradeableSystemContract",
         ),
+        (
+            &Path::new("../../crates/l2/contracts/src/l2/FeeTokenRegistry.sol"),
+            "FeeTokenRegistry",
+        ),
     ];
     for (path, name) in l2_contracts {
         compile_contract_to_bytecode(
@@ -273,7 +277,8 @@ fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
 
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, CREATE2DEPLOYER_ADDRESS, DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
-    L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS, address_to_word, get_erc1967_slot,
+    FEE_TOKEN_REGISTRY_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS,
+    address_to_word, get_erc1967_slot,
 };
 
 #[allow(clippy::enum_variant_names)]
@@ -327,6 +332,12 @@ fn common_bridge_l2_runtime(out_dir: &Path) -> Vec<u8> {
 /// Bytecode of the L2ToL1Messenger contract.
 fn l2_to_l1_messenger_runtime(out_dir: &Path) -> Vec<u8> {
     let path = out_dir.join("contracts/solc_out/L2ToL1Messenger.bytecode");
+    fs::read(path).expect("Failed to read bytecode file")
+}
+
+/// Bytecode of the FeeTokenRegistry contract.
+fn fee_token_registry_runtime(out_dir: &Path) -> Vec<u8> {
+    let path = out_dir.join("contracts/solc_out/FeeTokenRegistry.bytecode");
     fs::read(path).expect("Failed to read bytecode file")
 }
 
@@ -433,7 +444,14 @@ pub fn update_genesis_file(
         out_dir,
     )?;
 
-    for address in 0xff00..0xfffd {
+    add_with_proxy(
+        &mut genesis,
+        FEE_TOKEN_REGISTRY_ADDRESS,
+        fee_token_registry_runtime(out_dir),
+        out_dir,
+    )?;
+
+    for address in 0xff00..0xfffc {
         add_placeholder_proxy(&mut genesis, Address::from_low_u64_be(address), out_dir)?;
     }
 
