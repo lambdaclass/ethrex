@@ -167,7 +167,7 @@ mod tests {
     fn test_peer_data_to_serialized_peer() {
         // Test that we can correctly serialize an active Peer
         let node = Node::from_enode_url("enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303").unwrap();
-        let record = NodeRecord::from_node(&node, 17, &SecretKey::new(&mut OsRng)).unwrap();
+        let record = NodeRecord::from_node(&node, 17, &SecretKey::new(&mut OsRng), None).unwrap();
         let mut peer = PeerData::new(
             node,
             Some(record),

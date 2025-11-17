@@ -347,7 +347,12 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Result<Self, NodeError> {
+    pub fn from_node(
+        node: &Node,
+        seq: u64,
+        signer: &SecretKey,
+        fork_id: Option<ForkId>,
+    ) -> Result<Self, NodeError> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
@@ -371,6 +376,12 @@ impl NodeRecord {
         record
             .pairs
             .push(("udp".into(), node.udp_port.encode_to_vec().into()));
+
+        if let Some(fork_id) = fork_id {
+            record
+                .pairs
+                .push(("eth".into(), fork_id.encode_to_vec().into()));
+        }
 
         record.signature = record.sign_record(signer)?;
 
@@ -581,7 +592,7 @@ mod tests {
             addr.port(),
             public_key_from_signing_key(&signer),
         );
-        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        let mut record = NodeRecord::from_node(&node, 1, &signer, None).unwrap();
         // Drop fork ID since the test doesn't use it
         record.pairs.retain(|(k, _)| k != "eth");
         record.sign_record(&signer).unwrap();
