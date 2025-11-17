@@ -35,8 +35,6 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         .arg(ELF_PATH)
         .arg("--inputs")
         .arg(INPUT_PATH)
-        .arg("--output")
-        .arg(OUTPUT_PATH)
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit());
 
