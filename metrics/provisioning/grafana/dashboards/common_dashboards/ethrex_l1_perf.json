@@ -1606,6 +1606,108 @@
                 "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
+                "axisLabel": "Requests/sec",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 15,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 4,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 14,
+            "w": 4,
+            "x": 0,
+            "y": 28
+          },
+          "id": 116,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "sortBy": "Mean",
+              "sortDesc": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "repeat": "instance",
+          "repeatDirection": "v",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "sum by (outcome) (rate(rpc_requests_total{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[$__range]))",
+              "legendFormat": "{{outcome}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Engine Success/Error Rate - $instance",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
@@ -1656,8 +1758,8 @@
           },
           "gridPos": {
             "h": 14,
-            "w": 7,
-            "x": 0,
+            "w": 5,
+            "x": 4,
             "y": 28
           },
           "id": 113,
@@ -1728,8 +1830,8 @@
           },
           "gridPos": {
             "h": 14,
-            "w": 5,
-            "x": 7,
+            "w": 3,
+            "x": 9,
             "y": 28
           },
           "id": 115,
@@ -1961,7 +2063,7 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 12,
+            "h": 14,
             "w": 4,
             "x": 0,
             "y": 29
@@ -2030,7 +2132,7 @@
           "gridPos": {
             "h": 14,
             "w": 7,
-            "x": 0,
+            "x": 4,
             "y": 29
           },
           "id": 103,
@@ -2129,7 +2231,7 @@
                 "properties": [
                   {
                     "id": "custom.width",
-                    "value": 300
+                    "value": 214
                   }
                 ]
               }
@@ -2137,8 +2239,8 @@
           },
           "gridPos": {
             "h": 14,
-            "w": 5,
-            "x": 7,
+            "w": 3,
+            "x": 11,
             "y": 29
           },
           "id": 104,
@@ -2251,8 +2353,8 @@
           },
           "gridPos": {
             "h": 14,
-            "w": 6,
-            "x": 12,
+            "w": 4,
+            "x": 14,
             "y": 29
           },
           "id": 101,
@@ -3384,7 +3486,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 1438
+            "y": 188
           },
           "id": 56,
           "options": {
@@ -3404,7 +3506,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0",
+          "pluginVersion": "12.2.1",
           "targets": [
             {
               "editorMode": "code",
@@ -3483,7 +3585,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 1438
+            "y": 188
           },
           "id": 57,
           "options": {
@@ -3503,7 +3605,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0",
+          "pluginVersion": "12.2.1",
           "targets": [
             {
               "editorMode": "code",
@@ -3583,7 +3685,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 1438
+            "y": 188
           },
           "id": 58,
           "options": {
@@ -3603,7 +3705,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0",
+          "pluginVersion": "12.2.1",
           "targets": [
             {
               "editorMode": "code",
@@ -3705,5 +3807,5 @@
   "timezone": "utc",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 40
+  "version": 41
 }
