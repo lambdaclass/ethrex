@@ -73,7 +73,7 @@ impl RLPEncode for Block {
             .withdrawals
             .as_ref()
             .map(|w| w.length())
-            .unwrap_or(1);
+            .unwrap_or(0);
 
         list_length(payload_len)
     }
