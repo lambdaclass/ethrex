@@ -164,7 +164,7 @@ impl RLPEncode for u64 {
     #[inline]
     fn length(&self) -> usize {
         1usize
-            + ((64 - self.leading_zeros() as usize).div_ceil(8)
+            + (((u64::BITS as usize) - self.leading_zeros() as usize).div_ceil(8)
                 * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
     }
 }
@@ -595,24 +595,29 @@ mod tests {
     #[test]
     fn can_encode_u32() {
         let mut encoded = Vec::new();
-        0u16.encode(&mut encoded);
+        0u32.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL]);
+        assert_eq!(encoded.len(), 0u32.length());
 
         let mut encoded = Vec::new();
-        1u16.encode(&mut encoded);
+        1u32.encode(&mut encoded);
         assert_eq!(encoded, vec![0x01]);
+        assert_eq!(encoded.len(), 1u32.length());
 
         let mut encoded = Vec::new();
-        0x7Fu16.encode(&mut encoded);
+        0x7Fu32.encode(&mut encoded);
         assert_eq!(encoded, vec![0x7f]);
+        assert_eq!(encoded.len(), 0x7Fu32.length());
 
         let mut encoded = Vec::new();
-        0x80u16.encode(&mut encoded);
+        0x80u32.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x80]);
+        assert_eq!(encoded.len(), 0x80u32.length());
 
         let mut encoded = Vec::new();
-        0x90u16.encode(&mut encoded);
+        0x90u32.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x90]);
+        assert_eq!(encoded.len(), 0x90u32.length());
     }
 
     #[test]
@@ -620,22 +625,27 @@ mod tests {
         let mut encoded = Vec::new();
         0u16.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL]);
+        assert_eq!(encoded.len(), 0u16.length());
 
         let mut encoded = Vec::new();
         1u16.encode(&mut encoded);
         assert_eq!(encoded, vec![0x01]);
+        assert_eq!(encoded.len(), 1u16.length());
 
         let mut encoded = Vec::new();
         0x7Fu16.encode(&mut encoded);
         assert_eq!(encoded, vec![0x7f]);
+        assert_eq!(encoded.len(), 0x7Fu16.length());
 
         let mut encoded = Vec::new();
         0x80u16.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x80]);
+        assert_eq!(encoded.len(), 0x80u16.length());
 
         let mut encoded = Vec::new();
         0x90u16.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x90]);
+        assert_eq!(encoded.len(), 0x90u16.length());
     }
 
     #[test]
@@ -643,22 +653,27 @@ mod tests {
         let mut encoded = Vec::new();
         0u8.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL]);
+        assert_eq!(encoded.len(), 0u8.length());
 
         let mut encoded = Vec::new();
         1u8.encode(&mut encoded);
         assert_eq!(encoded, vec![0x01]);
+        assert_eq!(encoded.len(), 1u8.length());
 
         let mut encoded = Vec::new();
         0x7Fu8.encode(&mut encoded);
         assert_eq!(encoded, vec![0x7f]);
+        assert_eq!(encoded.len(), 0x7Fu8.length());
 
         let mut encoded = Vec::new();
         0x80u8.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x80]);
+        assert_eq!(encoded.len(), 0x80u8.length());
 
         let mut encoded = Vec::new();
         0x90u8.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x90]);
+        assert_eq!(encoded.len(), 0x90u8.length());
     }
 
     #[test]
