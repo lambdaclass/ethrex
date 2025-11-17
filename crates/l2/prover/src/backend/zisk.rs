@@ -30,7 +30,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::new("ziskemu");
 
     let start = std::time::Instant::now();
-    let output = cmd
+    let command = cmd
         .arg("--elf")
         .arg(ELF_PATH)
         .arg("--inputs")
@@ -38,11 +38,14 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         .arg("--output")
         .arg(OUTPUT_PATH)
         .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .output()?;
-    let duration = start.elapsed();
+        .stderr(Stdio::inherit());
 
+    let duration = start.elapsed();
+    let output = command.output();
+
+    // Remove input file before any early return
     std::fs::remove_file(INPUT_PATH)?;
+    let output = output?;
 
     if !output.status.success() {
         return Err(format!(
@@ -79,7 +82,7 @@ pub fn prove(
     let mut cmd = Command::new("cargo-zisk");
 
     let start = std::time::Instant::now();
-    let output = cmd
+    let command = cmd
         .arg("prove")
         .arg("--elf")
         .arg(ELF_PATH)
@@ -91,9 +94,14 @@ pub fn prove(
         .arg("--aggregation")
         .arg("--final-snark")
         .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .output()?;
+        .stderr(Stdio::inherit());
+
     let duration = start.elapsed();
+    let output = command.output();
+
+    // Remove input file before any early return
+    std::fs::remove_file(INPUT_PATH)?;
+    let output = output?;
 
     if !output.status.success() {
         return Err(format!(
