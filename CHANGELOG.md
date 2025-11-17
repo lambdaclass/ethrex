@@ -5,9 +5,6 @@
 ### 2025-11-17
 
 - Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding specialized length methods to each trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
-
-### 2025-11-17
-
 - Avoid temporary allocations when decoding and hashing trie nodes [#5353](https://github.com/lambdaclass/ethrex/pull/5353)
 
 ### 2025-11-13
