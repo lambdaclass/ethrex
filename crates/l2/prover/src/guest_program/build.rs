@@ -93,9 +93,10 @@ fn build_sp1_program() {
 
 #[cfg(all(not(clippy), feature = "zisk-guest"))]
 fn build_zisk_program() {
-    let mut command = std::process::Command::new("cargo");
+    let mut build_command = std::process::Command::new("cargo");
+    let mut setup_command = std::process::Command::new("cargo-zisk");
 
-    command
+    build_command
         .env("RUSTC", rustc_path("zisk"))
         .args([
             "+zisk",
@@ -107,14 +108,28 @@ fn build_zisk_program() {
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .current_dir("./src/zisk");
+    setup_command
+        .env("RUSTC", rustc_path("zisk"))
+        .args([
+            "rom-setup",
+            "-e",
+            "target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program"
+        ])
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .current_dir("./src/zisk");
 
-    println!("{command:?}");
+    println!("{build_command:?}");
+    println!("{setup_command:?}");
 
     let start = std::time::Instant::now();
 
-    let status = command
+    let build_status = build_command
         .status()
         .expect("Failed to execute zisk build command");
+    let setup_status = setup_command
+        .status()
+        .expect("Failed to execute zisk setup command");
 
     let duration = start.elapsed();
 
@@ -123,8 +138,11 @@ fn build_zisk_program() {
         duration.as_secs_f64()
     );
 
-    if !status.success() {
+    if !build_status.success() {
         panic!("Failed to build guest program with zisk toolchain");
+    }
+    if !setup_status.success() {
+        panic!("Failed to setup compiled guest program with zisk toolchain");
     }
 }
 
