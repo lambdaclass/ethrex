@@ -187,7 +187,9 @@ impl Trie {
     /// Returns keccak(RLP_NULL) if the trie is empty
     pub fn hash_no_commit(&self) -> H256 {
         if self.root.is_valid() {
-            self.root.compute_hash().finalize()
+            // 512 is the maximum size of an encoded node
+            let mut buf = Vec::with_capacity(512);
+            self.root.compute_hash_no_alloc(&mut buf).finalize()
         } else {
             *EMPTY_TRIE_HASH
         }

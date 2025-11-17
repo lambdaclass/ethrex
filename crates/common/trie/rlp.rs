@@ -86,58 +86,68 @@ impl RLPEncode for Node {
 
 impl RLPDecode for Node {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let mut rlp_items = vec![];
+        let mut rlp_items_len = 0;
+        let mut rlp_items: [Option<&[u8]>; 17] = Default::default();
         let mut decoder = Decoder::new(rlp)?;
         let mut item;
         // Get encoded fields
 
         // Check if we reached the end or if we decoded more items than the ones we need
-        while !decoder.is_done() && rlp_items.len() <= 17 {
-            (item, decoder) = decoder.get_encoded_item()?;
-            rlp_items.push(item);
+        while !decoder.is_done() && rlp_items_len < 17 {
+            (item, decoder) = decoder.get_encoded_item_ref()?;
+            rlp_items[rlp_items_len] = Some(item);
+            rlp_items_len += 1;
+        }
+        if !decoder.is_done() {
+            return Err(RLPDecodeError::Custom(
+                "Invalid arg count for Node, expected 2 or 17, got more than 17".to_string(),
+            ));
         }
         // Deserialize into node depending on the available fields
-        Ok((
-            match rlp_items.len() {
-                // Leaf or Extension Node
-                2 => {
-                    let (path, _) = decode_bytes(&rlp_items[0])?;
-                    let path = Nibbles::decode_compact(path);
-                    if path.is_leaf() {
-                        // Decode as Leaf
-                        let (value, _) = decode_bytes(&rlp_items[1])?;
-                        LeafNode {
-                            partial: path,
-                            value: value.to_vec(),
-                        }
-                        .into()
-                    } else {
-                        // Decode as Extension
-                        ExtensionNode {
-                            prefix: path,
-                            child: decode_child(&rlp_items[1]).into(),
-                        }
-                        .into()
-                    }
-                }
-                // Branch Node
-                17 => {
-                    let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
-                    let (value, _) = decode_bytes(&rlp_items[16])?;
-                    BranchNode {
-                        choices,
+        let node = match rlp_items_len {
+            // Leaf or Extension Node
+            2 => {
+                let (path, _) = decode_bytes(rlp_items[0].expect("we already checked the length"))?;
+                let path = Nibbles::decode_compact(path);
+                if path.is_leaf() {
+                    // Decode as Leaf
+                    let (value, _) =
+                        decode_bytes(rlp_items[1].expect("we already checked the length"))?;
+                    LeafNode {
+                        partial: path,
                         value: value.to_vec(),
                     }
                     .into()
+                } else {
+                    // Decode as Extension
+                    ExtensionNode {
+                        prefix: path,
+                        child: decode_child(rlp_items[1].expect("we already checked the length"))
+                            .into(),
+                    }
+                    .into()
                 }
-                n => {
-                    return Err(RLPDecodeError::Custom(format!(
-                        "Invalid arg count for Node, expected 2 or 17, got {n}"
-                    )));
+            }
+            // Branch Node
+            17 => {
+                let choices = array::from_fn(|i| {
+                    decode_child(rlp_items[i].expect("we already checked the length")).into()
+                });
+                let (value, _) =
+                    decode_bytes(rlp_items[16].expect("we already checked the length"))?;
+                BranchNode {
+                    choices,
+                    value: value.to_vec(),
                 }
-            },
-            decoder.finish()?,
-        ))
+                .into()
+            }
+            n => {
+                return Err(RLPDecodeError::Custom(format!(
+                    "Invalid arg count for Node, expected 2 or 17, got {n}"
+                )));
+            }
+        };
+        Ok((node, decoder.finish()?))
     }
 }
 

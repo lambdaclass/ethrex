@@ -68,16 +68,19 @@ impl<'a> Decoder<'a> {
 
     /// Returns the next field without decoding it, i.e. the payload bytes including its prefix.
     pub fn get_encoded_item(self) -> Result<(Vec<u8>, Self), RLPDecodeError> {
-        match get_item_with_prefix(self.payload) {
-            Ok((field, rest)) => {
-                let updated_self = Self {
-                    payload: rest,
-                    ..self
-                };
-                Ok((field.to_vec(), updated_self))
-            }
-            Err(err) => Err(err),
-        }
+        self.get_encoded_item_ref()
+            .map(|(field, updated_self)| (field.to_vec(), updated_self))
+    }
+
+    /// Returns the next field without decoding it, i.e. the payload bytes including its prefix.
+    pub fn get_encoded_item_ref(self) -> Result<(&'a [u8], Self), RLPDecodeError> {
+        get_item_with_prefix(self.payload).map(|(field, rest)| {
+            let updated_self = Self {
+                payload: rest,
+                ..self
+            };
+            (field, updated_self)
+        })
     }
 
     /// Returns Some(field) if there's some field to decode, otherwise returns None
