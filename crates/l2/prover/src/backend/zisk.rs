@@ -24,14 +24,10 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
     let args = vec![
-        "prove",
         "--elf",
         ELF_PATH,
-        "--input",
+        "--inputs",
         INPUT_PATH,
-        "--output-dir",
-        OUTPUT_PATH,
-        "--aggregation",
     ];
     let output = Command::new("ziskemu")
         .args(args)
@@ -79,7 +75,6 @@ pub fn prove(
         .args(static_args)
         .args(conditional_groth16_arg)
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .output()?;
 
