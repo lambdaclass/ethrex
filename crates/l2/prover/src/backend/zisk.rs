@@ -7,7 +7,7 @@ const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 
 const OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output/");
 
-const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_elf");
+const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
 pub struct ProveOutput(pub Vec<u8>);
 
@@ -23,9 +23,6 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     // We write the input to a temp file because ziskemu currently only accepts
     // input files from disk
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
-    dbg!(INPUT_PATH);
-    dbg!(OUTPUT_PATH);
-    dbg!(ELF_PATH);
 
     let mut cmd = Command::new("ziskemu");
 
