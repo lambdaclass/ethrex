@@ -1,11 +1,17 @@
-use std::process::{Command, Stdio};
+use std::{
+    io::ErrorKind,
+    process::{Command, Stdio},
+};
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 
-const OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output/vadcop_final_proof.compressed.bin");
+const OUTPUT_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/zisk_output/vadcop_final_proof.compressed.bin"
+);
 
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
@@ -103,7 +109,7 @@ pub fn to_batch_proof(
 fn write_elf_file() -> Result<(), Box<dyn std::error::Error>> {
     match std::fs::read(ELF_PATH) {
         Ok(existing_content) => {
-            if existing_content != content {
+            if existing_content != ZKVM_ZISK_PROGRAM_ELF {
                 std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
             }
         }
@@ -111,7 +117,7 @@ fn write_elf_file() -> Result<(), Box<dyn std::error::Error>> {
             if e.kind() == ErrorKind::NotFound {
                 std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
             } else {
-                return Err(e);
+                return Err(Box::new(e));
             }
         }
     }
