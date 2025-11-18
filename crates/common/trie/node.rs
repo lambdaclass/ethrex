@@ -171,12 +171,19 @@ impl NodeRef {
         }
     }
 
-    pub fn memoize_hashes(&self) {
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> &NodeHash {
+        match self {
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash_no_alloc(buf)),
+            NodeRef::Hash(hash) => hash,
+        }
+    }
+
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
         if let NodeRef::Node(node, hash) = &self
             && hash.get().is_none()
         {
-            node.memoize_hashes();
-            let _ = hash.set(node.compute_hash());
+            node.memoize_hashes(buf);
+            let _ = hash.set(node.compute_hash_no_alloc(buf));
         }
     }
 
@@ -217,7 +224,8 @@ impl From<Arc<Node>> for NodeRef {
 
 impl PartialEq for NodeRef {
     fn eq(&self, other: &Self) -> bool {
-        self.compute_hash() == other.compute_hash()
+        let mut buf = Vec::new();
+        self.compute_hash_no_alloc(&mut buf) == other.compute_hash_no_alloc(&mut buf)
     }
 }
 
@@ -358,24 +366,35 @@ impl Node {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        self.memoize_hashes();
+        let mut buf = Vec::new();
+        self.memoize_hashes(&mut buf);
         match self {
-            Node::Branch(n) => n.compute_hash(),
-            Node::Extension(n) => n.compute_hash(),
-            Node::Leaf(n) => n.compute_hash(),
+            Node::Branch(n) => n.compute_hash_no_alloc(&mut buf),
+            Node::Extension(n) => n.compute_hash_no_alloc(&mut buf),
+            Node::Leaf(n) => n.compute_hash_no_alloc(&mut buf),
+        }
+    }
+
+    /// Computes the node's hash
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+        self.memoize_hashes(buf);
+        match self {
+            Node::Branch(n) => n.compute_hash_no_alloc(buf),
+            Node::Extension(n) => n.compute_hash_no_alloc(buf),
+            Node::Leaf(n) => n.compute_hash_no_alloc(buf),
         }
     }
 
     /// Recursively memoizes the hashes of all nodes of the subtrie that has
     /// `self` as root (post-order traversal)
-    pub fn memoize_hashes(&self) {
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
         match self {
             Node::Branch(n) => {
                 for child in &n.choices {
-                    child.memoize_hashes();
+                    child.memoize_hashes(buf);
                 }
             }
-            Node::Extension(n) => n.child.memoize_hashes(),
+            Node::Extension(n) => n.child.memoize_hashes(buf),
             _ => {}
         }
     }
