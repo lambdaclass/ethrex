@@ -107,6 +107,26 @@ impl TrieDB for RocksDBTrieDB {
         Ok(res)
     }
 
+    fn get_nodes_in_path(
+        &self,
+        key: Nibbles,
+        start: usize,
+        count: usize,
+    ) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
+        let cf = self.cf_handle()?;
+        let mut res = Vec::with_capacity(key.len());
+        let key = self.make_key(key);
+        let keys = (start..start + count).map(|i| &key[..i]);
+        let values = self.db.batched_multi_get_cf(&cf, keys, true);
+        for value in values {
+            let value = value
+                .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?
+                .map(|v| v.to_vec());
+            res.push(value);
+        }
+        Ok(res)
+    }
+
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let mut batch = rocksdb::WriteBatch::default();
 
