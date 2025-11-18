@@ -82,7 +82,7 @@ pub fn prove(
 
     let output = Command::new("cargo-zisk")
         .args(static_args)
-        .args(conditional_groth16_arg)
+        //.args(conditional_groth16_arg)
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit())
         .output()?;
