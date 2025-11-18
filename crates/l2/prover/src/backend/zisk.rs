@@ -27,16 +27,14 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::new("ziskemu");
 
     let start = std::time::Instant::now();
-    let command = cmd
+    let output = cmd
         .arg("--elf")
         .arg(ELF_PATH)
         .arg("--inputs")
         .arg(INPUT_PATH)
         .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    let duration = start.elapsed();
-    let output = command.output()?;
+        .stderr(Stdio::inherit())
+        .output()?;
 
     if !output.status.success() {
         return Err(format!(
@@ -45,11 +43,6 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
-
-    println!(
-        "ZisK guest program executed in {:.2?} seconds",
-        duration.as_secs_f64()
-    );
 
     Ok(())
 }
@@ -80,6 +73,7 @@ pub fn prove(
         OUTPUT_PATH,
         "--aggregation",
     ];
+    dbg!(&static_args);
     let conditional_groth16_arg = if let ProofFormat::Groth16 = format {
         vec!["--final-snark"]
     } else {
@@ -89,8 +83,8 @@ pub fn prove(
     let output = Command::new("cargo-zisk")
         .args(static_args)
         .args(conditional_groth16_arg)
-        .stdin(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .output()?;
 
     if !output.status.success() {
