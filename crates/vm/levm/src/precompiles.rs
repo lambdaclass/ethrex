@@ -899,7 +899,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     Ok(Bytes::from_owner(result))
 }
 
-#[cfg(any(feature = "sp1", feature = "risc0"))]
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
@@ -955,7 +955,7 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     Ok(result == substrate_bn::Gt::one())
 }
 
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+#[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use lambdaworks_math::errors::PairingError;

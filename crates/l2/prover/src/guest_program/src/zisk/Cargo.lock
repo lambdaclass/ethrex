@@ -2727,9 +2727,9 @@ dependencies = [
 [[package]]
 name = "tiny-keccak"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak/?branch=zisk#a5cb98ca4d9d390b39b10c9e81a061fd830aea35"
 dependencies = [
+ "cfg-if",
  "crunchy",
 ]
 
