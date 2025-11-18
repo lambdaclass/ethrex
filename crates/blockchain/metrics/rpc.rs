@@ -14,7 +14,7 @@ fn initialize_rpc_outcomes_counter() -> CounterVec {
     register_counter_vec!(
         "rpc_requests_total",
         "Total number of RPC requests partitioned by namespace, method, and outcome",
-        &["namespace", "function_name", "outcome"],
+        &["namespace", "method", "outcome"],
     )
     .unwrap()
 }
@@ -23,7 +23,7 @@ fn initialize_rpc_duration_histogram() -> HistogramVec {
     register_histogram_vec!(
         "rpc_request_duration_seconds",
         "Histogram of RPC request handling duration partitioned by namespace and method",
-        &["namespace", "function_name"],
+        &["namespace", "method"],
     )
     .unwrap()
 }
@@ -44,9 +44,9 @@ impl RpcOutcome {
     }
 }
 
-pub fn record_rpc_outcome(namespace: &str, function_name: &str, outcome: RpcOutcome) {
+pub fn record_rpc_outcome(namespace: &str, method: &str, outcome: RpcOutcome) {
     METRICS_RPC_REQUEST_OUTCOMES
-        .with_label_values(&[namespace, function_name, outcome.as_label()])
+        .with_label_values(&[namespace, method, outcome.as_label()])
         .inc();
 }
 
@@ -61,15 +61,15 @@ pub fn initialize_rpc_metrics() {
 ///
 /// # Parameters
 /// * `namespace` - Category for the metric (e.g., "rpc", "engine", "block_execution")
-/// * `function_name` - Name identifier for the operation being timed
+/// * `method` - Name identifier for the operation being timed
 /// * `future` - The async operation to time
 ///
-pub async fn record_async_duration<Fut, T>(namespace: &str, function_name: &str, future: Fut) -> T
+pub async fn record_async_duration<Fut, T>(namespace: &str, method: &str, future: Fut) -> T
 where
     Fut: Future<Output = T>,
 {
     let timer = METRICS_RPC_DURATION
-        .with_label_values(&[namespace, function_name])
+        .with_label_values(&[namespace, method])
         .start_timer();
 
     let output = future.await;
