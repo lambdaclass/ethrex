@@ -32,7 +32,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -180,7 +180,12 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    #[instrument(level = "trace", name = "Execute Block", skip_all)]
+    #[instrument(
+        level = "trace",
+        name = "Execute Block",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     fn execute_block_pipeline(
         &self,
         block: &Block,
@@ -216,28 +221,40 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
+            let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
-            let execution_handle = s.spawn(move || -> Result<_, ChainError> {
-                let execution_result = vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+            let execution_handle = std::thread::Builder::new()
+                .name("block_executor_execution".to_string())
+                .spawn_scoped(s, move || -> Result<_, ChainError> {
+                    let execution_result =
+                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
-                // Validate execution went alright
-                validate_gas_used(&execution_result.receipts, &block.header)?;
-                validate_receipts_root(&block.header, &execution_result.receipts)?;
-                validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+                    // Validate execution went alright
+                    validate_gas_used(&execution_result.receipts, &block.header)?;
+                    validate_receipts_root(&block.header, &execution_result.receipts)?;
+                    validate_requests_hash(
+                        &block.header,
+                        &chain_config,
+                        &execution_result.requests,
+                    )?;
 
-                let exec_end_instant = Instant::now();
-                Ok((execution_result, exec_end_instant))
-            });
-            let merkleize_handle = s.spawn(move || -> Result<_, StoreError> {
-                let account_updates_list = self.handle_merkleization(
-                    rx,
-                    &parent_header,
-                    queue_length_ref,
-                    &mut max_queue_length,
-                )?;
-                let merkle_end_instant = Instant::now();
-                Ok((account_updates_list, merkle_end_instant))
-            });
+                    let exec_end_instant = Instant::now();
+                    Ok((execution_result, exec_end_instant))
+                })
+                .expect("Failed to spawn block_executor exec thread");
+            let merkleize_handle = std::thread::Builder::new()
+                .name("block_executor_merkleizer".to_string())
+                .spawn_scoped(s, move || -> Result<_, StoreError> {
+                    let account_updates_list = self.handle_merkleization(
+                        rx,
+                        &parent_header,
+                        queue_length_ref,
+                        max_queue_length_ref,
+                    )?;
+                    let merkle_end_instant = Instant::now();
+                    Ok((account_updates_list, merkle_end_instant))
+                })
+                .expect("Failed to spawn block_executor merkleizer thread");
             (
                 execution_handle.join().unwrap_or_else(|_| {
                     Err(ChainError::Custom("execution thread panicked".to_string()))
@@ -268,7 +285,12 @@ impl Blockchain {
         ))
     }
 
-    #[instrument(level = "trace", name = "Trie update", skip_all)]
+    #[instrument(
+        level = "trace",
+        name = "Trie update",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     fn handle_merkleization(
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
@@ -394,7 +416,7 @@ impl Blockchain {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                debug!(count = update.added_storage.len(), "With storages");
+                trace!(count = update.added_storage.len(), "Update storages");
                 let (storage_trie, storage_updates_map) = storage_updates_map
                     .entry(hashed_address_h256)
                     .or_insert_with(|| {
@@ -483,27 +505,13 @@ impl Blockchain {
             ))?
             .header;
 
-        // Later on, we need to access block hashes by number. To avoid needing
-        // to apply fork choice for each block, we cache them here.
-        // The clone is not redundant, the hash function modifies the original block.
-        #[allow(clippy::redundant_clone)]
-        let mut block_hashes_map: BTreeMap<u64, H256> = blocks
-            .iter()
-            .cloned()
-            .map(|block| (block.header.number, block.hash()))
-            .collect();
-
-        block_hashes_map.insert(
-            first_block_header.number.saturating_sub(1),
-            first_block_header.parent_hash,
-        );
-
         // Get state at previous block
         let trie = self
             .storage
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
+        let initial_state_root = trie.hash_no_commit();
 
         let (mut current_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
@@ -526,7 +534,7 @@ impl Blockchain {
             ChainError::WitnessGeneration("Failed to get root state node".to_string())
         })?;
 
-        let mut block_hashes = HashMap::new();
+        let mut blockhash_opcode_references = HashMap::new();
         let mut codes = Vec::new();
 
         for (i, block) in blocks.iter().enumerate() {
@@ -590,7 +598,7 @@ impl Blockchain {
                 })?
                 .clone();
 
-            block_hashes.extend(logger_block_hashes);
+            blockhash_opcode_references.extend(logger_block_hashes);
 
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
@@ -677,21 +685,14 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
                 })?;
                 let witness = std::mem::take(&mut *witness);
-                let witness = witness.into_iter().collect::<Vec<_>>();
+                let witness = witness.into_values().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
                 touched_account_storage_slots.entry(address).or_default();
             }
 
             let (new_state_trie_witness, updated_trie) = TrieLogger::open_trie(
                 self.storage
-                    .state_trie(
-                        block_hashes_map
-                            .get(&block.header.number)
-                            .ok_or(ChainError::WitnessGeneration(
-                                "Block hash not found for witness generation".to_string(),
-                            ))?
-                            .to_owned(),
-                    )
+                    .state_trie(block.header.hash())
                     .map_err(|_| ChainError::ParentStateNotFound)?
                     .ok_or(ChainError::ParentStateNotFound)?,
             );
@@ -706,63 +707,63 @@ impl Blockchain {
                 })?
                 .iter()
             {
-                accumulated_state_trie_witness.insert(state_trie_witness.clone());
+                accumulated_state_trie_witness
+                    .insert(*state_trie_witness.0, state_trie_witness.1.clone());
             }
 
             current_trie_witness = new_state_trie_witness;
         }
 
-        used_trie_nodes
-            .extend_from_slice(&Vec::from_iter(accumulated_state_trie_witness.into_iter()));
+        used_trie_nodes.extend_from_slice(&Vec::from_iter(
+            accumulated_state_trie_witness.into_values(),
+        ));
 
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty()
             && let Some(root) = root_node
         {
-            used_trie_nodes.push(root.encode_to_vec());
+            used_trie_nodes.push((*root).clone());
         }
 
-        let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
-
-        needed_block_numbers.sort();
-
-        // Last needed block header for the witness is the parent of the last block we need to execute
-        let last_needed_block_number = blocks
-            .last()
-            .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
-            .header
-            .number
-            .saturating_sub(1);
-
-        // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
-        let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
-
-        if let Some(block_number_from_logger) = needed_block_numbers.first()
-            && **block_number_from_logger < first_needed_block_number
-        {
-            first_needed_block_number = **block_number_from_logger;
-        }
-
+        // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
         let mut block_headers_bytes = Vec::new();
 
-        for block_number in first_needed_block_number..=last_needed_block_number {
-            let hash = block_hashes_map
-                .get(&block_number)
-                .ok_or(ChainError::WitnessGeneration(format!(
-                    "Failed to get block {block_number} hash"
-                )))?;
-            let header = self.storage.get_block_header_by_hash(*hash)?.ok_or(
-                ChainError::WitnessGeneration(format!("Failed to get block {block_number} header")),
-            )?;
-            block_headers_bytes.push(header.encode_to_vec());
+        let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
+        let first_needed_block_hash = first_blockhash_opcode_number
+            .and_then(|n| {
+                (*n < first_block_header.number.saturating_sub(1))
+                    .then(|| blockhash_opcode_references.get(n))?
+                    .copied()
+            })
+            .unwrap_or(first_block_header.parent_hash);
+
+        // At the beginning this is the header of the last block to execute.
+        let mut current_header = blocks
+            .last()
+            .ok_or_else(|| ChainError::WitnessGeneration("Empty batch".to_string()))?
+            .header
+            .clone();
+
+        // Headers from latest - 1 until we reach first block header we need.
+        // We do it this way because we want to fetch headers by hash, not by number
+        while current_header.hash() != first_needed_block_hash {
+            let parent_hash = current_header.parent_hash;
+            let current_number = current_header.number - 1;
+
+            current_header = self
+                .storage
+                .get_block_header_by_hash(parent_hash)?
+                .ok_or_else(|| {
+                    ChainError::WitnessGeneration(format!(
+                        "Failed to get block {current_number} header"
+                    ))
+                })?;
+
+            block_headers_bytes.push(current_header.encode_to_vec());
         }
 
-        let chain_config = self.storage.get_chain_config();
-
-        let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
-
+        // Create a list of all read/write addresses and storage slots
         let mut keys = Vec::new();
-
         for (address, touched_storage_slots) in touched_account_storage_slots {
             keys.push(address.as_bytes().to_vec());
             for slot in touched_storage_slots.iter() {
@@ -770,16 +771,68 @@ impl Blockchain {
             }
         }
 
+        // Get initial state trie root and embed the rest of the trie into it
+        let nodes: BTreeMap<H256, Node> = used_trie_nodes
+            .into_iter()
+            .map(|node| (node.compute_hash().finalize(), node))
+            .collect();
+        let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+            Trie::get_embedded_root(&nodes, initial_state_root)?
+        {
+            Some((*state_trie_root).clone())
+        } else {
+            None
+        };
+
+        // Get all initial storage trie roots and embed the rest of the trie into it
+        let state_trie = if let Some(state_trie_root) = &state_trie_root {
+            Trie::new_temp_with_root(state_trie_root.clone().into())
+        } else {
+            Trie::new_temp()
+        };
+        let mut storage_trie_roots = BTreeMap::new();
+        for key in &keys {
+            if key.len() != 20 {
+                continue; // not an address
+            }
+            let address = Address::from_slice(key);
+            let hashed_address = hash_address(&address);
+            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+                continue; // empty account, doesn't have a storage trie
+            };
+            let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
+            if storage_root_hash == *EMPTY_TRIE_HASH {
+                continue; // empty storage trie
+            }
+            if !nodes.contains_key(&storage_root_hash) {
+                continue; // storage trie isn't relevant to this execution
+            }
+            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+            let NodeRef::Node(node, _) = node else {
+                return Err(ChainError::Custom(
+                    "execution witness does not contain non-empty storage trie".to_string(),
+                ));
+            };
+            storage_trie_roots.insert(address, (*node).clone());
+        }
+
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: first_block_header.number,
-            chain_config,
-            nodes,
+            chain_config: self.storage.get_chain_config(),
+            state_trie_root,
+            storage_trie_roots,
             keys,
         })
     }
 
+    #[instrument(
+        level = "trace",
+        name = "Block DB update",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     pub fn store_block(
         &self,
         block: Block,
@@ -939,7 +992,7 @@ impl Blockchain {
             block_validated_instant,
             exec_merkle_start,
             exec_end_instant,
-            merkle_end_instant,
+            _merkle_end_instant,
             exec_merkle_end_instant,
             stored_instant,
         ]: [Instant; 7],
@@ -972,12 +1025,11 @@ impl Blockchain {
             };
             let extra_log = if as_gigas > 0.0 {
                 format!(
-                    " block validation: {}% exec+merkle: {}% (exec: {}% merkle: {}% max_queue_length: {merkle_queue_length}) store: {}%",
+                    " block validation: {}% | exec(w/merkle): {}% | merkle-only: {}% (max_queue_length: {merkle_queue_length}) | store: {}%",
                     percentage(start_instant, block_validated_instant),
-                    percentage(exec_merkle_start, exec_merkle_end_instant),
                     percentage(exec_merkle_start, exec_end_instant),
-                    percentage(exec_merkle_start, merkle_end_instant),
-                    percentage(merkle_end_instant, stored_instant),
+                    percentage(exec_end_instant, exec_merkle_end_instant),
+                    percentage(exec_merkle_end_instant, stored_instant),
                 )
             } else {
                 "".to_string()
@@ -1390,6 +1442,7 @@ impl Blockchain {
                     "Privileged Transactions are not supported in P2P".to_string(),
                 ));
             }
+            Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
         };
 
         Ok(result)

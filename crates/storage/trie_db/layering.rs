@@ -1,5 +1,4 @@
 use ethrex_common::H256;
-use rayon::iter::{ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -7,7 +6,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: Arc<FxHashMap<Vec<u8>, Vec<u8>>>,
+    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
@@ -48,9 +47,7 @@ impl TrieLayerCache {
             .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
     }
 
-    pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
-        let key = key.as_ref();
-
+    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
         if let Some(filter) = &self.bloom
@@ -128,71 +125,56 @@ impl TrieLayerCache {
 
         self.last_id += 1;
         let entry = TrieLayer {
-            nodes: Arc::new(nodes),
+            nodes,
             parent,
             id: self.last_id,
         };
         self.layers.insert(state_root, Arc::new(entry));
     }
 
-    /// Rebuilds the global bloom filter accruing all current existing layers.
+    /// Rebuilds the global bloom filter by inserting all keys from all layers.
     pub fn rebuild_bloom(&mut self) {
-        let mut blooms: Vec<_> = self
-            .layers
-            .values()
-            .par_bridge()
-            .map(|entry| {
-                let Ok(mut bloom) = Self::create_filter() else {
-                    tracing::warn!("TrieLayerCache: rebuild_bloom could not create filter");
-                    return None;
-                };
-                for (p, _) in entry.nodes.iter() {
-                    if let Err(qfilter::Error::CapacityExceeded) = bloom.insert(p) {
-                        tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                        return None;
-                    }
-                }
-                Some(bloom)
-            })
-            .collect();
-
-        let Some(mut ret) = blooms.pop().flatten() else {
-            tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
+        let Ok(mut new_global_filter) = Self::create_filter() else {
+            tracing::warn!(
+                "TrieLayerCache: rebuild_bloom could not create new filter. Poisoning bloom."
+            );
             self.bloom = None;
             return;
         };
-        for bloom in blooms.iter() {
-            let Some(bloom) = bloom else {
-                tracing::warn!("TrieLayerCache: rebuild_bloom no valid bloom found");
-                self.bloom = None;
-                return;
-            };
-            if let Err(qfilter::Error::CapacityExceeded) = ret.merge(false, bloom) {
-                tracing::warn!("TrieLayerCache: rebuild_bloom capacity exceeded");
-                self.bloom = None;
-                return;
+
+        for layer in self.layers.values() {
+            for path in layer.nodes.keys() {
+                if let Err(qfilter::Error::CapacityExceeded) = new_global_filter.insert(path) {
+                    tracing::warn!(
+                        "TrieLayerCache: rebuild_bloom capacity exceeded. Poisoning bloom."
+                    );
+                    self.bloom = None;
+                    return;
+                }
             }
         }
-        self.bloom = Some(ret);
+
+        self.bloom = Some(new_global_filter);
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let layer = match Arc::try_unwrap(self.layers.remove(&state_root)?) {
-            Ok(layer) => layer,
-            Err(layer) => TrieLayer::clone(&layer),
-        };
-        // ensure parents are commited
-        let parent_nodes = self.commit(layer.parent);
+        let mut layers_to_commit = vec![];
+        let mut current_state_root = state_root;
+        while let Some(layer) = self.layers.remove(&current_state_root) {
+            let layer = Arc::unwrap_or_clone(layer);
+            current_state_root = layer.parent;
+            layers_to_commit.push(layer);
+        }
+        let top_layer_id = layers_to_commit.first()?.id;
         // older layers are useless
-        self.layers.retain(|_, item| item.id > layer.id);
+        self.layers.retain(|_, item| item.id > top_layer_id);
         self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
-        Some(
-            parent_nodes
-                .unwrap_or_default()
-                .into_iter()
-                .chain(layer.nodes.as_ref().clone())
-                .collect(),
-        )
+        let nodes_to_commit = layers_to_commit
+            .into_iter()
+            .rev()
+            .flat_map(|layer| layer.nodes)
+            .collect();
+        Some(nodes_to_commit)
     }
 }
 
@@ -221,7 +203,7 @@ impl TrieDB for TrieWrapper {
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self.inner.get(self.state_root, key.clone()) {
+        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
         self.db.get(key)

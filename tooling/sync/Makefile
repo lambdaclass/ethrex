@@ -14,7 +14,7 @@ CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
 OS = $(shell uname)
 ifeq ($(OS), Darwin)
-	DATA_PATH = $(HOME)/Library/Application\ Support
+	DATA_PATH = $(HOME)/Library
 else
 	DATA_PATH = $(HOME)/.local/share
 endif
@@ -181,7 +181,7 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--metrics \
     		--metrics.port 3701 \
     		--network $(NETWORK) \
-    		--datadir "$(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM)" \
+    		--datadir $(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM) \
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
     		$(BOOTNODES_FLAG) \
 

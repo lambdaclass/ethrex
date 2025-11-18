@@ -10,15 +10,17 @@ path = "./lib.rs"
 
 [dependencies]
 # TODO(#1102): Move to Lambdaworks in the future
-c-kzg = { version = "2.1.1", optional = true }
+c-kzg = { version = "2.1.1", default-features = false, optional = true }
 kzg-rs.workspace = true
-
 thiserror.workspace = true
+
+#[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
 default = []
-c-kzg = ["dep:c-kzg"]
-risc0 = ["c-kzg"]
+c-kzg = ["c-kzg/std", "c-kzg/ethereum_kzg_settings"]
+risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable"]
 
 [lints]
 workspace = true

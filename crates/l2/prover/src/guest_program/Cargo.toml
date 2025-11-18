@@ -52,5 +52,9 @@ secp256k1 = [
     "ethrex-l2-common/secp256k1",
 ]
 
+# When this feature is enabled, the cycles used in the code inside the 
+# report_cycles! macro will be reported to stdout when running inside SP1 zkVM.
+sp1-cycles = []
+
 [lib]
 path = "./src/lib.rs"

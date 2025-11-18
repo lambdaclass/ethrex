@@ -55,6 +55,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
+use ethrex_metrics::profiling::record_async_duration;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -165,8 +166,10 @@ pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub active_filters: ActiveFilters,
-    pub syncer: Arc<SyncManager>,
-    pub peer_handler: PeerHandler,
+    // L2 nodes don't need to initialize the syncer
+    pub syncer: Option<Arc<SyncManager>>,
+    // L2 nodes don't need to initialize the peer handler
+    pub peer_handler: Option<PeerHandler>,
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -189,7 +192,15 @@ pub trait RpcHandler: Sized {
 
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(context).await
+        let namespace = match req.namespace() {
+            Ok(RpcNamespace::Engine) => "engine",
+            _ => "rpc",
+        };
+
+        record_async_duration(namespace, req.method.as_str(), async move {
+            request.handle(context).await
+        })
+        .await
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
@@ -208,13 +219,16 @@ pub fn start_block_executor(
 ) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
     let (block_worker_channel, mut block_receiver) =
         unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
-    std::thread::spawn(move || {
-        while let Some((notify, block)) = block_receiver.blocking_recv() {
-            let _ = notify
-                .send(blockchain.add_block_pipeline(block))
-                .inspect_err(|_| tracing::error!("failed to notify caller"));
-        }
-    });
+    std::thread::Builder::new()
+        .name("block_executor".to_string())
+        .spawn(move || {
+            while let Some((notify, block)) = block_receiver.blocking_recv() {
+                let _ = notify
+                    .send(blockchain.add_block_pipeline(block))
+                    .inspect_err(|_| tracing::error!("failed to notify caller"));
+            }
+        })
+        .expect("Falied to spawn block_executor thread");
     block_worker_channel
 }
 
@@ -243,8 +257,8 @@ pub async fn start_api(
         storage,
         blockchain,
         active_filters: active_filters.clone(),
-        syncer: Arc::new(syncer),
-        peer_handler,
+        syncer: Some(Arc::new(syncer)),
+        peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
             local_p2p_node,
@@ -555,6 +569,7 @@ pub async fn map_admin_requests(
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
+        "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -607,13 +622,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::default_context_with_storage;
+    use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
         H160,
         types::{ChainConfig, Genesis},
     };
+    use ethrex_crypto::keccak::keccak_hash;
     use ethrex_storage::{EngineType, Store};
-    use sha3::{Digest, Keccak256};
     use std::io::BufReader;
     use std::str::FromStr;
     use std::{fs::File, path::Path};
@@ -653,7 +668,7 @@ mod tests {
             "result": {
                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
                 "enr": enr_url,
-                "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
+                "id": hex::encode(keccak_hash(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
                 "name": "ethrex/test",
                 "ports": {

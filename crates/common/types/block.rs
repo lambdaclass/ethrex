@@ -316,7 +316,7 @@ impl RLPDecode for BlockBody {
 }
 
 impl BlockHeader {
-    fn compute_block_hash(&self) -> H256 {
+    pub fn compute_block_hash(&self) -> H256 {
         let mut buf = vec![];
         self.encode(&mut buf);
         keccak(buf)
@@ -514,6 +514,8 @@ pub fn calculate_base_fee_per_gas(
 pub enum InvalidBlockHeaderError {
     #[error("Gas used is greater than gas limit")]
     GasUsedGreaterThanGasLimit,
+    #[error("Gas limit changed more than allowed from the parent")]
+    GasLimitTooFarFromParent,
     #[error("Base fee per gas is incorrect")]
     BaseFeePerGasIncorrect,
     #[error("Timestamp is not greater than parent timestamp")]
@@ -581,7 +583,7 @@ pub fn validate_block_header(
     ) {
         base_fee
     } else {
-        return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
+        return Err(InvalidBlockHeaderError::GasLimitTooFarFromParent);
     };
 
     if expected_base_fee_per_gas != header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE) {

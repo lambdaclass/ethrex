@@ -3,7 +3,7 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::as_conversions)]
 
-use ethrex_common::{Address, U256};
+use ethrex_common::{Address, H160, U256};
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 
@@ -60,7 +60,7 @@ async fn test_state_reconstruct() {
     // test_state_block(&addresses, 6, 50).await;
     // test_state_block(&addresses, 11, 100).await;
     // test_state_block(&addresses, 16, 150).await;
-    test_state_block(&addresses, 21, addresses.len() as u64).await;
+    test_state_block(&addresses, 33, addresses.len() as u64).await;
 }
 
 async fn test_state_block(addresses: &[Address], block_number: u64, rich_accounts: u64) {
@@ -72,6 +72,15 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
             .await
             .expect("Error getting balance");
         if index < rich_accounts as usize {
+            // The bridge owner accept the ownership transfer, so the balance is not exactly 500000000000000000000000000
+            if *address
+                == H160::from_slice(
+                    &hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap(),
+                )
+            {
+                assert!(balance > U256::zero(), "Bridge owner has zero balance");
+                continue;
+            }
             assert_eq!(
                 balance,
                 U256::from_dec_str("500000000000000000000000000").unwrap(),

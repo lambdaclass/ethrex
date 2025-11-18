@@ -193,3 +193,9 @@ docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 
 docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
 	mdbook serve --open
+
+update-cargo-lock: ## 📦 Update Cargo.lock files
+	cargo tree
+	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml
+	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml
+	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
