@@ -9,10 +9,7 @@ use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramO
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
-const OUTPUT_PROOF_PATH: &str = concat!(
-    OUTPUT_DIR_PATH
-    "/vadcop_final_proof.compressed.bin"
-);
+const OUTPUT_PROOF_PATH: &str = concat!(OUTPUT_DIR_PATH, "/vadcop_final_proof.compressed.bin");
 
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
