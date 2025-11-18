@@ -70,25 +70,28 @@ pub fn prove(
     // accepts input files from disk
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
-    let mut cmd = Command::new("cargo-zisk");
+    let static_args = vec![
+        "prove",
+        "--elf",
+        ELF_PATH,
+        "--input",
+        INPUT_PATH,
+        "--output-dir",
+        OUTPUT_PATH,
+        "--aggregation",
+    ];
+    let conditional_groth16_arg = if format == ProofFormat::Groth16 {
+        vec!["--final-snark"]
+    } else {
+        vec![]
+    };
 
-    let start = std::time::Instant::now();
-    let command = cmd
-        .arg("prove")
-        .arg("--elf")
-        .arg(ELF_PATH)
-        .arg("--input")
-        .arg(INPUT_PATH)
-        .arg("--output-dir")
-        .arg(OUTPUT_PATH)
-        .arg("--unlock-mapped-memory")
-        .arg("--aggregation")
-        .arg("--final-snark")
+    let output = Command::new("cargo-zisk")
+        .args(static_args)
+        .args(conditional_groth16_arg)
         .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    let duration = start.elapsed();
-    let output = command.output()?;
+        .stderr(Stdio::inherit())
+        .output()?;
 
     if !output.status.success() {
         return Err(format!(
@@ -97,11 +100,6 @@ pub fn prove(
         )
         .into());
     }
-
-    println!(
-        "ZisK proof generated in {:.2?} seconds",
-        duration.as_secs_f64()
-    );
 
     let proof_bytes = std::fs::read(OUTPUT_PATH)?;
     let output = ProveOutput(proof_bytes);
