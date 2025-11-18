@@ -37,8 +37,6 @@ pub enum TrieGenerationError {
     TrieStackEmpty(Nibbles),
     #[error(transparent)]
     FlushToDbError(TrieError),
-    #[error("When joining the write threads, error")]
-    ThreadJoinError(),
 }
 
 pub const SIZE_TO_WRITE_DB: u64 = 20_000;
