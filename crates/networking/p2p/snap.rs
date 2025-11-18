@@ -189,25 +189,30 @@ mod tests {
     // Hive `AccounRange` Tests
     // Requests & invariantes taken from https://github.com/ethereum/go-ethereum/blob/3e567b8b2901611f004b5a6070a9b6d286be128d/cmd/devp2p/internal/ethtest/snap.go#L69
 
-    use lazy_static::lazy_static;
+    use std::sync::LazyLock;
 
-    lazy_static! {
-        // Constant values for hive `AccountRange` tests
-        static ref HASH_MIN: H256 = H256::zero();
-        static ref HASH_MAX: H256 =
-            H256::from_str("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",)
-                .unwrap();
-        static ref HASH_FIRST: H256 =
-            H256::from_str("0x005e94bf632e80cde11add7d3447cd4ca93a5f2205d9874261484ae180718bd6")
-                .unwrap();
-        static ref HASH_SECOND: H256 =
-            H256::from_str("0x00748bacab20da9ae19dd26a33bd10bbf825e28b3de84fc8fe1d15a21645067f")
-                .unwrap();
-        static ref HASH_FIRST_MINUS_500: H256 = H256::from_uint(&((*HASH_FIRST).into_uint() - 500));
-        static ref HASH_FIRST_MINUS_450: H256 = H256::from_uint(&((*HASH_FIRST).into_uint() - 450));
-        static ref HASH_FIRST_MINUS_ONE: H256 = H256::from_uint(&((*HASH_FIRST).into_uint() - 1));
-        static ref HASH_FIRST_PLUS_ONE: H256 = H256::from_uint(&((*HASH_FIRST).into_uint() + 1));
-    }
+    // Constant values for hive `AccountRange` tests
+    static HASH_MIN: LazyLock<H256> = LazyLock::new(|| H256::zero());
+    static HASH_MAX: LazyLock<H256> = LazyLock::new(|| {
+        H256::from_str("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+            .unwrap()
+    });
+    static HASH_FIRST: LazyLock<H256> = LazyLock::new(|| {
+        H256::from_str("0x005e94bf632e80cde11add7d3447cd4ca93a5f2205d9874261484ae180718bd6")
+            .unwrap()
+    });
+    static HASH_SECOND: LazyLock<H256> = LazyLock::new(|| {
+        H256::from_str("0x00748bacab20da9ae19dd26a33bd10bbf825e28b3de84fc8fe1d15a21645067f")
+            .unwrap()
+    });
+    static HASH_FIRST_MINUS_500: LazyLock<H256> =
+        LazyLock::new(|| H256::from_uint(&((*HASH_FIRST).into_uint() - 500)));
+    static HASH_FIRST_MINUS_450: LazyLock<H256> =
+        LazyLock::new(|| H256::from_uint(&((*HASH_FIRST).into_uint() - 450)));
+    static HASH_FIRST_MINUS_ONE: LazyLock<H256> =
+        LazyLock::new(|| H256::from_uint(&((*HASH_FIRST).into_uint() - 1)));
+    static HASH_FIRST_PLUS_ONE: LazyLock<H256> =
+        LazyLock::new(|| H256::from_uint(&((*HASH_FIRST).into_uint() + 1)));
 
     #[tokio::test]
     async fn hive_account_range_a() -> Result<(), StoreError> {

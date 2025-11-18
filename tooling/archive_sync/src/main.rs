@@ -1,7 +1,3 @@
-lazy_static::lazy_static! {
-    static ref CLIENT: reqwest::Client = reqwest::Client::new();
-}
-
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};
@@ -19,6 +15,7 @@ use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_storage::Store;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::cell::LazyCell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -29,6 +26,8 @@ use tokio::net::UnixStream;
 use tokio::task::JoinSet;
 use tracing::{debug, info};
 use tracing_subscriber::FmtSubscriber;
+
+static CLIENT: LazyCell<reqwest::Client> = LazyCell::new(|| reqwest::Client::new());
 
 /// Max account dumps to ask for in a single request. The current value matches geth's maximum output.
 const MAX_ACCOUNTS: usize = 256;

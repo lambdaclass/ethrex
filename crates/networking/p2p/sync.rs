@@ -37,7 +37,7 @@ use std::{
     cmp::min,
     collections::HashMap,
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -61,13 +61,16 @@ const BYTECODE_CHUNK_SIZE: usize = 50_000;
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 #[cfg(feature = "sync-test")]
-lazy_static::lazy_static! {
-    static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
-}
+static EXECUTE_BATCH_SIZE: LazyLock<usize> = LazyLock::new(|| {
+    std::env::var("EXECUTE_BATCH_SIZE")
+        .map(|var| {
+            var.parse()
+                .expect("Execute batch size environmental variable is not a number")
+        })
+        .unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT)
+});
 #[cfg(not(feature = "sync-test"))]
-lazy_static::lazy_static! {
-    static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
-}
+static EXECUTE_BATCH_SIZE: LazyLock<usize> = LazyLock::new(|| EXECUTE_BATCH_SIZE_DEFAULT);
 
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {

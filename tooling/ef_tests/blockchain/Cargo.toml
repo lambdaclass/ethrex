@@ -18,7 +18,6 @@ serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
 hex.workspace = true
-lazy_static.workspace = true
 tokio = { workspace = true, features = ["full"] }
 datatest-stable = "0.2.9"
 regex = "1.11.1"
