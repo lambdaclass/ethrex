@@ -350,7 +350,7 @@ impl Blockchain {
             );
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(&hashed_address)?;
+                state_trie.remove_account(&hashed_address)?;
                 account_states.remove(&hashed_address_h256);
                 continue;
             }
@@ -449,7 +449,7 @@ impl Blockchain {
                 storage_updates_map.extend(storage_updates);
                 account_state.storage_root = storage_hash;
             }
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            state_trie.insert_account(hashed_address, account_state.encode_to_vec())?;
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
         state_updates_map.extend(state_updates);
