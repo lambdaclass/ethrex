@@ -8,9 +8,10 @@ use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramO
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 
-const OUTPUT_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/zisk_output/vadcop_final_proof.compressed.bin"
+const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
+const OUTPUT_PROOF_PATH: &str = concat!(
+    OUTPUT_DIR_PATH
+    "/vadcop_final_proof.compressed.bin"
 );
 
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
@@ -23,12 +24,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
-    let args = vec![
-        "--elf",
-        ELF_PATH,
-        "--inputs",
-        INPUT_PATH,
-    ];
+    let args = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
     let output = Command::new("ziskemu")
         .args(args)
         .stdin(Stdio::inherit())
@@ -62,7 +58,7 @@ pub fn prove(
         "--input",
         INPUT_PATH,
         "--output-dir",
-        OUTPUT_PATH,
+        OUTPUT_DIR_PATH,
         "--aggregation",
     ];
     let conditional_groth16_arg = if let ProofFormat::Groth16 = format {
@@ -86,7 +82,7 @@ pub fn prove(
         .into());
     }
 
-    let proof_bytes = std::fs::read(OUTPUT_PATH)?;
+    let proof_bytes = std::fs::read(OUTPUT_PROOF_PATH)?;
     let output = ProveOutput(proof_bytes);
     Ok(output)
 }
