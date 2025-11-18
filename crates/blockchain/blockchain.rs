@@ -32,7 +32,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
+use ethrex_trie::{Nibbles, Node, NodeRef, PathRLP, Trie, TrieError, TrieNode, ValueRLP};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -350,6 +350,38 @@ impl Blockchain {
         account_states: &mut FxHashMap<H256, AccountState>,
     ) -> Result<H256, StoreError> {
         trace!("Execute block pipeline: Received {} updates", updates.len());
+        #[inline(never)]
+        fn remove_state(trie: &mut Trie, hashed_address: &PathRLP) -> Result<(), TrieError> {
+            trie.remove(hashed_address).map(|_| ())
+        }
+        #[inline(never)]
+        fn remove_storage(trie: &mut Trie, hashed_key: &PathRLP) -> Result<(), TrieError> {
+            trie.remove(hashed_key).map(|_| ())
+        }
+        #[inline(never)]
+        fn insert_state(
+            trie: &mut Trie,
+            hashed_address: PathRLP,
+            value: ValueRLP,
+        ) -> Result<(), TrieError> {
+            trie.insert(hashed_address, value)
+        }
+        #[inline(never)]
+        fn insert_storage(
+            trie: &mut Trie,
+            hashed_key: PathRLP,
+            value: ValueRLP,
+        ) -> Result<(), TrieError> {
+            trie.insert(hashed_key, value)
+        }
+        #[inline(never)]
+        fn commit_state(trie: &mut Trie) -> (H256, Vec<TrieNode>) {
+            trie.collect_changes_since_last_hash()
+        }
+        #[inline(never)]
+        fn commit_storage(trie: &mut Trie) -> (H256, Vec<TrieNode>) {
+            trie.collect_changes_since_last_hash()
+        }
         // Apply the account updates over the last block's state and compute the new state root
         for update in updates {
             let hashed_address = hash_address(&update.address);
@@ -360,7 +392,7 @@ impl Blockchain {
             );
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(&hashed_address)?;
+                remove_state(state_trie, &hashed_address)?;
                 account_states.remove(&hashed_address_h256);
                 continue;
             }
@@ -440,18 +472,17 @@ impl Blockchain {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
                         trace!(slot = hex::encode(&hashed_key), "Removing");
-                        storage_trie.remove(&hashed_key)?;
+                        remove_storage(storage_trie, &hashed_key)?;
                     } else {
                         trace!(slot = hex::encode(&hashed_key), "Inserting");
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        insert_storage(storage_trie, hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
                 trace!(
                     "Collecting storage changes for account {}",
                     hex::encode(&hashed_address)
                 );
-                let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                let (storage_hash, storage_updates) = commit_storage(storage_trie);
                 trace!(
                     "Storage changes collected for account {}",
                     hex::encode(&hashed_address)
@@ -459,9 +490,9 @@ impl Blockchain {
                 storage_updates_map.extend(storage_updates);
                 account_state.storage_root = storage_hash;
             }
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            insert_state(state_trie, hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates) = commit_state(state_trie);
         state_updates_map.extend(state_updates);
         Ok(state_trie_hash)
     }
