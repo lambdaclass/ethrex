@@ -7,10 +7,7 @@ use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
-
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
-const OUTPUT_PROOF_PATH: &str = concat!(OUTPUT_DIR_PATH, "/vadcop_final_proof.compressed.bin");
-
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
 pub struct ProveOutput(pub Vec<u8>);
@@ -79,7 +76,9 @@ pub fn prove(
         .into());
     }
 
-    let proof_bytes = std::fs::read(OUTPUT_PROOF_PATH)?;
+    let proof_bytes = std::fs::read(format!(
+        "{OUTPUT_DIR_PATH}/vadcop_final_proof.compressed.bin"
+    ))?;
     let output = ProveOutput(proof_bytes);
     Ok(output)
 }
