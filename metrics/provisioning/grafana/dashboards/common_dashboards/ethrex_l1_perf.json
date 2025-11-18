@@ -2111,7 +2111,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Average time per method for all RPC endpoints",
+          "description": "Total time spent per method for all RPC endpoints",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2178,7 +2178,7 @@
               "refId": "A"
             }
           ],
-          "title": "RPC Average Time per Method - $instance",
+          "title": "RPC Total Time per Method - $instance",
           "type": "piechart"
         },
         {
