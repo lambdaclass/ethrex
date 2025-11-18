@@ -471,7 +471,7 @@ services:
   # Ethrex Services
   ethrex-dev:
     container_name: ethrex-dev
-    image: "ghcr.io/lambdaclass/ethrex:latest-l2"
+    image: "ghcr.io/lambdaclass/ethrex:6.0.0-l2"
     platform: linux/amd64
     depends_on:
       - proxy
@@ -483,11 +483,11 @@ services:
       - source: ethrex-sponsor-addresses
         target: /usr/local/bin/sponsorable-addresses.txt
     command: >
-      l2 --dev --no-monitor --proof-coordinator.addr 0.0.0.0 --sponsorable-addresses sponsorable-addresses.txt
+      l2 --dev --no-monitor --proof-coordinator.addr 0.0.0.0 --admin-server.addr 0.0.0.0 --sponsorable-addresses sponsorable-addresses.txt
 
   ethrex-prover:
     container_name: ethrex-prover
-    image: "ghcr.io/lambdaclass/ethrex:latest-l2"
+    image: "ghcr.io/lambdaclass/ethrex:6.0.0-l2"
     depends_on:
       - ethrex-dev
     platform: linux/amd64
@@ -523,7 +523,7 @@ services:
 
   ethrex-l2-hub:
     container_name: l2-hub
-    image: "ghcr.io/lambdaclass/ethrex_l2_hub:merge"
+    image: "ghcr.io/lambdaclass/ethrex_l2_hub:latest"
     pull_policy: always
     depends_on:
       - ethrex-dev
@@ -533,7 +533,7 @@ services:
       VITE_L1_NAME: "Ethrex L1 Local"
       VITE_L1_RPC_URL: "http://localhost:8545"
       VITE_L1_CHAIN_ID: 9
-      VITE_L1_BRIDGE_ADDRESS: "0x36664d7c5031bd965bbb405b55495a90dd780740"
+      VITE_L1_BRIDGE_ADDRESS: "0xcecd5910a4404ccf2718feb58dac13e975a862a2"
       VITE_L2_NAME: "Ethrex L2 Local"
       VITE_L2_RPC_URL: "http://localhost:1729"
       VITE_L2_CHAIN_ID: 65536999
