@@ -206,10 +206,9 @@ pub trait RpcHandler: Sized {
             )
             .await;
 
-        let outcome = if result.is_ok() {
-            RpcOutcome::Success
-        } else {
-            RpcOutcome::Error
+        let outcome = match &result {
+            Ok(_) => RpcOutcome::Success,
+            Err(err) => RpcOutcome::Error(get_error_kind(err)),
         };
         record_rpc_outcome(namespace, method, outcome);
 
@@ -217,6 +216,27 @@ pub trait RpcHandler: Sized {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
+}
+
+fn get_error_kind(err: &RpcErr) -> String {
+    match err {
+        RpcErr::MethodNotFound(_) => "MethodNotFound",
+        RpcErr::WrongParam(_) => "WrongParam",
+        RpcErr::BadParams(_) => "BadParams",
+        RpcErr::MissingParam(_) => "MissingParam",
+        RpcErr::TooLargeRequest => "TooLargeRequest",
+        RpcErr::BadHexFormat(_) => "BadHexFormat",
+        RpcErr::UnsuportedFork(_) => "UnsuportedFork",
+        RpcErr::Internal(_) => "Internal",
+        RpcErr::Vm(_) => "Vm",
+        RpcErr::Revert { .. } => "Revert",
+        RpcErr::Halt { .. } => "Halt",
+        RpcErr::AuthenticationError(_) => "AuthenticationError",
+        RpcErr::InvalidForkChoiceState(_) => "InvalidForkChoiceState",
+        RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
+        RpcErr::UnknownPayload(_) => "UnknownPayload",
+    }
+    .to_string()
 }
 
 pub const FILTER_DURATION: Duration = {
