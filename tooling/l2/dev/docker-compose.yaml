@@ -479,8 +479,11 @@ services:
       - 127.0.0.1:8545:8545
       - 127.0.0.1:5555:5555
       - 127.0.0.1:1729:1729
+    configs:
+      - source: ethrex-sponsor-addresses
+        target: /usr/local/bin/sponsorable-addresses.txt
     command: >
-      l2 --dev --no-monitor --proof-coordinator.addr 0.0.0.0
+      l2 --dev --no-monitor --proof-coordinator.addr 0.0.0.0 --sponsorable-addresses sponsorable-addresses.txt
 
   ethrex-prover:
     container_name: ethrex-prover
@@ -539,6 +542,10 @@ services:
       VITE_TEST_TOKEN_CONTRACT_ADDRESS: "0xa0c79e7f98c9914c337d5b010af208b98f23f117"
 
 configs:
+  ethrex-sponsor-addresses:
+    content: |
+      0x12382432f3f26399ed9919e9422ba39e9415fe53
+
   nginx_conf:
     content: |
       map $$http_upgrade $$connection_upgrade {
