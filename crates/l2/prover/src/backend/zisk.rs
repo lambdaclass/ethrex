@@ -79,6 +79,7 @@ pub fn prove(
         .args(static_args)
         .args(conditional_groth16_arg)
         .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .output()?;
 
