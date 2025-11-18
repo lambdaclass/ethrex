@@ -1,6 +1,6 @@
 # Rich Accounts
 
-When running ethrex in dev mode (`ethrex --dev` and `ethrex l2 --dev`), a bunch of rich accounts are available to make it easy the testing of contracts and transactions. These are the private keys
+When running ethrex in dev mode (`ethrex --dev` and `ethrex l2 --dev`), a bunch of rich accounts are available to make testing of contracts and transactions easy. These are the private keys
 
 ```
 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e (0x4417092B70a3E5f10Dc504d0947DD256B965fc62)
