@@ -7,6 +7,7 @@ pragma solidity =0.8.29;
 /// It handles user withdrawals and message sending to L1.
 interface ICommonBridgeL2 {
     function NATIVE_TOKEN_L2() external returns (address);
+    function scopedCall(address to, bytes memory _calldata) external payable returns (bytes memory);
 
     /// @notice An ETH deposit was successfully processed
     /// @dev Event emitted when an ETH deposit is processed.

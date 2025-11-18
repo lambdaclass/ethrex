@@ -1,18 +1,25 @@
-use crate::sequencer::errors::BlockProducerError;
+use crate::sequencer::{
+    errors::BlockProducerError,
+    l1_committer::{self, L1Committer},
+};
+use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain,
-    constants::TX_GAS_COST,
+    Blockchain, SuperBlockchain,
+    constants::{POST_OSAKA_GAS_LIMIT_CAP, TX_GAS_COST},
     payload::{
         HeadTransaction, PayloadBuildContext, PayloadBuildResult, TransactionQueue,
         apply_plain_transaction,
     },
+    vm::StoreVmDatabase,
 };
 use ethrex_common::{
-    Address, U256,
+    Address, H256, Signature, U256,
     types::{
-        Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction, TxType,
+        Block, BlockHeader, EIP1559Transaction, GenericTransaction, MempoolTransaction,
+        PrivilegedL2Transaction, Receipt, SAFE_BYTES_PER_BLOB, Transaction, TxKind, TxType,
         account_diff::{AccountStateDiff, get_accounts_diff_size},
     },
+    utils::keccak,
 };
 use ethrex_l2_common::state_diff::{
     BLOCK_HEADER_LEN, L1MESSAGE_LOG_LEN, PRIVILEGED_TX_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE,
@@ -20,25 +27,29 @@ use ethrex_l2_common::state_diff::{
 use ethrex_l2_common::{
     l1_messages::get_block_l1_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
 };
-use ethrex_levm::utils::get_account_diffs_in_tx;
+use ethrex_levm::{hooks::l2_hook::COMMON_BRIDGE_L2_ADDRESS, utils::get_account_diffs_in_tx};
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     metrics_blocks::METRICS_BLOCKS,
     metrics_transactions::{METRICS_TX, MetricsTxType},
 };
+use ethrex_rlp::encode::PayloadRLPEncode;
 use ethrex_storage::Store;
-use std::collections::HashMap;
+use ethrex_vm::{EvmError, ExecutionResult};
+use secp256k1::{Message, SECP256K1, SecretKey};
+use spawned_concurrency::tasks::GenServerHandle;
 use std::ops::Div;
 use std::sync::Arc;
+use std::{collections::HashMap, str::FromStr};
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, error, info};
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
 /// Same as `blockchain::build_payload` without applying system operations and using a different `fill_transactions`
 pub async fn build_payload(
-    blockchain: Arc<Blockchain>,
+    super_blockchain: Arc<SuperBlockchain>,
     payload: Block,
     store: &Store,
     last_privileged_nonce: &mut Option<u64>,
@@ -48,17 +59,23 @@ pub async fn build_payload(
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context = PayloadBuildContext::new(payload, store, &blockchain.options.r#type)?;
+    let mut context = PayloadBuildContext::new(
+        payload,
+        store,
+        &super_blockchain.main_blockchain.options.r#type,
+    )?;
 
     fill_transactions(
-        blockchain.clone(),
+        super_blockchain.clone(),
         &mut context,
         store,
         last_privileged_nonce,
         block_gas_limit,
     )
     .await?;
-    blockchain.finalize_payload(&mut context)?;
+    super_blockchain
+        .main_blockchain
+        .finalize_payload(&mut context)?;
 
     let interval = Instant::now().duration_since(since).as_millis();
     // TODO: expose as a proper metric
@@ -83,7 +100,8 @@ pub async fn build_payload(
         #[allow(clippy::as_conversions)]
         METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
         // L2 does not allow for blob transactions so the blob pool can be ignored
-        let (tx_pool_size, _blob_pool_size) = blockchain
+        let (tx_pool_size, _blob_pool_size) = super_blockchain
+            .main_blockchain
             .mempool
             .get_mempool_size()
             .inspect_err(|e| tracing::error!("Failed to get metrics for: mempool size {}", e.to_string()))
@@ -101,7 +119,7 @@ pub async fn build_payload(
 /// Also, uses a configured `block_gas_limit` to limit the gas used in the block,
 /// which can be lower than the block gas limit specified in the payload header.
 pub async fn fill_transactions(
-    blockchain: Arc<Blockchain>,
+    super_blockchain: Arc<SuperBlockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
     last_privileged_nonce: &mut Option<u64>,
@@ -119,7 +137,7 @@ pub async fn fill_transactions(
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
-    let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
+    let mut txs = fetch_mempool_transactions(&super_blockchain.main_blockchain.as_ref(), context)?;
 
     // Execute and add transactions to payload (if suitable)
     loop {
@@ -173,7 +191,9 @@ pub async fn fill_transactions(
             // Pull transaction from the mempool
             debug!("Ignoring replay-protected transaction: {}", tx_hash);
             txs.pop();
-            blockchain.remove_transaction_from_pool(&tx_hash)?;
+            super_blockchain
+                .main_blockchain
+                .remove_transaction_from_pool(&tx_hash)?;
             continue;
         }
 
@@ -186,13 +206,245 @@ pub async fn fill_transactions(
         {
             debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
             txs.pop();
-            blockchain.remove_transaction_from_pool(&tx_hash)?;
+            super_blockchain
+                .main_blockchain
+                .remove_transaction_from_pool(&tx_hash)?;
             continue;
         }
 
         // Copy remaining gas and block value before executing the transaction
         let previous_remaining_gas = context.remaining_gas;
         let previous_block_value = context.block_value;
+
+        // Skip simulating calls to the CommonBridgeL2 contract
+        // We only want to simulate transactions that would require L1 simulation,
+        // and this is not the case for CommonBridge calls
+        //
+        // CAUTION: not skipping simulating these transactions would lead to
+        // a simulation failure in some cases.
+        if head_tx.to() != TxKind::Call(COMMON_BRIDGE_L2_ADDRESS) {
+            let mut sub_context = PayloadBuildContext::new(
+                context.payload.clone(),
+                &context.store,
+                &super_blockchain.main_blockchain.options.r#type,
+            )?;
+
+            let block_header = super_blockchain
+                .main_blockchain
+                .storage
+                .get_block_header_by_hash(context.parent_hash())
+                .inspect_err(|e| error!("{e}"))?
+                .unwrap();
+
+            let sim = match sub_context
+                .vm
+                .simulate_tx_from_generic(&head_tx.tx.clone().into(), &block_header)
+            {
+                Ok(sim_result) => sim_result,
+                Err(e) => {
+                    error!(from =% head_tx.tx.clone().sender(), to =? head_tx.tx.clone().to(), data = hex::encode(head_tx.tx.clone().data()), "{e}");
+                    println!("[L2 Builder] Head transaction simulation failed ({tx_hash:#x}): {e}");
+                    continue;
+                }
+            };
+
+            for log in sim.logs() {
+                if log.address == COMMON_BRIDGE_L2_ADDRESS
+                    && log.topics.contains(
+                        &H256::from_str(
+                            "b0e76942d2929d9dcf5c6b8e32bf27df13e118fcaab4cef2e90257551bba0270",
+                        )
+                        .unwrap(),
+                    )
+                {
+                    println!("[L2 Builder] Detected call to CommonBridge");
+
+                    let from = Address::from_slice(log.data.get(0x20 - 20..0x20).unwrap());
+                    let to = Address::from_slice(log.data.get(0x40 - 20..0x40).unwrap());
+                    let value = U256::from_big_endian(log.data.get(0x40..0x60).unwrap());
+                    let data_len =
+                        U256::from_big_endian(log.data.get(0x80..0xa0).unwrap()).as_usize();
+                    let data = &log.data.iter().as_slice()[0xa0..0xa0 + data_len];
+
+                    info!(%from, %to, ?value, data = hex::encode(data), "Executing call on L1");
+                    let l1 = super_blockchain.secondary_blockchain.as_ref().unwrap();
+
+                    let transaction = GenericTransaction {
+                        r#type: TxType::EIP1559,
+                        to: TxKind::Call(to),
+                        from,
+                        value,
+                        input: Bytes::copy_from_slice(data),
+                        ..Default::default()
+                    };
+
+                    println!("[L2 Builder] Simulating transaction in L1");
+
+                    let block_header = l1
+                        .storage
+                        .get_block_header(l1.storage.get_latest_block_number().await.unwrap())
+                        .unwrap()
+                        .unwrap();
+                    let result =
+                        simulate_tx(&transaction, &block_header, l1.storage.clone(), l1.clone())
+                            .await
+                            .inspect(|res| {
+                                info!(
+                                    success = res.is_success(),
+                                    "RESULT: {}",
+                                    hex::encode(res.output())
+                                )
+                            })
+                            .inspect_err(|e| {
+                                error!("SIMULATE ERROR: {e}");
+                                println!("[L2 Builder] L1 Simulation failed: {e}");
+                            })?;
+
+                    // 0x57272f8e
+                    // keccak(to || data)
+                    // 0x40
+                    // response_length
+                    // response || padding
+                    let response_len = result.output().len();
+                    let padding = response_len % 32;
+
+                    let data = [
+                        &[0x57, 0x27, 0x2f, 0x8e],
+                        keccak([to.as_bytes(), data].concat()).as_bytes(),
+                        H256::from_str(
+                            "0x0000000000000000000000000000000000000000000000000000000000000040",
+                        )
+                        .unwrap()
+                        .as_bytes(),
+                        U256::from_big_endian(&response_len.to_be_bytes())
+                            .to_big_endian()
+                            .as_slice(),
+                        result.output().iter().as_slice(),
+                        &vec![0; padding],
+                    ]
+                    .concat();
+
+                    let from =
+                        Address::from_str("000000000000000000000000000000000000fff0").unwrap();
+
+                    let tx = PrivilegedL2Transaction {
+                        chain_id: super_blockchain
+                            .main_blockchain
+                            .storage
+                            .chain_config
+                            .chain_id,
+                        nonce: context
+                            .store
+                            .get_nonce_by_account_address(
+                                context.store.get_latest_block_number().await.unwrap(),
+                                from,
+                            )
+                            .await
+                            .unwrap()
+                            .unwrap(),
+                        from,
+                        max_priority_fee_per_gas: 1000000000000,
+                        max_fee_per_gas: 1000000000000,
+                        gas_limit: POST_OSAKA_GAS_LIMIT_CAP - 1,
+                        to: TxKind::Call(COMMON_BRIDGE_L2_ADDRESS),
+                        value: U256::zero(),
+                        data: data.into(),
+                        access_list: vec![],
+                        inner_hash: Default::default(),
+                    };
+
+                    let mempool_tx =
+                        MempoolTransaction::new(Transaction::PrivilegedL2Transaction(tx), from);
+                    let head_tx = HeadTransaction {
+                        tx: mempool_tx,
+                        tip: 0,
+                    };
+
+                    println!(
+                        "[L2 Builder] Presetting L1 response: {:#x}",
+                        head_tx.tx.hash()
+                    );
+
+                    let receipt = match super_blockchain
+                        .main_blockchain
+                        .apply_transaction(&head_tx, context)
+                    {
+                        Ok(receipt) => {
+                            println!(
+                                "[L2 Builder] L1 response preset successfully ({:#x})",
+                                head_tx.tx.hash()
+                            );
+                            receipt
+                        }
+                        Err(e) => {
+                            error!("ERROR: {e}");
+                            panic!(
+                                "[L2 Builder] Failed to preset L1 response ({:#x}): {e}",
+                                head_tx.tx.hash()
+                            );
+                        }
+                    };
+
+                    let tx_backup = context.vm.db.get_tx_backup().map_err(|e| {
+                        BlockProducerError::FailedToGetDataFrom(format!("transaction backup: {e}"))
+                    })?;
+                    let account_diffs_in_tx = get_account_diffs_in_tx(&context.vm.db, tx_backup)
+                        .map_err(|e| {
+                            BlockProducerError::Custom(format!(
+                                "Failed to get account diffs from tx: {e}"
+                            ))
+                        })?;
+                    let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
+
+                    let (tx_size_without_accounts, new_accounts_diff_size) =
+                        calculate_tx_diff_size(&merged_diffs, &head_tx, &receipt)?;
+
+                    if acc_size_without_accounts + tx_size_without_accounts + new_accounts_diff_size
+                        > safe_bytes_per_blob
+                    {
+                        debug!(
+                            "No more StateDiff space to run this transactions. Skipping transaction: {:?}",
+                            tx_hash
+                        );
+                        txs.pop();
+
+                        // This transaction state change is too big, we need to undo it.
+                        undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                        continue;
+                    }
+
+                    // Check we don't have an excessive number of privileged transactions
+                    if head_tx.tx_type() == TxType::Privileged {
+                        if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
+                            debug!("Ran out of space for privileged transactions");
+                            txs.pop();
+                            undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                            continue;
+                        }
+                        let id = head_tx.nonce();
+                        if last_privileged_nonce.is_some_and(|last_nonce| id != last_nonce + 1) {
+                            debug!("Ignoring out-of-order privileged transaction");
+                            txs.pop();
+                            undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                            continue;
+                        }
+                        last_privileged_nonce.replace(id);
+                        privileged_tx_count += 1;
+                    }
+
+                    // We only add the messages and privileged transaction length because the accounts diffs may change
+                    acc_size_without_accounts += tx_size_without_accounts;
+                    size_accounts_diffs = new_accounts_diff_size;
+                    // Include the new accounts diffs
+                    account_diffs = merged_diffs;
+                    // Add transaction to block
+                    debug!("Adding transaction: {} to payload", tx_hash);
+                    context.payload.body.transactions.push(head_tx.into());
+                    // Save receipt for hash calculation
+                    context.receipts.push(receipt);
+                }
+            }
+        }
 
         // Execute tx
         let receipt = match apply_plain_transaction(&head_tx, context) {
@@ -253,7 +505,9 @@ pub async fn fill_transactions(
 
         txs.shift()?;
         // Pull transaction from the mempool
-        blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
+        super_blockchain
+            .main_blockchain
+            .remove_transaction_from_pool(&head_tx.tx.hash())?;
 
         // We only add the messages and privileged transaction length because the accounts diffs may change
         acc_size_without_accounts += tx_size_without_accounts;
@@ -367,4 +621,16 @@ fn undo_last_tx(
     context.remaining_gas = previous_remaining_gas;
     context.block_value = previous_block_value;
     Ok(())
+}
+
+async fn simulate_tx(
+    transaction: &GenericTransaction,
+    block_header: &BlockHeader,
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+) -> Result<ExecutionResult, EvmError> {
+    let vm_db = StoreVmDatabase::new(storage, block_header.clone());
+    let mut vm = blockchain.new_evm(vm_db)?;
+
+    vm.simulate_tx_from_generic(transaction, block_header)
 }

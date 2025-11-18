@@ -85,7 +85,7 @@ pub struct SuperBlockchain {
 
 #[derive(Debug)]
 pub struct Blockchain {
-    storage: Store,
+    pub storage: Store,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after

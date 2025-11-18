@@ -20,7 +20,7 @@ contract Counter {
     }
 
     function update(address bridge) public {
-        bytes memory response = ICommonBridge(bridge).scopedCall(address(0xffff), abi.encodeCall(ICommonBridgeL2.NATIVE_TOKEN_L2, ()));
+        bytes memory response = ICommonBridgeL2(address(0xffff)).scopedCall(bridge, abi.encodeCall(ICommonBridge.ON_CHAIN_PROPOSER, ()));
         res = response;
     }
 }

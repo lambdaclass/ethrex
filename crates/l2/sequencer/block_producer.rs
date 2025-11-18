@@ -7,7 +7,7 @@ use std::{
 
 use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain, BlockchainType,
+    Blockchain, BlockchainType, SuperBlockchain,
     error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
@@ -62,6 +62,12 @@ const ERC20_WITHDRAWAL_SIGNATURE: H256 = H256([
     0x65, 0x3f, 0xac, 0x2b, 0xb3, 0x2f, 0xa0, 0xb6, 0xbc, 0x75, 0x09, 0x7b, 0x9f, 0x33, 0x2e, 0x75,
 ]);
 
+// 0xb0e76942d2929d9dcf5c6b8e32bf27df13e118fcaab4cef2e90257551bba0270
+const SCOPED_CALL_SIGNATURE: H256 = H256([
+    0xb0, 0xe7, 0x69, 0x42, 0xd2, 0x92, 0x9d, 0x9d, 0xcf, 0x5c, 0x6b, 0x8e, 0x32, 0xbf, 0x27, 0xdf,
+    0x13, 0xe1, 0x18, 0xfc, 0xaa, 0xb4, 0xce, 0xf2, 0xe9, 0x02, 0x57, 0x55, 0x1b, 0xba, 0x02, 0x70,
+]);
+
 #[derive(Clone)]
 pub enum CallMessage {
     Health,
@@ -80,7 +86,7 @@ pub enum OutMessage {
 
 pub struct BlockProducer {
     store: Store,
-    blockchain: Arc<Blockchain>,
+    super_blockchain: Arc<SuperBlockchain>,
     sequencer_state: SequencerState,
     block_time_ms: u64,
     coinbase_address: Address,
@@ -105,7 +111,7 @@ impl BlockProducer {
         config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
-        blockchain: Arc<Blockchain>,
+        super_blockchain: Arc<SuperBlockchain>,
         sequencer_state: SequencerState,
         committer: GenServerHandle<L1Committer>,
     ) -> Self {
@@ -134,7 +140,7 @@ impl BlockProducer {
 
         Self {
             store,
-            blockchain,
+            super_blockchain,
             sequencer_state,
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
@@ -150,7 +156,7 @@ impl BlockProducer {
     pub async fn spawn(
         store: Store,
         rollup_store: StoreRollup,
-        blockchain: Arc<Blockchain>,
+        super_blockchain: Arc<SuperBlockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
         committer: GenServerHandle<L1Committer>,
@@ -159,7 +165,7 @@ impl BlockProducer {
             &cfg.block_producer,
             store,
             rollup_store,
-            blockchain,
+            super_blockchain,
             sequencer_state,
             committer,
         )
@@ -204,7 +210,7 @@ impl BlockProducer {
 
         // Blockchain builds the payload from mempool txs and executes them
         let payload_build_result = build_payload(
-            self.blockchain.clone(),
+            self.super_blockchain.clone(),
             payload,
             &self.store,
             &mut self.last_privileged_nonce,
@@ -217,7 +223,8 @@ impl BlockProducer {
                     && (log.topics[0] == DEPOSIT_PROCESSED_SIGNATURE
                         || log.topics[0] == ERC20_DEPOSIT_PROCESSED_SIGNATURE
                         || log.topics[0] == WITHDRAWAL_INITIATED_SIGNATURE
-                        || log.topics[0] == ERC20_WITHDRAWAL_SIGNATURE)
+                        || log.topics[0] == ERC20_WITHDRAWAL_SIGNATURE
+                        || log.topics[0] == SCOPED_CALL_SIGNATURE)
             })
         });
         info!(
@@ -251,8 +258,11 @@ impl BlockProducer {
         let block_number = block.header.number;
         let block_hash = block.hash();
         self.store_fee_config_by_block(block.header.number).await?;
-        self.blockchain
-            .store_block(block.clone(), account_updates_list, execution_result)?;
+        self.super_blockchain.main_blockchain.store_block(
+            block.clone(),
+            account_updates_list,
+            execution_result,
+        )?;
         info!(
             "Stored new block {:x}, transaction_count {}",
             block_hash, transactions_count
@@ -308,7 +318,8 @@ impl BlockProducer {
         Ok(())
     }
     async fn store_fee_config_by_block(&self, block_number: u64) -> Result<(), BlockProducerError> {
-        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
+        let BlockchainType::L2(l2_config) = &self.super_blockchain.main_blockchain.options.r#type
+        else {
             error!("Invalid blockchain type. Expected L2.");
             return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
         };

@@ -282,7 +282,7 @@ impl PayloadBuildContext {
 }
 
 impl PayloadBuildContext {
-    fn parent_hash(&self) -> BlockHash {
+    pub fn parent_hash(&self) -> BlockHash {
         self.payload.header.parent_hash
     }
 
@@ -662,6 +662,11 @@ impl Blockchain {
 
                         println!("[L1 Builder] Simulating transaction in L2");
 
+                        let block_header = l2
+                            .storage
+                            .get_block_header(l2.storage.get_latest_block_number().await.unwrap())
+                            .unwrap()
+                            .unwrap();
                         let result = simulate_tx(
                             &transaction,
                             &block_header,
@@ -707,10 +712,10 @@ impl Blockchain {
 
                         let mut tx = EIP1559Transaction {
                             chain_id: self.storage.chain_config.chain_id,
-                            nonce: self
-                                .storage
+                            nonce: context
+                                .store
                                 .get_nonce_by_account_address(
-                                    self.storage.get_latest_block_number().await.unwrap(),
+                                    context.store.get_latest_block_number().await.unwrap(),
                                     address,
                                 )
                                 .await
@@ -840,7 +845,7 @@ impl Blockchain {
 
     /// Executes the transaction, updates gas-related context values & return the receipt
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
-    fn apply_transaction(
+    pub fn apply_transaction(
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,

@@ -25,6 +25,8 @@ interface ICommonBridge {
         bytes data
     );
 
+    function ON_CHAIN_PROPOSER() external returns (address);
+
     /// @notice L2 withdrawals have been published on L1.
     /// @dev Event emitted when the L2 withdrawals are published on L1.
     /// @param withdrawalLogsBatchNumber the batch number where the withdrawal logs were emitted.

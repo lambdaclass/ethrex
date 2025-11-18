@@ -16,6 +16,8 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     address public constant NATIVE_TOKEN_L2 =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
+    mapping(bytes32 => bytes) public responses;
+
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
     modifier onlySelf() {
         require(
@@ -23,6 +25,23 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             "CommonBridgeL2: caller is not the bridge"
         );
         _;
+    }
+
+    event ScopedCall(address from, address to, uint256 value, bytes _calldata);
+
+    function scopedCall(address to, bytes memory _calldata) public override payable returns (bytes memory) {
+        bytes32 key = keccak256(abi.encodePacked(to, _calldata));
+        emit ScopedCall(msg.sender, to, msg.value, _calldata);
+
+        if (responses[key].length != 0) {
+            return responses[key];
+        }
+
+        return bytes("fede");
+    }
+
+    function setResponse(bytes32 key, bytes memory response) public {
+        responses[key] = response;
     }
 
     function withdraw(address _receiverOnL1) external payable {

@@ -135,7 +135,7 @@ pub async fn start_l2(
     let block_producer = BlockProducer::spawn(
         store.clone(),
         rollup_store.clone(),
-        super_blockchain.main_blockchain.clone(),
+        super_blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
         l1_committer.as_ref().unwrap().clone(),
