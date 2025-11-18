@@ -1,10 +1,10 @@
 use ethrex_common::{H160, types::ChainConfig};
 use serde::Deserialize;
-use std::cell::LazyCell;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 // Chain config for different forks as defined on https://ethereum.github.io/execution-spec-tests/v3.0.0/consuming_tests/common_types/#fork
-pub static MERGE_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static MERGE_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     chain_id: 1_u64,
     homestead_block: Some(0),
     dao_fork_block: Some(0),
@@ -25,24 +25,24 @@ pub static MERGE_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
     terminal_total_difficulty: Some(0),
     ..Default::default()
 });
-pub static MERGE_TO_SHANGHAI_AT_15K_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static MERGE_TO_SHANGHAI_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     shanghai_time: Some(0x3a98),
     ..*MERGE_CONFIG
 });
-pub static SHANGHAI_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static SHANGHAI_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     shanghai_time: Some(0),
     ..*MERGE_CONFIG
 });
-pub static SHANGHAI_TO_CANCUN_AT_15K_CONFIG: LazyCell<ChainConfig> =
-    LazyCell::new(|| ChainConfig {
+pub static SHANGHAI_TO_CANCUN_AT_15K_CONFIG: LazyLock<ChainConfig> =
+    LazyLock::new(|| ChainConfig {
         cancun_time: Some(0x3a98),
         ..*SHANGHAI_CONFIG
     });
-pub static CANCUN_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static CANCUN_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     cancun_time: Some(0),
     ..*SHANGHAI_CONFIG
 });
-pub static CANCUN_TO_PRAGUE_AT_15K_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| {
+pub static CANCUN_TO_PRAGUE_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| {
     ChainConfig {
         prague_time: Some(0x3a98),
         // Mainnet address
@@ -51,43 +51,43 @@ pub static CANCUN_TO_PRAGUE_AT_15K_CONFIG: LazyCell<ChainConfig> = LazyCell::new
         ..*CANCUN_CONFIG
     }
 });
-pub static PRAGUE_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static PRAGUE_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     prague_time: Some(0),
     ..*CANCUN_TO_PRAGUE_AT_15K_CONFIG
 });
 
-pub static PRAGUE_TO_OSAKA_AT_15K_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static PRAGUE_TO_OSAKA_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     osaka_time: Some(0x3a98),
     ..*PRAGUE_CONFIG
 });
 
-pub static OSAKA_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static OSAKA_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     osaka_time: Some(0),
     ..*PRAGUE_CONFIG
 });
 
-pub static OSAKA_TO_BPO1_AT_15K_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static OSAKA_TO_BPO1_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     bpo1_time: Some(0x3a98),
     ..*OSAKA_CONFIG
 });
 
-pub static BPO1_TO_BPO2_AT_15K_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static BPO1_TO_BPO2_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     bpo1_time: Some(0),
     bpo2_time: Some(0x3a98),
     ..*OSAKA_CONFIG
 });
 
-pub static BPO2_TO_BPO3_AT_15K_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static BPO2_TO_BPO3_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     bpo2_time: Some(0),
     bpo3_time: Some(0x3a98),
     ..*OSAKA_CONFIG
 });
-pub static BPO3_TO_BPO4_AT_15K_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static BPO3_TO_BPO4_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     bpo3_time: Some(0),
     bpo4_time: Some(0x3a98),
     ..*OSAKA_CONFIG
 });
-pub static BPO4_TO_BPO5_AT_15K_CONFIG: LazyCell<ChainConfig> = LazyCell::new(|| ChainConfig {
+pub static BPO4_TO_BPO5_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
     bpo4_time: Some(0),
     bpo5_time: Some(0x3a98),
     ..*OSAKA_CONFIG
