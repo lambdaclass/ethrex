@@ -14,9 +14,7 @@ pub struct ProveOutput(pub Vec<u8>);
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     // We write the ELF to a temp file because ziskemu currently only accepts
     // ELF files from disk
-    if !std::path::Path::new(ELF_PATH).exists() {
-        std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
-    }
+    std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
 
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
 
@@ -53,9 +51,7 @@ pub fn prove(
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     // We write the ELF to a temp file because cargo-zisk prove currently only
     // accepts ELF files from disk
-    if !std::path::Path::new(ELF_PATH).exists() {
-        std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
-    }
+    std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
 
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
 
@@ -84,6 +80,7 @@ pub fn prove(
         .args(static_args)
         //.args(conditional_groth16_arg)
         .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .output()?;
 
