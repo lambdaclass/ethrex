@@ -86,12 +86,13 @@ pub fn prove(
         vec![]
     };
 
-    let output = Command::new("cargo-zisk")
+    let command = Command::new("cargo-zisk")
         .args(static_args)
         .args(conditional_groth16_arg)
         .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .output()?;
+        .stderr(Stdio::inherit());
+    dbg!(&command);
+    let output = command.output()?;
 
     if !output.status.success() {
         return Err(format!(
