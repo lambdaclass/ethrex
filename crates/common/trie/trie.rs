@@ -50,6 +50,39 @@ pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
 pub type TrieNode = (Nibbles, NodeRLP);
 
+#[inline(never)]
+pub fn remove_state(trie: &mut Trie, hashed_address: &PathRLP) -> Result<(), TrieError> {
+    trie.remove(hashed_address).map(|_| ())
+}
+#[inline(never)]
+pub fn remove_storage(trie: &mut Trie, hashed_key: &PathRLP) -> Result<(), TrieError> {
+    trie.remove(hashed_key).map(|_| ())
+}
+#[inline(never)]
+pub fn insert_state(
+    trie: &mut Trie,
+    hashed_address: PathRLP,
+    value: ValueRLP,
+) -> Result<(), TrieError> {
+    trie.insert(hashed_address, value)
+}
+#[inline(never)]
+pub fn insert_storage(
+    trie: &mut Trie,
+    hashed_key: PathRLP,
+    value: ValueRLP,
+) -> Result<(), TrieError> {
+    trie.insert(hashed_key, value)
+}
+#[inline(never)]
+pub fn commit_state(trie: &mut Trie) -> (H256, Vec<TrieNode>) {
+    trie.collect_changes_since_last_hash()
+}
+#[inline(never)]
+pub fn commit_storage(trie: &mut Trie) -> (H256, Vec<TrieNode>) {
+    trie.collect_changes_since_last_hash()
+}
+
 /// Ethereum-compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
