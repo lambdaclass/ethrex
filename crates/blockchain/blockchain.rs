@@ -350,38 +350,6 @@ impl Blockchain {
         account_states: &mut FxHashMap<H256, AccountState>,
     ) -> Result<H256, StoreError> {
         trace!("Execute block pipeline: Received {} updates", updates.len());
-        #[inline(never)]
-        fn remove_state(trie: &mut Trie, hashed_address: &PathRLP) -> Result<(), TrieError> {
-            trie.remove(hashed_address).map(|_| ())
-        }
-        #[inline(never)]
-        fn remove_storage(trie: &mut Trie, hashed_key: &PathRLP) -> Result<(), TrieError> {
-            trie.remove(hashed_key).map(|_| ())
-        }
-        #[inline(never)]
-        fn insert_state(
-            trie: &mut Trie,
-            hashed_address: PathRLP,
-            value: ValueRLP,
-        ) -> Result<(), TrieError> {
-            trie.insert(hashed_address, value)
-        }
-        #[inline(never)]
-        fn insert_storage(
-            trie: &mut Trie,
-            hashed_key: PathRLP,
-            value: ValueRLP,
-        ) -> Result<(), TrieError> {
-            trie.insert(hashed_key, value)
-        }
-        #[inline(never)]
-        fn commit_state(trie: &mut Trie) -> (H256, Vec<TrieNode>) {
-            trie.collect_changes_since_last_hash()
-        }
-        #[inline(never)]
-        fn commit_storage(trie: &mut Trie) -> (H256, Vec<TrieNode>) {
-            trie.collect_changes_since_last_hash()
-        }
         // Apply the account updates over the last block's state and compute the new state root
         for update in updates {
             let hashed_address = hash_address(&update.address);
@@ -1715,6 +1683,35 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
 /// Calculates the blob gas required by a transaction
 pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
+}
+
+#[inline(never)]
+fn remove_state(trie: &mut Trie, hashed_address: &PathRLP) -> Result<(), TrieError> {
+    trie.remove(hashed_address).map(|_| ())
+}
+#[inline(never)]
+fn remove_storage(trie: &mut Trie, hashed_key: &PathRLP) -> Result<(), TrieError> {
+    trie.remove(hashed_key).map(|_| ())
+}
+#[inline(never)]
+fn insert_state(
+    trie: &mut Trie,
+    hashed_address: PathRLP,
+    value: ValueRLP,
+) -> Result<(), TrieError> {
+    trie.insert(hashed_address, value)
+}
+#[inline(never)]
+fn insert_storage(trie: &mut Trie, hashed_key: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
+    trie.insert(hashed_key, value)
+}
+#[inline(never)]
+fn commit_state(trie: &mut Trie) -> (H256, Vec<TrieNode>) {
+    trie.collect_changes_since_last_hash()
+}
+#[inline(never)]
+fn commit_storage(trie: &mut Trie) -> (H256, Vec<TrieNode>) {
+    trie.collect_changes_since_last_hash()
 }
 
 #[cfg(test)]
