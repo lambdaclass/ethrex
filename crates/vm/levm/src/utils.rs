@@ -23,14 +23,8 @@ use ethrex_common::{
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
-use k256::ecdsa::VerifyingKey;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp;
-use ethrex_rlp::encode::RLPEncode;
-use secp256k1::{
-    Message,
-    ecdsa::{RecoverableSignature, RecoveryId},
-};
 use std::collections::HashMap;
 pub type Storage = HashMap<U256, H256>;
 
@@ -298,7 +292,7 @@ pub fn eip7702_recover_address(
         return Ok(None);
     };
 
-    let Ok(authority) = VerifyingKey::recover_from_digest(digest, &signature, recovery_id) else {
+    let Ok(authority) = k256::ecdsa::VerifyingKey::recover_from_digest(digest, &signature, recovery_id) else {
         return Ok(None);
     };
 
@@ -321,8 +315,6 @@ pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
 ) -> Result<Option<Address>, VMError> {
     use ethrex_rlp::encode::RLPEncode;
-    use sha2::Digest;
-    use sha3::Keccak256;
 
     if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
         return Ok(None);
@@ -339,7 +331,7 @@ pub fn eip7702_recover_address(
     (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
     let bytes = keccak_hash(&rlp_buf);
 
-    let message = Message::from_digest(bytes);
+    let message = secp256k1::Message::from_digest(bytes);
 
     let bytes = [
         auth_tuple.r_signature.to_big_endian(),

@@ -20,7 +20,6 @@ use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_l2_common::privileged_transactions::get_block_privileged_transactions;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-#[cfg(feature = "l2")]
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
@@ -34,7 +33,6 @@ use ethrex_l2_common::{
     l1_messages::get_block_l1_messages,
     privileged_transactions::{
         PrivilegedTransactionError, compute_privileged_transactions_hash,
-        get_block_privileged_transactions,
     },
 };
 

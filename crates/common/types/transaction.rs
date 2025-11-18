@@ -1411,15 +1411,13 @@ pub fn recover_address_from_message(
     signature: Signature,
     message: &Bytes,
 ) -> Result<Address, Error> {
-    use sha2::Digest;
     // Hash message
     let payload = keccak(message);
-    recover_address(signature, payload)
+    Ok(recover_address(signature, payload)?)
 }
 
 #[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
-    use sha2::Digest;
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(

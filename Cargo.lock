@@ -3573,6 +3573,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sha3",
  "spinoff",
  "strum 0.27.2",
  "substrate-bn",
