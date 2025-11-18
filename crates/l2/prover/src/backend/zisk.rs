@@ -80,7 +80,7 @@ pub fn prove(
         OUTPUT_PATH,
         "--aggregation",
     ];
-    let conditional_groth16_arg = if format == ProofFormat::Groth16 {
+    let conditional_groth16_arg = if let ProofFormat::Groth16 = format {
         vec!["--final-snark"]
     } else {
         vec![]
