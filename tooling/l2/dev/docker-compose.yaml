@@ -4,14 +4,12 @@ services:
     image: 'redis:alpine'
     container_name: redis-db-l1
     command: redis-server
-    volumes:
-      - ./l1-redis-data:/data
 
   db-init-l1:
     image: postgres:17
     container_name: db-init-l1
     volumes:
-      - ./l1-blockscout-db-data:/var/lib/postgresql/data
+      - l1-blockscout-db-data:/var/lib/postgresql/data
     entrypoint:
       - sh
       - -c
@@ -33,7 +31,7 @@ services:
       - target: 5432
         published: 7434
     volumes:
-      - ./l1-blockscout-db-data:/var/lib/postgresql/data
+      - l1-blockscout-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
       interval: 10s
@@ -60,9 +58,6 @@ services:
     command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
     extra_hosts:
       - 'host.docker.internal:host-gateway'
-    volumes:
-      - ./l1-logs/:/app/logs/
-      - ./l1-dets/:/app/dets/
     environment:
         ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8545/
         ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:8545/
@@ -154,7 +149,7 @@ services:
     image: postgres:17
     container_name: stats-db-init-l1
     volumes:
-      - ./l1-stats-db-data:/var/lib/postgresql/data
+      - l1-stats-db-data:/var/lib/postgresql/data
     entrypoint:
       - sh
       - -c
@@ -176,7 +171,7 @@ services:
       - target: 5432
         published: 7435
     volumes:
-      - ./l1-stats-db-data:/var/lib/postgresql/data
+      - l1-stats-db-data:/var/lib/postgresql/data
     depends_on:
       stats-db-init-l1:
         condition: service_completed_successfully
@@ -228,13 +223,11 @@ services:
     image: 'redis:alpine'
     container_name: redis-db
     command: redis-server
-    volumes:
-      - ./redis-data:/data
 
   db-init:
     image: postgres:17
     volumes:
-      - ./blockscout-db-data:/var/lib/postgresql/data
+      - blockscout-db-data:/var/lib/postgresql/data
     entrypoint:
       - sh
       - -c
@@ -256,7 +249,7 @@ services:
       - target: 5432
         published: 7432
     volumes:
-      - ./blockscout-db-data:/var/lib/postgresql/data
+      - blockscout-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
       interval: 10s
@@ -283,9 +276,6 @@ services:
     command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
     extra_hosts:
       - 'host.docker.internal:host-gateway'
-    volumes:
-      - ./logs/:/app/logs/
-      - ./dets/:/app/dets/
     environment:
         ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:1729/
         ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:1729/
@@ -377,7 +367,7 @@ services:
   stats-db-init:
     image: postgres:17
     volumes:
-      - ./stats-db-data:/var/lib/postgresql/data
+      - stats-db-data:/var/lib/postgresql/data
     entrypoint:
       - sh
       - -c
@@ -399,7 +389,7 @@ services:
       - target: 5432
         published: 7433
     volumes:
-      - ./stats-db-data:/var/lib/postgresql/data
+      - stats-db-data:/var/lib/postgresql/data
     depends_on:
       stats-db-init:
         condition: service_completed_successfully
@@ -683,3 +673,9 @@ configs:
           proxy_pass http://visualizer-l1:8050/;
         }
       }
+
+volumes:
+  l1-blockscout-db-data:
+  l1-stats-db-data:
+  blockscout-db-data:
+  stats-db-data:
