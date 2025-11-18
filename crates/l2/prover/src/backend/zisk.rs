@@ -5,31 +5,30 @@ use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramO
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 
-const OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output/");
+const OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output/vadcop_final_proof.compressed.bin");
 
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
 pub struct ProveOutput(pub Vec<u8>);
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    // We write the ELF to a temp file because ziskemu currently only accepts
-    // ELF files from disk
-    std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
+    write_elf_file()?;
 
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
-
-    // We write the input to a temp file because ziskemu currently only accepts
-    // input files from disk
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
-    let mut cmd = Command::new("ziskemu");
-
-    let start = std::time::Instant::now();
-    let output = cmd
-        .arg("--elf")
-        .arg(ELF_PATH)
-        .arg("--inputs")
-        .arg(INPUT_PATH)
+    let args = vec![
+        "prove",
+        "--elf",
+        ELF_PATH,
+        "--input",
+        INPUT_PATH,
+        "--output-dir",
+        OUTPUT_PATH,
+        "--aggregation",
+    ];
+    let output = Command::new("ziskemu")
+        .args(args)
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit())
         .output()?;
@@ -49,14 +48,9 @@ pub fn prove(
     input: ProgramInput,
     format: ProofFormat,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
-    // We write the ELF to a temp file because cargo-zisk prove currently only
-    // accepts ELF files from disk
-    std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
+    write_elf_file()?;
 
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
-
-    // We write the input to a temp file because cargo-zisk prove currently only
-    // accepts input files from disk
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
     let static_args = vec![
@@ -69,7 +63,6 @@ pub fn prove(
         OUTPUT_PATH,
         "--aggregation",
     ];
-    dbg!(&static_args);
     let conditional_groth16_arg = if let ProofFormat::Groth16 = format {
         vec!["--final-snark"]
     } else {
@@ -78,9 +71,8 @@ pub fn prove(
 
     let output = Command::new("cargo-zisk")
         .args(static_args)
-        //.args(conditional_groth16_arg)
+        .args(conditional_groth16_arg)
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .output()?;
 
@@ -94,7 +86,6 @@ pub fn prove(
 
     let proof_bytes = std::fs::read(OUTPUT_PATH)?;
     let output = ProveOutput(proof_bytes);
-    std::fs::remove_file(OUTPUT_PATH)?;
     Ok(output)
 }
 
@@ -107,4 +98,22 @@ pub fn to_batch_proof(
     format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     Err("to_batch_proof is not implemented for ZisK backend".into())
+}
+
+fn write_elf_file() -> Result<(), Box<dyn std::error::Error>> {
+    match std::fs::read(ELF_PATH) {
+        Ok(existing_content) => {
+            if existing_content != content {
+                std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
+            }
+        }
+        Err(e) => {
+            if e.kind() == ErrorKind::NotFound {
+                std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)?;
+            } else {
+                return Err(e);
+            }
+        }
+    }
+    return Ok(());
 }
