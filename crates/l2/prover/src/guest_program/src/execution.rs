@@ -121,7 +121,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
 
     let chain_id = execution_witness.chain_config.chain_id;
 
-    stateless_validation_l1(&[block], execution_witness, chain_id)
+    stateless_validation_l1(vec![block], execution_witness, chain_id)
 }
 
 #[cfg(not(feature = "l2"))]
@@ -197,7 +197,7 @@ pub fn stateless_validation_l1(
                 block,
                 parent_block_header,
                 &chain_config,
-                elasticity_multiplier,
+                ELASTICITY_MULTIPLIER,
             )
             .map_err(StatelessExecutionError::BlockValidationError)
         })?;
