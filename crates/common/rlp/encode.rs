@@ -262,9 +262,6 @@ impl RLPEncode for [u8] {
     }
 
     fn length(&self) -> usize {
-        if self.is_empty() {
-            return 1;
-        }
         bytes_length(self.len(), self[0])
     }
 }
