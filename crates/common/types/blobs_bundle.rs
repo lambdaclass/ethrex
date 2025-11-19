@@ -6,7 +6,6 @@ use crate::types::Fork;
 use crate::types::constants::VERSIONED_HASH_VERSION_KZG;
 use crate::{Bytes, H256};
 
-use ethrex_rlp::encode::list_length;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -212,19 +211,6 @@ impl RLPEncode for BlobsBundle {
             .encode_field(&self.proofs)
             .encode_optional_field(&(self.version != 0).then_some(self.version))
             .finish();
-    }
-
-    fn length(&self) -> usize {
-        let payload_len = self.blobs.length()
-            + self.commitments.length()
-            + self.proofs.length()
-            + if self.version != 0 {
-                self.version.length()
-            } else {
-                0
-            };
-
-        list_length(payload_len)
     }
 }
 

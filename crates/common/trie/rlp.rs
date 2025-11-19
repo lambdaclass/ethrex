@@ -5,7 +5,7 @@ use std::array;
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, decode_bytes},
-    encode::{RLPEncode, bytes_length, encode_length, list_length},
+    encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -29,17 +29,6 @@ impl RLPEncode for BranchNode {
             }
         }
         <[u8] as RLPEncode>::encode(&self.value, buf);
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        let mut payload_len = <[u8] as RLPEncode>::length(&self.value);
-
-        for child in &self.choices {
-            payload_len += RLPEncode::length(child.compute_hash_ref());
-        }
-
-        list_length(payload_len)
     }
 
     // Duplicated to prealloc the buffer and avoid calculating the payload length twice
@@ -74,14 +63,6 @@ impl RLPEncode for ExtensionNode {
         encoder = self.child.compute_hash().encode(encoder);
         encoder.finish();
     }
-
-    fn length(&self) -> usize {
-        let payload_len = bytes_length(
-            self.prefix.compact_length(),
-            self.prefix.compact_first_byte(),
-        ) + self.child.compute_hash().length();
-        list_length(payload_len)
-    }
 }
 
 impl RLPEncode for LeafNode {
@@ -91,14 +72,6 @@ impl RLPEncode for LeafNode {
             .encode_bytes(&self.value)
             .finish()
     }
-
-    fn length(&self) -> usize {
-        let payload_len = bytes_length(
-            self.partial.compact_length(),
-            self.partial.compact_first_byte(),
-        ) + self.value.as_slice().length();
-        list_length(payload_len)
-    }
 }
 
 impl RLPEncode for Node {
@@ -107,14 +80,6 @@ impl RLPEncode for Node {
             Node::Branch(n) => n.encode(buf),
             Node::Extension(n) => n.encode(buf),
             Node::Leaf(n) => n.encode(buf),
-        }
-    }
-
-    fn length(&self) -> usize {
-        match self {
-            Node::Branch(n) => n.length(),
-            Node::Extension(n) => n.length(),
-            Node::Leaf(n) => n.length(),
         }
     }
 }

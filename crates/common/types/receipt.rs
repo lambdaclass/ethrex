@@ -2,7 +2,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
 use ethrex_rlp::{
     decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
-    encode::{RLPEncode, bytes_length, list_length},
+    encode::RLPEncode,
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -77,18 +77,6 @@ impl RLPEncode for Receipt {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         let encoded_inner = self.encode_inner();
         buf.put_slice(&encoded_inner);
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        let tx_type = self.tx_type as u8;
-
-        let payload_len = tx_type.length()
-            + self.succeeded.length()
-            + self.cumulative_gas_used.length()
-            + self.logs.length();
-
-        list_length(payload_len)
     }
 }
 
@@ -233,28 +221,6 @@ impl RLPEncode for ReceiptWithBloom {
             }
         };
     }
-
-    #[inline]
-    fn length(&self) -> usize {
-        let inner_len = {
-            let payload = self.succeeded.length()
-                + self.cumulative_gas_used.length()
-                + self.bloom.length()
-                + self.logs.length();
-            list_length(payload)
-        };
-
-        match self.tx_type {
-            TxType::Legacy => inner_len,
-
-            _ => {
-                let raw_len = 1 + inner_len; // prefix byte + inner RLP list
-                let first_byte = self.tx_type as u8; // always < 0x7f
-
-                bytes_length(raw_len, first_byte)
-            }
-        }
-    }
 }
 
 impl RLPDecode for ReceiptWithBloom {
@@ -342,13 +308,6 @@ impl RLPEncode for Log {
             .encode_field(&self.topics)
             .encode_field(&self.data)
             .finish();
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        let payload_len = self.address.length() + self.topics.length() + self.data.length();
-
-        list_length(payload_len)
     }
 }
 

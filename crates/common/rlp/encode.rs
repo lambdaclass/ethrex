@@ -1,6 +1,9 @@
 use bytes::{BufMut, Bytes};
 use ethereum_types::U256;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    usize,
+};
 
 use super::constants::RLP_NULL;
 
@@ -42,13 +45,49 @@ pub const fn bytes_length(bytes_len: usize, first_byte: u8) -> usize {
     1 + be_len as usize + bytes_len // prefix + len(len) + payload
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ByteCounter {
+    count: usize,
+}
+
+unsafe impl BufMut for ByteCounter {
+    fn remaining_mut(&self) -> usize {
+        usize::MAX - self.count
+    }
+
+    unsafe fn advance_mut(&mut self, cnt: usize) {
+        self.count += cnt;
+    }
+
+    fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+        unreachable!(
+            "shouldn't be reachable since all the functions that call this are reimplemented"
+        )
+    }
+
+    fn put<T: bytes::buf::Buf>(&mut self, src: T)
+    where
+        Self: Sized,
+    {
+        self.count += src.remaining();
+    }
+
+    fn put_bytes(&mut self, _val: u8, cnt: usize) {
+        self.count += cnt;
+    }
+
+    fn put_slice(&mut self, src: &[u8]) {
+        self.count += src.len()
+    }
+}
+
 pub trait RLPEncode {
     fn encode(&self, buf: &mut dyn BufMut);
 
     fn length(&self) -> usize {
-        let mut buf = Vec::new();
-        self.encode(&mut buf);
-        buf.len()
+        let mut counter = ByteCounter::default();
+        self.encode(&mut counter);
+        counter.count
     }
 
     fn encode_to_vec(&self) -> Vec<u8> {
@@ -236,7 +275,22 @@ impl<const N: usize> RLPEncode for [u8; N] {
     }
 
     fn length(&self) -> usize {
-        self.as_ref().length()
+        if N == 1 && self[0] <= 0x7f {
+            return 1;
+        }
+
+        if N < 56 {
+            return 1 + N;
+        }
+
+        // long case
+        let be_len = if N == 0 {
+            1
+        } else {
+            (N.ilog2() as usize / 8) + 1
+        };
+
+        1 + be_len + N
     }
 }
 
@@ -290,10 +344,9 @@ impl RLPEncode for U256 {
             ((self >> shift) & U256::from(0xff)).as_u32() as u8
         };
 
-        let is_nonzero_mask = (sig_len != 0) as usize;
         let is_multibyte_mask = ((sig_len > 1) as usize) | ((first_byte > 0x7f) as usize);
 
-        1 + (sig_len * is_nonzero_mask * is_multibyte_mask)
+        1 + sig_len * is_multibyte_mask
     }
 }
 
@@ -676,47 +729,57 @@ mod tests {
     #[test]
     fn can_encode_u64() {
         let mut encoded = Vec::new();
-        0u8.encode(&mut encoded);
+        0u64.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL]);
+        assert_eq!(encoded.len(), 0u64.length());
 
         let mut encoded = Vec::new();
-        1u8.encode(&mut encoded);
+        1u64.encode(&mut encoded);
         assert_eq!(encoded, vec![0x01]);
+        assert_eq!(encoded.len(), 1u64.length());
 
         let mut encoded = Vec::new();
-        0x7Fu8.encode(&mut encoded);
+        0x7Fu64.encode(&mut encoded);
         assert_eq!(encoded, vec![0x7f]);
+        assert_eq!(encoded.len(), 0x7Fu64.length());
 
         let mut encoded = Vec::new();
-        0x80u8.encode(&mut encoded);
+        0x80u64.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x80]);
+        assert_eq!(encoded.len(), 0x80u64.length());
 
         let mut encoded = Vec::new();
-        0x90u8.encode(&mut encoded);
+        0x90u64.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x90]);
+        assert_eq!(encoded.len(), 0x90u64.length());
     }
 
     #[test]
     fn can_encode_usize() {
         let mut encoded = Vec::new();
-        0u8.encode(&mut encoded);
+        0usize.encode(&mut encoded);
         assert_eq!(encoded, vec![0x80]);
+        assert_eq!(encoded.len(), 0usize.length());
 
         let mut encoded = Vec::new();
-        1u8.encode(&mut encoded);
+        1usize.encode(&mut encoded);
         assert_eq!(encoded, vec![0x01]);
+        assert_eq!(encoded.len(), 1usize.length());
 
         let mut encoded = Vec::new();
-        0x7Fu8.encode(&mut encoded);
+        0x7Fusize.encode(&mut encoded);
         assert_eq!(encoded, vec![0x7f]);
+        assert_eq!(encoded.len(), 0x7Fusize.length());
 
         let mut encoded = Vec::new();
-        0x80u8.encode(&mut encoded);
+        0x80usize.encode(&mut encoded);
         assert_eq!(encoded, vec![0x80 + 1, 0x80]);
+        assert_eq!(encoded.len(), 0x80usize.length());
 
         let mut encoded = Vec::new();
-        0x90u8.encode(&mut encoded);
+        0x90usize.encode(&mut encoded);
         assert_eq!(encoded, vec![0x80 + 1, 0x90]);
+        assert_eq!(encoded.len(), 0x90usize.length());
     }
 
     #[test]
@@ -729,6 +792,7 @@ mod tests {
             buf
         };
         assert_eq!(encoded, vec![0x00]);
+        assert_eq!(encoded.len(), message.length());
 
         // encode byte 0x0f
         let message: [u8; 1] = [0x0f];
@@ -738,6 +802,7 @@ mod tests {
             buf
         };
         assert_eq!(encoded, vec![0x0f]);
+        assert_eq!(encoded.len(), message.length());
 
         // encode bytes '\x04\x00'
         let message: [u8; 2] = [0x04, 0x00];
@@ -747,6 +812,7 @@ mod tests {
             buf
         };
         assert_eq!(encoded, vec![RLP_NULL + 2, 0x04, 0x00]);
+        assert_eq!(encoded.len(), message.length());
     }
 
     #[test]
@@ -760,6 +826,7 @@ mod tests {
         };
         let expected: [u8; 4] = [RLP_NULL + 3, b'd', b'o', b'g'];
         assert_eq!(encoded, expected);
+        assert_eq!(encoded.len(), message.length());
 
         // encode empty string
         let message = "";
@@ -770,6 +837,7 @@ mod tests {
         };
         let expected: [u8; 1] = [RLP_NULL];
         assert_eq!(encoded, expected);
+        assert_eq!(encoded.len(), message.length());
     }
 
     #[test]
@@ -783,6 +851,7 @@ mod tests {
         };
         let expected: [u8; 9] = [0xc8, 0x83, b'c', b'a', b't', 0x83, b'd', b'o', b'g'];
         assert_eq!(encoded, expected);
+        assert_eq!(encoded.len(), message.length());
 
         // encode empty list
         let message: Vec<&str> = vec![];
@@ -793,6 +862,7 @@ mod tests {
         };
         let expected: [u8; 1] = [RLP_EMPTY_LIST];
         assert_eq!(encoded, expected);
+        assert_eq!(encoded.len(), message.length());
     }
 
     #[test]
@@ -807,6 +877,7 @@ mod tests {
         };
         let expected: [u8; 5] = [RLP_NULL + 4, 192, 168, 0, 1];
         assert_eq!(encoded, expected);
+        assert_eq!(encoded.len(), ip.length());
 
         // encode an IPv6 address
         let message = "2001:0000:130F:0000:0000:09C0:876A:130B";
@@ -821,6 +892,7 @@ mod tests {
             0x6a, 0x13, 0x0b,
         ];
         assert_eq!(encoded, expected);
+        assert_eq!(encoded.len(), ip.length());
     }
 
     #[test]
@@ -833,6 +905,7 @@ mod tests {
         };
         let expected = hex!("94ef2d6d194084c2de36e0dabfce45d046b37d1106");
         assert_eq!(encoded, expected);
+        assert_eq!(encoded.len(), address.length());
     }
 
     #[test]
@@ -840,10 +913,12 @@ mod tests {
         let mut encoded = Vec::new();
         U256::from(1).encode(&mut encoded);
         assert_eq!(encoded, vec![1]);
+        assert_eq!(encoded.len(), U256::from(1).length());
 
         let mut encoded = Vec::new();
         U256::from(128).encode(&mut encoded);
         assert_eq!(encoded, vec![0x80 + 1, 128]);
+        assert_eq!(encoded.len(), U256::from(128).length());
 
         let mut encoded = Vec::new();
         U256::max_value().encode(&mut encoded);
@@ -851,6 +926,7 @@ mod tests {
         let mut expected: Vec<u8> = bytes.into();
         expected.insert(0, 0x80 + 32);
         assert_eq!(encoded, expected);
+        assert_eq!(encoded.len(), U256::max_value().length());
     }
 
     #[test]
@@ -861,5 +937,6 @@ mod tests {
         tuple.encode(&mut encoded);
         let expected = vec![0xc0 + 2, 0x01, 0x02];
         assert_eq!(encoded, expected);
+        assert_eq!(encoded.len(), tuple.length());
     }
 }
