@@ -241,7 +241,7 @@ impl PayloadBuildContext {
         let vm_db = StoreVmDatabase::new(storage.clone(), parent_header);
         let vm = new_evm(blockchain_type, vm_db)?;
 
-        let payload_size = payload.encode_to_vec().len() as u64;
+        let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
