@@ -52,7 +52,7 @@ use tokio_util::sync::CancellationToken;
 use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+use ethrex_metrics::blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
