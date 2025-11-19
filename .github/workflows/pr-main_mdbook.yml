@@ -7,8 +7,8 @@ on:
     paths:
       - "docs/**"
   pull_request:
-    # paths:
-    #   - "docs/**"
+    paths:
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
