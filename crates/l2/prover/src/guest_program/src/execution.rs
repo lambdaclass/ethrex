@@ -18,11 +18,7 @@ use ethrex_common::{H256, types::Block};
 use ethrex_l2_common::privileged_transactions::get_block_privileged_transactions;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-<<<<<<< Updated upstream
 use std::collections::{BTreeMap, HashMap};
-=======
-use std::collections::HashMap;
->>>>>>> Stashed changes
 
 #[cfg(not(feature = "l2"))]
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
