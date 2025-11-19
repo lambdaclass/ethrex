@@ -423,6 +423,8 @@ impl Blockchain {
                 // Example: network starts with a single account in genesis, transfers to another account,
                 // generating a second subtrie, then deploys a contract which self-destructs in that same
                 // address, removing the second subtrie.
+                //
+                // TODO(#5387): support this case
                 _ => unreachable!(
                     "we started with a branch node and there's no way to remove an entire subtrie"
                 ),
