@@ -65,6 +65,21 @@ impl Code {
         }
         targets
     }
+
+    /// Estimates the size of the Code struct in bytes
+    /// (including stack size and heap allocation).
+    ///
+    /// Note: This is an estimation and may not be exact.
+    ///
+    /// # Returns
+    ///
+    /// usize - Estimated size in bytes
+    pub fn size(&self) -> usize {
+        let hash_size = size_of::<H256>();
+        let bytes_size = size_of::<Bytes>();
+        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        hash_size + bytes_size + vec_size
+    }
 }
 
 impl AsRef<Bytes> for Code {
