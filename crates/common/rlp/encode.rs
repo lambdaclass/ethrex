@@ -19,12 +19,14 @@ pub const fn list_length(payload_len: usize) -> usize {
         // short prefix
         1 + payload_len
     } else {
+        // encode payload_len as big endian without leading zeros
         let be = payload_len.to_be_bytes();
         let mut i = 0;
         while i < be.len() && be[i] == 0 {
             i += 1;
         }
         let be_len = be.len() - i;
+        // prefix + payload_len encoding size + payload bytes
         1 + be_len + payload_len
     }
 }
@@ -197,7 +199,7 @@ impl RLPEncode for () {
     }
     #[inline]
     fn length(&self) -> usize {
-        0
+        1
     }
 }
 
