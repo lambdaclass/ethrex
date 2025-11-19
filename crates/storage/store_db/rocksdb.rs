@@ -1436,7 +1436,7 @@ impl StoreEngine for Store {
             let mut current_size = self
                 .account_code_cache_size
                 .load(std::sync::atomic::Ordering::SeqCst);
-            info!(
+            debug!(
                 "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
             );
 
