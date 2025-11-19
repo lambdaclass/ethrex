@@ -1385,10 +1385,6 @@ impl StoreEngine for Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
-        info!(
-            "[TRANSACTION BY HASH] Transaction hash: {:?}",
-            transaction_hash
-        );
         let (_block_number, block_hash, index) =
             match self.get_transaction_location(transaction_hash).await? {
                 Some(location) => location,
