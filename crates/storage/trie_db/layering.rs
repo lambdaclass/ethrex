@@ -1,6 +1,6 @@
 use ethrex_common::H256;
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -106,6 +106,7 @@ impl TrieLayerCache {
             tracing::warn!("tried to insert a state_root that's already inserted");
             return;
         }
+        let mut now = Instant::now();
 
         // add this new bloom to the global one.
         if let Some(filter) = &mut self.bloom {
@@ -117,12 +118,23 @@ impl TrieLayerCache {
                 }
             }
         }
+        tracing::info!(
+            "put_batch 0.11: bloom filter insertion - elapsed {:?}",
+            now.elapsed()
+        );
+        now = Instant::now();
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
 
+        tracing::info!(
+            "put_batch 1: nodes creation - elapsed {:?} size {}",
+            now.elapsed(),
+            nodes.len()
+        );
+        now = Instant::now();
         self.last_id += 1;
         let entry = TrieLayer {
             nodes,
@@ -130,6 +142,7 @@ impl TrieLayerCache {
             id: self.last_id,
         };
         self.layers.insert(state_root, Arc::new(entry));
+        tracing::info!("put_batch 5: layer insert - elapsed {:?}", now.elapsed());
     }
 
     /// Rebuilds the global bloom filter by inserting all keys from all layers.

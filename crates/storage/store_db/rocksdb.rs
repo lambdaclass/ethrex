@@ -28,6 +28,7 @@ use std::{
         atomic::AtomicU64,
         mpsc::{SyncSender, sync_channel},
     },
+    time::Instant,
 };
 use tracing::{debug, error, info};
 
@@ -782,10 +783,13 @@ impl Store {
         account_updates: Vec<(Nibbles, Vec<u8>)>,
         storage_updates: StorageUpdates,
     ) -> Result<(), StoreError> {
+        let start = Instant::now();
         let db = &*self.db;
         let fkv_ctl = &self.flatkeyvalue_control_tx;
         let trie_cache = &self.trie_cache;
 
+        tracing::info!("Update 1: start phase 1 - elapsed {:?}", start.elapsed());
+        let mut now = Instant::now();
         // Phase 1: update the in-memory diff-layers only, then notify block production.
         let new_layer = storage_updates
             .into_iter()
@@ -796,23 +800,45 @@ impl Store {
             })
             .chain(account_updates)
             .collect();
+        tracing::info!("Update 2: new layer - elapsed {:?}", now.elapsed());
+        now = Instant::now();
         // Read-Copy-Update the trie cache with a new layer.
         let trie = trie_cache
             .lock()
             .map_err(|_| StoreError::LockError)?
             .clone();
         let mut trie_mut = (*trie).clone();
+
+        tracing::info!("Update 3: trie clone - elapsed {:?}", now.elapsed());
+        now = Instant::now();
         trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
         let trie = Arc::new(trie_mut);
+        tracing::info!("Update 4: put batch - elapsed {:?}", now.elapsed());
+        now = Instant::now();
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
+        tracing::info!("Update 5: trie clone - elapsed {:?}", now.elapsed());
+        now = Instant::now();
         // Update finished, signal block processing.
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
+
+        tracing::info!("Update 5.1: signaled - elapsed {:?}", now.elapsed());
+        now = Instant::now();
+        tracing::info!(
+            "Update 5.2: total until signaled - elapsed {:?}",
+            start.elapsed()
+        );
 
         // Phase 2: update disk layer.
         let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
             // Nothing to commit to disk, move on.
+            tracing::info!(
+                "Update 5.3: total when non commitable - elapsed {:?}",
+                start.elapsed()
+            );
             return Ok(());
         };
+        tracing::info!("Update 6: get_commitable - elapsed {:?}", now.elapsed());
+        now = Instant::now();
         // Stop the flat-key-value generator thread, as the underlying trie is about to change.
         // Ignore the error, if the channel is closed it means there is no worker to notify.
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
@@ -838,12 +864,16 @@ impl Store {
         )?;
 
         let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
+        tracing::info!("Update 7: trie clone - elapsed {:?}", now.elapsed());
+        now = Instant::now();
 
         // Before encoding, accounts have only the account address as their path, while storage keys have
         // the account address (32 bytes) + storage path (up to 32 bytes).
 
         // Commit removes the bottom layer and returns it, this is the mutation step.
         let nodes = trie_mut.commit(root).unwrap_or_default();
+        tracing::info!("Update 8: commit - elapsed {:?}", now.elapsed());
+        now = Instant::now();
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
             let is_account = key.len() <= 65;
@@ -868,12 +898,18 @@ impl Store {
                 batch.put_cf(cf, key, value);
             }
         }
+        tracing::info!("Update 9: for iteration - elapsed {:?}", now.elapsed());
+        now = Instant::now();
         let result = db.write(batch);
+        tracing::info!("Update 10: db write - elapsed {:?}", now.elapsed());
+        now = Instant::now();
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
         // Phase 3: update diff layers with the removal of bottom layer.
         *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+        tracing::info!("Update 11: end - elapsed {:?}", now.elapsed());
+        tracing::info!("Update 12: total - elapsed {:?}", start.elapsed());
         Ok(())
     }
 
