@@ -163,6 +163,10 @@ pub struct Store {
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    /// Cache for account bytecodes, keyed by the bytecode hash.
+    /// Note that we don't remove entries on account code changes, since
+    /// those changes already affect the code hash stored in the account, and only
+    /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
     account_code_cache_size: AtomicU64,
 }
