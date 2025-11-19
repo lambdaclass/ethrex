@@ -1,13 +1,10 @@
 use crate::input::ProgramInput;
 use crate::output::ProgramOutput;
-use crate::report_cycles;
 
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::{
-    validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
-    validate_state_root,
-};
 use ethrex_common::types::AccountUpdate;
+#[cfg(not(feature = "l2"))]
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
@@ -19,7 +16,7 @@ use ethrex_common::{H256, types::Block};
 use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
@@ -91,42 +88,52 @@ pub enum StatelessExecutionError {
     TryIntoError(#[from] std::num::TryFromIntError),
 }
 
+#[cfg(feature = "l2")]
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
     let ProgramInput {
         blocks,
         execution_witness,
         elasticity_multiplier,
-        fee_configs: _fee_configs,
-        #[cfg(feature = "l2")]
+        fee_configs,
         blob_commitment,
-        #[cfg(feature = "l2")]
         blob_proof,
     } = input;
 
     let chain_id = execution_witness.chain_config.chain_id;
 
-    if cfg!(feature = "l2") {
-        #[cfg(feature = "l2")]
-        return stateless_validation_l2(
-            &blocks,
-            execution_witness,
-            elasticity_multiplier,
-            _fee_configs,
-            blob_commitment,
-            blob_proof,
-            chain_id,
-        );
-    }
-
-    stateless_validation_l1(blocks, execution_witness, elasticity_multiplier, chain_id)
+    stateless_validation_l2(
+        &blocks,
+        execution_witness,
+        elasticity_multiplier,
+        fee_configs,
+        blob_commitment,
+        blob_proof,
+        chain_id,
+    )
 }
 
+#[cfg(not(feature = "l2"))]
+pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
+    let ProgramInput {
+        block,
+        execution_witness,
+    } = input;
+
+    let chain_id = execution_witness.chain_config.chain_id;
+
+    stateless_validation_l1(&[block], execution_witness, chain_id)
+}
+
+#[cfg(not(feature = "l2"))]
 pub fn stateless_validation_l1(
     blocks: Vec<Block>,
     execution_witness: ExecutionWitness,
-    elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
+    use std::collections::BTreeMap;
+
+    use crate::report_cycles;
+
     let guest_program_state: GuestProgramState =
         report_cycles("guest_program_state_initialization", || {
             execution_witness
@@ -186,7 +193,7 @@ pub fn stateless_validation_l1(
     for block in blocks.iter() {
         // Validate the block
         report_cycles("validate_block", || {
-            validate_block(
+            ethrex_blockchain::validate_block(
                 block,
                 parent_block_header,
                 &chain_config,
@@ -227,19 +234,23 @@ pub fn stateless_validation_l1(
         }
 
         report_cycles("validate_gas_and_receipts", || {
-            validate_gas_used(&result.receipts, &block.header)
+            ethrex_blockchain::validate_gas_used(&result.receipts, &block.header)
                 .map_err(StatelessExecutionError::GasValidationError)
         })?;
 
         report_cycles("validate_receipts_root", || {
-            validate_receipts_root(&block.header, &result.receipts)
+            ethrex_blockchain::validate_receipts_root(&block.header, &result.receipts)
                 .map_err(StatelessExecutionError::ReceiptsRootValidationError)
         })?;
 
         // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
         report_cycles("validate_requests_hash", || {
-            validate_requests_hash(&block.header, &chain_config, &result.requests)
-                .map_err(StatelessExecutionError::RequestsRootValidationError)
+            ethrex_blockchain::validate_requests_hash(
+                &block.header,
+                &chain_config,
+                &result.requests,
+            )
+            .map_err(StatelessExecutionError::RequestsRootValidationError)
         })?;
 
         non_privileged_count += block.body.transactions.len();
@@ -258,7 +269,7 @@ pub fn stateless_validation_l1(
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
 
     report_cycles("validate_state_root", || {
-        validate_state_root(&last_block.header, final_state_root)
+        ethrex_blockchain::validate_state_root(&last_block.header, final_state_root)
             .map_err(|_chain_err| StatelessExecutionError::InvalidFinalStateTrie)
     })?;
 
@@ -282,7 +293,7 @@ pub fn stateless_validation_l2(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_configs: Option<Vec<FeeConfig>>,
+    fee_configs: Vec<FeeConfig>,
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
@@ -314,7 +325,9 @@ pub fn stateless_validation_l2(
 
     // Check blobs are valid
     let blob_versioned_hash = if !validium {
-        let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
+        if fee_configs.is_empty() {
+            return Err(StatelessExecutionError::FeeConfigNotFound);
+        }
         verify_blob(blocks, &fee_configs, blob_commitment, blob_proof)?
     } else {
         H256::zero()
@@ -344,14 +357,16 @@ fn execute_stateless(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_configs: Option<Vec<FeeConfig>>,
+    fee_configs: Vec<FeeConfig>,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let guest_program_state: GuestProgramState = execution_witness
         .try_into()
         .map_err(StatelessExecutionError::GuestProgramState)?;
 
     #[cfg(feature = "l2")]
-    let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
+    if fee_configs.is_empty() {
+        return Err(StatelessExecutionError::FeeConfigNotFound);
+    }
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
@@ -394,7 +409,7 @@ fn execute_stateless(
 
     for (i, block) in blocks.iter().enumerate() {
         // Validate the block
-        validate_block(
+        ethrex_blockchain::validate_block(
             block,
             parent_block_header,
             &chain_config,
@@ -439,12 +454,12 @@ fn execute_stateless(
         non_privileged_count += block.body.transactions.len()
             - get_block_privileged_transactions(&block.body.transactions).len();
 
-        validate_gas_used(&receipts, &block.header)
+        ethrex_blockchain::validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
-        validate_receipts_root(&block.header, &receipts)
+        ethrex_blockchain::validate_receipts_root(&block.header, &receipts)
             .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
         // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
-        validate_requests_hash(&block.header, &chain_config, &result.requests)
+        ethrex_blockchain::validate_requests_hash(&block.header, &chain_config, &result.requests)
             .map_err(StatelessExecutionError::RequestsRootValidationError)?;
         acc_receipts.push(receipts);
 
