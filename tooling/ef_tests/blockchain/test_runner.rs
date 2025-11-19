@@ -409,7 +409,7 @@ async fn re_run_stateless(
         let execution_witness = witness.unwrap();
     
         let program_input = ProgramInput {
-            block,
+            blocks: vec![block],
             execution_witness,
             ..Default::default()
         };
