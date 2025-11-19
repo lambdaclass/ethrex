@@ -74,12 +74,6 @@ impl RLPEncode for AuthorizationTuple {
 
         list_length(payload_len)
     }
-
-    fn encode_to_vec(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        self.encode(&mut buf);
-        buf
-    }
 }
 
 impl RLPDecode for AuthorizationTuple {

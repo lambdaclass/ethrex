@@ -210,11 +210,7 @@ impl Nibbles {
     /// Returns the length of this Nibbles as if you call encode_compact, without allocating.
     #[inline]
     pub const fn compact_length(&self) -> usize {
-        let d = self.data.len();
-        // subtract 1 if odd
-        let hex_len = d - (d & 1);
-        // prefix + packed bytes
-        1 + (hex_len / 2)
+        1 + self.data.len() / 2
     }
 
     /// Returns the first compacted byte, used to calculate the length without allocating.
@@ -222,11 +218,11 @@ impl Nibbles {
     pub fn compact_first_byte(&self) -> u8 {
         let is_leaf = self.is_leaf();
         let d = self.data.len();
-        let odd = d & 1 == 1;
+        let is_odd = d & 1 == 1;
 
         let mut v = 0u8;
 
-        if odd {
+        if is_odd {
             v = 0x10 + self.data[0];
         }
 
