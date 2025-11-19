@@ -411,6 +411,7 @@ async fn re_run_stateless(
         let program_input = ProgramInput {
             block,
             execution_witness,
+            ..Default::default()
         };
     
         if let Err(e) = ethrex_prover_lib::execute(backend, program_input) {
