@@ -1,15 +1,15 @@
 #[cfg(feature = "api")]
 pub mod api;
+#[cfg(any(feature = "api", feature = "metrics"))]
+pub mod blocks;
 #[cfg(feature = "api")]
 pub mod l2;
 #[cfg(any(feature = "api", feature = "metrics"))]
-pub mod blocks;
-#[cfg(any(feature = "api", feature = "metrics"))]
 pub mod process;
-#[cfg(any(feature = "api", feature = "transactions"))]
-pub mod transactions;
 #[cfg(feature = "api")]
 pub mod profiling;
+#[cfg(any(feature = "api", feature = "transactions"))]
+pub mod transactions;
 
 /// A macro to conditionally enable metrics-related code.
 ///
