@@ -235,7 +235,25 @@ impl BranchNode {
                     )));
                 };
 
-                let node = collapse_branch(choice, child);
+                let node = match child {
+                    // Replace self with an extension node leading to the child
+                    Node::Branch(_) => ExtensionNode::new(
+                        Nibbles::from_hex(vec![*choice_index as u8]),
+                        child_ref.clone(),
+                    )
+                    .into(),
+                    // Replace self with the child extension node, updating its path in the process
+                    Node::Extension(extension_node) => {
+                        let mut extension_node = extension_node.take();
+                        extension_node.prefix.prepend(*choice_index as u8);
+                        extension_node.into()
+                    }
+                    Node::Leaf(leaf) => {
+                        let mut leaf = leaf.take();
+                        leaf.partial.prepend(*choice_index as u8);
+                        leaf.into()
+                    }
+                };
                 NodeRemoveResult::New(node)
             }
             // Return the updated node
@@ -293,27 +311,6 @@ impl BranchNode {
     }
 }
 
-pub fn collapse_branch(choice: u8, child: &mut Node) -> Node {
-    match child {
-        // Replace self with an extension node leading to the child
-        Node::Branch(_) => ExtensionNode::new(
-            Nibbles::from_hex(vec![choice]),
-            NodeRef::Hash(child.compute_hash()),
-        )
-        .into(),
-        // Replace self with the child extension node, updating its path in the process
-        Node::Extension(extension_node) => {
-            let mut extension_node = extension_node.take();
-            extension_node.prefix.prepend(choice);
-            extension_node.into()
-        }
-        Node::Leaf(leaf) => {
-            let mut leaf = leaf.take();
-            leaf.partial.prepend(choice);
-            leaf.into()
-        }
-    }
-}
 #[cfg(test)]
 mod test {
     use ethereum_types::H256;

@@ -34,7 +34,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::node::collapse_branch;
+use ethrex_trie::node::ExtensionNode;
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -446,7 +446,7 @@ impl Blockchain {
                 0 => None,
                 1 => {
                     // Collapse the branch into an extension or leaf
-                    let (choice, _only_child) = real_root
+                    let (choice, only_child) = real_root
                         .choices
                         .into_iter()
                         .enumerate()
@@ -464,7 +464,26 @@ impl Blockchain {
                     };
                     let mut child = child_bytes.map(|b| Node::decode(&b)).transpose()?;
                     if let Some(child) = child.as_mut() {
-                        *child = collapse_branch(choice as u8, child);
+                        // Same match as in [`BranchNode::remove`]
+                        *child = match child {
+                            // Replace root with an extension node leading to the child
+                            Node::Branch(_) => ExtensionNode::new(
+                                Nibbles::from_hex(vec![choice as u8]),
+                                only_child,
+                            )
+                            .into(),
+                            // Replace root with the child extension node, updating its path in the process
+                            Node::Extension(extension_node) => {
+                                let mut extension_node = extension_node.take();
+                                extension_node.prefix.prepend(choice as u8);
+                                extension_node.into()
+                            }
+                            Node::Leaf(leaf) => {
+                                let mut leaf = leaf.take();
+                                leaf.partial.prepend(choice as u8);
+                                leaf.into()
+                            }
+                        };
                     }
                     child
                 }
