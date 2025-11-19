@@ -44,22 +44,6 @@ pub enum Transaction {
     FeeTokenTransaction(FeeTokenTransaction),
 }
 
-impl Transaction {
-    // Used to get the RLP length without encoding
-    #[inline]
-    fn tx_type_byte(&self) -> u8 {
-        match self {
-            Transaction::EIP2930Transaction(_) => 0x01,
-            Transaction::EIP1559Transaction(_) => 0x02,
-            Transaction::EIP4844Transaction(_) => 0x03,
-            Transaction::EIP7702Transaction(_) => 0x04,
-            Transaction::PrivilegedL2Transaction(_) => 0x05,
-            Transaction::FeeTokenTransaction(_) => 0x06,
-            Transaction::LegacyTransaction(_) => 0x0, // unused
-        }
-    }
-}
-
 /// The same as a Transaction enum, only that blob transactions are in wrapped format, including
 /// the blobs bundle.
 /// PrivilegedL2Transaction is not included as it is not expected to be sent over P2P.
@@ -71,21 +55,6 @@ pub enum P2PTransaction {
     EIP4844TransactionWithBlobs(WrappedEIP4844Transaction),
     EIP7702Transaction(EIP7702Transaction),
     FeeTokenTransaction(FeeTokenTransaction),
-}
-
-impl P2PTransaction {
-    /// Used to calculate the RLP length without encoding.
-    #[inline]
-    fn tx_type_byte(&self) -> u8 {
-        match self {
-            P2PTransaction::EIP2930Transaction(_) => 0x01,
-            P2PTransaction::EIP1559Transaction(_) => 0x02,
-            P2PTransaction::EIP4844TransactionWithBlobs(_) => 0x03,
-            P2PTransaction::EIP7702Transaction(_) => 0x04,
-            P2PTransaction::FeeTokenTransaction(_) => 0x05,
-            P2PTransaction::LegacyTransaction(_) => 0x0, // unused,
-        }
-    }
 }
 
 impl TryInto<Transaction> for P2PTransaction {
@@ -116,7 +85,7 @@ impl RLPEncode for P2PTransaction {
             P2PTransaction::LegacyTransaction(t) => t.length(),
 
             tx => {
-                let tx_type = tx.tx_type_byte();
+                let tx_type = tx.tx_type() as u8;
                 let inner_len = match tx {
                     P2PTransaction::EIP2930Transaction(t) => t.length(),
                     P2PTransaction::EIP1559Transaction(t) => t.length(),
@@ -512,7 +481,7 @@ impl RLPEncode for Transaction {
         match self {
             Transaction::LegacyTransaction(t) => t.length(),
             tx => {
-                let tx_type = tx.tx_type_byte();
+                let tx_type = tx.tx_type() as u8;
 
                 let inner_len = match tx {
                     Transaction::EIP2930Transaction(t) => t.length(),
