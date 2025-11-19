@@ -20,14 +20,9 @@ pub const fn list_length(payload_len: usize) -> usize {
         1 + payload_len
     } else {
         // encode payload_len as big endian without leading zeros
-        let be = payload_len.to_be_bytes();
-        let mut i = 0;
-        while i < be.len() && be[i] == 0 {
-            i += 1;
-        }
-        let be_len = be.len() - i;
+        let be_len = payload_len.ilog2() / 8 + 1;
         // prefix + payload_len encoding size + payload bytes
-        1 + be_len + payload_len
+        1 + be_len as usize + payload_len
     }
 }
 
@@ -43,14 +38,8 @@ pub const fn bytes_length(bytes_len: usize, first_byte: u8) -> usize {
     }
 
     // long (>=56 bytes)
-    let be = bytes_len.to_be_bytes();
-    let mut i = 0;
-    while i < be.len() && be[i] == 0 {
-        i += 1;
-    }
-    let be_len = be.len() - i;
-
-    1 + be_len + bytes_len // prefix + len(len) + payload
+    let be_len = bytes_len.ilog2() / 8 + 1;
+    1 + be_len as usize + bytes_len // prefix + len(len) + payload
 }
 
 pub trait RLPEncode {
@@ -123,9 +112,14 @@ impl RLPEncode for u8 {
 
     #[inline]
     fn length(&self) -> usize {
-        1usize
-            + ((8 - self.leading_zeros() as usize).div_ceil(8)
-                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
+        let bits = 8 - self.leading_zeros() as usize;
+
+        // will be 1 only if the value is non-zero AND > 0x7f.
+        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
+
+        let size = bits.div_ceil(8);
+
+        1 + size * needs_full_encoding
     }
 }
 
@@ -135,13 +129,10 @@ impl RLPEncode for u16 {
     }
     #[inline]
     fn length(&self) -> usize {
-        // (16 - leading_zeros) gives the position of highest bit set, which is converted into byte length
-        // That byte length is multiplied by a flag: (*self != 0) AND (*self > 0x7f)
-        // which evaluates to 1 only when a prefix is required (value >= 0x80)
-        // finally the initial 1usize accounts for the prefix byte itself
-        1usize
-            + ((16 - self.leading_zeros() as usize).div_ceil(8)
-                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
+        let bits = 16 - self.leading_zeros() as usize;
+        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
+        let size = bits.div_ceil(8);
+        1 + size * needs_full_encoding
     }
 }
 
@@ -152,9 +143,10 @@ impl RLPEncode for u32 {
 
     #[inline]
     fn length(&self) -> usize {
-        1usize
-            + ((32 - self.leading_zeros() as usize).div_ceil(8)
-                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
+        let bits = 32 - self.leading_zeros() as usize;
+        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
+        let size = bits.div_ceil(8);
+        1 + size * needs_full_encoding
     }
 }
 
@@ -165,9 +157,10 @@ impl RLPEncode for u64 {
 
     #[inline]
     fn length(&self) -> usize {
-        1usize
-            + (((u64::BITS as usize) - self.leading_zeros() as usize).div_ceil(8)
-                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
+        let bits = 64 - self.leading_zeros() as usize;
+        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
+        let size = bits.div_ceil(8);
+        1 + size * needs_full_encoding
     }
 }
 
@@ -178,9 +171,10 @@ impl RLPEncode for usize {
 
     #[inline]
     fn length(&self) -> usize {
-        1usize
-            + ((usize::BITS as usize - self.leading_zeros() as usize).div_ceil(8)
-                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
+        let bits = usize::BITS as usize - self.leading_zeros() as usize;
+        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
+        let size = bits.div_ceil(8);
+        1 + size * needs_full_encoding
     }
 }
 
@@ -191,9 +185,10 @@ impl RLPEncode for u128 {
 
     #[inline]
     fn length(&self) -> usize {
-        1usize
-            + ((128 - self.leading_zeros() as usize).div_ceil(8)
-                * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
+        let bits = 128 - self.leading_zeros() as usize;
+        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
+        let size = bits.div_ceil(8);
+        1 + size * needs_full_encoding
     }
 }
 
