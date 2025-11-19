@@ -20,7 +20,7 @@ PAYLOAD=$(jq -c --arg run_url "$RUN_URL" '
         }
       ]
     }
-  ] else [])
+  ] else [] end)
 ' "$BLOCKS_FILE")
 
 printf '%s' "$PAYLOAD" | curl -X POST "$WEBHOOK_URL" \
