@@ -31,9 +31,9 @@ rayon.workspace = true
 url.workspace = true
 rkyv.workspace = true
 rustc-hash.workspace = true
+k256.workspace = true
 
 secp256k1 = { workspace = true, optional = true }
-k256 = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex-literal.workspace = true
@@ -42,9 +42,10 @@ hex-literal.workspace = true
 default = ["secp256k1"]
 c-kzg = ["ethrex-crypto/c-kzg"]
 secp256k1 = ["dep:secp256k1"]
-risc0 = ["ethrex-crypto/risc0", "dep:k256"]
-zisk = ["dep:k256"]
-sp1 = ["dep:k256"]
+
+risc0 = ["ethrex-crypto/risc0"]
+sp1 = []
+zisk = []
 
 [lib]
 path = "./common.rs"

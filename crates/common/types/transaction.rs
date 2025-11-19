@@ -1,6 +1,6 @@
 use std::{cmp::min, fmt::Display};
 
-use crate::{errors::Error, utils::keccak};
+use crate::{errors::EcdsaError, utils::keccak};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 use ethrex_crypto::keccak::keccak_hash;
@@ -1046,7 +1046,7 @@ impl RLPDecode for FeeTokenTransaction {
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Result<Address, Error> {
+    pub fn sender(&self) -> Result<Address, EcdsaError> {
         match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
@@ -1410,10 +1410,10 @@ impl Transaction {
 pub fn recover_address_from_message(
     signature: Signature,
     message: &Bytes,
-) -> Result<Address, Error> {
+) -> Result<Address, EcdsaError> {
     // Hash message
     let payload = keccak(message);
-    Ok(recover_address(signature, payload)?)
+    recover_address(signature, payload).map_err(EcdsaError::from)
 }
 
 #[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
@@ -1422,7 +1422,7 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
     let signature_bytes = signature.to_fixed_bytes();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes[..64],
-        secp256k1::ecdsa::RecoveryId::try_from(signature_bytes[64] as i32)?, // cannot fail
+        secp256k1::ecdsa::RecoveryId::try_from(signature_bytes[64] as i32)?,
     )?;
     // Recover public key
     let public = secp256k1::SECP256K1.recover_ecdsa(

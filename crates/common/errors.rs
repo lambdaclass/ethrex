@@ -1,5 +1,5 @@
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub enum EcdsaError {
     #[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
     #[error("secp256k1 error: {0}")]
     Secp256k1(#[from] secp256k1::Error),

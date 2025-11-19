@@ -4,6 +4,7 @@ use p256::{
     FieldElement as P256FieldElement, NistP256,
     elliptic_curve::{Curve, bigint::U256 as P256Uint, ff::PrimeField},
 };
+use std::sync::LazyLock;
 
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
 pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
@@ -71,10 +72,10 @@ pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
 
 // EIP7702 - EOA Load Code
-pub static SECP256K1_ORDER: std::sync::LazyLock<U256> =
-    std::sync::LazyLock::new(|| U256::from_big_endian(&k256::Secp256k1::ORDER.to_be_bytes()));
+pub static SECP256K1_ORDER: LazyLock<U256> =
+    LazyLock::new(|| U256::from_big_endian(&k256::Secp256k1::ORDER.to_be_bytes()));
 pub static SECP256K1_ORDER_OVER2: std::sync::LazyLock<U256> =
-    std::sync::LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
+    LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
 pub const MAGIC: u8 = 0x05;
 pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 // Set the code of authority to be 0xef0100 || address. This is a delegation designation.

@@ -909,8 +909,8 @@ async fn test_forced_withdrawal(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     println!("forced_withdrawal: Testing forced withdrawal");
-    let rich_address =
-        get_address_from_secret_key(&rich_wallet_private_key).expect("Failed to get address");
+    let rich_address = get_address_from_secret_key(&rich_wallet_private_key.secret_bytes())
+        .expect("Failed to get address");
     let l1_initial_balance = l1_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -2009,7 +2009,8 @@ async fn test_fee_token(
     recipient_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     let test = "test_fee_token";
-    let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
+    let rich_wallet_address =
+        get_address_from_secret_key(&rich_wallet_private_key.secret_bytes()).unwrap();
     let l1_client = l1_client();
     println!("{test}: Rich wallet address: {rich_wallet_address:#x}");
 
@@ -2084,7 +2085,8 @@ async fn test_fee_token(
     println!("{test}: Sender balance before transfer: {sender_balance_before_transfer}");
     println!("{test}: Sender fee balance before transfer: {sender_token_balance_before_transfer}");
 
-    let recipient_address = get_address_from_secret_key(&recipient_private_key).unwrap();
+    let recipient_address =
+        get_address_from_secret_key(&recipient_private_key.secret_bytes()).unwrap();
     let recipient_balance_before_transfer = l2_client
         .get_balance(recipient_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;

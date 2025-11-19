@@ -292,7 +292,9 @@ pub fn eip7702_recover_address(
         return Ok(None);
     };
 
-    let Ok(authority) = k256::ecdsa::VerifyingKey::recover_from_digest(digest, &signature, recovery_id) else {
+    let Ok(authority) =
+        k256::ecdsa::VerifyingKey::recover_from_digest(digest, &signature, recovery_id)
+    else {
         return Ok(None);
     };
 

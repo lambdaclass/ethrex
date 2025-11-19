@@ -15,13 +15,17 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Block};
-#[cfg(feature = "l2")]
-use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_l2_common::privileged_transactions::get_block_privileged_transactions;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
+<<<<<<< Updated upstream
 use std::collections::{BTreeMap, HashMap};
+=======
+use std::collections::HashMap;
+>>>>>>> Stashed changes
 
+#[cfg(not(feature = "l2"))]
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
@@ -29,10 +33,8 @@ use ethrex_common::types::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    l1_messages::get_block_l1_messages,
-    privileged_transactions::{
-        PrivilegedTransactionError, compute_privileged_transactions_hash,
-    },
+    l1_messages::{L1Message, get_block_l1_messages},
+    privileged_transactions::{PrivilegedTransactionError, compute_privileged_transactions_hash},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -333,7 +335,6 @@ pub fn stateless_validation_l2(
     })
 }
 
-// receipts, account_updates, and last_block_header are only used in L2
 #[cfg_attr(not(feature = "l2"), expect(dead_code))]
 struct StatelessResult {
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
@@ -395,7 +396,7 @@ fn execute_stateless(
     let mut acc_receipts = Vec::new();
     let mut non_privileged_count = 0;
 
-    for (_i, block) in blocks.iter().enumerate() {
+    for (i, block) in blocks.iter().enumerate() {
         // Validate the block
         validate_block(
             block,
@@ -410,7 +411,7 @@ fn execute_stateless(
         let mut vm = Evm::new_for_l2(
             wrapped_db.clone(),
             fee_configs
-                .get(_i)
+                .get(i)
                 .cloned()
                 .ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
         )?;

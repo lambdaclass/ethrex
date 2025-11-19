@@ -7,7 +7,7 @@ fn main() {
     #[cfg(all(not(clippy), feature = "sp1"))]
     build_sp1_program();
 
-    #[cfg(all(not(clippy), feature = "zisk-guest"))]
+    #[cfg(all(not(clippy), feature = "zisk"))]
     build_zisk_program();
 }
 
@@ -102,7 +102,7 @@ fn build_sp1_program() {
     .expect("could not write SP1 vk-u32 to file");
 }
 
-#[cfg(all(not(clippy), feature = "zisk-guest"))]
+#[cfg(all(not(clippy), feature = "zisk"))]
 fn build_zisk_program() {
     let mut build_command = std::process::Command::new("cargo");
     let mut setup_command = std::process::Command::new("cargo-zisk");
@@ -161,7 +161,7 @@ fn build_zisk_program() {
     }
 }
 
-#[cfg(all(not(clippy), feature = "zisk-guest"))]
+#[cfg(all(not(clippy), feature = "zisk"))]
 /// Returns the path to `rustc` executable of the given toolchain.
 ///
 /// Taken from https://github.com/eth-act/ere/blob/master/crates/compile-utils/src/rust.rs#L166

@@ -13,4 +13,4 @@ pub mod rkyv_utils;
 pub mod tracing;
 pub mod utils;
 
-pub use errors::Error;
+pub use errors::EcdsaError;

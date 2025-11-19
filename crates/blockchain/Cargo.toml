@@ -13,7 +13,7 @@ ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
-ethrex-vm = { workspace = true, default-features = false }
+ethrex-vm.workspace = true
 ethrex-metrics = { path = "./metrics", default-features = false }
 
 thiserror.workspace = true

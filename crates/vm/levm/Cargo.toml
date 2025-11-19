@@ -40,10 +40,9 @@ ark-bn254 = "0.5.0"
 ark-ec = "0.5.0"
 ark-ff = { version = "0.5.0", features = ["asm"] }
 strum = { version = "0.27.1", features = ["derive"] }
+k256.workspace = true
 substrate-bn = { version = "0.6.0", optional = true }
-
 secp256k1 = { workspace = true, optional = true }
-k256 = { workspace = true, optional = true }
 
 bitvec = { version = "1.0.1", features = ["alloc"] }
 
@@ -55,14 +54,14 @@ colored = "2.1.0"
 spinoff = "0.8.0"
 
 [features]
-default = ["secp256k1", "dep:k256"]
+default = ["secp256k1"]
 secp256k1 = ["dep:secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 ethereum_foundation_tests = []
 debug = []
-sp1 = ["dep:substrate-bn", "dep:k256"]
-risc0 = ["dep:substrate-bn", "dep:k256", "c-kzg"]
-zisk = ["dep:substrate-bn", "dep:k256"]
+sp1 = ["dep:substrate-bn"]
+risc0 = ["dep:substrate-bn", "c-kzg"]
+zisk = ["dep:substrate-bn"]
 
 [lints.rust]
 unsafe_code = "warn"

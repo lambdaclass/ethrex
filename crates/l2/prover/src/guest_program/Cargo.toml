@@ -36,7 +36,6 @@ methods = ["src/risc0"]
 default = ["secp256k1"]
 risc0 = ["dep:risc0-build", "dep:risc0-zkvm"]
 sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
-zisk-guest = []
 zisk = [
     "ethrex-common/zisk",
     "ethrex-blockchain/zisk",
@@ -52,7 +51,7 @@ secp256k1 = [
     "ethrex-l2-common/secp256k1",
 ]
 
-# When this feature is enabled, the cycles used in the code inside the 
+# When this feature is enabled, the cycles used in the code inside the
 # report_cycles! macro will be reported to stdout when running inside SP1 zkVM.
 sp1-cycles = []
 
