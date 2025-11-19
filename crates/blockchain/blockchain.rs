@@ -364,6 +364,16 @@ impl Blockchain {
                 max_queue_length,
             );
         };
+        // If there are less than 3 subtries, we fallback to sequential processing.
+        // This simplifies the handling of shard results.
+        if old_root.choices.iter().filter(|c| c.is_valid()).count() < 3 {
+            return self.handle_merkleization_sequential(
+                rx,
+                parent_header,
+                queue_length,
+                max_queue_length,
+            );
+        }
         let mut workers_tx = Vec::with_capacity(16);
         let mut workers_handles = Vec::with_capacity(16);
         for i in 0..16 {
@@ -412,26 +422,27 @@ impl Blockchain {
                 continue;
             };
             let root_node = Node::decode(root_node)?;
-            match root_node {
-                Node::Branch(mut subtrie_branch) => {
-                    real_root.choices[choice] = std::mem::take(&mut subtrie_branch.choices[choice]);
-                }
-                // On most chains, there's no way to remove entire subtries.
-                // There can be exceptions in networks engineered to trigger this case, but it's
-                // not expected in normal operation.
-                //
-                // Example: network starts with a single account in genesis, transfers to another account,
-                // generating a second subtrie, then deploys a contract which self-destructs in that same
-                // address, removing the second subtrie.
-                //
-                // TODO(#5387): support this case
-                _ => unreachable!(
-                    "we started with a branch node and there's no way to remove an entire subtrie"
-                ),
-            }
+            let Node::Branch(mut subtrie_branch) = root_node else {
+                unreachable!("the result can only remove one of the >2 subtries we had")
+            };
+            real_root.choices[choice] = std::mem::take(&mut subtrie_branch.choices[choice]);
+
             code_updates.extend(worker_result.code_updates);
             storage_updates_map.extend(worker_result.storage_updates);
             state_updates_map.extend(worker_result.state_updates);
+        }
+
+        if real_root.choices.iter().filter(|c| c.is_valid()).count() < 2 {
+            // On most chains, there's no way to go from a branch root node to a leaf or extension.
+            // There are exceptions in networks engineered to trigger this case, but it's
+            // not expected in normal operation.
+            //
+            // Example: network starts with a single account in genesis, transfers to other addresses,
+            // generating more subtries, then deploys a contract which self-destructs in each of those
+            // addresses, reverting back to the base case.
+            //
+            // TODO(#5387): support this case
+            todo!("real root has less than 2 valid subtries after merkleization");
         }
         let root_node = real_root.encode_to_vec();
         let state_trie_hash = keccak(&root_node);
