@@ -396,7 +396,9 @@ async fn re_run_stateless(
     let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
 
     for block in blocks {
-        let witness = blockchain.generate_witness_for_blocks(&[block.clone()]).await;
+        let witness = blockchain
+            .generate_witness_for_blocks(&[block.clone()])
+            .await;
         if test_should_fail && witness.is_err() {
             // We can't generate witness for a test that should fail.
             return Ok(());
@@ -407,13 +409,13 @@ async fn re_run_stateless(
         }
         // At this point witness is guaranteed to be Ok
         let execution_witness = witness.unwrap();
-    
+
         let program_input = ProgramInput {
             blocks: vec![block],
             execution_witness,
             ..Default::default()
         };
-    
+
         if let Err(e) = ethrex_prover_lib::execute(backend, program_input) {
             if !test_should_fail {
                 return Err(format!(
