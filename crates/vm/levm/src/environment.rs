@@ -28,6 +28,7 @@ pub struct Environment {
     pub difficulty: U256,
     pub chain_id: U256,
     pub base_fee_per_gas: U256,
+    pub base_blob_fee_per_gas: U256,
     pub gas_price: U256, // Effective gas price
     pub block_excess_blob_gas: Option<U256>,
     pub block_blob_gas_used: Option<U256>,
@@ -38,6 +39,7 @@ pub struct Environment {
     pub tx_nonce: u64,
     pub block_gas_limit: u64,
     pub is_privileged: bool,
+    pub fee_token: Option<Address>,
 }
 
 /// This struct holds special configuration variables specific to the
