@@ -4,7 +4,7 @@ mod leaf;
 
 use std::sync::{Arc, OnceLock};
 
-pub use branch::{BranchNode, collapse_branch};
+pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
