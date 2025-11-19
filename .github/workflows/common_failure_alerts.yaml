@@ -14,7 +14,7 @@ on:
       - L2 TDX build
       - LEVM
       - Publish Docker
-      - Publish Ethrex docs page
+      - Publish Ethrex docs to https://docs.ethrex.xyz/
     branches:
       - main
     types:
