@@ -4,6 +4,3 @@ rustflags = [
     "-Ctarget-feature=+avx2,+sse2,+ssse3,+sse4.1,+sse4.2,+bmi1,+lzcnt,+pclmulqdq",
 ]
 
-[target.riscv64ima-zisk-zkvm-elf]
-rustflags = []
-
