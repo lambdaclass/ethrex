@@ -6,4 +6,4 @@ Layer 2 (L2) solutions are protocols built on top of Ethereum to increase scalab
 
 ## Get started with your L2
 
-Check out the [Quickstart L2 guide](../getting-started#quickstart-l2) to start your rollup in just a command, or jump right into the [Deploy an L2](./deploy.md) for more detailed instructions.
+Check out the [Quickstart L2 guide](../getting-started/README.md#quickstart-l2) to start your rollup in just a command, or jump right into the [Deploy an L2](../l2/deployment/overview.md) for more detailed instructions.

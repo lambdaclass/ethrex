@@ -139,29 +139,30 @@ The mechanism for withdrawing funds from L2 back to L1 is explained in detail in
 
 ### Batch Commitment
 
-An L2 batch commitment is the hash of the following things:
+An L2 batch commitment contains:
 
 - The new L2 state root.
-- The state diff hash or polynomial commitments, depending on whether we are using calldata or blobs.
-- The Withdrawal logs merkle root.
+- The latest block's hash
+- The KZG versioned hash of the blobs published by the L2
+- The rolling hash of the processed privileged transactions
+- The Merkle root of the withdrawal logs
 
-The public input to the proof is then the hash of the previous batch commitment and the new one.
+These are committed as public inputs of the zk proof that validates a new L2 state.
 
 ## L1 contract checks
 
 ### Commit transaction
 
-For the `commit` transaction, the L1 verifier contract receives the following things from the sequencer:
-
-- The L2 batch number to be commited.
-- The new L2 state root.
-- The Withdrawal logs merkle root.
-- The state diffs hash or polynomial commitment scheme accordingly.
+For the `commit` transaction, the L1 verifier contract receives the batch commitment, as defined previously, for the new batch.
 
 The contract will then:
 
-- Check that the batch number is the immediate successor of the last batch processed.
-- Check that the state diffs are valid, either through hashing or the point evaluation precompile.
+- Check that the batch number is the immediate successor of the last committed batch.
+- Check that the batch has not been committed already.
+- Check that the `lastBlockHash` is not zero.
+- If privileged transactions were processed, it checks the submitted hash against the one in the `CommonBridge` contract.
+- If withdrawals were processed, it publishes them to the `CommonBridge` contract.
+- It checks that a blob was published if the L2 is running as a rollup, or that no blob was published if it's running as a validium.
 - Calculate the new batch commitment and store it.
 
 ### Verify transaction
@@ -169,11 +170,16 @@ The contract will then:
 On a `verification` transaction, the L1 contract receives the following:
 
 - The batch number.
-- The batch proof.
+- The RISC-V Zero-Knowledge proof of the batch execution (if enabled).
+- The SP1 Zero-Knowledge proof of the batch execution (if enabled).
+- The TDX Zero-Knowledge proof of the batch execution (if enabled).
 
 The contract will then:
 
-- Compute the proof public input from the new and previous batch commitments (both are already stored in the contract).
+- Check that the batch number is the immediate successor of the last verified batch.
+- Check that the batch has been committed.
+- It removes the pending transaction hashes from the `CommonBridge` contract.
+- It verifies the public data of the proof, checking that the data committed in the `commitBatch` call matches the data in the public inputs of the proof.
 - Pass the proof and public inputs to the verifier and assert the proof passes.
 - If the proof passes, finalize the L2 state, setting the latest batch as the given one and allowing any withdrawals for that batch to occur.
 
