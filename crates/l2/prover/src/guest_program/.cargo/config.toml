@@ -1,3 +1,0 @@
-[target.riscv64ima-zisk-zkvm-elf]
-rustflags = []
-
