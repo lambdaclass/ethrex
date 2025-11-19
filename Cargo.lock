@@ -3310,6 +3310,7 @@ dependencies = [
  "rayon",
  "reqwest 0.12.24",
  "secp256k1",
+ "semver 1.0.27",
  "serde",
  "serde_json",
  "spawned-concurrency",
