@@ -156,7 +156,7 @@ impl RLPEncode for u8 {
         // will be 1 only if the value is non-zero AND > 0x7f.
         let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
 
-        let size = bits.div_ceil(8);
+        let size = (bits + 7) >> 3;
 
         1 + size * needs_full_encoding
     }
@@ -170,7 +170,7 @@ impl RLPEncode for u16 {
     fn length(&self) -> usize {
         let bits = 16 - self.leading_zeros() as usize;
         let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = bits.div_ceil(8);
+        let size = (bits + 7) >> 3;
         1 + size * needs_full_encoding
     }
 }
@@ -184,7 +184,7 @@ impl RLPEncode for u32 {
     fn length(&self) -> usize {
         let bits = 32 - self.leading_zeros() as usize;
         let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = bits.div_ceil(8);
+        let size = (bits + 7) >> 3;
         1 + size * needs_full_encoding
     }
 }
@@ -198,7 +198,7 @@ impl RLPEncode for u64 {
     fn length(&self) -> usize {
         let bits = 64 - self.leading_zeros() as usize;
         let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = bits.div_ceil(8);
+        let size = (bits + 7) >> 3;
         1 + size * needs_full_encoding
     }
 }
@@ -212,7 +212,7 @@ impl RLPEncode for usize {
     fn length(&self) -> usize {
         let bits = usize::BITS as usize - self.leading_zeros() as usize;
         let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = bits.div_ceil(8);
+        let size = (bits + 7) >> 3;
         1 + size * needs_full_encoding
     }
 }
@@ -226,7 +226,7 @@ impl RLPEncode for u128 {
     fn length(&self) -> usize {
         let bits = 128 - self.leading_zeros() as usize;
         let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = bits.div_ceil(8);
+        let size = (bits + 7) >> 3;
         1 + size * needs_full_encoding
     }
 }
