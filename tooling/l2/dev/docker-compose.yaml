@@ -1,27 +1,26 @@
 services:
-  # L1 Blockscout Services
-  redis-db-l1:
+  # DB services
+  redis-db:
     image: 'redis:alpine'
-    container_name: redis-db-l1
+    container_name: redis-db
     command: redis-server
 
-  db-init-l1:
+  db-init:
     image: postgres:17
-    container_name: db-init-l1
     volumes:
-      - l1-blockscout-db-data:/var/lib/postgresql/data
+      - blockscout-db-data:/var/lib/postgresql/data
     entrypoint:
       - sh
       - -c
       - |
         chown -R 2000:2000 /var/lib/postgresql/data
 
-  db-l1:
+  db:
     image: postgres:17
     user: 2000:2000
     shm_size: 256m
     restart: always
-    container_name: 'db-l1'
+    container_name: 'db'
     command: postgres -c 'max_connections=200' -c 'client_connection_check_interval=60000'
     environment:
         POSTGRES_DB: 'blockscout'
@@ -29,9 +28,9 @@ services:
         POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
     ports:
       - target: 5432
-        published: 7434
+        published: 7432
     volumes:
-      - l1-blockscout-db-data:/var/lib/postgresql/data
+      - blockscout-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
       interval: 10s
@@ -39,20 +38,57 @@ services:
       retries: 5
       start_period: 10s
     depends_on:
-      db-init-l1:
+      db-init:
         condition: service_completed_successfully
 
+  stats-db-init:
+    image: postgres:17
+    volumes:
+      - stats-db-data:/var/lib/postgresql/data
+    entrypoint:
+      - sh
+      - -c
+      - |
+        chown -R 2000:2000 /var/lib/postgresql/data
+
+  stats-db:
+    image: postgres:17
+    user: 2000:2000
+    shm_size: 256m
+    restart: always
+    container_name: 'stats-db'
+    command: postgres -c 'max_connections=200'
+    environment:
+        POSTGRES_DB: 'stats'
+        POSTGRES_USER: 'stats'
+        POSTGRES_PASSWORD: 'n0uejXPl61ci6ldCuE2gQU5Y'
+    ports:
+      - target: 5432
+        published: 7433
+    volumes:
+      - stats-db-data:/var/lib/postgresql/data
+    depends_on:
+      stats-db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # L1 Blockscout Services
   backend-l1:
     image: ghcr.io/lambdaclass/blockscout-private:9.2.2.commit.763c41da
     platform: linux/arm64
     pull_policy: always
     depends_on:
-      db-l1:
+      db:
         condition: service_healthy
-      redis-db-l1:
+      redis-db:
         condition: service_started
     links:
-      - db-l1:database
+      - db:database
     stop_grace_period: 5m
     container_name: 'backend-l1'
     command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
@@ -64,7 +100,7 @@ services:
         CHAIN_ID: '9'
         ETHEREUM_JSONRPC_VARIANT: geth
         DISABLE_FILE_LOGGING: false
-        DATABASE_URL: postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db-l1:5432/blockscout
+        DATABASE_URL: postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1
         ETHEREUM_JSONRPC_TRANSPORT: http
         ETHEREUM_JSONRPC_DISABLE_ARCHIVE_BALANCES: false
         SECRET_KEY_BASE: 56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN
@@ -91,7 +127,7 @@ services:
         MICROSERVICE_ACCOUNT_ABSTRACTION_URL: http://user-ops-indexer:8050/
         DECODE_NOT_A_CONTRACT_CALLS: true
         ACCOUNT_ENABLED: false
-        ACCOUNT_REDIS_URL: redis://redis-db-l1:6379
+        ACCOUNT_REDIS_URL: redis://redis-db:6379/1
         NFT_MEDIA_HANDLER_ENABLED: false
         NFT_MEDIA_HANDLER_REMOTE_DISPATCHER_NODE_MODE_ENABLED: false
         NFT_MEDIA_HANDLER_BUCKET_FOLDER: /folder_1
@@ -145,42 +181,6 @@ services:
         NEXT_PUBLIC_MARKETPLACE_ENABLED: false
         NEXT_PUBLIC_PROMOTE_BLOCKSCOUT_IN_TITLE: false
 
-  stats-db-init-l1:
-    image: postgres:17
-    container_name: stats-db-init-l1
-    volumes:
-      - l1-stats-db-data:/var/lib/postgresql/data
-    entrypoint:
-      - sh
-      - -c
-      - |
-        chown -R 2000:2000 /var/lib/postgresql/data
-
-  stats-db-l1:
-    image: postgres:17
-    user: 2000:2000
-    shm_size: 256m
-    restart: always
-    container_name: 'stats-db-l1'
-    command: postgres -c 'max_connections=200'
-    environment:
-        POSTGRES_DB: 'stats'
-        POSTGRES_USER: 'stats'
-        POSTGRES_PASSWORD: 'n0uejXPl61ci6ldCuE2gQU5Y'
-    ports:
-      - target: 5432
-        published: 7435
-    volumes:
-      - l1-stats-db-data:/var/lib/postgresql/data
-    depends_on:
-      stats-db-init-l1:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
 
   stats-l1:
     image: ghcr.io/blockscout/stats:${STATS_DOCKER_TAG:-latest}
@@ -191,11 +191,11 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     depends_on:
-      - stats-db-l1
+      - stats-db
       - backend-l1
     environment:
-      - STATS__DB_URL=${STATS__DB_URL:-postgres://stats:n0uejXPl61ci6ldCuE2gQU5Y@stats-db-l1:5432/stats}
-      - STATS__BLOCKSCOUT_DB_URL=${STATS__BLOCKSCOUT_DB_URL:-postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db-l1:5432/blockscout}
+      - STATS__DB_URL=${STATS__DB_URL:-postgres://stats:n0uejXPl61ci6ldCuE2gQU5Y@stats-db:5432/stats_l1}
+      - STATS__BLOCKSCOUT_DB_URL=${STATS__BLOCKSCOUT_DB_URL:-postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1}
       - STATS__CREATE_DATABASE=${STATS__CREATE_DATABASE:-true}
       - STATS__RUN_MIGRATIONS=${STATS__RUN_MIGRATIONS:-true}
       - STATS__BLOCKSCOUT_API_URL=${STATS__BLOCKSCOUT_API_URL:-http://host.docker.internal:8083}
@@ -219,47 +219,6 @@ services:
       - STATS__TRACING__FORMAT=default
 
   # L2 Blockscout Services
-  redis-db:
-    image: 'redis:alpine'
-    container_name: redis-db
-    command: redis-server
-
-  db-init:
-    image: postgres:17
-    volumes:
-      - blockscout-db-data:/var/lib/postgresql/data
-    entrypoint:
-      - sh
-      - -c
-      - |
-        chown -R 2000:2000 /var/lib/postgresql/data
-
-  db:
-    image: postgres:17
-    user: 2000:2000
-    shm_size: 256m
-    restart: always
-    container_name: 'db'
-    command: postgres -c 'max_connections=200' -c 'client_connection_check_interval=60000'
-    environment:
-        POSTGRES_DB: 'blockscout'
-        POSTGRES_USER: 'blockscout'
-        POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
-    ports:
-      - target: 5432
-        published: 7432
-    volumes:
-      - blockscout-db-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    depends_on:
-      db-init:
-        condition: service_completed_successfully
-
   backend:
     image: ghcr.io/lambdaclass/blockscout-private:9.2.2.commit.763c41da
     platform: linux/arm64
@@ -282,7 +241,7 @@ services:
         CHAIN_ID: '65536999'
         ETHEREUM_JSONRPC_VARIANT: geth
         DISABLE_FILE_LOGGING: false
-        DATABASE_URL: postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout
+        DATABASE_URL: postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l2
         ETHEREUM_JSONRPC_TRANSPORT: http
         ETHEREUM_JSONRPC_DISABLE_ARCHIVE_BALANCES: false
         SECRET_KEY_BASE: 56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN
@@ -309,7 +268,7 @@ services:
         MICROSERVICE_ACCOUNT_ABSTRACTION_URL: http://user-ops-indexer:8050/
         DECODE_NOT_A_CONTRACT_CALLS: true
         ACCOUNT_ENABLED: false
-        ACCOUNT_REDIS_URL: redis://redis-db:6379
+        ACCOUNT_REDIS_URL: redis://redis-db:6379/2
         NFT_MEDIA_HANDLER_ENABLED: false
         NFT_MEDIA_HANDLER_REMOTE_DISPATCHER_NODE_MODE_ENABLED: false
         NFT_MEDIA_HANDLER_BUCKET_FOLDER: /folder_1
@@ -364,41 +323,6 @@ services:
         NEXT_PUBLIC_PROMOTE_BLOCKSCOUT_IN_TITLE: false
 
 
-  stats-db-init:
-    image: postgres:17
-    volumes:
-      - stats-db-data:/var/lib/postgresql/data
-    entrypoint:
-      - sh
-      - -c
-      - |
-        chown -R 2000:2000 /var/lib/postgresql/data
-
-  stats-db:
-    image: postgres:17
-    user: 2000:2000
-    shm_size: 256m
-    restart: always
-    container_name: 'stats-db'
-    command: postgres -c 'max_connections=200'
-    environment:
-        POSTGRES_DB: 'stats'
-        POSTGRES_USER: 'stats'
-        POSTGRES_PASSWORD: 'n0uejXPl61ci6ldCuE2gQU5Y'
-    ports:
-      - target: 5432
-        published: 7433
-    volumes:
-      - stats-db-data:/var/lib/postgresql/data
-    depends_on:
-      stats-db-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
 
   stats:
     image: ghcr.io/blockscout/stats:${STATS_DOCKER_TAG:-latest}
@@ -412,8 +336,8 @@ services:
       - stats-db
       - backend
     environment:
-      - STATS__DB_URL=${STATS__DB_URL:-postgres://stats:n0uejXPl61ci6ldCuE2gQU5Y@stats-db:5432/stats}
-      - STATS__BLOCKSCOUT_DB_URL=${STATS__BLOCKSCOUT_DB_URL:-postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout}
+      - STATS__DB_URL=${STATS__DB_URL:-postgres://stats:n0uejXPl61ci6ldCuE2gQU5Y@stats-db:5432/stats_l2}
+      - STATS__BLOCKSCOUT_DB_URL=${STATS__BLOCKSCOUT_DB_URL:-postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l2}
       - STATS__CREATE_DATABASE=${STATS__CREATE_DATABASE:-true}
       - STATS__RUN_MIGRATIONS=${STATS__RUN_MIGRATIONS:-true}
       - STATS__BLOCKSCOUT_API_URL=${STATS__BLOCKSCOUT_API_URL:-http://host.docker.internal:8082}
@@ -682,7 +606,5 @@ configs:
       }
 
 volumes:
-  l1-blockscout-db-data:
-  l1-stats-db-data:
   blockscout-db-data:
   stats-db-data:
