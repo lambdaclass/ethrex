@@ -109,6 +109,8 @@ fn build_zisk_program() {
 
     build_command
         .env("RUSTC", rustc_path("zisk"))
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS");
         .args([
             "+zisk",
             "build",
@@ -121,6 +123,8 @@ fn build_zisk_program() {
         .current_dir("./src/zisk");
     setup_command
         .env("RUSTC", rustc_path("zisk"))
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS");
         .args([
             "rom-setup",
             "-e",
