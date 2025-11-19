@@ -19,17 +19,19 @@ pub const fn list_length(payload_len: usize) -> usize {
         // short prefix
         1 + payload_len
     } else {
+        // encode payload_len as big endian without leading zeros
         let be = payload_len.to_be_bytes();
         let mut i = 0;
         while i < be.len() && be[i] == 0 {
             i += 1;
         }
         let be_len = be.len() - i;
+        // prefix + payload_len encoding size + payload bytes
         1 + be_len + payload_len
     }
 }
 
-/// Computes the length needed for a given bytes length and first byte
+/// Computes the length needed for a given byte-string and first byte
 #[inline]
 pub const fn bytes_length(bytes_len: usize, first_byte: u8) -> usize {
     if bytes_len == 1 && first_byte <= 0x7f {
@@ -133,6 +135,10 @@ impl RLPEncode for u16 {
     }
     #[inline]
     fn length(&self) -> usize {
+        // (16 - leading_zeros) gives the position of highest bit set, which is converted into byte length
+        // That byte length is multiplied by a flag: (*self != 0) AND (*self > 0x7f)
+        // which evaluates to 1 only when a prefix is required (value >= 0x80)
+        // finally the initial 1usize accounts for the prefix byte itself
         1usize
             + ((16 - self.leading_zeros() as usize).div_ceil(8)
                 * (((*self != 0) as usize) & ((*self > 0x7f) as usize)))
@@ -197,7 +203,7 @@ impl RLPEncode for () {
     }
     #[inline]
     fn length(&self) -> usize {
-        0
+        1
     }
 }
 
