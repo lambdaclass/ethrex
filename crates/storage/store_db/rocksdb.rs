@@ -799,8 +799,6 @@ impl Store {
             start.elapsed()
         );
 
-        (*trie).clone().prebuild_clones();
-
         // Phase 2: update disk layer.
         let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
             // Nothing to commit to disk, move on.
