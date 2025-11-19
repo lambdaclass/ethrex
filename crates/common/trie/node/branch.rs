@@ -222,9 +222,8 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children.get_mut(0).unwrap();
-                let choice = *choice_index as u8;
-                let Some(child) =
-                    child_ref.get_node_mut(db, base_path.current().append_new(choice))?
+                let Some(child) = child_ref
+                    .get_node_mut(db, base_path.current().append_new(*choice_index as u8))?
                 else {
                     return Err(TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
