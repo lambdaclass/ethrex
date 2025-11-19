@@ -222,8 +222,9 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children.get_mut(0).unwrap();
-                let Some(child) = child_ref
-                    .get_node_mut(db, base_path.current().append_new(*choice_index as u8))?
+                let choice = *choice_index as u8;
+                let Some(child) =
+                    child_ref.get_node_mut(db, base_path.current().append_new(choice))?
                 else {
                     return Err(TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
@@ -234,25 +235,7 @@ impl BranchNode {
                     )));
                 };
 
-                let node = match child {
-                    // Replace self with an extension node leading to the child
-                    Node::Branch(_) => ExtensionNode::new(
-                        Nibbles::from_hex(vec![*choice_index as u8]),
-                        child_ref.clone(),
-                    )
-                    .into(),
-                    // Replace self with the child extension node, updating its path in the process
-                    Node::Extension(extension_node) => {
-                        let mut extension_node = extension_node.take();
-                        extension_node.prefix.prepend(*choice_index as u8);
-                        extension_node.into()
-                    }
-                    Node::Leaf(leaf) => {
-                        let mut leaf = leaf.take();
-                        leaf.partial.prepend(*choice_index as u8);
-                        leaf.into()
-                    }
-                };
+                let node = collapse_branch(choice, child);
                 NodeRemoveResult::New(node)
             }
             // Return the updated node
@@ -310,6 +293,27 @@ impl BranchNode {
     }
 }
 
+pub fn collapse_branch(choice: u8, child: &mut Node) -> Node {
+    match child {
+        // Replace self with an extension node leading to the child
+        Node::Branch(_) => ExtensionNode::new(
+            Nibbles::from_hex(vec![choice]),
+            NodeRef::Hash(child.compute_hash()),
+        )
+        .into(),
+        // Replace self with the child extension node, updating its path in the process
+        Node::Extension(extension_node) => {
+            let mut extension_node = extension_node.take();
+            extension_node.prefix.prepend(choice);
+            extension_node.into()
+        }
+        Node::Leaf(leaf) => {
+            let mut leaf = leaf.take();
+            leaf.partial.prepend(choice);
+            leaf.into()
+        }
+    }
+}
 #[cfg(test)]
 mod test {
     use ethereum_types::H256;
