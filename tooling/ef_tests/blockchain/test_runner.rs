@@ -395,33 +395,35 @@ async fn re_run_stateless(
 
     let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
 
-    let witness = blockchain.generate_witness_for_blocks(&blocks).await;
-    if test_should_fail && witness.is_err() {
-        // We can't generate witness for a test that should fail.
-        return Ok(());
-    } else if !test_should_fail && let Err(err) = witness {
-        return Err(format!(
-            "Failed to create witness for a test that should not fail: {err}"
-        ));
-    }
-    // At this point witness is guaranteed to be Ok
-    let execution_witness = witness.unwrap();
-
-    let program_input = ProgramInput {
-        blocks,
-        execution_witness,
-        elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
-        ..Default::default()
-    };
-
-    if let Err(e) = ethrex_prover_lib::execute(backend, program_input) {
-        if !test_should_fail {
+    for block in blocks {
+        let witness = blockchain.generate_witness_for_blocks(&[block.clone()]).await;
+        if test_should_fail && witness.is_err() {
+            // We can't generate witness for a test that should fail.
+            return Ok(());
+        } else if !test_should_fail && let Err(err) = witness {
             return Err(format!(
-                "Expected test: {test_key} to succeed but failed with {e}"
+                "Failed to create witness for a test that should not fail: {err}"
             ));
         }
-    } else if test_should_fail {
-        return Err(format!("Expected test: {test_key} to fail but succeeded"));
+        // At this point witness is guaranteed to be Ok
+        let execution_witness = witness.unwrap();
+    
+        let program_input = ProgramInput {
+            block,
+            execution_witness,
+            ..Default::default()
+        };
+    
+        if let Err(e) = ethrex_prover_lib::execute(backend, program_input) {
+            if !test_should_fail {
+                return Err(format!(
+                    "Expected test: {test_key} to succeed but failed with {e}"
+                ));
+            }
+        } else if test_should_fail {
+            return Err(format!("Expected test: {test_key} to fail but succeeded"));
+        }
     }
+
     Ok(())
 }
