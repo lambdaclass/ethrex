@@ -23,7 +23,6 @@ use ethrex_common::{
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp;
 use std::collections::HashMap;
 pub type Storage = HashMap<U256, H256>;
@@ -252,7 +251,12 @@ pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError
     }
 }
 
-#[cfg(any(feature = "zisk", feature = "risc0", feature = "sp1"))]
+#[cfg(any(
+    feature = "zisk",
+    feature = "risc0",
+    feature = "sp1",
+    not(feature = "secp256k1")
+))]
 pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
 ) -> Result<Option<Address>, VMError> {
@@ -312,10 +316,16 @@ pub fn eip7702_recover_address(
     Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
 
-#[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
+#[cfg(all(
+    not(feature = "zisk"),
+    not(feature = "risc0"),
+    not(feature = "sp1"),
+    feature = "secp256k1"
+))]
 pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
 ) -> Result<Option<Address>, VMError> {
+    use ethrex_crypto::keccak::keccak_hash;
     use ethrex_rlp::encode::RLPEncode;
 
     if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {

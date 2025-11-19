@@ -374,7 +374,12 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
+#[cfg(all(
+    not(feature = "sp1"),
+    not(feature = "risc0"),
+    not(feature = "zisk"),
+    feature = "secp256k1"
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     use crate::gas_cost::ECRECOVER_COST;
 
@@ -440,7 +445,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
+#[cfg(any(
+    feature = "sp1",
+    feature = "risc0",
+    feature = "zisk",
+    not(feature = "secp256k1"),
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     use ethrex_common::utils::keccak;
     use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
