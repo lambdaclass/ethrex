@@ -1047,22 +1047,30 @@ async fn handle_incoming_message(
                 }
             }
             if state.blockchain.is_synced() {
-                if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
-                    let fork = state.blockchain.current_fork().await?;
-                    if let Err(error) = msg.validate_requested(requested, fork).await {
-                        warn!(
-                            peer=%state.node,
-                            reason=%error,
-                            "disconnected from peer",
-                        );
-                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
-                            .await;
-                        return Err(PeerConnectionError::DisconnectSent(
-                            DisconnectReason::SubprotocolError,
-                        ));
-                    } else {
-                        state.requested_pooled_txs.remove(&msg.id);
-                    }
+                let Some(requested) = state.requested_pooled_txs.get(&msg.id) else {
+                    warn!(
+                        peer=%state.node,
+                        reason="unsolicited PooledTransactions message",
+                        "disconnected from peer",
+                    );
+                    send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
+                    return Err(PeerConnectionError::DisconnectSent(
+                        DisconnectReason::SubprotocolError,
+                    ));
+                };
+                let fork = state.blockchain.current_fork().await?;
+                if let Err(error) = msg.validate_requested(requested, fork).await {
+                    warn!(
+                        peer=%state.node,
+                        reason=%error,
+                        "disconnected from peer",
+                    );
+                    send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
+                    return Err(PeerConnectionError::DisconnectSent(
+                        DisconnectReason::SubprotocolError,
+                    ));
+                } else {
+                    state.requested_pooled_txs.remove(&msg.id);
                 }
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();

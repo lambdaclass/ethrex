@@ -1191,6 +1191,17 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Add a previously validated blob transaction and its blobs bundle to the mempool
+    #[cfg(feature = "c-kzg")]
+    pub async fn add_blob_transaction_to_pool_unchecked(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        self.add_blob_transaction_to_pool_maybe_validate(transaction, blobs_bundle, true)
+            .await
+    }
+
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
     #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
@@ -1198,11 +1209,24 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
+        self.add_blob_transaction_to_pool_maybe_validate(transaction, blobs_bundle, false)
+            .await
+    }
+
+    #[cfg(feature = "c-kzg")]
+    async fn add_blob_transaction_to_pool_maybe_validate(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+        assume_valid: bool,
+    ) -> Result<H256, MempoolError> {
         // Validate blobs bundle
 
         let fork = self.current_fork().await?;
 
-        blobs_bundle.validate(&transaction, fork)?;
+        if !assume_valid {
+            blobs_bundle.validate(&transaction, fork)?;
+        }
 
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash();
