@@ -15,6 +15,7 @@ use crate::{
 };
 use bytes::BytesMut;
 use ethrex_common::{H256, H512};
+use ethrex_storage::Store;
 use futures::StreamExt;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -89,6 +90,7 @@ pub struct DiscoveryServer {
 
 impl DiscoveryServer {
     pub async fn spawn(
+        storage: Store,
         local_node: Node,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
@@ -97,7 +99,8 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
+        let fork_id = storage.get_fork_id().await.ok();
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer, fork_id)
             .expect("Failed to create local node record");
         let mut discovery_server = Self {
             local_node: local_node.clone(),

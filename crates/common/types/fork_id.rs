@@ -7,6 +7,7 @@ use ethrex_rlp::{
 };
 
 use ethereum_types::H32;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::{BlockHash, BlockHeader, BlockNumber, ChainConfig};
@@ -14,7 +15,7 @@ use super::{BlockHash, BlockHeader, BlockNumber, ChainConfig};
 // See https://github.com/ethereum/go-ethereum/blob/530adfc8e3ef9c8b6356facecdec10b30fb81d7d/core/forkid/forkid.go#L51
 const TIMESTAMP_THRESHOLD: u64 = 1438269973;
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ForkId {
     pub fork_hash: H32,
     pub fork_next: BlockNumber,

@@ -111,6 +111,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     );
 
     DiscoveryServer::spawn(
+        context.storage.clone(),
         context.local_node.clone(),
         context.signer,
         udp_socket.clone(),

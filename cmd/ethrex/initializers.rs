@@ -331,7 +331,7 @@ pub fn get_local_node_record(
 ) -> NodeRecord {
     match read_node_config_file(datadir) {
         Ok(Some(ref mut config)) => {
-            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
+            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer, None)
                 .expect("Node record could not be created from local node")
         }
         _ => {
@@ -339,7 +339,7 @@ pub fn get_local_node_record(
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            NodeRecord::from_node(local_p2p_node, timestamp, signer)
+            NodeRecord::from_node(local_p2p_node, timestamp, signer, None)
                 .expect("Node record could not be created from local node")
         }
     }
