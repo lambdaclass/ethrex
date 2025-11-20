@@ -25,6 +25,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::{fs::read_to_string, path::Path};
+use tracing::info;
 use tracing::{error, warn};
 
 pub mod calldata;
@@ -458,16 +459,24 @@ pub async fn create2_deploy_from_bytecode(
     Ok((deploy_tx_hash, contract_address))
 }
 
-/// Deploys a contract behind an OpenZeppelin's `ERC1967Proxy`.
-/// The embedded `ERC1967_PROXY_BYTECODE` may be empty if the crate was compiled
-/// without the `COMPILE_CONTRACTS` env var set. In that case, this function
-/// will return `DeployError::ProxyBytecodeNotFound`.
-async fn deploy_proxy(
+pub async fn create2_deploy_from_bytecode_no_wait(
+    constructor_args: &[u8],
+    bytecode: &[u8],
     deployer: &Signer,
-    eth_client: &EthClient,
-    implementation_address: Address,
     salt: &[u8],
+    eth_client: &EthClient,
+    overrides: Overrides,
 ) -> Result<(H256, Address), DeployError> {
+    let init_code = [bytecode, constructor_args].concat();
+
+    let (deploy_tx_hash, contract_address) =
+        create2_deploy_no_wait(salt, &init_code, deployer, eth_client, overrides).await?;
+
+    Ok((deploy_tx_hash, contract_address))
+}
+
+/// Builds the init code for deploying a contract behind an OpenZeppelin `ERC1967Proxy`.
+fn build_proxy_init_code(implementation_address: Address) -> Result<Bytes, DeployError> {
     #[allow(clippy::const_is_empty)]
     if ERC1967_PROXY_BYTECODE.is_empty() {
         return Err(DeployError::ProxyBytecodeNotFound);
@@ -479,16 +488,64 @@ async fn deploy_proxy(
     init_code.extend(H256::from_low_u64_be(0x40).0);
     init_code.extend(H256::zero().0);
 
-    let (deploy_tx_hash, proxy_address) =
-        create2_deploy(salt, &Bytes::from(init_code), deployer, eth_client)
-            .await
-            .map_err(DeployError::from)?;
+    Ok(Bytes::from(init_code))
+}
 
-    Ok((deploy_tx_hash, proxy_address))
+/// Deploys a contract behind an OpenZeppelin's `ERC1967Proxy`.
+/// The embedded `ERC1967_PROXY_BYTECODE` may be empty if the crate was compiled
+/// without the `COMPILE_CONTRACTS` env var set. In that case, this function
+/// will return `DeployError::ProxyBytecodeNotFound`.
+async fn deploy_proxy(
+    deployer: &Signer,
+    eth_client: &EthClient,
+    implementation_address: Address,
+    salt: &[u8],
+) -> Result<(H256, Address), DeployError> {
+    let init_code = build_proxy_init_code(implementation_address)?;
+
+    create2_deploy(salt, &init_code, deployer, eth_client)
+        .await
+        .map_err(DeployError::from)
+}
+
+/// Same as `deploy_proxy`, but does not wait for the transaction receipt.
+async fn deploy_proxy_no_wait(
+    deployer: &Signer,
+    eth_client: &EthClient,
+    implementation_address: Address,
+    salt: &[u8],
+    overrides: Overrides,
+) -> Result<(H256, Address), DeployError> {
+    let init_code = build_proxy_init_code(implementation_address)?;
+
+    create2_deploy_no_wait(salt, &init_code, deployer, eth_client, overrides)
+        .await
+        .map_err(DeployError::from)
 }
 
 /// Deploys a contract behind an OpenZeppelin's `ERC1967Proxy`.
 pub async fn deploy_with_proxy(
+    deployer: &Signer,
+    eth_client: &EthClient,
+    contract_path: &Path,
+    salt: &[u8],
+) -> Result<ProxyDeployment, DeployError> {
+    let (implementation_tx_hash, implementation_address) =
+        create2_deploy_from_path(&[], contract_path, deployer, salt, eth_client).await?;
+
+    let (proxy_tx_hash, proxy_address) =
+        deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
+
+    Ok(ProxyDeployment {
+        proxy_address,
+        proxy_tx_hash,
+        implementation_address,
+        implementation_tx_hash,
+    })
+}
+
+/// Same as `deploy_with_proxy`, but does not wait for the transaction receipts.
+pub async fn deploy_with_proxy_no_wait(
     deployer: &Signer,
     eth_client: &EthClient,
     contract_path: &Path,
@@ -529,12 +586,57 @@ pub async fn deploy_with_proxy_from_bytecode(
     })
 }
 
-async fn create2_deploy(
+/// Same as `deploy_with_proxy_from_bytecode`, but does not wait for the transaction receipts.
+pub async fn deploy_with_proxy_from_bytecode_no_wait(
+    deployer: &Signer,
+    eth_client: &EthClient,
+    bytecode: &[u8],
+    salt: &[u8],
+    overrides: Overrides,
+) -> Result<ProxyDeployment, DeployError> {
+    let (implementation_tx_hash, implementation_address) = create2_deploy_from_bytecode_no_wait(
+        &[],
+        bytecode,
+        deployer,
+        salt,
+        eth_client,
+        overrides.clone(),
+    )
+    .await?;
+
+    info!(
+        "Deployed implementation at {implementation_address:#x} with tx {implementation_tx_hash:#x}"
+    );
+
+    let (proxy_tx_hash, proxy_address) = deploy_proxy_no_wait(
+        deployer,
+        eth_client,
+        implementation_address,
+        salt,
+        Overrides {
+            nonce: overrides.nonce.map(|nonce| nonce + 1),
+            ..overrides
+        },
+    )
+    .await?;
+
+    info!("Deployed proxy at {proxy_address:#x} with tx {proxy_tx_hash:#x}");
+
+    Ok(ProxyDeployment {
+        proxy_address,
+        proxy_tx_hash,
+        implementation_address,
+        implementation_tx_hash,
+    })
+}
+
+async fn build_create2_deploy_tx(
     salt: &[u8],
     init_code: &[u8],
     deployer: &Signer,
     eth_client: &EthClient,
-) -> Result<(H256, Address), EthClientError> {
+    overrides: Overrides,
+) -> Result<GenericTransaction, EthClientError> {
     let calldata = [salt, init_code].concat();
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
@@ -544,7 +646,7 @@ async fn create2_deploy(
             EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
         })?;
 
-    let deploy_tx = build_generic_tx(
+    build_generic_tx(
         eth_client,
         TxType::EIP1559,
         DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
@@ -553,18 +655,42 @@ async fn create2_deploy(
         Overrides {
             max_fee_per_gas: Some(gas_price),
             max_priority_fee_per_gas: Some(gas_price),
-            ..Default::default()
+            ..overrides
         },
     )
-    .await?;
+    .await
+}
 
+async fn create2_deploy(
+    salt: &[u8],
+    init_code: &[u8],
+    deployer: &Signer,
+    eth_client: &EthClient,
+) -> Result<(H256, Address), EthClientError> {
+    let deploy_tx =
+        build_create2_deploy_tx(salt, init_code, deployer, eth_client, Overrides::default())
+            .await?;
     let deploy_tx_hash =
         send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer).await?;
 
-    wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
-
     let deployed_address = create2_address(salt, keccak(init_code));
 
+    Ok((deploy_tx_hash, deployed_address))
+}
+
+async fn create2_deploy_no_wait(
+    salt: &[u8],
+    init_code: &[u8],
+    deployer: &Signer,
+    eth_client: &EthClient,
+    overrides: Overrides,
+) -> Result<(H256, Address), EthClientError> {
+    let deploy_tx =
+        build_create2_deploy_tx(salt, init_code, deployer, eth_client, overrides).await?;
+
+    let deploy_tx_hash = send_generic_transaction(eth_client, deploy_tx, deployer).await?;
+
+    let deployed_address = create2_address(salt, keccak(init_code));
     Ok((deploy_tx_hash, deployed_address))
 }
 
@@ -584,36 +710,25 @@ fn create2_address(salt: &[u8], init_code_hash: H256) -> Address {
     )
 }
 
-pub async fn initialize_contract(
+pub async fn initialize_contract_no_wait(
     contract_address: Address,
     initialize_calldata: Vec<u8>,
     initializer: &Signer,
     eth_client: &EthClient,
+    overrides: Overrides,
 ) -> Result<H256, EthClientError> {
-    let gas_price = eth_client
-        .get_gas_price_with_extra(20)
-        .await?
-        .try_into()
-        .map_err(|_| {
-            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
-        })?;
-
     let initialize_tx = build_generic_tx(
         eth_client,
         TxType::EIP1559,
         contract_address,
         initializer.address(),
         initialize_calldata.into(),
-        Overrides {
-            max_fee_per_gas: Some(gas_price),
-            max_priority_fee_per_gas: Some(gas_price),
-            ..Default::default()
-        },
+        overrides,
     )
     .await?;
 
     let initialize_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, initialize_tx, initializer).await?;
+        send_generic_transaction(eth_client, initialize_tx, initializer).await?;
 
     Ok(initialize_tx_hash)
 }
@@ -1117,23 +1232,24 @@ async fn _call_bytes32_variable(
     Ok(arr)
 }
 
-pub async fn register_fee_token(
+pub async fn register_fee_token_no_wait(
     client: &EthClient,
     bridge_address: Address,
     fee_token: Address,
     signer: &Signer,
-) -> Result<(), EthClientError> {
+    overrides: Overrides,
+) -> Result<H256, EthClientError> {
     let calldata = encode_calldata(REGISTER_FEE_TOKEN_SIGNATURE, &[Value::Address(fee_token)])?;
+
     let tx_register = build_generic_tx(
         client,
         TxType::EIP1559,
         bridge_address,
         signer.address(),
         calldata.into(),
-        Overrides::default(),
+        overrides,
     )
     .await?;
-    let tx_hash = send_generic_transaction(client, tx_register, signer).await?;
-    wait_for_transaction_receipt(tx_hash, client, 100).await?;
-    Ok(())
+
+    send_generic_transaction(client, tx_register, signer).await
 }

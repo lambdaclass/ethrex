@@ -16,12 +16,11 @@ use ethrex_common::{
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::{calldata::Value, prover::ProverType, utils::get_address_from_secret_key};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
-use ethrex_l2_sdk::register_fee_token;
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode,
-    deploy_with_proxy_from_bytecode, initialize_contract, send_generic_transaction,
-    wait_for_transaction_receipt,
+    build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode_no_wait,
+    initialize_contract_no_wait, send_generic_transaction, wait_for_transaction_receipt,
 };
+use ethrex_l2_sdk::{deploy_with_proxy_from_bytecode_no_wait, register_fee_token_no_wait};
 use ethrex_rpc::{
     EthClient,
     clients::Overrides,
@@ -475,6 +474,8 @@ pub enum DeployerError {
     BytecodeNotFound,
     #[error("Failed to parse genesis")]
     Genesis,
+    #[error("Transaction receipt error")]
+    TransactionReceiptError,
 }
 
 /// Bytecode of the OnChainProposer contract.
@@ -520,6 +521,11 @@ const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256)";
 
+// Gas limit for deploying and initializing contracts
+// Needed to avoid estimating gas of initializations when the
+// deploy transaction is still pending
+const TRANSACTION_GAS_LIMIT: u64 = 10_000_000;
+
 #[derive(Clone)]
 pub struct ContractAddresses {
     pub on_chain_proposer_address: Address,
@@ -549,11 +555,47 @@ pub async fn deploy_l1_contracts(
 
     info!("Deploying contracts");
 
-    let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
+    let (contract_addresses, deploy_tx_hashes) =
+        deploy_contracts(&eth_client, &opts, &signer).await?;
 
     info!("Initializing contracts");
 
-    initialize_contracts(contract_addresses.clone(), &eth_client, &opts, &signer).await?;
+    let initialize_tx_hashes =
+        initialize_contracts(contract_addresses.clone(), &eth_client, &opts, &signer).await?;
+
+    info!("Waiting for deployment transactions receipts");
+
+    for tx_hash in deploy_tx_hashes {
+        if tx_hash == H256::default() {
+            continue;
+        }
+        let receipt = wait_for_transaction_receipt(tx_hash, &eth_client, 100).await?;
+        if !receipt.receipt.status {
+            error!("Receipt status is false for tx_hash: {:#x}", tx_hash);
+            return Err(DeployerError::TransactionReceiptError);
+        }
+        info!(
+            "Gas used for tx_hash {:#x}: {}",
+            tx_hash, receipt.tx_info.gas_used
+        );
+    }
+
+    info!("Waiting for initialization transactions receipts");
+
+    for tx_hash in initialize_tx_hashes {
+        if tx_hash == H256::default() {
+            continue;
+        }
+        let receipt = wait_for_transaction_receipt(tx_hash, &eth_client, 100).await?;
+        if !receipt.receipt.status {
+            error!("Receipt status is false for tx_hash: {:#x}", tx_hash);
+            return Err(DeployerError::TransactionReceiptError);
+        }
+        info!(
+            "Gas used for tx_hash {:#x}: {}",
+            tx_hash, receipt.tx_info.gas_used
+        );
+    }
 
     if opts.deposit_rich {
         let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
@@ -576,10 +618,22 @@ async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
     deployer: &Signer,
-) -> Result<ContractAddresses, DeployerError> {
+) -> Result<(ContractAddresses, Vec<H256>), DeployerError> {
     trace!("Deploying contracts");
 
     info!("Deploying OnChainProposer");
+
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
+    let mut nonce = eth_client
+        .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
 
     let salt = if opts.randomize_contract_deployment {
         H256::random().as_bytes().to_vec()
@@ -601,8 +655,23 @@ async fn deploy_contracts(
         return Err(DeployerError::BytecodeNotFound);
     }
 
-    let on_chain_proposer_deployment =
-        deploy_with_proxy_from_bytecode(deployer, eth_client, &bytecode, &salt).await?;
+    let on_chain_proposer_deployment = deploy_with_proxy_from_bytecode_no_wait(
+        deployer,
+        eth_client,
+        &bytecode,
+        &salt,
+        Overrides {
+            nonce: Some(nonce),
+            gas_limit: Some(TRANSACTION_GAS_LIMIT),
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    nonce += 2;
+
     info!(
         "OnChainProposer deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
         on_chain_proposer_deployment.proxy_address,
@@ -613,9 +682,20 @@ async fn deploy_contracts(
 
     info!("Deploying CommonBridge");
 
-    let bridge_deployment =
-        deploy_with_proxy_from_bytecode(deployer, eth_client, COMMON_BRIDGE_BYTECODE, &salt)
-            .await?;
+    let bridge_deployment = deploy_with_proxy_from_bytecode_no_wait(
+        deployer,
+        eth_client,
+        COMMON_BRIDGE_BYTECODE,
+        &salt,
+        Overrides {
+            nonce: Some(nonce),
+            gas_limit: Some(TRANSACTION_GAS_LIMIT),
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     info!(
         "CommonBridge deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
@@ -625,14 +705,23 @@ async fn deploy_contracts(
         bridge_deployment.implementation_tx_hash,
     );
 
+    nonce += 2;
+
     let sequencer_registry_deployment = if opts.deploy_based_contracts {
         info!("Deploying SequencerRegistry");
 
-        let sequencer_registry_deployment = deploy_with_proxy_from_bytecode(
+        let sequencer_registry_deployment = deploy_with_proxy_from_bytecode_no_wait(
             deployer,
             eth_client,
             SEQUENCER_REGISTRY_BYTECODE,
             &salt,
+            Overrides {
+                nonce: Some(nonce),
+                gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?;
 
@@ -649,23 +738,31 @@ async fn deploy_contracts(
     };
 
     // if it's a required proof type, but no address has been specified, deploy it.
-    let sp1_verifier_address = match opts.sp1_verifier_address {
-        _ if opts.aligned => Address::zero(),
-        Some(addr) if opts.sp1 => addr,
+    let (sp1_verifier_deployment_tx_hash, sp1_verifier_address) = match opts.sp1_verifier_address {
+        _ if opts.aligned => (H256::default(), Address::zero()),
+        Some(addr) if opts.sp1 => (H256::default(), addr),
         None if opts.sp1 => {
             info!("Deploying SP1Verifier");
-            let (verifier_deployment_tx_hash, sp1_verifier_address) = create2_deploy_from_bytecode(
-                &[],
-                SP1_VERIFIER_BYTECODE,
-                deployer,
-                &salt,
-                eth_client,
-            )
-            .await?;
+            let (verifier_deployment_tx_hash, sp1_verifier_address) =
+                create2_deploy_from_bytecode_no_wait(
+                    &[],
+                    SP1_VERIFIER_BYTECODE,
+                    deployer,
+                    &salt,
+                    eth_client,
+                    Overrides {
+                        nonce: Some(nonce),
+                        gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
+                        ..Default::default()
+                    },
+                )
+                .await?;
             info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
-            sp1_verifier_address
+            (verifier_deployment_tx_hash, sp1_verifier_address)
         }
-        _ => Address::zero(),
+        _ => (H256::default(), Address::zero()),
     };
 
     // we can't deploy the risc0 contract because of uncompatible licenses
@@ -714,15 +811,28 @@ async fn deploy_contracts(
         tdx_verifier_address = ?tdx_verifier_address,
         "Contracts deployed"
     );
-    Ok(ContractAddresses {
-        on_chain_proposer_address: on_chain_proposer_deployment.proxy_address,
-        bridge_address: bridge_deployment.proxy_address,
-        sp1_verifier_address,
-        risc0_verifier_address,
-        tdx_verifier_address,
-        sequencer_registry_address: sequencer_registry_deployment.proxy_address,
-        aligned_aggregator_address,
-    })
+
+    let receipts = vec![
+        on_chain_proposer_deployment.implementation_tx_hash,
+        on_chain_proposer_deployment.proxy_tx_hash,
+        bridge_deployment.implementation_tx_hash,
+        bridge_deployment.proxy_tx_hash,
+        sequencer_registry_deployment.implementation_tx_hash,
+        sequencer_registry_deployment.proxy_tx_hash,
+        sp1_verifier_deployment_tx_hash,
+    ];
+    Ok((
+        ContractAddresses {
+            on_chain_proposer_address: on_chain_proposer_deployment.proxy_address,
+            bridge_address: bridge_deployment.proxy_address,
+            sp1_verifier_address,
+            risc0_verifier_address,
+            tdx_verifier_address,
+            sequencer_registry_address: sequencer_registry_deployment.proxy_address,
+            aligned_aggregator_address,
+        },
+        receipts,
+    ))
 }
 
 fn deploy_tdx_contracts(
@@ -817,8 +927,22 @@ async fn initialize_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
     initializer: &Signer,
-) -> Result<(), DeployerError> {
+) -> Result<Vec<H256>, DeployerError> {
     trace!("Initializing contracts");
+    let mut tx_hashes = vec![];
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+    let mut nonce = eth_client
+        .get_nonce(
+            initializer.address(),
+            BlockIdentifier::Tag(BlockTag::Pending),
+        )
+        .await?;
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
@@ -875,15 +999,25 @@ async fn initialize_contracts(
 
         let deployer = Signer::Local(LocalSigner::new(opts.private_key));
 
-        let initialize_tx_hash = initialize_contract(
+        let initialize_tx_hash = initialize_contract_no_wait(
             contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
             &deployer,
             eth_client,
+            Overrides {
+                nonce: Some(nonce),
+                gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?;
 
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+
+        nonce += 1;
+        tx_hashes.push(initialize_tx_hash);
 
         info!("Initializing SequencerRegistry");
         let initialize_tx_hash = {
@@ -896,15 +1030,24 @@ async fn initialize_contracts(
             let sequencer_registry_initialization_calldata =
                 encode_calldata("initialize(address,address)", &calldata_values)?;
 
-            initialize_contract(
+            initialize_contract_no_wait(
                 contract_addresses.sequencer_registry_address,
                 sequencer_registry_initialization_calldata,
                 &deployer,
                 eth_client,
+                Overrides {
+                    nonce: Some(nonce),
+                    gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
             )
             .await?
         };
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
+        nonce += 1;
+        tx_hashes.push(initialize_tx_hash);
     } else {
         // Initialize only OnChainProposer without Based config
         let calldata_values = vec![
@@ -931,14 +1074,23 @@ async fn initialize_contracts(
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
 
-        let initialize_tx_hash = initialize_contract(
+        let initialize_tx_hash = initialize_contract_no_wait(
             contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
             initializer,
             eth_client,
+            Overrides {
+                nonce: Some(nonce),
+                gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?;
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+        nonce += 1;
+        tx_hashes.push(initialize_tx_hash);
     }
 
     let initialize_bridge_address_tx_hash = {
@@ -946,11 +1098,18 @@ async fn initialize_contracts(
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
 
-        initialize_contract(
+        initialize_contract_no_wait(
             contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
             initializer,
             eth_client,
+            Overrides {
+                nonce: Some(nonce),
+                gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?
     };
@@ -960,6 +1119,9 @@ async fn initialize_contracts(
         "OnChainProposer bridge address initialized"
     );
 
+    nonce += 1;
+    tx_hashes.push(initialize_bridge_address_tx_hash);
+
     if opts.on_chain_proposer_owner != initializer.address() {
         let transfer_ownership_tx_hash = {
             let owener_transfer_calldata = encode_calldata(
@@ -967,14 +1129,24 @@ async fn initialize_contracts(
                 &[Value::Address(opts.on_chain_proposer_owner)],
             )?;
 
-            initialize_contract(
+            initialize_contract_no_wait(
                 contract_addresses.on_chain_proposer_address,
                 owener_transfer_calldata,
                 initializer,
                 eth_client,
+                Overrides {
+                    nonce: Some(nonce),
+                    gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
             )
             .await?
         };
+
+        tx_hashes.push(transfer_ownership_tx_hash);
+        nonce += 1;
 
         if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
             let signer = Signer::Local(LocalSigner::new(owner_pk));
@@ -985,12 +1157,19 @@ async fn initialize_contracts(
                 contract_addresses.on_chain_proposer_address,
                 opts.on_chain_proposer_owner,
                 accept_ownership_calldata.into(),
-                Overrides::default(),
+                Overrides {
+                    nonce: Some(nonce),
+                    gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
             )
             .await?;
             let accept_tx_hash = send_generic_transaction(eth_client, accept_tx, &signer).await?;
 
-            wait_for_transaction_receipt(accept_tx_hash, eth_client, 100).await?;
+            tx_hashes.push(accept_tx_hash);
+            nonce += 1;
 
             info!(
                 transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
@@ -1015,25 +1194,44 @@ async fn initialize_contracts(
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
-        initialize_contract(
+        initialize_contract_no_wait(
             contract_addresses.bridge_address,
             bridge_initialization_calldata,
             initializer,
             eth_client,
+            Overrides {
+                nonce: Some(nonce),
+                gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+    tx_hashes.push(initialize_tx_hash);
+    nonce += 1;
 
     if let Some(fee_token) = opts.initial_fee_token {
-        register_fee_token(
+        let register_tx_hash = register_fee_token_no_wait(
             eth_client,
             contract_addresses.bridge_address,
             fee_token,
             initializer,
+            Overrides {
+                nonce: Some(nonce),
+                gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?;
         info!(?fee_token, "CommonBridge initial fee token registered");
+        info!(tx_hash = %format!("{register_tx_hash:#x}"), "Initial fee token registration transaction sent");
+        tx_hashes.push(register_tx_hash);
+        nonce += 1;
     }
 
     if opts.bridge_owner != initializer.address() {
@@ -1041,13 +1239,23 @@ async fn initialize_contracts(
             TRANSFER_OWNERSHIP_SIGNATURE,
             &[Value::Address(opts.bridge_owner)],
         )?;
-        let transfer_tx_hash = initialize_contract(
+        let transfer_tx_hash = initialize_contract_no_wait(
             contract_addresses.bridge_address,
             transfer_calldata,
             initializer,
             eth_client,
+            Overrides {
+                nonce: Some(nonce),
+                gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?;
+
+        tx_hashes.push(transfer_tx_hash);
+
         if let Some(owner_pk) = opts.bridge_owner_pk {
             let signer = Signer::Local(LocalSigner::new(owner_pk));
             let accept_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
@@ -1057,16 +1265,24 @@ async fn initialize_contracts(
                 contract_addresses.bridge_address,
                 opts.bridge_owner,
                 accept_calldata.into(),
-                Overrides::default(),
+                Overrides {
+                    gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
             )
             .await?;
+
             let accept_tx_hash = send_generic_transaction(eth_client, accept_tx, &signer).await?;
-            wait_for_transaction_receipt(accept_tx_hash, eth_client, 100).await?;
+
+            tx_hashes.push(accept_tx_hash);
             info!(
                 transfer_tx_hash = %format!("{transfer_tx_hash:#x}"),
                 accept_tx_hash = %format!("{accept_tx_hash:#x}"),
                 "CommonBridge ownership transferred and accepted"
             );
+            info!("Used nonce {}", nonce);
         } else {
             info!(
                 transfer_tx_hash = %format!("{transfer_tx_hash:#x}"),
@@ -1076,7 +1292,7 @@ async fn initialize_contracts(
     }
 
     trace!("Contracts initialized");
-    Ok(())
+    Ok(tx_hashes)
 }
 
 async fn make_deposits(
