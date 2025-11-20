@@ -51,36 +51,46 @@ rex deploy 0 <PRIVATE_KEY> \
     -- "constructor(address)" 0000000000000000000000000000000000000000
 ```
 
+Deployment mints tokens to the address derived from `<PRIVATE_KEY>`, and that same address can be use to cover the fees for fee-token transactions.
+
 ## Operator Workflow
 
 Operators decide which ERC-20s are valid fee tokens:
 
 1. Deploy or reuse an `IFeeToken` implementation and note its L2 address. When initializing the network, the deployer binary can automatically register one by passing `--initial-fee-token <address>` so the bridge queues it during startup.
 2. Register additional tokens (or remove them) through the L1 `CommonBridge` using `registerNewFeeToken(address)` / `unregisterFeeToken(address)`. Each call enqueues a privileged transaction that the sequencer must force on L2.
+3. After a token is registered, the bridge owner must set its conversion ratio in the L2 `FeeTokenPricer` (`0x…fffb`). Call `setFeeTokenRatio(address,uint256)` on the L1 bridge (again a privileged transaction) to define the amount of fee token (in its smallest unit) equivalent to 1 wei. For example, a ratio of 2 means 2 fee token units per 1 wei. Without a ratio, fee-token transactions revert because the sequencer cannot price the gas.
 
 > ⚠️ **Warning:** Registration completes only after the L1 watcher processes the privileged transaction and the L2 registry emits `FeeTokenRegistered`. Until then, user transactions referencing the token will fail.
 
-If the token is not yet registered, the bridge owner can queue the privileged call from L1 with the SDK helpers:
+If the token is not yet registered, the bridge owner can queue the privileged call from L1 with the `rex` CLI:
 
-```rust
-let calldata = ethrex_l2_sdk::calldata::encode_calldata(
-    "registerNewFeeToken(address)",
-    &[Value::Address(fee_token_address)],
-)?;
-let tx = build_generic_tx(
-    &l1_client,
-    TxType::EIP1559,
-    ethrex_l2_sdk::bridge_address()?, // CommonBridge proxy on L1
-    owner_signer.address(),
-    calldata.into(),
-    Overrides {
-        gas_limit: Some(21000 * 10),
-        ..Default::default()
-    },
-).await?;
-let hash = send_generic_transaction(&l1_client, tx, &owner_signer).await?;
-wait_for_transaction_receipt(hash, &l1_client, 100).await?;
-// The L1 watcher will include the privileged tx and the registry will emit FeeTokenRegistered.
+```shell
+rex send <L1_BRIDGE_ADDRESS> \
+  "registerNewFeeToken(address)" \
+  <L2_FEE_TOKEN_ADDRESS> \
+  --rpc-url http://localhost:8545 \
+  --private-key <BRIDGE_OWNER_PK>
+
+# After the L1 watcher processes the privileged tx, the registry emits FeeTokenRegistered.
+```
+
+Setting the ratio uses a similar pattern:
+
+```shell
+rex send <L1_BRIDGE_ADDRESS> \
+  "setFeeTokenRatio(address,uint256)" \
+  <L2_FEE_TOKEN_ADDRESS> \
+  2 \
+  --rpc-url http://localhost:8545 \
+  --private-key <BRIDGE_OWNER_PK>
+
+# After the privileged tx lands on L2, confirm:
+rex call 0x000000000000000000000000000000000000fffb \
+  "getFeeTokenRatio(address)" \
+  <L2_FEE_TOKEN_ADDRESS> \
+  --rpc-url http://localhost:1729
+# 0x...02
 ```
 
 ## User Workflow
@@ -92,6 +102,26 @@ Once a token is registered, users can submit fee-token transactions:
 3. Send the transaction with `send_generic_transaction` and wait for the receipt.
 
 Fee locking and distribution happen automatically inside `l2_hook.rs`.
+
+### Minimal `Cargo.toml`
+
+```toml
+[package]
+name = "fee-token-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.86"
+hex = "0.4.3"
+secp256k1 = { version = "0.30.0", default-features = false, features = ["global-context", "recovery", "rand"] }
+tokio = { version = "1.41.1", features = ["macros", "rt-multi-thread"] }
+url = { version = "2.5.4", features = ["serde"] }
+ethrex_l2_sdk = { package = "ethrex-sdk", git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-rpc = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-common = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-l2-rpc = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+```
 
 ```rust
 use anyhow::Result;
