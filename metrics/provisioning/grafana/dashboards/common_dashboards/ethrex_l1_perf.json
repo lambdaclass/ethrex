@@ -1665,7 +1665,7 @@
               "refId": "A"
             }
           ],
-          "title": "RPC Total Time per Method - $instance",
+          "title": "Engine Total Time per Method - $instance",
           "type": "piechart"
         },
         {
