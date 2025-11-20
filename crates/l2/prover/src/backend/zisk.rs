@@ -23,7 +23,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         .asm()
         .verify_constraints()
         .elf_path(ELF_PATH.into())
-        .unlock_mapped_memory(true)
+        //.unlock_mapped_memory(true)
         .build()?;
 
     client.execute(stdin)?;
