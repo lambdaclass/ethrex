@@ -757,7 +757,7 @@ impl Store {
                             .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
                     })
                     .chain(account_updates)
-                    .map(|(key, value)| (key.into_vec(), value)),
+                    .map(|(key, value)| (key.into_vec().into(), value.into())),
             );
         }
 
@@ -802,7 +802,7 @@ impl Store {
             let is_leaf = key.len() == 65 || key.len() == 131;
             let is_account = key.len() <= 65;
 
-            if is_leaf && key > last_written {
+            if is_leaf && &*key > last_written.as_slice() {
                 continue;
             }
             let cf = if is_leaf {

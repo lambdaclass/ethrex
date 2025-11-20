@@ -105,7 +105,7 @@ impl StoreEngine for Store {
                             .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
                     })
                     .chain(update_batch.account_updates)
-                    .map(|(key, value)| (key.into_vec(), value)),
+                    .map(|(key, value)| (key.into_vec().into(), value.into())),
             );
 
             nodes
@@ -118,9 +118,10 @@ impl StoreEngine for Store {
                 .map_err(|_| StoreError::LockError)?;
             for (key, value) in nodes {
                 if value.is_empty() {
-                    state_trie.remove(&key);
+                    state_trie.remove(&*key);
                 } else {
-                    state_trie.insert(key, value);
+                    // TODO: Maybe adapt `state_trie` to share references.
+                    state_trie.insert(key.to_vec(), value.to_vec());
                 }
             }
         }
