@@ -24,11 +24,17 @@ pub struct ProgramOutput {
     pub chain_id: U256,
     /// amount of non-privileged transactions
     pub non_privileged_count: U256,
+    #[cfg(feature = "l2")]
+    /// merkle root of all l2 messages in a batch
+    pub l2messages_merkle_root: H256,
+    #[cfg(feature = "l2")]
+    /// balance diffs for each chain id
+    pub balance_diffs: Vec<(U256, U256)>, // (chain_id, balance_diff)
 }
 
 impl ProgramOutput {
     pub fn encode(&self) -> Vec<u8> {
-        [
+        let mut encoded = [
             self.initial_state_hash.to_fixed_bytes(),
             self.final_state_hash.to_fixed_bytes(),
             #[cfg(feature = "l2")]
@@ -40,7 +46,15 @@ impl ProgramOutput {
             self.last_block_hash.to_fixed_bytes(),
             self.chain_id.to_big_endian(),
             self.non_privileged_count.to_big_endian(),
+            #[cfg(feature = "l2")]
+            self.l2messages_merkle_root.to_fixed_bytes(),
         ]
-        .concat()
+        .concat();
+        #[cfg(feature = "l2")]
+        for (chain_id, balance_diff) in &self.balance_diffs {
+            encoded.extend_from_slice(&chain_id.to_big_endian());
+            encoded.extend_from_slice(&balance_diff.to_big_endian());
+        }
+        encoded
     }
 }

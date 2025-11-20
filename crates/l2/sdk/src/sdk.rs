@@ -11,9 +11,10 @@ use ethrex_common::{
         WrappedEIP4844Transaction,
     },
 };
-use ethrex_l2_common::{calldata::Value, l1_messages::L1MessageProof};
+use ethrex_l2_common::messages::{L2Message, L2MessageProof, get_l2_message_hash};
+use ethrex_l2_common::{calldata::Value, messages::L1MessageProof};
 use ethrex_l2_rpc::{
-    clients::get_message_proof,
+    clients::get_l1_message_proof,
     signer::{LocalSigner, Signable, Signer},
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -25,7 +26,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::{fs::read_to_string, path::Path};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
@@ -38,10 +39,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x39b37222708e21491b9126e0969a043baa09d5a7
+// 0x7907c8e504a5539467ef23b61cf86aaa66704a14
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x39, 0xb3, 0x72, 0x22, 0x70, 0x8e, 0x21, 0x49, 0x1b, 0x91, 0x26, 0xe0, 0x96, 0x9a, 0x04, 0x3b,
-    0xaa, 0x09, 0xd5, 0xa7,
+    0x79, 0x07, 0xc8, 0xe5, 0x04, 0xa5, 0x53, 0x94, 0x67, 0xef, 0x23, 0xb6, 0x1c, 0xf8, 0x6a, 0xaa,
+    0x66, 0x70, 0x4a, 0x14,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -941,12 +942,12 @@ async fn priority_fee_from_override_or_rpc(
     get_fee_from_override_or_get_gas_price(client, None).await
 }
 
-pub async fn wait_for_message_proof(
+pub async fn wait_for_l1_message_proof(
     client: &EthClient,
     transaction_hash: H256,
     max_retries: u64,
 ) -> Result<Vec<L1MessageProof>, EthClientError> {
-    let mut message_proof = get_message_proof(client, transaction_hash).await?;
+    let mut message_proof = get_l1_message_proof(client, transaction_hash).await?;
     let mut r#try = 1;
     while message_proof.is_none() {
         println!(
@@ -962,7 +963,7 @@ pub async fn wait_for_message_proof(
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        message_proof = get_message_proof(client, transaction_hash).await?;
+        message_proof = get_l1_message_proof(client, transaction_hash).await?;
     }
     message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
 }
@@ -1038,6 +1039,71 @@ pub async fn get_l1_active_fork(
     } else {
         Ok(Fork::Osaka)
     }
+}
+
+pub async fn verify_message(
+    chain_id: u64,
+    eth_client: &EthClient,
+    l2_message: &L2Message,
+    message_proof: &L2MessageProof,
+    router_address: Address,
+) -> Result<bool, EthClientError> {
+    info!("Verifying L2 message on chain id {chain_id} via router at {router_address:#x}");
+    const VERIFY_MESSAGE_SIGNATURE: &str = "verifyMessage(uint256,uint256,bytes32,bytes32[])";
+
+    let message_leaf: Vec<u8> = get_l2_message_hash(l2_message).as_bytes().to_vec();
+    info!("L2 message leaf: 0x{}", hex::encode(&message_leaf));
+    info!("proofs: {}", message_proof.merkle_proof.len());
+    info!("batch number: {}", message_proof.batch_number);
+    info!("message hash : 0x{}", message_proof.message_hash);
+
+    let proof_values = message_proof
+        .merkle_proof
+        .iter()
+        .map(|h| Value::FixedBytes(h.as_bytes().to_vec().into()))
+        .collect::<Vec<_>>();
+
+    let calldata_values = vec![
+        Value::Uint(chain_id.into()),
+        Value::Uint(message_proof.batch_number.into()),
+        Value::FixedBytes(message_leaf.into()),
+        Value::Array(proof_values),
+    ];
+
+    let calldata = encode_calldata(VERIFY_MESSAGE_SIGNATURE, &calldata_values)?;
+
+    info!(
+        "calling eth client to verify message... {:?}",
+        eth_client.urls
+    );
+    info!("router address: {router_address:#x}");
+
+    let hex_string = eth_client
+        .call(router_address, calldata.into(), Overrides::default())
+        .await?;
+
+    // Decode the 32-byte ABI bool
+    let return_data = hex::decode(hex_string.trim_start_matches("0x"))
+        .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {e}")))?;
+
+    if return_data.len() != 32 {
+        return Err(EthClientError::Custom(
+            "Unexpected return data length".to_owned(),
+        ));
+    }
+
+    #[expect(clippy::indexing_slicing)]
+    let is_valid = match return_data[31] {
+        0 => false,
+        1 => true,
+        _ => {
+            return Err(EthClientError::Custom(
+                "Invalid boolean value in return data".to_owned(),
+            ));
+        }
+    };
+
+    Ok(is_valid)
 }
 
 async fn _generic_call(

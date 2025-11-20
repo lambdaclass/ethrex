@@ -82,4 +82,12 @@ interface ICommonBridgeL2 {
     /// @param destination Address on L1 that should receive the tokens
     /// @param amount Amount of tokens to withdraw
     function withdrawERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external;
+
+    /// @notice Sends an arbitrary message to the another chain.
+    /// @dev This can be used to perform simple transfers or to call contracts on the destination chain.
+    /// @param chainId The chain ID of the destination chain.
+    /// @param to The address of the contract on the destination chain.
+    /// @param destGasLimit The gas limit for the destination chain execution.
+    /// @param data The calldata to send to the destination contract.
+    function sendToL2(uint256 chainId, address to, uint256 destGasLimit, bytes calldata data) external payable;
 }
