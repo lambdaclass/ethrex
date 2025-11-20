@@ -84,14 +84,14 @@ pub fn prove(
 }
 
 pub fn verify(_output: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>> {
-    Err("verify is not implemented for ZisK backend".into())
+    unimplemented!("verify is not implemented for ZisK backend")
 }
 
 pub fn to_batch_proof(
     proof: ProveOutput,
     format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    Err("to_batch_proof is not implemented for ZisK backend".into())
+    unimplemented!("to_batch_proof is not implemented for ZisK backend")
 }
 
 fn write_elf_file() -> Result<(), Box<dyn std::error::Error>> {
