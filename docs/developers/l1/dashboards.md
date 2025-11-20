@@ -94,6 +94,11 @@ Collapsed row that surfaces the `namespace="engine"` Prometheus timers so you ca
 
 ![Engine API row](img/engine_api_row.png)
 
+### Engine Success/Error Rate
+Shows the rate of successful vs. failed Engine API requests per second.
+
+![Engine Success/Error Rate](img/engine_success_error_rate.png)
+
 ### Engine Request Rate by Method
 Shows how many Engine API calls per second we process, split by JSON-RPC method and averaged across the currently selected dashboard range.
 
@@ -117,10 +122,15 @@ Another collapsed row focused on the public JSON-RPC surface (`namespace="rpc"`)
 
 ![RPC API row](img/rpc_api_row.png)
 
-### RPC Time per Method
+### RPC Success/Error Rate
+Shows the rate of successful vs. failed RPC API requests per second.
+
+![RPC Success/Error Rate](img/rpc_success_error_rate.png)
+
+### RPC Total Time per Method
 Pie chart that shows where RPC time is spent across methods over the selected range. Quickly surfaces which endpoints dominate total processing time.
 
-![RPC Time per Method](img/rpc_time_per_method.png)
+![RPC Total Time per Method](img/rpc_total_time_per_method.png)
 
 ### Slowest RPC Methods
 Table listing the highest average-latency methods over the active dashboard range. Used to prioritise optimisation or caching efforts.
