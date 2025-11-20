@@ -189,8 +189,7 @@ impl Node {
 
     pub fn from_enr_url(enr: &str) -> Result<Self, NodeError> {
         let record = NodeRecord::from_enr_url(enr)?;
-        let pairs = record.decode_pairs();
-        let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
+        let public_key = record.pairs.secp256k1.ok_or(NodeError::MissingField(
             "public key not found in record".into(),
         ))?;
         let verifying_key = PublicKey::from_slice(public_key.as_bytes()).map_err(|_| {
@@ -199,7 +198,7 @@ impl Node {
         let encoded = verifying_key.serialize_uncompressed();
         let public_key = H512::from_slice(&encoded[1..]);
 
-        let ip: IpAddr = match (pairs.ip, pairs.ip6) {
+        let ip: IpAddr = match (record.pairs.ip, record.pairs.ip6) {
             (None, None) => {
                 return Err(NodeError::MissingField(
                     "Ip not found in record, can't construct node".into(),
@@ -212,13 +211,15 @@ impl Node {
 
         // both udp and tcp can be defined in the pairs or only one
         // in the latter case, we have to default both ports to the one provided
-        let udp_port = pairs
+        let udp_port = record
+            .pairs
             .udp_port
-            .or(pairs.tcp_port)
+            .or(record.pairs.tcp_port)
             .ok_or(NodeError::MissingField("No port found in record".into()))?;
-        let tcp_port = pairs
+        let tcp_port = record
+            .pairs
             .tcp_port
-            .or(pairs.udp_port)
+            .or(record.pairs.udp_port)
             .ok_or(NodeError::MissingField("No port found in record".into()))?;
 
         Ok(Self::new(ip, udp_port, tcp_port, public_key))
@@ -263,17 +264,7 @@ impl Display for Node {
     }
 }
 
-/// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md)
-#[derive(Debug, PartialEq, Clone, Eq, Default, Serialize, Deserialize)]
-pub struct NodeRecord {
-    pub signature: H512,
-    pub seq: u64,
-    // holds optional values in (key, value) format
-    // value represents the rlp encoded bytes
-    pub pairs: Vec<(Bytes, Bytes)>,
-}
-
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct NodeRecordPairs {
     /// The ID of the identity scheme: https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
     /// This is always "v4".
@@ -286,15 +277,16 @@ pub struct NodeRecordPairs {
     pub tcp_port: Option<u16>,
     pub udp_port: Option<u16>,
     pub secp256k1: Option<H264>,
+    pub snap: Option<Vec<(Bytes, Bytes)>>,
     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
     pub eth: Option<EthEnrEntry>,
     // TODO implement ipv6 specific ports
 }
 
-impl NodeRecord {
-    pub fn decode_pairs(&self) -> NodeRecordPairs {
+impl NodeRecordPairs {
+    pub fn decode_pairs(pairs: Vec<(Bytes, Bytes)>) -> NodeRecordPairs {
         let mut decoded_pairs = NodeRecordPairs::default();
-        for (key, value) in &self.pairs {
+        for (key, value) in pairs {
             let Ok(key) = String::from_utf8(key.to_vec()) else {
                 continue;
             };
@@ -319,6 +311,14 @@ impl NodeRecord {
                     // but we should return an error if we can't decode it
                     decoded_pairs.eth = EthEnrEntry::decode(&value).ok();
                 }
+                "snap" => {
+                    let Ok(decoder) = Decoder::new(&value) else {
+                        continue;
+                    };
+                    decoded_pairs.snap = decode_node_record_optional_fields(vec![], decoder)
+                        .ok()
+                        .map(|v| v.0);
+                }
                 _ => {}
             }
         }
@@ -326,6 +326,59 @@ impl NodeRecord {
         decoded_pairs
     }
 
+    /// Returns vector as (key,value) pairs encoded as rlp, and entries are chronologically ordered by keys.
+    pub fn encode_pairs(&self) -> Vec<(Bytes, Bytes)> {
+        let mut pairs = vec![];
+
+        if let Some(v) = self.eth.as_ref() {
+            pairs.push(("eth".into(), v.encode_to_vec().into()));
+        }
+
+        if let Some(v) = self.id.as_ref() {
+            pairs.push(("id".into(), v.encode_to_vec().into()));
+        }
+
+        if let Some(v) = self.ip.as_ref() {
+            pairs.push(("ip".into(), v.encode_to_vec().into()));
+        }
+
+        if let Some(v) = self.ip6.as_ref() {
+            pairs.push(("ip6".into(), v.encode_to_vec().into()));
+        }
+
+        if let Some(v) = self.secp256k1.as_ref() {
+            pairs.push(("secp256k1".into(), v.encode_to_vec().into()));
+        }
+
+        if let Some(snap_pairs) = self.snap.as_ref() {
+            let mut snap_rlp = Vec::new();
+            structs::Encoder::new(&mut snap_rlp)
+                .encode_key_value_list::<Bytes>(snap_pairs)
+                .finish();
+            pairs.push(("snap".into(), snap_rlp.into()));
+        }
+
+        if let Some(tcp_port) = self.tcp_port {
+            pairs.push(("tcp".into(), tcp_port.encode_to_vec().into()));
+        }
+        if let Some(udp_port) = self.udp_port {
+            pairs.push(("udp".into(), udp_port.encode_to_vec().into()));
+        }
+        pairs
+    }
+}
+
+/// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md)
+#[derive(Debug, PartialEq, Clone, Eq, Default, Serialize, Deserialize)]
+pub struct NodeRecord {
+    pub signature: H512,
+    pub seq: u64,
+    // holds optional values in (key, value) format
+    // value represents the rlp encoded bytes
+    pub pairs: NodeRecordPairs,
+}
+
+impl NodeRecord {
     pub fn enr_url(&self) -> Result<String, NodeError> {
         let rlp_encoded = self.encode_to_vec();
         let base64_encoded = ethrex_common::base64::encode(&rlp_encoded);
@@ -347,38 +400,34 @@ impl NodeRecord {
         signer: &SecretKey,
         fork_id: Option<ForkId>,
     ) -> Result<Self, NodeError> {
-        let mut record = NodeRecord {
-            seq,
+        let mut record_pairs = NodeRecordPairs {
+            id: Some("v4".to_string()),
+            tcp_port: Some(node.tcp_port),
+            udp_port: Some(node.udp_port),
             ..Default::default()
         };
+
+        match node.ip {
+            IpAddr::V4(v4) => record_pairs.ip = Some(v4),
+            IpAddr::V6(v6) => record_pairs.ip6 = Some(v6),
+        }
+
         if let Some(fork_id) = fork_id {
             let eth_enr = EthEnrEntry {
                 fork_id,
                 rest: vec![],
             };
-            record
-                .pairs
-                .push(("eth".into(), eth_enr.encode_to_vec().into()));
+            record_pairs.eth = Some(eth_enr);
         }
-        record
-            .pairs
-            .push(("id".into(), "v4".encode_to_vec().into()));
-        record
-            .pairs
-            .push(("ip".into(), node.ip.encode_to_vec().into()));
-        record.pairs.push((
-            "secp256k1".into(),
-            PublicKey::from_secret_key(secp256k1::SECP256K1, signer)
-                .serialize()
-                .encode_to_vec()
-                .into(),
+
+        record_pairs.secp256k1 = Some(H264::from_slice(
+            &PublicKey::from_secret_key(secp256k1::SECP256K1, signer).serialize(),
         ));
-        record
-            .pairs
-            .push(("tcp".into(), node.tcp_port.encode_to_vec().into()));
-        record
-            .pairs
-            .push(("udp".into(), node.udp_port.encode_to_vec().into()));
+        let mut record = NodeRecord {
+            seq,
+            pairs: record_pairs,
+            ..Default::default()
+        };
 
         //TODO: Maybe we should sort the pairs based on key values?
         //e.g. record.pairs.sort_by(|a, b| a.0.cmp(&b.0));
@@ -406,7 +455,7 @@ impl NodeRecord {
         let mut rlp = vec![];
         structs::Encoder::new(&mut rlp)
             .encode_field(&self.seq)
-            .encode_key_value_list::<Bytes>(&self.pairs)
+            .encode_key_value_list::<Bytes>(&self.pairs.encode_pairs())
             .finish();
         keccak_hash(&rlp)
     }
@@ -414,29 +463,7 @@ impl NodeRecord {
 
 impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
     fn from(value: NodeRecordPairs) -> Self {
-        let mut pairs = vec![];
-        if let Some(eth) = value.eth {
-            pairs.push(("eth".into(), eth.encode_to_vec().into()));
-        }
-        if let Some(id) = value.id {
-            pairs.push(("id".into(), id.encode_to_vec().into()));
-        }
-        if let Some(ip) = value.ip {
-            pairs.push(("ip".into(), ip.encode_to_vec().into()));
-        }
-        if let Some(ip6) = value.ip6 {
-            pairs.push(("ip6".into(), ip6.encode_to_vec().into()));
-        }
-        if let Some(secp256k1) = value.secp256k1 {
-            pairs.push(("secp256k1".into(), secp256k1.encode_to_vec().into()));
-        }
-        if let Some(tcp) = value.tcp_port {
-            pairs.push(("tcp".into(), tcp.encode_to_vec().into()));
-        }
-        if let Some(udp) = value.udp_port {
-            pairs.push(("udp".into(), udp.encode_to_vec().into()));
-        }
-        pairs
+        value.encode_pairs()
     }
 }
 
@@ -450,13 +477,14 @@ impl RLPDecode for NodeRecord {
         let (seq, decoder) = decoder.decode_field("seq")?;
         let (pairs, decoder) = decode_node_record_optional_fields(vec![], decoder)?;
 
+        let record_pairs = NodeRecordPairs::decode_pairs(pairs);
+
         // all fields in pairs are optional except for id
-        let id_pair = pairs.iter().find(|(k, _v)| k.eq("id".as_bytes()));
-        if id_pair.is_some() {
+        if record_pairs.id.is_some() {
             let node_record = NodeRecord {
                 signature,
                 seq,
-                pairs,
+                pairs: record_pairs,
             };
             let remaining = decoder.finish()?;
             Ok((node_record, remaining))
@@ -491,7 +519,7 @@ impl RLPEncode for NodeRecord {
         structs::Encoder::new(buf)
             .encode_field(&self.signature)
             .encode_field(&self.seq)
-            .encode_key_value_list::<Bytes>(&self.pairs)
+            .encode_key_value_list::<Bytes>(&self.pairs.encode_pairs())
             .finish();
     }
 }
@@ -509,7 +537,7 @@ impl RLPEncode for Node {
 
 // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
 // entry-value = [[ forkHash, forkNext ], ...]
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EthEnrEntry {
     fork_id: ForkId, // Fork identifier per EIP-2124
     // Ignore additional fields (for forward compatibility).
@@ -624,9 +652,8 @@ mod tests {
             addr.port(),
             public_key_from_signing_key(&signer),
         );
-        let mut record = NodeRecord::from_node(&node, 1, &signer, None).unwrap();
         // Drop fork ID since the test doesn't use it
-        record.pairs.retain(|(k, _)| k != "eth");
+        let record = NodeRecord::from_node(&node, 1, &signer, None).unwrap();
         record.sign_record(&signer).unwrap();
 
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
@@ -666,8 +693,7 @@ mod tests {
 
         let enr_url = record.enr_url().unwrap();
         let parsed_record = NodeRecord::from_enr_url(&enr_url).unwrap();
-        let pairs = parsed_record.decode_pairs();
 
-        assert_eq!(pairs.eth, Some(eth_enr));
+        assert_eq!(parsed_record.pairs.eth, Some(eth_enr));
     }
 }
