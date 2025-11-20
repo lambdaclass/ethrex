@@ -1,4 +1,9 @@
-#[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
+#[cfg(all(
+    not(feature = "zisk"),
+    not(feature = "risc0"),
+    not(feature = "sp1"),
+    feature = "secp256k1"
+))]
 pub fn get_address_from_secret_key(
     secret_key_bytes: &[u8],
 ) -> Result<ethrex_common::Address, String> {
@@ -21,7 +26,12 @@ pub fn get_address_from_secret_key(
     Ok(ethrex_common::Address::from(address_bytes))
 }
 
-#[cfg(any(feature = "zisk", feature = "risc0", feature = "sp1"))]
+#[cfg(any(
+    feature = "zisk",
+    feature = "risc0",
+    feature = "sp1",
+    not(feature = "secp256k1")
+))]
 pub fn get_address_from_secret_key(
     secret_key_bytes: &[u8],
 ) -> Result<ethrex_common::Address, String> {

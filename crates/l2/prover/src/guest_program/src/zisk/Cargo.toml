@@ -7,12 +7,20 @@ edition = "2024"
 
 [dependencies]
 ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.13.0" }
-guest_program = { path = "../../", default-features = false, features = [
-    "zisk",
-] }
 
 sha2 = "0.10.9"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
+
+guest_program = { path = "../../", default-features = false }
+ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
+    "zisk",
+] }
+ethrex-common = { path = "../../../../../../common", default-features = false, features = [
+    "zisk",
+] }
+ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false, features = [
+    "zisk",
+] }
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/0xPolygonHermez/zisk-patch-hashes.git", branch = "zisk-patch-sha2/v0.10.9" }
