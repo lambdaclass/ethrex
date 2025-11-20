@@ -1,7 +1,8 @@
 use axum::{Router, routing::get};
 
 use crate::{
-    MetricsApiError, gather_default_metrics, blocks::METRICS_BLOCKS, process::METRICS_PROCESS, transactions::METRICS_TX,
+    MetricsApiError, blocks::METRICS_BLOCKS, gather_default_metrics, process::METRICS_PROCESS,
+    transactions::METRICS_TX,
 };
 
 pub async fn start_prometheus_metrics_api(
