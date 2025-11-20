@@ -54,6 +54,7 @@ pub fn prove(
         "--output-dir",
         OUTPUT_DIR_PATH,
         "--aggregation",
+        "--verify-proofs",
     ];
     let conditional_groth16_arg = if let ProofFormat::Groth16 = format {
         vec!["--final-snark"]
