@@ -52,5 +52,5 @@ pub enum ProveOutput {
     #[cfg(feature = "risc0")]
     RISC0(risc0_zkvm::Receipt),
     #[cfg(feature = "zisk")]
-    ZisK(zisk::ProveOutput),
+    ZisK(zisk_sdk::Proof),
 }

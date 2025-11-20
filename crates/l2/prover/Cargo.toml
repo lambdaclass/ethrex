@@ -44,6 +44,9 @@ sp1-sdk = { version = "=5.0.8", optional = true }
 sp1-prover = { version = "=5.0.8", optional = true }
 sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
 
+zisk-sdk = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.14.0" }
+zisk-common = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.14.0" }
+
 [dev-dependencies]
 ethrex-storage.workspace = true
 

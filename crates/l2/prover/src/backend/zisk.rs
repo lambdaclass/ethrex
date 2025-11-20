@@ -2,6 +2,8 @@ use std::{
     io::ErrorKind,
     process::{Command, Stdio},
 };
+use zisk_sdk::{ProverClient, Proof};
+use zisk_common::io::ZiskStdin;
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
@@ -14,72 +16,38 @@ pub struct ProveOutput(pub Vec<u8>);
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     write_elf_file()?;
+    let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
+    let stdin = ZiskStdin::from_vec(stdin_bytes);
 
-    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
-    std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
+    let client = ProverClient::builder()
+        .asm()
+        .verify_constraints()
+        .elf_path(ELF_PATH.into())
+        .unlock_mapped_memory(true)
+        .build()?;
 
-    let args = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
-    let output = Command::new("ziskemu")
-        .args(args)
-        .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .output()?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "ZisK execution failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
-
+    client.execute(stdin)?;
     Ok(())
 }
 
 pub fn prove(
     input: ProgramInput,
     format: ProofFormat,
-) -> Result<ProveOutput, Box<dyn std::error::Error>> {
+) -> Result<Proof, Box<dyn std::error::Error>> {
     write_elf_file()?;
+    let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
+    let stdin = ZiskStdin::from_vec(stdin_bytes);
 
-    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
-    std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
+    let client = ProverClient::builder()
+        .asm()
+        .prove()
+        .aggregation(true)
+        .save_proofs(true)
+        .elf_path(ELF_PATH.into())
+        .unlock_mapped_memory(true)
+        .build()?;
 
-    let static_args = vec![
-        "prove",
-        "--elf",
-        ELF_PATH,
-        "--input",
-        INPUT_PATH,
-        "--output-dir",
-        OUTPUT_DIR_PATH,
-        "--aggregation",
-    ];
-    let conditional_groth16_arg = if let ProofFormat::Groth16 = format {
-        vec!["--final-snark"]
-    } else {
-        vec![]
-    };
-
-    let output = Command::new("cargo-zisk")
-        .args(static_args)
-        .args(conditional_groth16_arg)
-        .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .output()?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "ZisK proof generation failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
-
-    let proof_bytes = std::fs::read(format!(
-        "{OUTPUT_DIR_PATH}/vadcop_final_proof.compressed.bin"
-    ))?;
-    let output = ProveOutput(proof_bytes);
+    let output = client.prove(stdin)?.proof;
     Ok(output)
 }
 
@@ -88,7 +56,7 @@ pub fn verify(_output: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>>
 }
 
 pub fn to_batch_proof(
-    proof: ProveOutput,
+    proof: Proof,
     format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     unimplemented!("to_batch_proof is not implemented for ZisK backend")
