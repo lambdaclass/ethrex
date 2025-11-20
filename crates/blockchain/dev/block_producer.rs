@@ -4,6 +4,7 @@ use ethrex_rpc::clients::{EngineClient, EngineClientError};
 use ethrex_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::time::sleep;
 
 pub async fn start_block_producer(
     execution_client_auth_url: String,
@@ -51,6 +52,7 @@ pub async fn start_block_producer(
                 tracing::error!(
                     "Failed to produce block: error sending engine_forkchoiceUpdatedV3 with PayloadAttributes: {error}"
                 );
+                sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
             }
@@ -73,6 +75,7 @@ pub async fn start_block_producer(
                 tracing::error!(
                     "Failed to produce block: error sending engine_getPayloadV5: {error}"
                 );
+                sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
             }
@@ -106,6 +109,7 @@ pub async fn start_block_producer(
                 tracing::error!(
                     "Failed to produce block: error sending engine_newPayloadV4: {error}"
                 );
+                sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
             }
@@ -117,6 +121,7 @@ pub async fn start_block_producer(
             tracing::error!(
                 "Failed to produce block: latest_valid_hash is None in PayloadStatus: {payload_status:?}"
             );
+            sleep(Duration::from_millis(300)).await;
             tries += 1;
             continue;
         };
