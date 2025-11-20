@@ -42,6 +42,7 @@ pub const fn bytes_length(bytes_len: usize, first_byte: u8) -> usize {
     1 + be_len as usize + bytes_len // prefix + len(len) + payload
 }
 
+/// Struct implementing `BufMut`, but only counting the number of bytes pushed into the buffer.
 #[derive(Debug, Clone, Copy, Default)]
 struct ByteCounter {
     count: usize,
