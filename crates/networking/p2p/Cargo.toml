@@ -25,7 +25,6 @@ tokio-util = { workspace = true, features = ["codec", "net"] }
 bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true
-lazy_static.workspace = true
 snap.workspace = true
 serde.workspace = true
 secp256k1.workspace = true

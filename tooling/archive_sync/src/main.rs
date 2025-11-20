@@ -1,7 +1,3 @@
-lazy_static::lazy_static! {
-    static ref CLIENT: reqwest::Client = reqwest::Client::new();
-}
-
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};

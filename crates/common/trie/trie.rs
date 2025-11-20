@@ -17,7 +17,7 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
@@ -32,14 +32,9 @@ pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
-use lazy_static::lazy_static;
 
-lazy_static! {
-    // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256(
-        keccak_hash([RLP_NULL]),
-    );
-}
+// Hash value for an empty trie, equal to keccak(RLP_NULL)
+pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| H256(keccak_hash([RLP_NULL])));
 
 /// RLP-encoded trie path
 pub type PathRLP = Vec<u8>;

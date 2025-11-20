@@ -4,6 +4,7 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
     str::FromStr,
+    sync::LazyLock,
 };
 
 use bytes::Bytes;
@@ -568,9 +569,8 @@ pub async fn deploy_l1_contracts(
     Ok(contract_addresses)
 }
 
-lazy_static::lazy_static! {
-    static ref SALT: std::sync::Mutex<H256>  = std::sync::Mutex::new(H256::zero());
-}
+static SALT: LazyLock<std::sync::Mutex<H256>> =
+    LazyLock::new(|| std::sync::Mutex::new(H256::zero()));
 
 async fn deploy_contracts(
     eth_client: &EthClient,
