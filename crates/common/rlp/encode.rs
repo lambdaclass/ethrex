@@ -12,6 +12,14 @@ pub fn encode<T: RLPEncode>(value: T) -> Vec<u8> {
     buf
 }
 
+/// Calculates the encoded length of the given integer bit with and lsb
+#[inline(always)]
+const fn impl_length_integers(bits: u32, lsb: u8) -> usize {
+    let sig_len = (bits + 7) >> 3;
+    let is_multibyte_mask = ((sig_len > 1) as usize) | ((lsb > 0x7f) as usize);
+    1 + sig_len as usize * is_multibyte_mask
+}
+
 /// Computes the length needed for a given payload length
 #[inline]
 pub const fn list_length(payload_len: usize) -> usize {
@@ -150,14 +158,7 @@ impl RLPEncode for u8 {
 
     #[inline]
     fn length(&self) -> usize {
-        let bits = 8 - self.leading_zeros() as usize;
-
-        // will be 1 only if the value is non-zero AND > 0x7f.
-        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-
-        let size = (bits + 7) >> 3;
-
-        1 + size * needs_full_encoding
+        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
     }
 }
 
@@ -167,10 +168,7 @@ impl RLPEncode for u16 {
     }
     #[inline]
     fn length(&self) -> usize {
-        let bits = 16 - self.leading_zeros() as usize;
-        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = (bits + 7) >> 3;
-        1 + size * needs_full_encoding
+        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
     }
 }
 
@@ -181,10 +179,7 @@ impl RLPEncode for u32 {
 
     #[inline]
     fn length(&self) -> usize {
-        let bits = 32 - self.leading_zeros() as usize;
-        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = (bits + 7) >> 3;
-        1 + size * needs_full_encoding
+        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
     }
 }
 
@@ -195,10 +190,7 @@ impl RLPEncode for u64 {
 
     #[inline]
     fn length(&self) -> usize {
-        let bits = 64 - self.leading_zeros() as usize;
-        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = (bits + 7) >> 3;
-        1 + size * needs_full_encoding
+        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
     }
 }
 
@@ -209,10 +201,7 @@ impl RLPEncode for usize {
 
     #[inline]
     fn length(&self) -> usize {
-        let bits = usize::BITS as usize - self.leading_zeros() as usize;
-        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = (bits + 7) >> 3;
-        1 + size * needs_full_encoding
+        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
     }
 }
 
@@ -223,10 +212,7 @@ impl RLPEncode for u128 {
 
     #[inline]
     fn length(&self) -> usize {
-        let bits = 128 - self.leading_zeros() as usize;
-        let needs_full_encoding = ((*self != 0) as usize) & ((*self > 0x7f) as usize);
-        let size = (bits + 7) >> 3;
-        1 + size * needs_full_encoding
+        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
     }
 }
 
@@ -261,6 +247,9 @@ impl RLPEncode for [u8] {
     }
 
     fn length(&self) -> usize {
+        if self.is_empty() {
+            return 1;
+        }
         bytes_length(self.len(), self[0])
     }
 }
@@ -331,18 +320,7 @@ impl RLPEncode for U256 {
     }
 
     fn length(&self) -> usize {
-        let bits = 256 - self.leading_zeros() as usize;
-        let sig_len = bits.div_ceil(8);
-        let first_byte = if sig_len == 0 {
-            0
-        } else {
-            let shift = 8 * (sig_len - 1);
-            ((self >> shift) & U256::from(0xff)).as_u32() as u8
-        };
-
-        let is_multibyte_mask = ((sig_len > 1) as usize) | ((first_byte > 0x7f) as usize);
-
-        1 + sig_len * is_multibyte_mask
+        impl_length_integers(self.bits() as u32, (self.low_u32() & 0xff) as u8)
     }
 }
 
