@@ -53,12 +53,7 @@ impl RpcOutcome {
 
 pub fn record_rpc_outcome(namespace: &str, method: &str, outcome: RpcOutcome) {
     METRICS_RPC_REQUEST_OUTCOMES
-        .with_label_values(&[
-            namespace,
-            method,
-            outcome.as_label(),
-            outcome.error_kind(),
-        ])
+        .with_label_values(&[namespace, method, outcome.as_label(), outcome.error_kind()])
         .inc();
 }
 
