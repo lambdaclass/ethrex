@@ -109,5 +109,5 @@ fn write_elf_file() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    return Ok(());
+    Ok(())
 }
