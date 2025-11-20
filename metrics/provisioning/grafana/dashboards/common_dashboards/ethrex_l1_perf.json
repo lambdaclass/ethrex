@@ -2819,7 +2819,7 @@
               "refId": "error_pct_by_method_kind"
             }
           ],
-          "title": "Engine & RPC Errors by Method & % by Kind - $instance",
+          "title": "Engine & RPC Errors % by Method & Kind - $instance",
           "type": "timeseries"
         }
       ],
