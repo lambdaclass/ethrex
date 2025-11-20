@@ -44,7 +44,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
 }
 
 fn get_quote(private_key: &SecretKey) -> Result<Bytes, String> {
-    let address = get_address_from_secret_key(private_key.secret_bytes())
+    let address = get_address_from_secret_key(&private_key.secret_bytes())
         .map_err(|e| format!("Error deriving address: {e}"))?;
     let mut digest_slice = [0u8; 64];
     digest_slice
