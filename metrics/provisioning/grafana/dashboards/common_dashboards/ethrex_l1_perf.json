@@ -305,7 +305,7 @@
       "type": "table"
     },
     {
-      "collapsed": true,
+      "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -313,870 +313,869 @@
         "y": 5
       },
       "id": 50,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "percentunit"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Value"
-                },
-                "properties": [
-                  {
-                    "id": "custom.axisSoftMin",
-                    "value": 0.3
-                  },
-                  {
-                    "id": "custom.axisSoftMax",
-                    "value": 0.7
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 6,
-            "x": 0,
-            "y": 20
-          },
-          "id": 2,
-          "interval": "10s",
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.2.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "sum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance)\n  sum by (instance)(\n    gas_limit{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  )",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "{{ instance }}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Gas Used %",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "Ggas/s"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "block_number"
-                },
-                "properties": [
-                  {
-                    "id": "custom.axisPlacement",
-                    "value": "right"
-                  },
-                  {
-                    "id": "unit"
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 7,
-            "x": 6,
-            "y": 20
-          },
-          "id": 11,
-          "interval": "10s",
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean",
-                "max"
-              ],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.2.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "disableTextWrap": false,
-              "editorMode": "code",
-              "expr": "gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} - 0",
-              "fullMetaSearch": false,
-              "includeNullMetadata": true,
-              "legendFormat": "{{ instance }} Gigagas/s",
-              "range": true,
-              "refId": "A",
-              "useBackend": false
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-              "hide": true,
-              "instant": false,
-              "legendFormat": "{{instance}} Block Number",
-              "range": true,
-              "refId": "B"
-            }
-          ],
-          "title": "Ggas/s",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 11,
-            "x": 13,
-            "y": 20
-          },
-          "id": 1,
-          "interval": "10s",
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.2.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "disableTextWrap": false,
-              "editorMode": "code",
-              "expr": "head_height{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-              "format": "time_series",
-              "fullMetaSearch": false,
-              "hide": false,
-              "includeNullMetadata": true,
-              "instant": false,
-              "interval": "",
-              "legendFormat": "{{ instance }} Head height",
-              "range": true,
-              "refId": "A",
-              "useBackend": false
-            }
-          ],
-          "title": "Block Height",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "fillOpacity": 50,
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "pointShape": "circle",
-                "pointSize": {
-                  "fixed": 7
-                },
-                "pointStrokeWidth": 1,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "show": "points+lines"
-              },
-              "links": [
-                {
-                  "title": "Show on Etherscan",
-                  "url": "https://etherscan.io/block/${__data.fields[\"Block\"]}"
-                }
-              ],
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "gigagas"
-                },
-                "properties": [
-                  {
-                    "id": "unit",
-                    "value": "si:Ggas/s"
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "/block.*/"
-                },
-                "properties": [
-                  {
-                    "id": "custom.hideFrom",
-                    "value": {
-                      "legend": false,
-                      "tooltip": true,
-                      "viz": false
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 12,
-            "w": 12,
-            "x": 0,
-            "y": 84
-          },
-          "id": 47,
-          "interval": "5s",
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean",
-                "max",
-                "last"
-              ],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "mapping": "auto",
-            "series": [
-              {
-                "frame": {
-                  "matcher": {
-                    "id": "byIndex",
-                    "options": 0
-                  }
-                },
-                "x": {
-                  "matcher": {
-                    "id": "byName",
-                    "options": "Block"
-                  }
-                },
-                "y": {
-                  "matcher": {
-                    "id": "byName",
-                    "options": "gigagas"
-                  }
-                }
-              }
-            ],
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.2.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "ggas/s {{ instance }}",
-              "range": true,
-              "refId": "Ggas/s"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "Block",
-              "range": true,
-              "refId": "Block"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "all_same_block",
-              "range": true,
-              "refId": "all_same_block"
-            }
-          ],
-          "title": "Ggas/s by Block",
-          "transformations": [
-            {
-              "id": "joinByField",
-              "options": {
-                "mode": "inner"
-              }
-            },
-            {
-              "id": "filterByValue",
-              "options": {
-                "filters": [
-                  {
-                    "config": {
-                      "id": "equal",
-                      "options": {
-                        "value": "0"
-                      }
-                    },
-                    "fieldName": "all_same_block"
-                  }
-                ],
-                "match": "any",
-                "type": "exclude"
-              }
-            },
-            {
-              "id": "groupBy",
-              "options": {
-                "fields": {
-                  "Time": {
-                    "aggregations": [
-                      "lastNotNull"
-                    ],
-                    "operation": "aggregate"
-                  },
-                  "Value": {
-                    "aggregations": [],
-                    "operation": "groupby"
-                  }
-                }
-              }
-            }
-          ],
-          "type": "xychart"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "series",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "fillOpacity": 50,
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "lineWidth": 2,
-                "pointShape": "circle",
-                "pointSize": {
-                  "fixed": 7
-                },
-                "pointStrokeWidth": 1,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "show": "points+lines"
-              },
-              "links": [
-                {
-                  "oneClick": false,
-                  "targetBlank": true,
-                  "title": "Show on Etherscan",
-                  "url": "https://${network}.etherscan.io/block/${__data.fields.block_number}"
-                }
-              ],
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Value"
-                },
-                "properties": [
-                  {
-                    "id": "unit",
-                    "value": "s"
-                  },
-                  {
-                    "id": "custom.axisPlacement",
-                    "value": "left"
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "/block.*/"
-                },
-                "properties": [
-                  {
-                    "id": "custom.hideFrom",
-                    "value": {
-                      "legend": false,
-                      "tooltip": true,
-                      "viz": true
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Block"
-                },
-                "properties": [
-                  {
-                    "id": "unit",
-                    "value": "none"
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 12,
-            "w": 12,
-            "x": 12,
-            "y": 84
-          },
-          "id": 12,
-          "interval": "5s",
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean",
-                "max"
-              ],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "mapping": "auto",
-            "series": [
-              {
-                "frame": {
-                  "matcher": {
-                    "id": "byIndex",
-                    "options": 0
-                  }
-                },
-                "x": {
-                  "matcher": {
-                    "id": "byName",
-                    "options": "Block"
-                  }
-                },
-                "y": {
-                  "matcher": {
-                    "id": "byName",
-                    "options": "Value"
-                  }
-                }
-              }
-            ],
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.2.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "exemplar": false,
-              "expr": "sum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance) ( \n  sum by (instance)(\n    gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  ) * 1000000000\n)",
-              "format": "time_series",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "Block time {{ instance }}",
-              "range": true,
-              "refId": "block_time"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "Block",
-              "range": true,
-              "refId": "block"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "all_same_block",
-              "range": true,
-              "refId": "all_same_block"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "max without(instance) (\nsum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance)\n  sum by (instance)(\n    gas_limit{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  )\n)",
-              "hide": true,
-              "instant": false,
-              "legendFormat": "Gas Used %",
-              "range": true,
-              "refId": "gas_used"
-            }
-          ],
-          "title": "Block Time",
-          "transformations": [
-            {
-              "id": "joinByField",
-              "options": {
-                "byField": "Time",
-                "mode": "inner"
-              }
-            },
-            {
-              "id": "filterByValue",
-              "options": {
-                "filters": [
-                  {
-                    "config": {
-                      "id": "equal",
-                      "options": {
-                        "value": "0"
-                      }
-                    },
-                    "fieldName": "all_same_block"
-                  }
-                ],
-                "match": "any",
-                "type": "exclude"
-              }
-            },
-            {
-              "id": "filterFieldsByName",
-              "options": {
-                "byVariable": false,
-                "include": {
-                  "pattern": "^(?!.*all_same_block).*$"
-                }
-              }
-            },
-            {
-              "id": "groupBy",
-              "options": {
-                "fields": {
-                  "Block": {
-                    "aggregations": []
-                  },
-                  "Block time ethrex-mainnet-3-0-0:3701": {
-                    "aggregations": []
-                  },
-                  "Block time ethrex-mainnet-4-0-0-pathbased:3701": {
-                    "aggregations": []
-                  },
-                  "Time": {
-                    "aggregations": [
-                      "lastNotNull"
-                    ],
-                    "operation": "aggregate"
-                  },
-                  "Value": {
-                    "aggregations": [],
-                    "operation": "groupby"
-                  },
-                  "all_same_block": {
-                    "aggregations": []
-                  },
-                  "remove_duplicate_blocks": {
-                    "aggregations": []
-                  }
-                }
-              }
-            }
-          ],
-          "type": "xychart"
-        }
-      ],
+      "panels": [],
       "title": "Block Processing",
       "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "custom.axisSoftMin",
+                "value": 0.3
+              },
+              {
+                "id": "custom.axisSoftMax",
+                "value": 0.7
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 6
+      },
+      "id": 2,
+      "interval": "10s",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance)\n  sum by (instance)(\n    gas_limit{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  )",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "{{ instance }}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Gas Used %",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "Ggas/s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block_number"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 7,
+        "x": 6,
+        "y": 6
+      },
+      "id": 11,
+      "interval": "10s",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "disableTextWrap": false,
+          "editorMode": "code",
+          "expr": "gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} - 0",
+          "fullMetaSearch": false,
+          "includeNullMetadata": true,
+          "legendFormat": "{{ instance }} Gigagas/s",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "{{instance}} Block Number",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Ggas/s",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 11,
+        "x": 13,
+        "y": 6
+      },
+      "id": 1,
+      "interval": "10s",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "disableTextWrap": false,
+          "editorMode": "code",
+          "expr": "head_height{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+          "format": "time_series",
+          "fullMetaSearch": false,
+          "hide": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "interval": "",
+          "legendFormat": "{{ instance }} Head height",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
+        }
+      ],
+      "title": "Block Height",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 50,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 7
+            },
+            "pointStrokeWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "points+lines"
+          },
+          "links": [
+            {
+              "title": "Show on Etherscan",
+              "url": "https://etherscan.io/block/${__data.fields[\"Block\"]}"
+            }
+          ],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "gigagas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "si:Ggas/s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/block.*/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": false
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 47,
+      "interval": "5s",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "last"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mapping": "auto",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "gigagas"
+              }
+            }
+          }
+        ],
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "ggas/s {{ instance }}",
+          "range": true,
+          "refId": "Ggas/s"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Block",
+          "range": true,
+          "refId": "Block"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "all_same_block",
+          "range": true,
+          "refId": "all_same_block"
+        }
+      ],
+      "title": "Ggas/s by Block",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "mode": "inner"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "config": {
+                  "id": "equal",
+                  "options": {
+                    "value": "0"
+                  }
+                },
+                "fieldName": "all_same_block"
+              }
+            ],
+            "match": "any",
+            "type": "exclude"
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Time": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value": {
+                "aggregations": [],
+                "operation": "groupby"
+              }
+            }
+          }
+        }
+      ],
+      "type": "xychart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "series",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 50,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 2,
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 7
+            },
+            "pointStrokeWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "points+lines"
+          },
+          "links": [
+            {
+              "oneClick": false,
+              "targetBlank": true,
+              "title": "Show on Etherscan",
+              "url": "https://${network}.etherscan.io/block/${__data.fields.block_number}"
+            }
+          ],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "left"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/block.*/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Block"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "id": 12,
+      "interval": "5s",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mapping": "auto",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              }
+            }
+          }
+        ],
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "sum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance) ( \n  sum by (instance)(\n    gigagas{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  ) * 1000000000\n)",
+          "format": "time_series",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Block time {{ instance }}",
+          "range": true,
+          "refId": "block_time"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max without(instance) (last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Block",
+          "range": true,
+          "refId": "block"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "scalar(\n  max(\n    ( max without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n      == bool\n      min without(instance) (\n        last_over_time(block_number{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])\n      )\n  ))\n)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "all_same_block",
+          "range": true,
+          "refId": "all_same_block"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max without(instance) (\nsum by (instance)(\n  gas_used{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}\n)\n/\non(instance)\n  sum by (instance)(\n    gas_limit{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"} \n  )\n)",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "Gas Used %",
+          "range": true,
+          "refId": "gas_used"
+        }
+      ],
+      "title": "Block Time",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "inner"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "config": {
+                  "id": "equal",
+                  "options": {
+                    "value": "0"
+                  }
+                },
+                "fieldName": "all_same_block"
+              }
+            ],
+            "match": "any",
+            "type": "exclude"
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "byVariable": false,
+            "include": {
+              "pattern": "^(?!.*all_same_block).*$"
+            }
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Block": {
+                "aggregations": []
+              },
+              "Block time ethrex-mainnet-3-0-0:3701": {
+                "aggregations": []
+              },
+              "Block time ethrex-mainnet-4-0-0-pathbased:3701": {
+                "aggregations": []
+              },
+              "Time": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "all_same_block": {
+                "aggregations": []
+              },
+              "remove_duplicate_blocks": {
+                "aggregations": []
+              }
+            }
+          }
+        }
+      ],
+      "type": "xychart"
     },
     {
       "collapsed": true,
@@ -1184,7 +1183,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 26
       },
       "id": 49,
       "panels": [
@@ -1213,7 +1212,7 @@
             "h": 13,
             "w": 6,
             "x": 0,
-            "y": 7
+            "y": 83
           },
           "id": 18,
           "options": {
@@ -1326,7 +1325,7 @@
             "h": 13,
             "w": 6,
             "x": 6,
-            "y": 7
+            "y": 83
           },
           "id": 63,
           "options": {
@@ -1454,7 +1453,7 @@
             "h": 13,
             "w": 12,
             "x": 12,
-            "y": 7
+            "y": 83
           },
           "id": 61,
           "interval": "5s",
@@ -1589,7 +1588,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 27
       },
       "id": 110,
       "panels": [
@@ -1620,7 +1619,7 @@
             "h": 14,
             "w": 5,
             "x": 0,
-            "y": 21
+            "y": 97
           },
           "id": 118,
           "options": {
@@ -1701,7 +1700,7 @@
             "h": 14,
             "w": 3,
             "x": 5,
-            "y": 21
+            "y": 97
           },
           "id": 115,
           "interval": "10s",
@@ -1813,7 +1812,7 @@
             "h": 14,
             "w": 4,
             "x": 8,
-            "y": 21
+            "y": 97
           },
           "id": 113,
           "options": {
@@ -1918,7 +1917,7 @@
             "h": 14,
             "w": 12,
             "x": 12,
-            "y": 21
+            "y": 97
           },
           "id": 112,
           "interval": "10s",
@@ -1970,7 +1969,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 8
+        "y": 28
       },
       "id": 100,
       "panels": [
@@ -2001,7 +2000,7 @@
             "h": 14,
             "w": 7,
             "x": 0,
-            "y": 36
+            "y": 112
           },
           "id": 103,
           "options": {
@@ -2109,7 +2108,7 @@
             "h": 14,
             "w": 3,
             "x": 7,
-            "y": 36
+            "y": 112
           },
           "id": 104,
           "options": {
@@ -2223,7 +2222,7 @@
             "h": 14,
             "w": 5,
             "x": 10,
-            "y": 36
+            "y": 112
           },
           "id": 101,
           "options": {
@@ -2325,7 +2324,7 @@
             "h": 14,
             "w": 9,
             "x": 15,
-            "y": 36
+            "y": 112
           },
           "id": 102,
           "options": {
@@ -2373,7 +2372,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 29
       },
       "id": 117,
       "panels": [
@@ -2472,7 +2471,7 @@
             "h": 14,
             "w": 6,
             "x": 0,
-            "y": 10
+            "y": 86
           },
           "id": 116,
           "options": {
@@ -2607,7 +2606,7 @@
             "h": 14,
             "w": 6,
             "x": 6,
-            "y": 10
+            "y": 86
           },
           "id": 107,
           "options": {
@@ -2754,7 +2753,7 @@
             "h": 14,
             "w": 12,
             "x": 12,
-            "y": 10
+            "y": 86
           },
           "id": 108,
           "options": {
@@ -2832,7 +2831,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 30
       },
       "id": 48,
       "panels": [],
@@ -2909,7 +2908,7 @@
         "h": 5,
         "w": 12,
         "x": 0,
-        "y": 11
+        "y": 31
       },
       "id": 32,
       "options": {
@@ -3012,7 +3011,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 11
+        "y": 31
       },
       "id": 46,
       "options": {
@@ -3081,7 +3080,7 @@
         "h": 3,
         "w": 5,
         "x": 0,
-        "y": 16
+        "y": 36
       },
       "id": 34,
       "options": {
@@ -3150,7 +3149,7 @@
         "h": 3,
         "w": 2,
         "x": 5,
-        "y": 16
+        "y": 36
       },
       "id": 33,
       "options": {
@@ -3218,7 +3217,7 @@
         "h": 3,
         "w": 5,
         "x": 7,
-        "y": 16
+        "y": 36
       },
       "id": 43,
       "options": {
@@ -3322,7 +3321,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 19
+        "y": 39
       },
       "id": 30,
       "options": {
@@ -3450,7 +3449,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 19
+        "y": 39
       },
       "id": 31,
       "options": {
@@ -3554,7 +3553,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 25
+        "y": 45
       },
       "id": 45,
       "options": {
@@ -3693,7 +3692,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 25
+        "y": 45
       },
       "id": 42,
       "options": {
@@ -3743,7 +3742,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 53
       },
       "id": 55,
       "panels": [
@@ -3813,7 +3812,7 @@
             "h": 8,
             "w": 6,
             "x": 0,
-            "y": 312
+            "y": 388
           },
           "id": 56,
           "options": {
@@ -3912,7 +3911,7 @@
             "h": 8,
             "w": 9,
             "x": 6,
-            "y": 312
+            "y": 388
           },
           "id": 57,
           "options": {
@@ -4012,7 +4011,7 @@
             "h": 8,
             "w": 9,
             "x": 15,
-            "y": 312
+            "y": 388
           },
           "id": 58,
           "options": {
@@ -4134,5 +4133,5 @@
   "timezone": "utc",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 41
+  "version": 42
 }
