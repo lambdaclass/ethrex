@@ -158,7 +158,7 @@ impl RLPEncode for u8 {
 
     #[inline]
     fn length(&self) -> usize {
-        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
+        impl_length_integers(self.checked_ilog2().unwrap_or(0), *self)
     }
 }
 
