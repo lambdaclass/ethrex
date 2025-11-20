@@ -83,6 +83,7 @@ pub trait RLPEncode {
     fn encode(&self, buf: &mut dyn BufMut);
 
     fn length(&self) -> usize {
+        // Run the `encode` function, but only counting the bytes pushed.
         let mut counter = ByteCounter::default();
         self.encode(&mut counter);
         counter.count
