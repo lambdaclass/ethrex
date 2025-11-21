@@ -492,7 +492,22 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
             "GetPayloadBodiesByRangeV1Request: fetched {} bodies",
             bodies.len()
         );
-        build_payload_body_response(bodies.into_iter().map(Some).collect())
+        info!(
+            "GetPayloadBodiesByRangeV1Request: variable set before building response"
+        );
+        let bodies_into_iter = bodies.into_iter();
+        info!(
+            "GetPayloadBodiesByRangeV1Request: variable iter done"
+        );
+        let some_map = bodies_into_iter.map(Some);
+        info!(
+            "GetPayloadBodiesByRangeV1Request: variable map done"
+        );
+        let param = some_map.collect();
+        info!(
+            "GetPayloadBodiesByRangeV1Request: variable collect done"
+        );
+        build_payload_body_response(param)
     }
 }
 
