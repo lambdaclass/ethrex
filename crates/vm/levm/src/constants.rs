@@ -74,7 +74,7 @@ pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
 // EIP7702 - EOA Load Code
 pub static SECP256K1_ORDER: LazyLock<U256> = LazyLock::new(||
         // we use the k256 crate instead of the secp256k1 because the latter is optional
-        // while the former is not, this is to avoid a conditiona compilation attribute.
+        // while the former is not, this is to avoid a conditional compilation attribute.
         U256::from_big_endian(&k256::Secp256k1::ORDER.to_be_bytes()));
 pub static SECP256K1_ORDER_OVER2: std::sync::LazyLock<U256> =
     LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
