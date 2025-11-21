@@ -2,9 +2,10 @@ use std::{
     io::ErrorKind,
     process::{Command, Stdio},
     sync::OnceLock,
+    time::{Duration, Instant},
 };
 use zisk_common::io::ZiskStdin;
-use zisk_sdk::{Asm, Proof, ProverClient, ZiskProver};
+use zisk_sdk::{Asm, Proof, ProverClient, ZiskProveResult, ZiskProver};
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
@@ -13,16 +14,13 @@ const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
-pub static PROVER_CLIENT: OnceLock<ZiskProver<Asm>> = OnceLock::new();
-
 pub struct ProveOutput(pub Vec<u8>);
 
-pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    write_elf_file()?;
-    let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
-    let stdin = ZiskStdin::from_vec(stdin_bytes);
+pub static PROVE_CLIENT: OnceLock<ZiskProver<Asm>> = OnceLock::new();
+pub static EXECUTE_CLIENT: OnceLock<ZiskProver<Asm>> = OnceLock::new();
 
-    let client = PROVER_CLIENT.get_or_init(|| {
+pub fn execute_client() -> &'static ZiskProver<Asm> {
+    EXECUTE_CLIENT.get_or_init(|| {
         ProverClient::builder()
             .asm()
             .verify_constraints()
@@ -30,11 +28,41 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
             .unlock_mapped_memory(true)
             .build()
             .unwrap_or_else(|e| panic!("Failed to setup ZisK prover client: {e}"))
-    });
+    })
+}
 
+pub fn prove_client() -> &'static ZiskProver<Asm> {
+    PROVE_CLIENT.get_or_init(|| {
+        ProverClient::builder()
+            .asm()
+            .prove()
+            .aggregation(true)
+            .elf_path(ELF_PATH.into())
+            .unlock_mapped_memory(true)
+            .build()
+            .unwrap_or_else(|e| panic!("Failed to setup ZisK prover client: {e}"))
+    })
+}
+
+pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+    write_elf_file()?;
+    let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
+    let stdin = ZiskStdin::from_vec(stdin_bytes);
+
+    let client = execute_client();
     client.execute(stdin)?;
-    std::thread::sleep(std::time::Duration::from_secs(5));
+
     Ok(())
+}
+
+pub fn execute_timed(input: ProgramInput) -> Result<Duration, Box<dyn std::error::Error>> {
+    write_elf_file()?;
+    let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
+    let stdin = ZiskStdin::from_vec(stdin_bytes);
+
+    let client = execute_client();
+    let duration = client.execute(stdin)?.duration;
+    Ok(duration)
 }
 
 pub fn prove(
@@ -45,19 +73,25 @@ pub fn prove(
     let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
     let stdin = ZiskStdin::from_vec(stdin_bytes);
 
-    let client = PROVER_CLIENT.get_or_init(|| {
-        ProverClient::builder()
-            .asm()
-            .prove()
-            .aggregation(true)
-            .elf_path(ELF_PATH.into())
-            .unlock_mapped_memory(true)
-            .build()
-            .unwrap_or_else(|e| panic!("Failed to setup ZisK prover client: {e}"))
-    });
+    let client = prove_client();
+    let proof = client.prove(stdin)?.proof;
+    Ok(proof)
+}
 
-    let output = client.prove(stdin)?.proof;
-    Ok(output)
+pub fn prove_timed(
+    input: ProgramInput,
+    format: ProofFormat,
+) -> Result<(Proof, Duration), Box<dyn std::error::Error>> {
+    write_elf_file()?;
+    let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
+    let stdin = ZiskStdin::from_vec(stdin_bytes);
+
+    let client = prove_client();
+
+    let ZiskProveResult {
+        proof, duration, ..
+    } = client.prove(stdin)?;
+    Ok((proof, duration))
 }
 
 pub fn verify(_output: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>> {
