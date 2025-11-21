@@ -25,7 +25,6 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         .witness_lib_path_opt(None)
         .proving_key_path_opt(None)
         .elf_path(ELF_PATH.into())
-        .verbose(false)
         .shared_tables(false)
         .asm_path_opt(None)
         .base_port_opt(None)
