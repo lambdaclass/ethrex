@@ -283,8 +283,10 @@ impl PooledTransactions {
                     );
                     continue;
                 }
+                // SAFETY: PooledTransactions::validate_requested is called before PooledTransactions::handle,
+                // so we already validated the blobs at this point.
                 if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
+                    .add_blob_transaction_to_pool_unchecked(itx.tx, itx.blobs_bundle)
                     .await
                 {
                     debug!(
