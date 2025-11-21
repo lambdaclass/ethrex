@@ -466,21 +466,46 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        info!(
+            "GetPayloadBodiesByRangeV1Request: start={}, count={}",
+            self.start, self.count
+        );
         if self.count >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
+        info!(
+            "GetPayloadBodiesByRangeV1Request: start={}, count={} - passed size check",
+            self.start, self.count
+        );
         let latest_block_number = context.storage.get_latest_block_number().await?;
+        info!(
+            "GetPayloadBodiesByRangeV1Request: latest_block_number={}",
+            latest_block_number
+        );
         let last = latest_block_number.min(self.start + self.count - 1);
+        info!(
+            "GetPayloadBodiesByRangeV1Request: fetching bodies from {} to {}",
+            self.start, last
+        );
         let bodies = context.storage.get_block_bodies(self.start, last).await?;
+        info!(
+            "GetPayloadBodiesByRangeV1Request: fetched {} bodies",
+            bodies.len()
+        );
         build_payload_body_response(bodies.into_iter().map(Some).collect())
     }
 }
 
 fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, RpcErr> {
+    info!(
+        "Building payload body response for {} bodies",
+        bodies.len()
+    );
     let response: Vec<Option<ExecutionPayloadBody>> = bodies
         .into_iter()
         .map(|body| body.map(Into::into))
         .collect();
+    info!("Built payload body response, {:?}", response);
     serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 

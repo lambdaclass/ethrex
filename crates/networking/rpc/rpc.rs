@@ -477,9 +477,12 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context).await,
         Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context).await,
-        Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
-            "Engine namespace not allowed in map_http_requests".to_owned(),
-        )),
+        Ok(RpcNamespace::Engine) => {
+            error!("Engine namespace not allowed in map_http_requests. Method: {}", req.method);
+            Err(RpcErr::Internal(
+                "Engine namespace not allowed in map_http_requests".to_owned(),
+            ))
+        }
         Err(rpc_err) => Err(rpc_err),
     }
 }
