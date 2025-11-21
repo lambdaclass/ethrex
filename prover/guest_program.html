@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Deploy a contract - Ethrex</title>
+        <title>Guest program - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../../favicon.svg">
-        <link rel="shortcut icon" href="../../favicon.png">
-        <link rel="stylesheet" href="../../css/variables.css">
-        <link rel="stylesheet" href="../../css/general.css">
-        <link rel="stylesheet" href="../../css/chrome.css">
-        <link rel="stylesheet" href="../../css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../../fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../../";
+            const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,33 +237,79 @@
 }
 
 </style>
-<h1 id="deploy-a-contract-to-l2"><a class="header" href="#deploy-a-contract-to-l2">Deploy a Contract to L2</a></h1>
-<p>You can deploy smart contracts to your L2 using <a href="https://github.com/lambdaclass/rex"><code>rex</code></a>, a simple CLI tool for interacting with Ethereum-compatible networks.</p>
-<h2 id="1-generate-the-contract-bytecode"><a class="header" href="#1-generate-the-contract-bytecode">1. Generate the Contract Bytecode</a></h2>
-<p>First, compile your Solidity contract to get the deployment bytecode. You can use <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">solc</a> for this:</p>
-<pre><code class="language-sh">solc --bin MyContract.sol -o out/
-</code></pre>
-<p>The bytecode will be in out/MyContract.bin</p>
-<h2 id="2-deploy-with-rex"><a class="header" href="#2-deploy-with-rex">2. Deploy with rex</a></h2>
-<p>Use the following command to deploy your contract:</p>
-<pre><code class="language-sh">rex deploy --rpc-url http://localhost:1729 &lt;BYTECODE&gt; 0 &lt;PRIVATE_KEY&gt;
-</code></pre>
+<h1 id="ethrex-prover-guest-program"><a class="header" href="#ethrex-prover-guest-program">ethrex-prover guest program</a></h1>
+<p>The guest program is the code that is compiled into a zkVM-compatible binary (e.g., RISC-V), to then generate a zero-knowledge proof of its execution.</p>
+<h2 id="program-inputs"><a class="header" href="#program-inputs">Program inputs</a></h2>
+<p>The inputs for the blocks execution program (also called prover inputs) are:</p>
 <ul>
-<li>Replace <code>&lt;BYTECODE&gt;</code> with the hex string from your compiled contract (e.g., contents of <code>MyContract.bin</code>)</li>
-<li>Replace <code>&lt;PRIVATE_KEY&gt;</code> with your wallet's private key. It must have funds in L2</li>
-<li>Adjust the <code>--rpc-url</code> if your L2 node is running elsewhere</li>
+<li><code>blocks</code>: The blocks to be proven (header and body).</li>
+<li><code>execution_witness</code>: A structure containing the necessary state data (like account and storage values with their Merkle proofs) required for the execution of the blocks. It includes the parent header of the first block.</li>
+<li><code>elasticity_multiplier</code>: A parameter for block validation.</li>
+<li><code>fee_configs</code>: L2-specific fee configurations for each block.</li>
+<li><code>blob_commitment</code> and <code>blob_proof</code>: L2-specific data for verifying the state diff blob.</li>
 </ul>
-<p>For more details and advanced usage, see the <a href="https://github.com/lambdaclass/rex">rex repository</a>.</p>
+<p>These inputs are required for proof generation. The public values of the proof (also called program outputs), which are needed for proof verification, are:</p>
+<ul>
+<li><code>initial_state_hash</code>: The state root from the parent header of the first block.</li>
+<li><code>final_state_hash</code>: The state root from the header of the last block.</li>
+<li><code>l1messages_merkle_root</code>: The Merkle root of L1 messages (withdrawals) generated during block execution.</li>
+<li><code>privileged_transactions_hash</code>: A hash representing all privileged transactions processed in the blocks.</li>
+<li><code>blob_versioned_hash</code>: The versioned hash of the state diff blob, derived from its KZG commitment.</li>
+<li><code>last_block_hash</code>: The hash of the last block in the batch.</li>
+<li><code>chain_id</code>: The chain ID of the network.</li>
+<li><code>non_privileged_count</code>: The number of non-privileged transactions in the batch.</li>
+</ul>
+<h2 id="blocks-execution-program"><a class="header" href="#blocks-execution-program">Blocks execution program</a></h2>
+<p>The program leverages <code>ethrex-common</code> primitives and <code>ethrex-vm</code> methods. <code>ethrex-prover</code> implements a program that uses the existing execution logic and generates a proof of its execution using a zkVM. Some L2-specific logic and input validation are added on top of the basic blocks execution.</p>
+<p>The following sections outline the steps taken by the execution program.</p>
+<h3 id="prelude-1-state-trie-basics"><a class="header" href="#prelude-1-state-trie-basics">Prelude 1: state trie basics</a></h3>
+<p>We recommend learning about Merkle Patricia Tries (MPTs) to better understand this section.</p>
+<p>Each executed block transitions the Ethereum state from an initial state to a final state. State values are stored in MPTs:</p>
+<ol>
+<li>Each account has a Storage Trie containing its storage values.</li>
+<li>The World State Trie contains all account information, including each account's storage root hash (linking storage tries to the world trie).</li>
+</ol>
+<p>Hashing the root node of the world state trie generates a unique identifier for a particular Ethereum state, known as the "state hash".</p>
+<p>There are two kinds of MPT proofs:</p>
+<ol>
+<li>Inclusion proofs: Prove that <code>key: value</code> is a valid entry in the MPT with root hash <code>h</code>.</li>
+<li>Exclusion proofs: Prove that <code>key</code> does not exist in the MPT with root hash <code>h</code>.
+These proofs allow verifying that a value is included (or its key doesn't exist) in a specific state.</li>
+</ol>
+<h3 id="prelude-2-privileged-transactions-l1-messages-and-state-diffs"><a class="header" href="#prelude-2-privileged-transactions-l1-messages-and-state-diffs">Prelude 2: privileged transactions, L1 messages and state diffs</a></h3>
+<p>These three components are specific additions for ethrex's L2 protocol, layered on top of standard Ethereum execution logic. They each require specific validation steps within the program.</p>
+<p>For more details, refer to <a href="../l2/architecture/overview.html">Overview</a>, <a href="../l2/fundamentals/withdrawals.html">Withdrawals</a>, and <a href="../l2/fundamentals/state_diffs.html">State diffs</a>.</p>
+<h3 id="step-1-initial-state-validation"><a class="header" href="#step-1-initial-state-validation">Step 1: initial state validation</a></h3>
+<p>The program validates the initial state by converting the <code>ExecutionWitness</code> into a <code>GuestProgramState</code> and verifying that its trie structure correctly represents the expected state. This involves checking that the calculated state trie root hash matches the initial state hash (obtained from the first block's parent block header).</p>
+<p>The validation happens in several steps:</p>
+<ol>
+<li>The <code>ExecutionWitness</code> (collected during pre-execution) is converted to <code>GuestProgramState</code>.</li>
+<li>A <code>GuestProgramStateWrapper</code> is created to provide database functionality.</li>
+<li>For each state value in the database (account state and storage slots), the program verifies merkle proofs of the inclusion (or exclusion, in the case of accounts that didn't exist before this batch) of the value in the state trie</li>
+<li>The state trie root is compared against the first block's parent state root.</li>
+</ol>
+<p>This validation ensures that all state values needed for execution are properly linked to the initial state via their MPT proofs. Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries - a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.</p>
+<h3 id="step-2-blocks-execution"><a class="header" href="#step-2-blocks-execution">Step 2: blocks execution</a></h3>
+<p>After validating the initial state, the program executes the blocks sequentially. This leverages the existing <code>ethrex-vm</code> execution logic. For each block, it performs validation checks and then executes the transactions within it. State changes from each block are applied before executing the next one.</p>
+<h3 id="step-3-final-state-validation"><a class="header" href="#step-3-final-state-validation">Step 3: final state validation</a></h3>
+<p>During execution, state values are updated (modified, created, or removed). After executing all blocks, the program calculates the final state by applying all state updates to the initial pruned tries.</p>
+<p>Applying the updates results in a new world state root node for the pruned tries. Hashing this node yields the calculated final state hash. The program then verifies that this calculated hash matches the expected final state hash (from the last block header), thus validating the final state.</p>
+<h3 id="step-4-privileged-transactions-hash-calculation"><a class="header" href="#step-4-privileged-transactions-hash-calculation">Step 4: privileged transactions hash calculation</a></h3>
+<p>After execution and final state validation, the program calculates a hash encompassing all privileged transactions (like L1 to L2 deposits) processed within the blocks. This hash is committed as a public input, required for verification on the L1 bridge contract.</p>
+<h3 id="step-5-l1-messages-merkle-root-calculation"><a class="header" href="#step-5-l1-messages-merkle-root-calculation">Step 5: L1 messages Merkle root calculation</a></h3>
+<p>Similarly, the program constructs a binary Merkle tree of all L2-&gt;L1 messages (withdrawals) initiated in the blocks and calculates its root hash. This hash is also committed as a public input. Later, L1 accounts can claim their withdrawals by providing a Merkle proof of inclusion that validates against this root hash on the L1 bridge contract.</p>
+<h3 id="step-6-state-diff-calculation-and-commitment"><a class="header" href="#step-6-state-diff-calculation-and-commitment">Step 6: state diff calculation and commitment</a></h3>
+<p>Finally, the program calculates the state diffs (changes between initial and final state) intended for publication to L1 as blob data. It then verifies the provided <code>blob_commitment</code> and <code>blob_proof</code> against the calculated state diff. The resulting <code>blob_versioned_hash</code> (derived from the KZG commitment) is committed as a public input for verification on the L1 contract.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/wallet.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../prover/prover.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../developers/rich-accounts.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -273,11 +319,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/wallet.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../prover/prover.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../developers/rich-accounts.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -292,17 +338,17 @@
         </script>
 
 
-        <script src="../../elasticlunr.min.js"></script>
-        <script src="../../mark.min.js"></script>
-        <script src="../../searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="../../clipboard.min.js"></script>
-        <script src="../../highlight.js"></script>
-        <script src="../../book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../../mermaid.min.js"></script>
-        <script src="../../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
 
 
     </div>

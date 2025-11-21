@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Deploy a contract - Ethrex</title>
+        <title>Deploying a validium ethrex L2 - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,33 +237,117 @@
 }
 
 </style>
-<h1 id="deploy-a-contract-to-l2"><a class="header" href="#deploy-a-contract-to-l2">Deploy a Contract to L2</a></h1>
-<p>You can deploy smart contracts to your L2 using <a href="https://github.com/lambdaclass/rex"><code>rex</code></a>, a simple CLI tool for interacting with Ethereum-compatible networks.</p>
-<h2 id="1-generate-the-contract-bytecode"><a class="header" href="#1-generate-the-contract-bytecode">1. Generate the Contract Bytecode</a></h2>
-<p>First, compile your Solidity contract to get the deployment bytecode. You can use <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">solc</a> for this:</p>
-<pre><code class="language-sh">solc --bin MyContract.sol -o out/
+<h1 id="deploying-a-validium-ethrex-l2"><a class="header" href="#deploying-a-validium-ethrex-l2">Deploying a validium ethrex L2</a></h1>
+<p>In this section, we'll cover how to deploy a validium ethrex L2 on a public network such as Holesky, Sepolia, or Mainnet.</p>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<p>This guide assumes that you have ethrex installed and available in your PATH. If you haven't installed it yet, follow one of the methods in the Installation Guide. If you want to build the binary from source, refer to the <a href="./overview.html#building-from-source-skip-if-ethrex-is-already-installed">Building from source</a> section and select the appropriate build option.</p>
+<h2 id="1-deploy-the-contracts"><a class="header" href="#1-deploy-the-contracts">1. Deploy the Contracts</a></h2>
+<p>First, deploy and initialize the contracts on L1 using the ethrex l2 deploy command (for more details on the ethrex CLI, see the ethrex CLI Reference section):</p>
+<pre><code class="language-shell">ethrex l2 deploy \
+  --validium true \
+  --eth-rpc-url &lt;L1_RPC_URL&gt; \
+  --private-key &lt;PRIVATE_KEY&gt; \
+  --genesis-l2-path &lt;PATH_TO_L2_GENESIS_FILE&gt; \
+  --bridge-owner &lt;COMMON_BRIDGE_OWNER_ADDRESS&gt; \
+  --on-chain-proposer-owner &lt;ON_CHAIN_PROPOSER_OWNER_ADDRESS&gt; \
+  --committer.l1-address &lt;L1_COMMITTER_ADDRESS&gt; \
+  --proof-sender.l1-address &lt;L1_PROOF_SENDER_ADDRESS&gt; \
+  --env-file-path &lt;PATH_TO_ENV_FILE&gt; \
+  --randomize-contract-deployment
 </code></pre>
-<p>The bytecode will be in out/MyContract.bin</p>
-<h2 id="2-deploy-with-rex"><a class="header" href="#2-deploy-with-rex">2. Deploy with rex</a></h2>
-<p>Use the following command to deploy your contract:</p>
-<pre><code class="language-sh">rex deploy --rpc-url http://localhost:1729 &lt;BYTECODE&gt; 0 &lt;PRIVATE_KEY&gt;
-</code></pre>
+<div class="mdbook-alerts mdbook-alerts-caution">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  caution
+</p>
+<p>Ensure you control the Committer and Proof Sender accounts, as they will be authorized as sequencers. These accounts will have control over the chain state.</p>
+</div>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>If you plan to prove your L2 using SP1, RISC0, or TEE, add the following extra arguments to the command above:
+<code>--sp1 true</code> to require SP1 proofs for validating batch execution and state settlement.
+<code>--sp1.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Succinct Labs recommends their deployed canonical verifier gateways; see the list here.
+<code>--risc0 true</code> to require RISC0 proofs for validating batch execution and state settlement.
+<code>--risc0.verifier-address</code> to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.
+<code>--tdx true</code> to require TEE proofs for validating batch execution and state settlement.
+<code>--tdx.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.
+Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the <a href="./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
+</div>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>Retrieve the deployed contract addresses from the console logs or the .env file generated during deployment (in the directory where you ran the command) for use in the next step.</p>
+</div>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
 <ul>
-<li>Replace <code>&lt;BYTECODE&gt;</code> with the hex string from your compiled contract (e.g., contents of <code>MyContract.bin</code>)</li>
-<li>Replace <code>&lt;PRIVATE_KEY&gt;</code> with your wallet's private key. It must have funds in L2</li>
-<li>Adjust the <code>--rpc-url</code> if your L2 node is running elsewhere</li>
+<li>Replace <code>L1_RPC_URL</code> with your preferred RPC provider endpoint.</li>
+<li>Replace <code>PRIVATE_KEY</code> with the private key of an account funded on the target L1. This key will sign the transactions during deployment.</li>
+<li>Replace <code>PATH_TO_L2_GENESIS_FILE</code> with the path to your L2 genesis file.A genesis example is available in the fixtures directory of the <a href="https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json">official GitHub repository</a>. This file initializes the <code>OnChainProposer</code> contract with the genesis state root.</li>
+<li>The <code>CommonBridge</code> and <code>OnChainProposer</code> contracts are upgradeable and ownable, with implementations behind proxies initialized during deployment. Replace <code>COMMON_BRIDGE_OWNER_ADDRESS</code> and <code>ON_CHAIN_PROPOSER_OWNER_ADDRESS</code> with the address of the account you want as the owner. The owner can upgrade implementations or perform administrative actions; for more details, see the Architecture section.</li>
+<li>The sequencer components (<code>L1Committer</code> and <code>L1ProofSender</code>) require funded accounts on the target L1 to advance the network. Replace <code>L1_COMMITTER_ADDRESS</code> and <code>L1_PROOF_SENDER_ADDRESS</code> with the addresses of those accounts.</li>
+<li>Replace <code>PATH_TO_ENV_FILE</code> with the path where you want to save the generated environment file. This file contains the deployed contract addresses and other configuration details needed to run the L2 node.</li>
+<li>L1 contract deployment uses the <code>CREATE2</code> opcode for deterministic addresses. To deploy non-deterministically, include the <code>--randomize-contract-deployment</code> flag.</li>
 </ul>
-<p>For more details and advanced usage, see the <a href="https://github.com/lambdaclass/rex">rex repository</a>.</p>
+</div>
+<h2 id="2-start-the-l2-node"><a class="header" href="#2-start-the-l2-node">2. Start the L2 node</a></h2>
+<p>Once the contracts are deployed, start the L2 node:</p>
+<pre><code class="language-shell">ethrex l2 \
+  --validium \
+  --l1.bridge-address &lt;COMMON_BRIDGE_ADDRESS&gt; \
+  --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; \
+  --block-producer.coinbase-address &lt;L2_COINBASE_ADDRESS&gt; \
+  --proof-coordinator.l1-private-key &lt;L1_PROOF_SENDER_PRIVATE_KEY&gt; \
+  --committer.l1-private-key &lt;L1_COMMITTER_PRIVATE_KEY&gt; \
+  --eth.rpc-url &lt;L1_RPC_URL&gt; \
+  --network &lt;PATH_TO_L2_GENESIS_FILE&gt; \
+  --no-monitor
+</code></pre>
+<div class="mdbook-alerts mdbook-alerts-caution">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  caution
+</p>
+<p>Replace <code>L1_COMMITTER_PRIVATE_KEY</code> and <code>L1_PROOF_SENDER_PRIVATE_KEY</code> with the private keys for the <code>L1_COMMITTER_ADDRESS</code> and <code>L1_PROOF_SENDER_ADDRESS</code> used in the deployment step, respectively.</p>
+</div>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>The L1 Committer and L1 Proof Sender accounts must be funded for the chain to advance.</p>
+</div>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<ul>
+<li>Replace <code>COMMON_BRIDGE_ADDRESS</code> and <code>ON_CHAIN_PROPOSER_ADDRESS</code> with the proxy addresses for the CommonBridge and OnChainProposer contracts from the deployment step.</li>
+<li>Replace <code>L2_COINBASE_ADDRESS</code> with the address that will collect L2 block fees. To access these funds on L1, you'll need to withdraw them (see the Withdrawals section for details).</li>
+<li>Replace <code>L1_PROOF_SENDER_PRIVATE_KEY</code> and <code>L1_COMMITTER_PRIVATE_KEY</code> with the private keys for the <code>L1_PROOF_SENDER_ADDRESS</code> and <code>L1_COMMITTER_ADDRESS</code> from the deployment step.</li>
+<li>Replace <code>L1_RPC_URL</code> and <code>PATH_TO_L2_GENESIS_FILE</code> with the same values used in the deployment step.</li>
+</ul>
+</div>
+<p>That's it! You now have a validium ethrex L2 up and running. However, one key component is still missing: state proving. The L2 state is considered final only after a batch execution ZK proof is successfully verified on-chain. Generating these proofs requires running a dedicated prover, which is covered in the Run an ethrex L2 Prover section.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/wallet.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/deployment/vanilla.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/deployment/based.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -273,11 +357,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/wallet.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/deployment/vanilla.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/deployment/based.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

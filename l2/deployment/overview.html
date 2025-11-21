@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Deploy a contract - Ethrex</title>
+        <title>Overview - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,33 +237,79 @@
 }
 
 </style>
-<h1 id="deploy-a-contract-to-l2"><a class="header" href="#deploy-a-contract-to-l2">Deploy a Contract to L2</a></h1>
-<p>You can deploy smart contracts to your L2 using <a href="https://github.com/lambdaclass/rex"><code>rex</code></a>, a simple CLI tool for interacting with Ethereum-compatible networks.</p>
-<h2 id="1-generate-the-contract-bytecode"><a class="header" href="#1-generate-the-contract-bytecode">1. Generate the Contract Bytecode</a></h2>
-<p>First, compile your Solidity contract to get the deployment bytecode. You can use <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">solc</a> for this:</p>
-<pre><code class="language-sh">solc --bin MyContract.sol -o out/
-</code></pre>
-<p>The bytecode will be in out/MyContract.bin</p>
-<h2 id="2-deploy-with-rex"><a class="header" href="#2-deploy-with-rex">2. Deploy with rex</a></h2>
-<p>Use the following command to deploy your contract:</p>
-<pre><code class="language-sh">rex deploy --rpc-url http://localhost:1729 &lt;BYTECODE&gt; 0 &lt;PRIVATE_KEY&gt;
-</code></pre>
+<h1 id="deploying-an-ethrex-l2"><a class="header" href="#deploying-an-ethrex-l2">Deploying an ethrex L2</a></h1>
+<p>As outlined in the introduction, ethrex L2 offers a wide range of features to its users. The most common is a classic centralized L2 managed by an operator, which can be an individual or a DAO. ethrex L2 can also function as a Validium, which is similarly centralized and operator-managed, with the key difference that network data is not posted to L1 during settlement.</p>
+<p>In addition to these classic functionalities, ethrex L2 provides a novel and continually evolving feature in the industry: ethrex L2 as a based rollup. Unlike the previous options, this is a permissionless and decentralized L2 sequencer—anyone can run a node and participate in the network.</p>
+<p>In this section, we will cover how to deploy any of these options.</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>This section focuses solely on the step-by-step process for deploying ethrex L2 in any of its forms. For a deeper understanding of how each mode works under the hood, refer to the Fundamentals section. To learn more about the architecture of each mode, see the Architecture section.</p>
+</div>
+<p>Before proceeding, note that this guide assumes you have ethrex installed. If you haven't installed it yet, follow one of the methods in the <a href="../../getting-started/installation/README.html">Installation Guide</a>. If you're looking to build from source, don't skip this section—we'll cover that method here, as it is independent of the deployment approach you choose later.</p>
+<h2 id="building-from-source-skip-if-ethrex-is-already-installed"><a class="header" href="#building-from-source-skip-if-ethrex-is-already-installed">Building from source (skip if ethrex is already installed)</a></h2>
+<h3 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h3>
+<p>Ensure you have the following installed on your system:</p>
 <ul>
-<li>Replace <code>&lt;BYTECODE&gt;</code> with the hex string from your compiled contract (e.g., contents of <code>MyContract.bin</code>)</li>
-<li>Replace <code>&lt;PRIVATE_KEY&gt;</code> with your wallet's private key. It must have funds in L2</li>
-<li>Adjust the <code>--rpc-url</code> if your L2 node is running elsewhere</li>
+<li>Rust and Cargo (install via <a href="https://rustup.rs/">rustup</a>)</li>
+<li>Solidity compiler (refer to <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">Solidity documentation</a>)</li>
+<li>SP1 Toolchain (if you plan to use SP1 proving, refer to <a href="https://docs.succinct.xyz/docs/sp1/getting-started/install">SP1 documentation</a>)</li>
+<li>RISC0 Toolchain (if you plan to use RISC0 proving, refer to <a href="https://dev.risczero.com/api/zkvm/install">RISC0 documentation</a>)</li>
+<li>CUDA Toolkit 12.9 (if you plan to use GPU acceleration for SP1 or RISC0 proving)</li>
 </ul>
-<p>For more details and advanced usage, see the <a href="https://github.com/lambdaclass/rex">rex repository</a>.</p>
+<ol>
+<li>
+<p>Clone the official ethrex repository:</p>
+<pre><code class="language-shell">git clone https://github.com/lambdaclass/ethrex
+cd ethrex
+</code></pre>
+</li>
+<li>
+<p>Build the binary:</p>
+<pre><code class="language-shell"># For dummy proving
+COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql
+
+# For SP1 CPU proving (very slow, not recommended)
+COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1
+
+# For RISC0 CPU proving (very slow, not recommended)
+COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,risc0
+
+# For SP1 and RISC0 CPU proving (very slow, not recommended)
+COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0
+
+# For SP1 GPU proving
+COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,gpu
+
+# For RISC0 GPU proving
+COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,risc0,gpu
+
+# For SP1 and RISC0 GPU proving
+COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
+</code></pre>
+</li>
+</ol>
+<div class="mdbook-alerts mdbook-alerts-warning">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  warning
+</p>
+<p>If you want your verifying keys generation to be reproducible, prepend <code>PROVER_REPRODUCIBLE_BUILD=true</code> to the above command:</p>
+<pre><code class="language-shell">PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo b -r --bin ethrex -F l2,l2-sql,sp1,risc0,gpu
+</code></pre>
+</div>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/wallet.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/deployment/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/deployment/vanilla.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -273,11 +319,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/wallet.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/deployment/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/deployment/vanilla.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

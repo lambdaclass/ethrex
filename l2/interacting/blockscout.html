@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Deploy a contract - Ethrex</title>
+        <title>Blockscout for ethrex L2 - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,33 +237,18 @@
 }
 
 </style>
-<h1 id="deploy-a-contract-to-l2"><a class="header" href="#deploy-a-contract-to-l2">Deploy a Contract to L2</a></h1>
-<p>You can deploy smart contracts to your L2 using <a href="https://github.com/lambdaclass/rex"><code>rex</code></a>, a simple CLI tool for interacting with Ethereum-compatible networks.</p>
-<h2 id="1-generate-the-contract-bytecode"><a class="header" href="#1-generate-the-contract-bytecode">1. Generate the Contract Bytecode</a></h2>
-<p>First, compile your Solidity contract to get the deployment bytecode. You can use <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">solc</a> for this:</p>
-<pre><code class="language-sh">solc --bin MyContract.sol -o out/
-</code></pre>
-<p>The bytecode will be in out/MyContract.bin</p>
-<h2 id="2-deploy-with-rex"><a class="header" href="#2-deploy-with-rex">2. Deploy with rex</a></h2>
-<p>Use the following command to deploy your contract:</p>
-<pre><code class="language-sh">rex deploy --rpc-url http://localhost:1729 &lt;BYTECODE&gt; 0 &lt;PRIVATE_KEY&gt;
-</code></pre>
-<ul>
-<li>Replace <code>&lt;BYTECODE&gt;</code> with the hex string from your compiled contract (e.g., contents of <code>MyContract.bin</code>)</li>
-<li>Replace <code>&lt;PRIVATE_KEY&gt;</code> with your wallet's private key. It must have funds in L2</li>
-<li>Adjust the <code>--rpc-url</code> if your L2 node is running elsewhere</li>
-</ul>
-<p>For more details and advanced usage, see the <a href="https://github.com/lambdaclass/rex">rex repository</a>.</p>
+<h1 id="blockscout-for-ethrex-l2"><a class="header" href="#blockscout-for-ethrex-l2">Blockscout for ethrex L2</a></h1>
+<p>TDB</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/wallet.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/interacting/deploy_contracts.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/interacting/l2_hub.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -273,11 +258,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/wallet.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/interacting/deploy_contracts.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/interacting/l2_hub.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

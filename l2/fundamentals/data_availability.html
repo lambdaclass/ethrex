@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Deploy a contract - Ethrex</title>
+        <title>Data availability - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,33 +237,38 @@
 }
 
 </style>
-<h1 id="deploy-a-contract-to-l2"><a class="header" href="#deploy-a-contract-to-l2">Deploy a Contract to L2</a></h1>
-<p>You can deploy smart contracts to your L2 using <a href="https://github.com/lambdaclass/rex"><code>rex</code></a>, a simple CLI tool for interacting with Ethereum-compatible networks.</p>
-<h2 id="1-generate-the-contract-bytecode"><a class="header" href="#1-generate-the-contract-bytecode">1. Generate the Contract Bytecode</a></h2>
-<p>First, compile your Solidity contract to get the deployment bytecode. You can use <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">solc</a> for this:</p>
-<pre><code class="language-sh">solc --bin MyContract.sol -o out/
-</code></pre>
-<p>The bytecode will be in out/MyContract.bin</p>
-<h2 id="2-deploy-with-rex"><a class="header" href="#2-deploy-with-rex">2. Deploy with rex</a></h2>
-<p>Use the following command to deploy your contract:</p>
-<pre><code class="language-sh">rex deploy --rpc-url http://localhost:1729 &lt;BYTECODE&gt; 0 &lt;PRIVATE_KEY&gt;
-</code></pre>
+<h1 id="reconstructing-state-or-data-availability"><a class="header" href="#reconstructing-state-or-data-availability">Reconstructing state or Data Availability</a></h1>
+<p>Rollups, unlike validiums, need to have their state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the chain. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the chain or some of their funds.</p>
+<p>This is called the <strong>Data Availability</strong> problem. Sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:</p>
 <ul>
-<li>Replace <code>&lt;BYTECODE&gt;</code> with the hex string from your compiled contract (e.g., contents of <code>MyContract.bin</code>)</li>
-<li>Replace <code>&lt;PRIVATE_KEY&gt;</code> with your wallet's private key. It must have funds in L2</li>
-<li>Adjust the <code>--rpc-url</code> if your L2 node is running elsewhere</li>
+<li>For every new L2 batch, send as part of the <code>commit</code> transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all <code>commit</code> transactions, start executing them from the beginning and reconstruct the state.</li>
 </ul>
-<p>For more details and advanced usage, see the <a href="https://github.com/lambdaclass/rex">rex repository</a>.</p>
+<p>This is now feasible; if we take 200 bytes as a rough estimate for the size of a single transfer between two users (see <a href="https://ethereum.stackexchange.com/questions/30175/what-is-the-size-bytes-of-a-simple-ethereum-transaction-versus-a-bitcoin-trans">this post</a> for the calculation on legacy transactions) and 128 KB as <a href="https://github.com/ethereum/go-ethereum/blob/830f3c764c21f0d314ae0f7e60d6dd581dc540ce/core/txpool/legacypool/legacypool.go#L49-L53">a reasonable transaction size limit</a> we get around ~650 transactions at maximum per <code>commit</code> transaction (we are assuming we use calldata here, blobs can increase this limit as each one is 128 KB and we could use multiple per transaction).</p>
+<p>Going a bit further, instead of posting the entire transaction, we could just post which accounts have been modified and their new values (this includes deployed contracts and their bytecode of course). This can reduce the size a lot for most cases; in the case of a regular transfer as above, we only need to record balance updates of two accounts, which requires sending just two <code>(address, balance)</code> pairs, so (20 + 32) * 2 = 104 bytes, or around half as before. Some other clever techniques and compression algorithms can push down the publishing cost of this and other transactions much further.</p>
+<p>This is called <code>state diffs</code>. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the chain.</p>
+<p>Detailed documentation on <a href="./state_diffs.html">the state diffs spec</a>.</p>
+<h3 id="how-do-we-prevent-the-sequencer-from-publishing-the-wrong-state-diffs"><a class="header" href="#how-do-we-prevent-the-sequencer-from-publishing-the-wrong-state-diffs">How do we prevent the sequencer from publishing the wrong state diffs?</a></h3>
+<p>Once again, state diffs have to be part of the public input. With them, the prover can show that they are equal to the ones returned by the VM after executing all blocks in the batch. As always, the actual state diffs are not part of the public input, but <strong>their hash</strong> is, so the size is a fixed 32 bytes. This hash is then part of the batch commitment. The prover then assures us that the given state diff hash is correct (i.e. it exactly corresponds to the changes in state of the executed blocks).</p>
+<p>There's still a problem however: the L1 contract needs to have the actual state diff for data availability, not just the hash. This is sent as part of calldata of the <code>commit</code> transaction (actually later as a blob, we'll get to that), so the sequencer could in theory send the wrong state diff. To make sure this can't happen, the L1 contract hashes it to make sure that it matches the actual state diff hash that is included as part of the public input.</p>
+<p>With that, we can be sure that state diffs are published and that they are correct. The sequencer cannot mess with them at all; either it publishes the correct state diffs or the L1 contract will reject its batch.</p>
+<h3 id="compression"><a class="header" href="#compression">Compression</a></h3>
+<p>Because state diffs are compressed to save space on L1, this compression needs to be proven as well. Otherwise, once again, the sequencer could send the wrong (compressed) state diffs. This is easy though, we just make the prover run the compression and we're done.</p>
+<h2 id="eip-4844-aka-blobs"><a class="header" href="#eip-4844-aka-blobs">EIP 4844 (a.k.a. Blobs)</a></h2>
+<p>While we could send state diffs through calldata, there is a (hopefully) cheaper way to do it: blobs. The Ethereum Cancun upgrade introduced a new type of transaction where users can submit a list of opaque blobs of data, each one of size at most 128 KB. The main purpose of this new type of transaction is precisely to be used by rollups for data availability; they are priced separately through a <code>blob_gas</code> market instead of the regular <code>gas</code> one and for all intents and purposes should be much cheaper than calldata.</p>
+<p>Using EIP 4844, our state diffs would now be sent through blobs. While this is cheaper, there's a new problem to address with it. The whole point of blobs is that they're cheaper because they are only kept around for approximately two weeks and ONLY in the beacon chain, i.e. the consensus side. The execution side (and thus the EVM when running contracts) does not have access to the contents of a blob. Instead, the only thing it has access to is a <strong>KZG commitment</strong> of it.</p>
+<p>This is important. If you recall, the way the L1 ensured that the state diff published by the sequencer was correct was by hashing its contents and ensuring that the hash matched the given state diff hash. With the contents of the state diff now no longer accessible by the contract, we can't do that anymore, so we need another way to ensure the correct contents of the state diff (i.e. the blob).</p>
+<p>The solution is to make the prover take the KZG commitment as a public input and the KZG proof as a private input, compute the state diffs after correctly executing a batch of blocks, and verify the proof to check that the commitment binds to the correct state diffs.</p>
+<p>Because the KZG commitment is a public input, we can use the <code>BLOBHASH</code> EVM opcode to retrieve the blob rolling hash (which is just the hash of the KZG commitment and some other constant data) and compare it to the public input KZG commitment (which needs to be hashed too).</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/wallet.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/fundamentals/block_vs_state_diff_measurements.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/fundamentals/execution_witness.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -273,11 +278,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/wallet.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/fundamentals/block_vs_state_diff_measurements.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/fundamentals/execution_witness.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

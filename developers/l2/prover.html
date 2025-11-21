@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Deploy a contract - Ethrex</title>
+        <title>Running the Prover - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,33 +237,199 @@
 }
 
 </style>
-<h1 id="deploy-a-contract-to-l2"><a class="header" href="#deploy-a-contract-to-l2">Deploy a Contract to L2</a></h1>
-<p>You can deploy smart contracts to your L2 using <a href="https://github.com/lambdaclass/rex"><code>rex</code></a>, a simple CLI tool for interacting with Ethereum-compatible networks.</p>
-<h2 id="1-generate-the-contract-bytecode"><a class="header" href="#1-generate-the-contract-bytecode">1. Generate the Contract Bytecode</a></h2>
-<p>First, compile your Solidity contract to get the deployment bytecode. You can use <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">solc</a> for this:</p>
-<pre><code class="language-sh">solc --bin MyContract.sol -o out/
-</code></pre>
-<p>The bytecode will be in out/MyContract.bin</p>
-<h2 id="2-deploy-with-rex"><a class="header" href="#2-deploy-with-rex">2. Deploy with rex</a></h2>
-<p>Use the following command to deploy your contract:</p>
-<pre><code class="language-sh">rex deploy --rpc-url http://localhost:1729 &lt;BYTECODE&gt; 0 &lt;PRIVATE_KEY&gt;
-</code></pre>
+<h1 id="running-the-prover"><a class="header" href="#running-the-prover">Running the Prover</a></h1>
+<p>This guide provides instructions for setting up and running the Ethrex L2 prover for development and testing purposes.</p>
+<h2 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h2>
+<p>Before you begin, ensure you have the following dependencies installed:</p>
 <ul>
-<li>Replace <code>&lt;BYTECODE&gt;</code> with the hex string from your compiled contract (e.g., contents of <code>MyContract.bin</code>)</li>
-<li>Replace <code>&lt;PRIVATE_KEY&gt;</code> with your wallet's private key. It must have funds in L2</li>
-<li>Adjust the <code>--rpc-url</code> if your L2 node is running elsewhere</li>
+<li><a href="https://dev.risczero.com/api/zkvm/install">RISC0</a>
+<ol>
+<li><code>curl -L https://risczero.com/install | bash</code></li>
+<li><code>rzup install</code></li>
+</ol>
+</li>
+<li><a href="https://docs.succinct.xyz/docs/sp1/introduction">SP1</a>
+<ol>
+<li><code>curl -L https://sp1up.succinct.xyz | bash</code></li>
+<li><code>sp1up --version 5.0.8</code></li>
+</ol>
+</li>
+<li><a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">SOLC</a></li>
 </ul>
-<p>For more details and advanced usage, see the <a href="https://github.com/lambdaclass/rex">rex repository</a>.</p>
+<p>After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.</p>
+<h3 id="l1-block-proving"><a class="header" href="#l1-block-proving">L1 block proving</a></h3>
+<p>ethrex-prover is able to generate execution proofs of Ethereum Mainnet/Testnet blocks. An example binary was created for this purpose in <code>crates/l2/prover/bench</code>. Refer to its README for usage.</p>
+<h2 id="dev-mode"><a class="header" href="#dev-mode">Dev Mode</a></h2>
+<p>To run the blockchain (<code>proposer</code>) and prover in conjunction, start the <code>Prover</code>, use the following command:</p>
+<pre><code class="language-sh">make init-prover-&lt;sp1|risc0|exec&gt; # optional: GPU=true
+</code></pre>
+<h3 id="run-the-whole-system-with-the-prover---in-one-machine"><a class="header" href="#run-the-whole-system-with-the-prover---in-one-machine">Run the whole system with the prover - In one Machine</a></h3>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>Used for development purposes.</p>
+</div>
+<ol>
+<li><code>cd crates/l2</code></li>
+<li><code>make rm-db-l2 &amp;&amp; make down</code>
+<ul>
+<li>It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by <a href="https://docs.rs/dirs/latest/dirs/fn.datadir.html">datadir</a>.</li>
+</ul>
+</li>
+<li><code>make init</code>
+<ul>
+<li>Make sure you have the <code>solc</code> compiler installed in your system.</li>
+<li>Init the L1 in a docker container on port <code>8545</code>.</li>
+<li>Deploy the needed contracts for the L2 on the L1.</li>
+<li>Start the L2 locally on port <code>1729</code>.</li>
+</ul>
+</li>
+<li>In a new terminal → <code>make init-prover-&lt;sp1|risc0|exec&gt; # GPU=true</code>.</li>
+</ol>
+<p>After this initialization we should have the prover running in <code>dev_mode</code> → No real proofs.</p>
+<h2 id="gpu-mode"><a class="header" href="#gpu-mode">GPU mode</a></h2>
+<p><strong>Steps for Ubuntu 22.04 with Nvidia A4000:</strong></p>
+<ol>
+<li>Install <code>docker</code> → using the <a href="https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository">Ubuntu apt repository</a>
+<ul>
+<li>Add the <code>user</code> you are using to the <code>docker</code> group → command: <code>sudo usermod -aG docker $USER</code>. (needs reboot, doing it after CUDA installation)</li>
+<li><code>id -nG</code> after reboot to check if the user is in the group.</li>
+</ul>
+</li>
+<li>Install <a href="https://www.rust-lang.org/tools/install">Rust</a></li>
+<li>Install <a href="https://dev.risczero.com/api/zkvm/install">RISC0</a></li>
+<li>Install <a href="https://developer.nvidia.com/cuda-downloads?target_os=Linux&amp;target_arch=x86_64&amp;Distribution=Ubuntu&amp;target_version=22.04&amp;target_type=deb_local">CUDA for Ubuntu</a>
+<ul>
+<li>Install <code>CUDA Toolkit Installer</code> first. Then the <code>nvidia-open</code> drivers.</li>
+</ul>
+</li>
+<li>Reboot</li>
+<li>Run the following commands:</li>
+</ol>
+<pre><code class="language-sh">sudo apt-get install libssl-dev pkg-config libclang-dev clang
+echo 'export PATH=/usr/local/cuda/bin:$PATH' &gt;&gt; ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' &gt;&gt; ~/.bashrc
+</code></pre>
+<h3 id="run-the-whole-system-with-a-gpu-prover"><a class="header" href="#run-the-whole-system-with-a-gpu-prover">Run the whole system with a GPU Prover</a></h3>
+<p>Two separate machines are recommended for running the <code>Prover</code> and the <code>sequencer</code> to avoid resource contention. However, for development, you can run them in two separate terminals on the same machine.</p>
+<ul>
+<li><strong>Machine 1 (or Terminal 1)</strong>: For the <code>Prover</code> (GPU is recommended).</li>
+<li><strong>Machine 2 (or Terminal 2)</strong>: For the <code>sequencer</code>/L2 node.</li>
+</ul>
+<ol>
+<li>
+<p><strong><code>Prover</code>/<code>zkvm</code> Setup</strong></p>
+<ol>
+<li><code>cd ethrex/crates/l2</code></li>
+<li>You can set the following environment variables to configure the prover:
+<ul>
+<li><code>PROVER_CLIENT_PROVER_SERVER_ENDPOINT</code>: The address of the server where the client will request the proofs from.</li>
+<li><code>PROVER_CLIENT_PROVING_TIME_MS</code>: The amount of time to wait before requesting new data to prove.</li>
+</ul>
+</li>
+<li>To start the <code>Prover</code>/<code>zkvm</code>, run:
+<pre><code class="language-sh">make init-prover-&lt;sp1|risc0|exec&gt; # optional: GPU=true
+</code></pre>
+</li>
+</ol>
+</li>
+<li>
+<p><strong><code>ProofCoordinator</code>/<code>sequencer</code> Setup</strong></p>
+<ol>
+<li><code>cd ethrex/crates/l2</code></li>
+<li>Create a <code>.env</code> file with the following content:
+<pre><code class="language-env"># Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+ETHREX_DEPLOYER_L1_PRIVATE_KEY=&lt;private_key&gt;
+# Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY=&lt;private_key&gt;
+# Should be the same as ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+ETHREX_COMMITTER_L1_PRIVATE_KEY=&lt;private_key&gt;
+# Should be different from ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=&lt;private_key&gt;
+# Used to handle TCP communication with other servers from any network interface.
+ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
+# Set to true to randomize the salt.
+ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
+# Set to true if you want SP1 proofs to be required
+ETHREX_L2_SP1=true
+# Check the if the verification contract is present on your preferred network. Don't define this if you want it to be deployed automatically.
+ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS=&lt;address&gt;
+# Set to true if you want proofs to be required
+ETHREX_L2_RISC0=true
+# Check the if the contract is present on your preferred network. You shall deploy it manually if not.
+ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS=&lt;address&gt;
+# Set to any L1 endpoint.
+ETHREX_ETH_RPC_URL=&lt;url&gt;
+</code></pre>
+</li>
+<li><code>source .env</code></li>
+</ol>
+</li>
+</ol>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>Make sure to have funds, if you want to perform a quick test <code>0.2[ether]</code> on each account should be enough.</p>
+</div>
+<ul>
+<li>
+<p><code>Finally</code>, to start the <code>proposer</code>/<code>l2 node</code>, run:</p>
+<ul>
+<li><code>make rm-db-l2 &amp;&amp; make down</code></li>
+<li><code>make deploy-l1 &amp;&amp; make init-l2</code> (if running a risc0 prover, see the next step before invoking the L1 contract deployer)</li>
+</ul>
+</li>
+<li>
+<p>If running with a local L1 (for development), you will need to manually deploy the risc0 contracts by following the instructions <a href="https://github.com/risc0/risc0-ethereum/tree/main/contracts/script">here</a>.</p>
+</li>
+<li>
+<p>For a local L1 running with ethrex, we do the following:</p>
+<ol>
+<li>clone the risc0-ethereum repo</li>
+<li>edit the <code>risc0-ethereum/contracts/deployment.toml</code> file by adding
+<pre><code class="language-toml">[chains.ethrex]
+name = "Ethrex local devnet"
+id = 9
+</code></pre>
+</li>
+<li>export env. variables (we are using an ethrex's rich L1 account)
+<pre><code class="language-bash">export VERIFIER_ESTOP_OWNER="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+export DEPLOYER_PRIVATE_KEY="0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+export DEPLOYER_ADDRESS="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+export CHAIN_KEY="ethrex"
+export RPC_URL="http://localhost:8545"
+
+export ETHERSCAN_URL="dummy"
+export ETHERSCAN_API_KEY="dummy"
+</code></pre>
+the last two variables need to be defined with some value even if not used, else the deployment script fails.</li>
+<li>cd into <code>risc0-ethereum/</code></li>
+<li>run the deployment script
+<pre><code class="language-bash">bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
+</code></pre>
+</li>
+<li>if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the <code>ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS=&lt;address&gt;</code> env. variable.
+if you get an error like <code>risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)</code>, try to update the git submodules (foundry dependencies) with <code>git submodule update --init --recursive</code>.</li>
+</ol>
+</li>
+</ul>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<p>Configuration is done through environment variables or CLI flags.
+You can see a list of available flags by passing <code>--help</code> to the CLI, or checkout <a href="../../CLI.html">CLI</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/wallet.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../developers/l2/integration-tests.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../developers/l2/state-reconstruction-blobs.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -273,11 +439,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/wallet.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../developers/l2/integration-tests.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../developers/l2/state-reconstruction-blobs.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

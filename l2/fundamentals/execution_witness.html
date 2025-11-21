@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Deploy a contract - Ethrex</title>
+        <title>Execution witness - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,33 +237,39 @@
 }
 
 </style>
-<h1 id="deploy-a-contract-to-l2"><a class="header" href="#deploy-a-contract-to-l2">Deploy a Contract to L2</a></h1>
-<p>You can deploy smart contracts to your L2 using <a href="https://github.com/lambdaclass/rex"><code>rex</code></a>, a simple CLI tool for interacting with Ethereum-compatible networks.</p>
-<h2 id="1-generate-the-contract-bytecode"><a class="header" href="#1-generate-the-contract-bytecode">1. Generate the Contract Bytecode</a></h2>
-<p>First, compile your Solidity contract to get the deployment bytecode. You can use <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">solc</a> for this:</p>
-<pre><code class="language-sh">solc --bin MyContract.sol -o out/
+<h1 id="execution-witness"><a class="header" href="#execution-witness">Execution witness</a></h1>
+<p>The purpose of the execution witness is to allow executing blocks without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.</p>
+<p>An execution witness contains all the initial state values (state nodes, codes, storage keys, block headers) that will be read or written to during the blocks' execution.</p>
+<p>An execution witness is created from a prior execution of the blocks. This execution can be done by a synced node, and it would expose the data to a RPC endpoint. This is the <code>debug_executionWitness</code> endpoint which is implemented by ethrex and other clients.</p>
+<p>If this endpoint is not available, the prover needs to do the following:</p>
+<ol>
+<li>execute the blocks (also called "pre-execution") to identify which state values will be accessed.</li>
+<li>log every initial state value accessed or updated during this execution.</li>
+<li>retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash, using the <code>eth_getProof</code> RPC endpoint of a synced node.</li>
+</ol>
+<p>Steps 1 and 2 are data collection steps only - no validation is performed at this stage. The actual validation happens later inside the zkVM guest program. Step 3 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections <a href="../../prover/guest_program.html#step-1-initial-state-validation">initial state validation</a> and <a href="../../prover/guest_program.html#step-3-final-state-validation">final state validation</a> we explain what are pruned tries and in which case they get restructured.</p>
+<p>If a value is removed during block execution (meaning it existed initially but not finally), two pathological cases can occur where the witness lacks sufficient information to update the trie structure correctly:</p>
+<p><strong>Case 1</strong></p>
+<p><img src="../img/execw_case1.png" alt="Image showing restructuration for case 1" /></p>
+<p>Here, only <strong>leaf 1</strong> is part of the execution witness, so we lack the proof (and thus the node data) for <strong>leaf 2</strong>. After removing <strong>leaf 1</strong>, <strong>branch 1</strong> becomes redundant. During trie restructuring, it's replaced by <strong>leaf 3</strong>, whose path is the path of <strong>leaf 2</strong> concatenated with a prefix nibble (<code>k</code>) representing the choice taken at the original <strong>branch 1</strong>, and keeping <strong>leaf 2</strong>'s value.</p>
+<pre><code class="language-text">branch1 = {c_1, c_2, ..., c_k, ..., c_16} # Only c_k = hash(leaf2) is non-empty
+leaf2 = {value, path}
+leaf3 = {value, concat(k, path)} # New leaf replacing branch1 and leaf2
 </code></pre>
-<p>The bytecode will be in out/MyContract.bin</p>
-<h2 id="2-deploy-with-rex"><a class="header" href="#2-deploy-with-rex">2. Deploy with rex</a></h2>
-<p>Use the following command to deploy your contract:</p>
-<pre><code class="language-sh">rex deploy --rpc-url http://localhost:1729 &lt;BYTECODE&gt; 0 &lt;PRIVATE_KEY&gt;
-</code></pre>
-<ul>
-<li>Replace <code>&lt;BYTECODE&gt;</code> with the hex string from your compiled contract (e.g., contents of <code>MyContract.bin</code>)</li>
-<li>Replace <code>&lt;PRIVATE_KEY&gt;</code> with your wallet's private key. It must have funds in L2</li>
-<li>Adjust the <code>--rpc-url</code> if your L2 node is running elsewhere</li>
-</ul>
-<p>For more details and advanced usage, see the <a href="https://github.com/lambdaclass/rex">rex repository</a>.</p>
+<p>Without <strong>leaf 2</strong>'s data, we cannot construct <strong>leaf 3</strong>. The solution is to fetch the <em>final</em> state proof for the key of <strong>leaf 2</strong>. This yields an exclusion proof containing <strong>leaf 3</strong>. By removing the prefix nibble <code>k</code>, we can reconstruct the original path and value of <strong>leaf 2</strong>. This process might need to be repeated if similar restructuring occurred at higher levels of the trie.</p>
+<p><strong>Case 2</strong></p>
+<p><img src="../img/execw_case2.png" alt="Image showing restructuration for case 2" /></p>
+<p>In this case, restructuring requires information about <strong>branch/ext 2</strong> (which could be a branch or extension node), but this node might not be in the witness. Checking the final <strong>extension</strong> node might seem sufficient to deduce <strong>branch/ext 2</strong> in simple scenarios. However, this fails if similar restructuring occurred at higher trie levels involving more removals, as the final <strong>extension</strong> node might combine paths from multiple original branches, making it ambiguous to reconstruct the specific missing <strong>branch/ext 2</strong> node.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/wallet.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/fundamentals/data_availability.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/fundamentals/deposits.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -273,11 +279,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/wallet.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/fundamentals/data_availability.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/interacting/blockscout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/fundamentals/deposits.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
