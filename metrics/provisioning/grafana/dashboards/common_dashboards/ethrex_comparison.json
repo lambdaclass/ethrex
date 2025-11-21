@@ -29,7 +29,7 @@
         "x": 0,
         "y": 0
       },
-      "id": 4,
+      "id": 14,
       "panels": [
         {
           "datasource": {
@@ -100,6 +100,184 @@
             "x": 0,
             "y": 1
           },
+          "id": 13,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean"
+              ],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.999\"}",
+              "hide": false,
+              "legendFormat": "reth mainnet p99.9",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth mainnet p50",
+              "range": true,
+              "refId": "E"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "nethermind_mgas_per_sec{instance=\"nethermind-mainnet-1:6060\"} * 1000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "nethermind mainnet",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "chain_mgasps{instance=\"geth-mainnet-1:6060\", job=\"geth\", quantile=\"0.999\"} * 1000000",
+              "hide": true,
+              "instant": false,
+              "legendFormat": "geth mainnet p99.9",
+              "range": true,
+              "refId": "D"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "gigagas{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} * 1000000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{ instance }}",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Ggas/s vs other clients (MAINNET)",
+          "transformations": [
+            {
+              "id": "renameByRegex",
+              "options": {
+                "regex": "^([^:]+):\\d+$",
+                "renamePattern": "$1"
+              }
+            }
+          ],
+          "type": "timeseries"
+        }
+      ],
+      "title": "Ggas/s MAINNET Latest client Update (21/11/25)",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "id": 4,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "description": "",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "si:gas"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 12,
+            "w": 24,
+            "x": 0,
+            "y": 49
+          },
           "id": 7,
           "options": {
             "legend": {
@@ -129,6 +307,19 @@
               "legendFormat": "reth mainnet p99.9",
               "range": true,
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.5\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth mainnet p50",
+              "range": true,
+              "refId": "E"
             },
             {
               "datasource": {
@@ -249,7 +440,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 79
+            "y": 61
           },
           "id": 2,
           "options": {
@@ -465,7 +656,7 @@
             "h": 13,
             "w": 12,
             "x": 12,
-            "y": 79
+            "y": 61
           },
           "id": 3,
           "options": {
@@ -624,7 +815,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 1
+        "y": 2
       },
       "id": 5,
       "panels": [
@@ -695,7 +886,7 @@
             "h": 14,
             "w": 24,
             "x": 0,
-            "y": 2
+            "y": 77
           },
           "id": 6,
           "options": {
@@ -789,7 +980,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 2
+        "y": 3
       },
       "id": 8,
       "panels": [
@@ -860,7 +1051,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 17
+            "y": 167
           },
           "id": 1,
           "options": {
@@ -891,6 +1082,19 @@
               "legendFormat": "reth hoodi p99.9",
               "range": true,
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.5\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth hoodi p50",
+              "range": true,
+              "refId": "D"
             },
             {
               "datasource": {
@@ -998,7 +1202,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 30
+            "y": 180
           },
           "id": 9,
           "options": {
@@ -1125,7 +1329,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 3
+        "y": 4
       },
       "id": 10,
       "panels": [
@@ -1196,7 +1400,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 44
+            "y": 168
           },
           "id": 11,
           "options": {
@@ -1227,6 +1431,19 @@
               "legendFormat": "reth sepolia p99.9",
               "range": true,
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.5\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth sepolia p50",
+              "range": true,
+              "refId": "D"
             },
             {
               "datasource": {
@@ -1334,7 +1551,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 57
+            "y": 181
           },
           "id": 12,
           "options": {
@@ -1531,5 +1748,5 @@
   "timezone": "browser",
   "title": "Ethrex Comparison",
   "uid": "ads9rd7",
-  "version": 2
+  "version": 4
 }
