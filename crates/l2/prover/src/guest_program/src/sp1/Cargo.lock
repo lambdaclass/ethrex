@@ -938,7 +938,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "rustc-hash",
- "secp256k1",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -956,6 +955,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "k256",
  "kzg-rs",
  "lazy_static",
  "libc",
@@ -967,6 +967,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sha3",
  "thiserror",
  "tinyvec",
  "tracing",
@@ -995,11 +996,13 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "k256",
  "lambdaworks-crypto",
  "rkyv",
  "secp256k1",
  "serde",
  "serde_with",
+ "sha3",
  "thiserror",
 ]
 
@@ -1029,6 +1032,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sha3",
  "strum",
  "substrate-bn",
  "thiserror",
@@ -2601,8 +2605,8 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.10.8"
-source = "git+https://github.com/sp1-patches/RustCrypto-hashes?tag=patch-sha2-0.10.8-sp1-4.0.0#1f224388fdede7cef649bce0d63876d1a9e3f515"
+version = "0.10.9"
+source = "git+https://github.com/sp1-patches/RustCrypto-hashes?tag=patch-sha2-0.10.9-sp1-4.0.0#0b1945eea7d9a776fd6e50ffd5fc51f0c5e6f155"
 dependencies = [
  "cfg-if",
  "cpufeatures",
