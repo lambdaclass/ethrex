@@ -22,8 +22,15 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let client = ProverClient::builder()
         .asm()
         .verify_constraints()
+        .witness_lib_path_opt(None)
+        .witness_lib_path_opt(None)
         .elf_path(ELF_PATH.into())
-        //.unlock_mapped_memory(true)
+        .verbose(false)
+        .shared_tables(false)
+        .asm_path_opt(None)
+        .base_port_opt(None)
+        .unlock_mapped_memory(true)
+        .print_command_info()
         .build()?;
 
     client.execute(stdin)?;
