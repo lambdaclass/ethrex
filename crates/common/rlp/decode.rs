@@ -388,7 +388,7 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..length_of_length + 1];
-            let length = parse_be_length_usize(length_bytes)?;
+            let length = parse_be_length(length_bytes)?;
             if data.len() < length_of_length + length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
@@ -411,7 +411,7 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..list_length + 1];
-            let payload_length = parse_be_length_usize(length_bytes)?;
+            let payload_length = parse_be_length(length_bytes)?;
             if data.len() < list_length + payload_length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
@@ -453,7 +453,7 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..length_of_length + 1];
-            let length = parse_be_length_usize(length_bytes)?;
+            let length = parse_be_length(length_bytes)?;
             if data.len() < length_of_length + length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
@@ -475,7 +475,7 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..list_length + 1];
-            let payload_length = parse_be_length_usize(length_bytes)?;
+            let payload_length = parse_be_length(length_bytes)?;
             if data.len() < list_length + payload_length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
@@ -588,7 +588,7 @@ fn decode_be_integer_u128(bytes: &[u8]) -> Result<u128, RLPDecodeError> {
 
 /// Parses a RLP payload length
 #[inline]
-fn parse_be_length_usize(bytes: &[u8]) -> Result<usize, RLPDecodeError> {
+fn parse_be_length(bytes: &[u8]) -> Result<usize, RLPDecodeError> {
     if bytes.is_empty() {
         return Err(RLPDecodeError::InvalidLength);
     }
