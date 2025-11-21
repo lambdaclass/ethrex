@@ -3342,6 +3342,5 @@ dependencies = [
  "ethrex-vm",
  "guest_program",
  "rkyv",
- "sha2",
  "ziskos",
 ]
