@@ -38,7 +38,7 @@
 - Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
 
 ### 2025-11-05
-
+- Move insertion of receipts and tx locations to the background [#5203](https://github.com/lambdaclass/ethrex/pull/5203)
 - Merkelization backpressure and batching [#5200](https://github.com/lambdaclass/ethrex/pull/5200)
 
 ### 2025-11-03
