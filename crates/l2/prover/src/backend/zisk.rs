@@ -50,7 +50,6 @@ pub fn prove(
             .asm()
             .prove()
             .aggregation(true)
-            .save_proofs(true)
             .elf_path(ELF_PATH.into())
             .unlock_mapped_memory(true)
             .build()
