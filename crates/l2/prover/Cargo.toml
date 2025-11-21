@@ -68,7 +68,12 @@ sp1 = ["guest_program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
 zisk = ["guest_program/zisk"]
 profiling = ["sp1-sdk?/profiling"]
 
-gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
+gpu = [
+    "risc0-zkvm?/cuda",
+    "sp1-sdk?/cuda",
+    "zisk-sdk?/gpu",
+    "zisk-common?/gpu",
+    ]
 l2 = [
     "guest_program/l2",
     "ethrex-l2/l2",
