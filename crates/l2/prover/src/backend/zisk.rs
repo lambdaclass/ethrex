@@ -49,6 +49,7 @@ pub fn prove_client() -> &'static ZiskProver<Asm> {
             .aggregation(true)
             .elf_path(ELF_PATH.into())
             .unlock_mapped_memory(true)
+            .gpu(Default::default())
             .build()
             .unwrap_or_else(|e| panic!("Failed to setup ZisK prover client: {e}"))
     })
