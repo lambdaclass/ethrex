@@ -23,7 +23,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
         .asm()
         .verify_constraints()
         .witness_lib_path_opt(None)
-        .witness_lib_path_opt(None)
+        .proving_key_path_opt(None)
         .elf_path(ELF_PATH.into())
         .verbose(false)
         .shared_tables(false)
