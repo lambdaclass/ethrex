@@ -74,40 +74,40 @@ impl RLPDecode for u8 {
 impl RLPDecode for u16 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((u16::from_be_bytes(padded_bytes), rest))
+        let value = decode_be_integer_u64(bytes, 2)? as u16;
+        Ok((value, rest))
     }
 }
 
 impl RLPDecode for u32 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((u32::from_be_bytes(padded_bytes), rest))
+        let value = decode_be_integer_u64(bytes, 4)? as u32;
+        Ok((value, rest))
     }
 }
 
 impl RLPDecode for u64 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((u64::from_be_bytes(padded_bytes), rest))
+        let value = decode_be_integer_u64(bytes, 8)?;
+        Ok((value, rest))
     }
 }
 
 impl RLPDecode for usize {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((usize::from_be_bytes(padded_bytes), rest))
+        let value = decode_be_integer_u64(bytes, std::mem::size_of::<usize>())? as usize;
+        Ok((value, rest))
     }
 }
 
 impl RLPDecode for u128 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((u128::from_be_bytes(padded_bytes), rest))
+        let value = decode_be_integer_u128(bytes)?;
+        Ok((value, rest))
     }
 }
 
@@ -388,7 +388,7 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..length_of_length + 1];
-            let length = usize::from_be_bytes(static_left_pad(length_bytes)?);
+            let length = parse_be_length_usize(length_bytes)?;
             if data.len() < length_of_length + length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
@@ -411,7 +411,7 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..list_length + 1];
-            let payload_length = usize::from_be_bytes(static_left_pad(length_bytes)?);
+            let payload_length = parse_be_length_usize(length_bytes)?;
             if data.len() < list_length + payload_length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
@@ -453,7 +453,7 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..length_of_length + 1];
-            let length = usize::from_be_bytes(static_left_pad(length_bytes)?);
+            let length = parse_be_length_usize(length_bytes)?;
             if data.len() < length_of_length + length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
@@ -475,7 +475,7 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..list_length + 1];
-            let payload_length = usize::from_be_bytes(static_left_pad(length_bytes)?);
+            let payload_length = parse_be_length_usize(length_bytes)?;
             if data.len() < list_length + payload_length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
@@ -487,12 +487,14 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
     }
 }
 
+#[inline]
 pub fn is_encoded_as_bytes(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
     let prefix = rlp.first().ok_or(RLPDecodeError::MalformedData)?;
     Ok((0xb8..=0xbf).contains(prefix))
 }
 
 /// Receives an RLP bytes item (prefix between 0xb8 and 0xbf) and returns its payload
+#[inline]
 pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
     let prefix = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
     let offset: usize = (prefix - 0xb8 + 1).into();
@@ -503,6 +505,7 @@ pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
 /// It returns a 2-element tuple with the following elements:
 /// - The payload of the item.
 /// - The remaining bytes after the item.
+#[inline]
 pub fn decode_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
     let (is_list, payload, rest) = decode_rlp_item(data)?;
     if is_list {
@@ -515,10 +518,8 @@ pub fn decode_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
 /// The size of the data must be less than or equal to the size of the output array.
 #[inline]
 pub fn static_left_pad<const N: usize>(data: &[u8]) -> Result<[u8; N], RLPDecodeError> {
-    let mut result = [0; N];
-
     if data.is_empty() {
-        return Ok(result);
+        return Ok([0; N]);
     }
     if data[0] == 0 {
         return Err(RLPDecodeError::MalformedData);
@@ -526,12 +527,84 @@ pub fn static_left_pad<const N: usize>(data: &[u8]) -> Result<[u8; N], RLPDecode
     if data.len() > N {
         return Err(RLPDecodeError::InvalidLength);
     }
+    if data.len() == N {
+        let mut result = [0; N];
+        result.copy_from_slice(data);
+        return Ok(result);
+    }
+
+    let mut result = [0; N];
     let data_start_index = N.saturating_sub(data.len());
     result
         .get_mut(data_start_index..)
         .ok_or(RLPDecodeError::InvalidLength)?
         .copy_from_slice(data);
     Ok(result)
+}
+
+/// Decodes a RLP integer limited by max_len into a u64.
+#[inline]
+fn decode_be_integer_u64(bytes: &[u8], max_len: usize) -> Result<u64, RLPDecodeError> {
+    debug_assert!(max_len <= 8);
+
+    if bytes.len() > max_len {
+        return Err(RLPDecodeError::InvalidLength);
+    }
+    if bytes.is_empty() {
+        return Ok(0);
+    }
+    if bytes[0] == 0 {
+        return Err(RLPDecodeError::MalformedData);
+    }
+
+    let mut value: u64 = 0;
+    for byte in bytes {
+        value = (value << 8) | (*byte as u64);
+    }
+    Ok(value)
+}
+
+/// Decodes a RLP integer into a u128, it's separate from the u64 to avoid paying the cost of using a u128.
+#[inline]
+fn decode_be_integer_u128(bytes: &[u8]) -> Result<u128, RLPDecodeError> {
+    if bytes.len() > 16 {
+        return Err(RLPDecodeError::InvalidLength);
+    }
+
+    if bytes.is_empty() {
+        return Ok(0);
+    }
+
+    if bytes[0] == 0 {
+        return Err(RLPDecodeError::MalformedData);
+    }
+
+    let mut value: u128 = 0;
+    for byte in bytes {
+        value = (value << 8) | (*byte as u128);
+    }
+    Ok(value)
+}
+
+/// Parses a RLP payload length
+#[inline]
+fn parse_be_length_usize(bytes: &[u8]) -> Result<usize, RLPDecodeError> {
+    if bytes.is_empty() {
+        return Err(RLPDecodeError::InvalidLength);
+    }
+
+    if bytes[0] == 0 {
+        return Err(RLPDecodeError::MalformedData);
+    }
+
+    let mut value: usize = 0;
+    for byte in bytes {
+        value = value
+            .checked_mul(256)
+            .and_then(|v| v.checked_add(*byte as usize))
+            .ok_or(RLPDecodeError::InvalidLength)?;
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
