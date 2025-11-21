@@ -94,20 +94,20 @@ Collapsed row that surfaces the `namespace="engine"` Prometheus timers so you ca
 
 ![Engine API row](img/engine_api_row.png)
 
-### Engine Success/Error Rate
-Shows the rate of successful vs. failed Engine API requests per second.
+### Engine Total Time per Method
+Pie chart that shows where Engine time is spent across methods over the selected range. Quickly surfaces which endpoints dominate total processing time.
 
-![Engine Success/Error Rate](img/engine_success_error_rate.png)
-
-### Engine Request Rate by Method
-Shows how many Engine API calls per second we process, split by JSON-RPC method and averaged across the currently selected dashboard range.
-
-![Engine Request Rate by Method](img/engine_request_rate_by_method.png)
+![Engine Total Time per Method](img/engine_total_time_per_method.png)
 
 ### Engine Latency by Methods (Avg Duration)
 Bar gauge of the historical average latency per Engine method over the selected time range.
 
 ![Engine Latency by Methods](img/engine_latency_by_methods.png)
+
+### Engine Request Rate by Method
+Shows how many Engine API calls per second we process, split by JSON-RPC method and averaged across the currently selected dashboard range.
+
+![Engine Request Rate by Method](img/engine_request_rate_by_method.png)
 
 ### Engine Latency by Method
 Live timeseries that tries to correlate to the per-block execution time by showing real-time latency per Engine method with an 18 s lookback window.
@@ -121,11 +121,6 @@ _**Limitations**: The aggregated panels pull averages across the current dashboa
 Another collapsed row focused on the public JSON-RPC surface (`namespace="rpc"`). Expand it when you need to diagnose endpoint hotspots or validate rate limiting. Each panel repeats per instance to be able to compare behaviour across nodes.
 
 ![RPC API row](img/rpc_api_row.png)
-
-### RPC Success/Error Rate
-Shows the rate of successful vs. failed RPC API requests per second.
-
-![RPC Success/Error Rate](img/rpc_success_error_rate.png)
 
 ### RPC Total Time per Method
 Pie chart that shows where RPC time is spent across methods over the selected range. Quickly surfaces which endpoints dominate total processing time.
@@ -148,6 +143,28 @@ Live timeseries that tries to correlate to the per-block execution time by showi
 ![RPC Latency by Methods](img/rpc_latency_by_methods.png)
 
 _**Limitations**: The RPC latency views inherit the same windowing caveats as the Engine charts: averages use the dashboard time range while the live chart relies on an 18 s window._
+
+## Engine and RPC Error rates
+
+Collapsed row showing error rates for both Engine and RPC APIs side by side and a deagreagated panel by method and kind of error. Each panel repeats per instance to be able to compare behaviour across nodes.
+
+![Engine and RPC Error rates row](img/engine_and_rpc_error_rates_row.png)
+
+### Engine Success/Error Rate
+Shows the rate of successful vs. failed Engine API requests per second.
+
+![Engine Success/Error Rate](img/engine_success_error_rate.png)
+
+### RPC Success/Error Rate
+Shows the rate of successful vs. failed RPC API requests per second.
+
+![RPC Success/Error Rate](img/rpc_success_error_rate.png)
+
+### Engine and RPC Errors % by Method and Kind
+
+Deaggregated view of error percentages split by method and error kind for both Engine and RPC APIs. The % are calculated against total requests for a particular method, so all different error percentage for a method should sum up to the percentage of errors for that method.
+
+![Engine and RPC Errors % by Method and Kind](img/engine_and_rpc_errors_by_method_and_kind.png)
 
 ## Process and server info
 

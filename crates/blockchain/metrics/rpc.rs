@@ -14,7 +14,7 @@ fn initialize_rpc_outcomes_counter() -> CounterVec {
     register_counter_vec!(
         "rpc_requests_total",
         "Total number of RPC requests partitioned by namespace, method, and outcome",
-        &["namespace", "method", "outcome"],
+        &["namespace", "method", "outcome", "error_kind"],
     )
     .unwrap()
 }
@@ -29,24 +29,31 @@ fn initialize_rpc_duration_histogram() -> HistogramVec {
 }
 
 /// Represents the outcome of an RPC request when recording metrics.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum RpcOutcome {
     Success,
-    Error,
+    Error(String),
 }
 
 impl RpcOutcome {
     fn as_label(&self) -> &'static str {
         match self {
             RpcOutcome::Success => "success",
-            RpcOutcome::Error => "error",
+            RpcOutcome::Error(_) => "error",
+        }
+    }
+
+    fn error_kind(&self) -> &str {
+        match self {
+            RpcOutcome::Success => "",
+            RpcOutcome::Error(kind) => kind,
         }
     }
 }
 
 pub fn record_rpc_outcome(namespace: &str, method: &str, outcome: RpcOutcome) {
     METRICS_RPC_REQUEST_OUTCOMES
-        .with_label_values(&[namespace, method, outcome.as_label()])
+        .with_label_values(&[namespace, method, outcome.as_label(), outcome.error_kind()])
         .inc();
 }
 
