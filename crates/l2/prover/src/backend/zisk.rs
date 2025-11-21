@@ -33,7 +33,6 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     client.execute(stdin)?;
-    std::thread::sleep(std::time::Duration::from_secs(5));
     Ok(())
 }
 
