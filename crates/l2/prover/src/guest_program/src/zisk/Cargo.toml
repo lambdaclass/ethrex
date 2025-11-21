@@ -7,7 +7,6 @@ edition = "2024"
 
 [dependencies]
 ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.14.0" }
-
 sha2 = "0.10.9"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 

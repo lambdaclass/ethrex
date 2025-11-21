@@ -1416,7 +1416,12 @@ pub fn recover_address_from_message(
     recover_address(signature, payload).map_err(EcdsaError::from)
 }
 
-#[cfg(all(not(feature = "zisk"), not(feature = "risc0"), not(feature = "sp1")))]
+#[cfg(all(
+    not(feature = "zisk"),
+    not(feature = "risc0"),
+    not(feature = "sp1"),
+    feature = "secp256k1"
+))]
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
@@ -1434,7 +1439,12 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
     Ok(Address::from_slice(&hash[12..]))
 }
 
-#[cfg(any(feature = "zisk", feature = "risc0", feature = "sp1"))]
+#[cfg(any(
+    feature = "zisk",
+    feature = "risc0",
+    feature = "sp1",
+    not(feature = "secp256k1")
+))]
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k256::ecdsa::Error> {
     use sha2::Digest;
     use sha3::Keccak256;
