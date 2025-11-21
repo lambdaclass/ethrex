@@ -280,7 +280,8 @@ impl<T: RLPDecode> RLPDecode for Vec<T> {
             return Err(RLPDecodeError::MalformedData);
         }
 
-        let mut result = Vec::new();
+        let count = count_items(payload)?;
+        let mut result = Vec::with_capacity(count);
         let mut current_slice = payload;
 
         while !current_slice.is_empty() {
@@ -485,6 +486,18 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
             ))
         }
     }
+}
+
+/// Counts the items in a rlp list without decoding.
+#[inline]
+pub fn count_items(mut slice: &[u8]) -> Result<usize, RLPDecodeError> {
+    let mut count = 0;
+    while !slice.is_empty() {
+        let (_, rest) = get_item_with_prefix(slice)?;
+        count += 1;
+        slice = rest;
+    }
+    Ok(count)
 }
 
 pub fn is_encoded_as_bytes(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
