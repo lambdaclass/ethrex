@@ -22,17 +22,12 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let client = ProverClient::builder()
         .asm()
         .verify_constraints()
-        .witness_lib_path_opt(None)
-        .proving_key_path_opt(None)
         .elf_path(ELF_PATH.into())
-        .shared_tables(false)
-        .asm_path_opt(None)
-        .base_port_opt(None)
         .unlock_mapped_memory(true)
-        .print_command_info()
         .build()?;
 
     client.execute(stdin)?;
+    std::thread::sleep(std::time::Duration::from_secs(5));
     Ok(())
 }
 
