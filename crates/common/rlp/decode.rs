@@ -694,6 +694,10 @@ mod tests {
         let decoded: Vec<String> = Vec::decode(&rlp).unwrap();
         let expected = vec!["cat".to_string(), "dog".to_string()];
         assert_eq!(decoded, expected);
+
+        let (_, payload, _) = decode_rlp_item(&rlp).unwrap();
+        let count = count_items(payload).unwrap();
+        assert_eq!(decoded.len(), count);
     }
 
     #[test]
