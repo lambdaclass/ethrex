@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-21
+
+- When decoding a `Vec<T>`, count the number of elements to pre allocate [#5400](https://github.com/lambdaclass/ethrex/pull/5400)
+
 ### 2025-11-19
 
 - Parallelize merkleization [#5377](https://github.com/lambdaclass/ethrex/pull/5377)
