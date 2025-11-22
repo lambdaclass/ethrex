@@ -36,6 +36,7 @@ pub fn prove_client() -> &'static ZiskProver<Asm> {
         ProverClient::builder()
             .asm()
             .prove()
+            .gpu(Default::default())
             .aggregation(true)
             .elf_path(ELF_PATH.into())
             .unlock_mapped_memory(true)
