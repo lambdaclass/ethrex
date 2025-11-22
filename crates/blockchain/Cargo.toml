@@ -26,6 +26,8 @@ tokio-util.workspace = true
 
 ethrex-metrics = { path = "./metrics", default-features = false }
 
+lru = "0.16.2"
+
 [dev-dependencies]
 serde_json.workspace = true
 hex = "0.4.3"
