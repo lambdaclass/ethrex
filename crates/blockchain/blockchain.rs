@@ -36,9 +36,10 @@ use ethrex_storage::{
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
+use lru::LruCache;
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{
@@ -60,6 +61,8 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+
+const TX_SENDER_CACHE_MAX_SIZE: usize = 50_000;
 
 type StoreUpdatesMap = FxHashMap<H256, (Result<Trie, StoreError>, FxHashMap<Nibbles, Vec<u8>>)>;
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -90,6 +93,8 @@ pub struct Blockchain {
     /// Mapping from a payload id to either a complete payload or a payload build task
     /// We need to keep completed payloads around in case consensus requests them twice
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Cache for transaction senders, mapping from transaction hash to sender address
+    tx_sender_cache: Arc<Mutex<LruCache<H256, Address, FxBuildHasher>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -142,6 +147,10 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
+            tx_sender_cache: Arc::new(Mutex::new(LruCache::with_hasher(
+                TX_SENDER_CACHE_MAX_SIZE.try_into().unwrap(),
+                FxBuildHasher,
+            ))),
         }
     }
 
@@ -152,6 +161,10 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
+            tx_sender_cache: Arc::new(Mutex::new(LruCache::with_hasher(
+                TX_SENDER_CACHE_MAX_SIZE.try_into().unwrap(),
+                FxBuildHasher,
+            ))),
         }
     }
 
@@ -227,14 +240,34 @@ impl Blockchain {
         let queue_length = AtomicUsize::new(0);
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
+        let tx_sender_cache = self.tx_sender_cache.clone();
+
         let (execution_result, account_updates_list) = std::thread::scope(|s| {
             let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
             let execution_handle = std::thread::Builder::new()
                 .name("block_executor_execution".to_string())
                 .spawn_scoped(s, move || -> Result<_, ChainError> {
+                    let block_senders = {
+                        let mut tx_sender_cache = tx_sender_cache.lock().unwrap();
+                        block
+                            .body
+                            .transactions
+                            .iter()
+                            .map(|tx| {
+                                tx_sender_cache
+                                    .get(&tx.hash())
+                                    .copied()
+                                    .unwrap_or(H160::zero())
+                            })
+                            .collect()
+                    };
+                    let block_senders = block
+                        .body
+                        .recover_with_cached_senders(block_senders)
+                        .unwrap();
                     let execution_result =
-                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                        vm.execute_block_pipeline(block, tx, queue_length_ref, &block_senders)?;
 
                     // Validate execution went alright
                     validate_gas_used(&execution_result.receipts, &block.header)?;
@@ -1402,6 +1435,7 @@ impl Blockchain {
         self.mempool
             .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
+        self.tx_sender_cache.lock().unwrap().put(hash, sender);
         Ok(hash)
     }
 
@@ -1427,6 +1461,7 @@ impl Blockchain {
         // Add transaction to storage
         self.mempool
             .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.tx_sender_cache.lock().unwrap().put(hash, sender);
 
         Ok(hash)
     }

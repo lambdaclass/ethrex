@@ -20,7 +20,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -259,6 +259,25 @@ impl BlockBody {
             .par_iter()
             .map(|tx| Ok((tx, tx.sender()?)))
             .collect::<Result<Vec<(&Transaction, Address)>, secp256k1::Error>>()
+    }
+
+    pub fn recover_with_cached_senders(
+        &self,
+        cached_senders: Vec<Address>,
+    ) -> Result<Vec<Address>, secp256k1::Error> {
+        // Recovering addresses is computationally expensive.
+        // Computing them in parallel greatly reduces execution time.
+        cached_senders
+            .par_iter()
+            .zip(&self.transactions)
+            .map(|(sender, tx)| {
+                if sender.is_zero() {
+                    tx.sender()
+                } else {
+                    Ok(*sender)
+                }
+            })
+            .collect::<Result<Vec<Address>, secp256k1::Error>>()
     }
 }
 
