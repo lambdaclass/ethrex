@@ -428,7 +428,7 @@ The following links, repos, and projects have been important in the development 
 ### Based rollups + extra steps
 
 - [Based Ticketing Rollup by George Spasov](https://hackmd.io/@Perseverance/Syk2oQU36)
-- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/contestable-rollup)
+- [Based Contestable Rollup by Taiko (Taiko Alethia)](https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/based-rollups/)
 - [Native Based Rollup by Taiko (Taiko Gwyneth)](https://docs.taiko.xyz/taiko-gwyneth-protocol/what-is-taiko-gwyneth/)
 
 ### Misc
