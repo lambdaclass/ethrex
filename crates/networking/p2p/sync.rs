@@ -383,7 +383,12 @@ impl Syncer {
             let final_batch = end_block_number == start + batch_size as u64;
             // Retrieve batch from DB
             if !single_batch {
-                headers = store.read_fullsync_batch(start, batch_size as u64).await?;
+                headers = store
+                    .read_fullsync_batch(start, batch_size as u64)
+                    .await?
+                    .into_iter()
+                    .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
+                    .collect::<Result<Vec<_>, SyncError>>()?;
             }
             let mut blocks = Vec::new();
             // Request block bodies
@@ -1162,6 +1167,8 @@ pub enum SyncError {
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
+    #[error("Missing fullsync batch")]
+    MissingFullsyncBatch,
 }
 
 impl SyncError {
@@ -1185,7 +1192,8 @@ impl SyncError {
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
-            | SyncError::PeerTableError(_) => false,
+            | SyncError::PeerTableError(_)
+            | SyncError::MissingFullsyncBatch => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
