@@ -1,5 +1,6 @@
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=src/");
 
     #[cfg(all(not(clippy), feature = "risc0"))]
     build_risc0_program();
@@ -127,7 +128,7 @@ fn build_zisk_program() {
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .args([
             "rom-setup",
-            "-e",
+            "--elf",
             "target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
         ])
         .stdout(std::process::Stdio::inherit())
