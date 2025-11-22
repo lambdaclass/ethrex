@@ -58,7 +58,7 @@ path = "src/lib.rs"
 
 [features]
 # TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct
-default = ["zisk"]
+default = ["l2"]
 # prover backends
 risc0 = [
     "guest_program/risc0",
