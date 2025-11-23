@@ -48,32 +48,18 @@ impl RLPEncode for bool {
 // integer types impls
 
 fn impl_encode<const N: usize>(value_be: [u8; N], buf: &mut dyn BufMut) {
-    let mut is_multi_byte_case = false;
-
-    for n in value_be.iter().take(N - 1) {
-        // If we encounter a non 0 byte pattern before the last byte, we are
-        // at the multi byte case
-        if *n != 0 {
-            is_multi_byte_case = true;
-            break;
-        }
-    }
-
-    match value_be[N - 1] {
-        // 0, also known as null or the empty string is 0x80
-        0 if !is_multi_byte_case => buf.put_u8(RLP_NULL),
-        // for a single byte whose value is in the [0x00, 0x7f] range, that byte is its own RLP encoding.
-        n @ 1..=0x7f if !is_multi_byte_case => buf.put_u8(n),
-        // if a string is 0-55 bytes long, the RLP encoding consists of a
-        // single byte with value RLP_NULL (0x80) plus the length of the string followed by the string.
-        _ => {
-            let mut bytes = ArrayVec::<[u8; 8]>::new();
-            bytes.extend_from_slice(&value_be);
-            let start = bytes.iter().position(|&x| x != 0).unwrap();
-            let len = bytes.len() - start;
+    if let Some(start) = value_be.iter().position(|&x| x != 0) {
+        let last = value_be[N - 1];
+        if start == N - 1 && last <= 0x7f {
+            buf.put_u8(last);
+        } else {
+            let len = N - start;
             buf.put_u8(RLP_NULL + len as u8);
-            buf.put_slice(&bytes[start..]);
+            buf.put_slice(&value_be[start..]);
         }
+    } else {
+        // 0, also known as null or the empty string is 0x80
+        buf.put_u8(RLP_NULL);
     }
 }
 
