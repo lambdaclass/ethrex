@@ -4,8 +4,8 @@
 This note tracks the current state of metrics and dashboard observability for the L1, highlights the gaps against a cross-client baseline. It covers runtime metrics exposed through our crates, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
 
 ### At a glance
-- **Covered today**: Block execution timings, detailed execution breakdown, Engine API and JSON-RPC method telemetry, and host/process health are exported and graphed through `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`. The refreshed [L1 Dashboard doc](./dashboards.md) has screenshots and panel descriptions.
-- **Missing**: Sync/peer awareness, txpool depth, storage IO metrics, and richer error taxonomy are absent or only logged.
+- **Covered today**: Block execution timings, detailed execution breakdown, Engine API and JSON-RPC method telemetry (including error rates), and host/process health are exported and graphed through `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`. The refreshed [L1 Dashboard doc](./dashboards.md) has screenshots and panel descriptions.
+- **Missing**: Sync/peer awareness, txpool depth, and storage IO metrics are absent or only logged.
 - **Near-term focus**: Ship sync & peer gauges, surface txpool counters we already emit, extend storage instrumentation, and harden alerting before widening coverage further.
 
 ## Baseline We Compare Against
@@ -40,10 +40,10 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 | Peer health | Yes | Yes | No |
 | Block & payload pipeline | Yes | Yes | Yes (latency + throughput) |
 | Transaction pool | Yes (basic) | Yes | Partial (counters, no panels) |
-| Engine API & RPC | Partial (metrics exist, limited panels) | Yes | Partial (per-method rate/latency) |
+| Engine API & RPC | Partial (metrics exist, limited panels) | Yes | Partial (per-method rate/latency + error rates) |
 | State & storage | Yes | Yes | Partial (datadir size; no pruning) |
 | Process & host health | Yes | Yes | Yes (node exporter + process) |
-| Error & anomaly counters | Yes | Yes | No |
+| Error & anomaly counters | Yes | Yes | Partial (RPC/Engine errors) |
 
 - **Block execution pipeline**
   - Gauges exposed in `ethrex_metrics::metrics_blocks`: `gas_limit`, `gas_used`, `gigagas`, `block_number`, `head_height`, `execution_ms`, `merkle_ms`, `store_ms`, `transaction_count`, plus block-building focused gauges that need to be reviewed first (`gigagas_block_building`, `block_building_ms`, `block_building_base_fee`).
@@ -62,6 +62,7 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 - **Engine & RPC telemetry**
   - `function_duration_seconds_*{namespace="engine"|"rpc"}` histograms are emitted by the same profiling layer.
   - Grafana now charts per-method request rates and range-based latency averages for both Engine API and JSON-RPC namespaces via the "Engine API" and "RPC API" rows.
+  - A new "Engine and RPC Error rates" row visualises success/error rates and breaks down errors by method and kind.
 - **Metrics API**
   - `crates/blockchain/metrics/api.rs` exposes `/metrics` and `/health`; orchestration defined in `cmd/ethrex/initializers.rs` ensures the Axum server starts alongside the node when metrics are enabled.
   - The provisioning stack (docker-compose, Makefile targets) ships Prometheus and Grafana wiring, so any new metric family automatically appears in the scrape.
@@ -82,17 +83,17 @@ Before addressing the gaps listed below, we should also consider some general im
 | Peer health | `net_peerCount` RPC endpoint exists. | No Prometheus gauges for active peers, peer limits, snap-capable availability, or handshake failures; dashboard lacks a networking row. |
 | Block & payload pipeline | `METRICS_BLOCKS` tracks gas throughput and execution stage timings; `transaction_count` is exported but not visualised yet. | Add p50/p95 histograms for execution stages, block import success/failure counters, and an L1-driven TPS gauge so operators can read execution throughput without relying on L2 metrics. |
 | Transaction pool | Success/error counters per tx type emitted from `crates/blockchain/payload.rs`. | No exported pending depth, blob/regular split, drop reasons, or gossip throughput; aggregates exist only in L2 (`crates/l2/sequencer/metrics.rs`). |
-| Engine API & RPC | Per-method request rate, latency (range-based + 18 s lookback) covering `namespace="engine"` and `namespace="rpc"` metrics. | Deepen error taxonomy ( error/rates and distinguish failure reasons), add payload build latency distributions, and baseline alert thresholds. |
+| Engine API & RPC | Per-method request rate, latency (range-based + 18 s lookback) covering `namespace="engine"` and `namespace="rpc"` metrics. Plus success/error rates and error breakdown. | Add payload build latency distributions, and baseline alert thresholds. |
 | State & storage | Only `datadir_size_bytes` today. | Export healing/download progress, snapshot sync %, DB read/write throughput, pruning/backfill counters (we need to check what makes sense here), and cache hit/miss ratios. |
 | Process & host health | Process collector + `datadir_size_bytes`; node_exporter covers CPU/RSS/disk. | Add cache pressure indicators (fd saturation, async task backlog) and ensure dashboards surface alert thresholds. |
-| Error & anomaly counters | None published. | Add Prometheus counters for failed block imports, reorg depth, RPC errors, Engine API retries, sync failures, and wire alerting. |
+| Error & anomaly counters | RPC and Engine API error rates and breakdown. | Add Prometheus counters for failed block imports, reorg depth, Engine API retries, sync failures, and wire alerting. |
 
 ### Next steps
 1. Tackle general improvements around naming conventions and label consistency.
 2. Implement sync & peer metrics (best-peer lag, stage progress) and add corresponding Grafana row.
 3. Surface txpool metrics by wiring existing counters and charting them.
 4. Add the metrics relying on `ethereum-metrics-exporter` into the existing metrics, and avoid our dashboard dependence on it.
-5. Extend Engine API / JSON-RPC metrics with richer error taxonomy and payload construction latency distributions.
+5. Extend Engine API / JSON-RPC metrics with payload construction latency distributions.
 6. State and Storage metrics, specially related to snapsync, pruning, db and cache.
 7. Process health improvements, specially related to read/write latencies and probably tokio tasks.
 8. Review block building metrics.
