@@ -22,7 +22,7 @@ make build-prover-<sp1/risc0> # optional: GPU=true
 This will generate the SP1 ELF program and verification key under:
 
 - `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf`
-- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk`
+- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32`
 
 ### 2. Deploying L1 Contracts
 
@@ -290,7 +290,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 - Sends proofs to the **Aligned Batcher** instead of the `OnChainProposer` contract.
 - Tracks the last proof sent using the rollup store.
 
-![Proof Sender Aligned Mode](../img/aligned_mode_proof_sender.png)
+![Proof Sender Aligned Mode](./img/aligned_mode_proof_sender.png)
 
 ### Proof Verifier
 
@@ -298,7 +298,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 - Monitors whether the next proof has been aggregated by Aligned.
 - Once verified, collects all already aggregated proofs and triggers the advancement of the `OnChainProposer` contract by sending a single transaction.
 
-![Aligned Mode Proof Verifier](../img/aligned_mode_proof_verifier.png)
+![Aligned Mode Proof Verifier](./img/aligned_mode_proof_verifier.png)
 
 ### OnChainProposer
 
