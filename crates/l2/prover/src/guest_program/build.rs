@@ -9,6 +9,9 @@ fn main() {
 
     #[cfg(all(not(clippy), feature = "zisk"))]
     build_zisk_program();
+
+    #[cfg(all(not(clippy), feature = "openvm"))]
+    build_openvm_program();
 }
 
 #[cfg(all(not(clippy), feature = "risc0"))]
@@ -159,6 +162,39 @@ fn build_zisk_program() {
     if !setup_status.success() {
         panic!("Failed to setup compiled guest program with zisk toolchain");
     }
+}
+
+#[cfg(all(not(clippy), feature = "openvm"))]
+fn build_openvm_program() {
+    use std::{
+        fs,
+        path::Path,
+        process::{Command, Stdio},
+    };
+
+    let status = Command::new("cargo")
+        .arg("openvm")
+        .arg("build")
+        .arg("--no-transpile")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .current_dir("./src/openvm")
+        .status()
+        .expect("failed to execute cargo openvm build");
+
+    if !status.success() {
+        panic!("cargo openvm build failed with exit status: {}", status);
+    }
+
+    let elf_src =
+        Path::new("./src/openvm/target/riscv32im-risc0-zkvm-elf/release/zkvm-openvm-program");
+    let elf_dst = Path::new("./src/openvm/out/riscv32im-openvm-zkvm-elf");
+
+    if let Some(parent) = elf_dst.parent() {
+        fs::create_dir_all(parent).expect("failed to create destination dir");
+    }
+
+    fs::copy(&elf_src, &elf_dst).expect("failed to copy zkvm-openvm-program");
 }
 
 #[cfg(all(not(clippy), feature = "zisk"))]
