@@ -16,8 +16,18 @@ snap.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+criterion = { version = "0.7.0", features = ["html_reports"] }
+
 [lib]
 path = "./rlp.rs"
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "decode"
+harness = false
+
+[[bench]]
+name = "encode"
+harness = false
