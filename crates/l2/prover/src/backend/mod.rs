@@ -15,7 +15,7 @@ pub mod sp1;
 #[cfg(feature = "zisk")]
 pub mod zisk;
 
-#[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum)]
+#[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum, PartialEq)]
 pub enum Backend {
     #[default]
     Exec,

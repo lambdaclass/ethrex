@@ -14,7 +14,11 @@ pub struct BackendNotAvailable(Backend);
 
 impl std::fmt::Display for BackendNotAvailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Backend '{:?}' was not compiled. Enable the corresponding feature to use this backend.", self.0)
+        write!(
+            f,
+            "Backend '{:?}' was not compiled. Enable the corresponding feature to use this backend.",
+            self.0
+        )
     }
 }
 
@@ -38,7 +42,7 @@ pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std:
             {
                 Err(Box::new(BackendNotAvailable(Backend::SP1)))
             }
-        },
+        }
         Backend::RISC0 => {
             #[cfg(feature = "risc0")]
             {
@@ -48,7 +52,7 @@ pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std:
             {
                 Err(Box::new(BackendNotAvailable(Backend::RISC0)))
             }
-        },
+        }
         Backend::ZisK => {
             #[cfg(feature = "zisk")]
             {
@@ -58,7 +62,7 @@ pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std:
             {
                 Err(Box::new(BackendNotAvailable(Backend::ZisK)))
             }
-        },
+        }
     }
 }
 
@@ -79,7 +83,7 @@ pub fn prove(
             {
                 Err(Box::new(BackendNotAvailable(Backend::SP1)))
             }
-        },
+        }
         Backend::RISC0 => {
             #[cfg(feature = "risc0")]
             {
@@ -89,7 +93,7 @@ pub fn prove(
             {
                 Err(Box::new(BackendNotAvailable(Backend::RISC0)))
             }
-        },
+        }
         Backend::ZisK => {
             #[cfg(feature = "zisk")]
             {
@@ -99,7 +103,7 @@ pub fn prove(
             {
                 Err(Box::new(BackendNotAvailable(Backend::ZisK)))
             }
-        },
+        }
     }
 }
 
