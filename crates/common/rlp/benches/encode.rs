@@ -1,17 +1,36 @@
-use std::hint::black_box;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
-fn fibonacci(n: u64) -> u64 {
-    match n {
-        0 => 1,
-        1 => 1,
-        n => fibonacci(n-1) + fibonacci(n-2),
-    }
+fn bench_encode_scalars(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_scalars");
+    group.finish();
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("fib 20", |b| b.iter(|| fibonacci(black_box(20))));
+fn bench_encode_bytes_strings(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_bytes_strings");
+    group.finish();
 }
 
-criterion_group!(benches, criterion_benchmark);
+fn bench_encode_collections(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_collections");
+    group.finish();
+}
+
+fn bench_encode_tuples(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_tuples");
+    group.finish();
+}
+
+fn bench_encode_ips(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_ip_types");
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_encode_scalars,
+    bench_encode_bytes_strings,
+    bench_encode_collections,
+    bench_encode_tuples,
+    bench_encode_ips,
+);
 criterion_main!(benches);
