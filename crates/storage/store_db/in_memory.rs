@@ -39,7 +39,7 @@ pub struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    trie_cache: Arc<TrieLayerCache>,
+    trie_cache: Mutex<HashMap<H256, Arc<TrieLayerCache>>>,
     // Contains account trie nodes
     state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -91,11 +91,22 @@ impl StoreEngine for Store {
         let mut store = self.inner()?;
 
         // Store trie updates
-        let nodes = {
-            let trie = Arc::make_mut(&mut store.trie_cache);
+        let block_header = &update_batch
+            .blocks
+            .first()
+            .ok_or(StoreError::UpdateBatchNoBlocks)?
+            .header;
+        let state_root = store
+            .headers
+            .get(&block_header.parent_hash)
+            .map(|header| header.state_root)
+            .unwrap_or_default();
 
-            let nodes = trie.commit();
-            trie.put_iter(
+        let nodes = {
+            let trie_caches = store.trie_cache.get_mut().unwrap();
+
+            let mut trie_cache = Arc::clone(trie_caches.get_mut(&state_root).unwrap());
+            let nodes = trie_cache.commit_and_put_iter(
                 update_batch
                     .storage_updates
                     .into_iter()
@@ -106,6 +117,15 @@ impl StoreEngine for Store {
                     })
                     .chain(update_batch.account_updates)
                     .map(|(key, value)| (key.into_vec().into(), value.into())),
+            );
+            trie_caches.insert(
+                update_batch
+                    .blocks
+                    .last()
+                    .ok_or(StoreError::UpdateBatchNoBlocks)?
+                    .header
+                    .state_root,
+                trie_cache,
             );
 
             nodes
@@ -423,7 +443,14 @@ impl StoreEngine for Store {
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: store.trie_cache.clone(),
+            inner: Arc::clone(
+                store
+                    .trie_cache
+                    .lock()
+                    .unwrap()
+                    .entry(state_root)
+                    .or_insert_with(|| Arc::new(TrieLayerCache::default())),
+            ),
             db,
             prefix: Some(hashed_address),
         });
@@ -436,7 +463,14 @@ impl StoreEngine for Store {
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
         let wrap_db = Box::new(TrieWrapper {
             state_root,
-            inner: store.trie_cache.clone(),
+            inner: Arc::clone(
+                store
+                    .trie_cache
+                    .lock()
+                    .unwrap()
+                    .entry(state_root)
+                    .or_insert_with(|| Arc::new(TrieLayerCache::default())),
+            ),
             db,
             prefix: None,
         });

@@ -15,13 +15,45 @@ impl TrieLayerCache {
         self.data.get(key).map(|entry| &*entry.value)
     }
 
-    /// Write a batch of items into the cache at the last layer.
+    // /// Write a batch of items into the cache at the last layer.
+    // ///
+    // /// Items that were already present in that layer will be overwritten. Use
+    // /// [`TrieLayerCache::commit`] to advance the layers before putting items into the new layer.
+    // pub fn put_iter(&mut self, iter: impl IntoIterator<Item = (Arc<[u8]>, Arc<[u8]>)>) {
+    // }
+
+    /// Return an iterator to extract the elements of the 128th layer.
     ///
-    /// Items that were already present in that layer will be overwritten. Use
-    /// [`TrieLayerCache::commit`] to advance the layers before putting items into the new layer.
-    pub fn put_iter(&mut self, iter: impl IntoIterator<Item = (Arc<[u8]>, Arc<[u8]>)>) {
+    /// If there are not yet 128 layers, it'll return an empty vec.
+    pub fn commit_and_put_iter(
+        self: &mut Arc<Self>,
+        iter: impl IntoIterator<Item = (Arc<[u8]>, Arc<[u8]>)>,
+    ) -> Vec<(Arc<[u8]>, Arc<[u8]>)> {
+        let self_mut = Arc::make_mut(self);
+
+        // Commit last layer.
+        let mut items = Vec::new();
+        self_mut.data.retain(|key, entry| {
+            entry.layers <<= 1;
+            if entry.layers == 0 {
+                items.push((
+                    Arc::clone(key),
+                    if entry.previous.is_empty() {
+                        mem::take(&mut entry.value)
+                    } else {
+                        entry.previous.remove(0)
+                    },
+                ));
+
+                true
+            } else {
+                false
+            }
+        });
+
+        // Put items.
         for (key, value) in iter {
-            match self.data.entry(key) {
+            match self_mut.data.entry(key) {
                 Entry::Occupied(entry) => {
                     let entry = entry.into_mut();
 
@@ -41,32 +73,6 @@ impl TrieLayerCache {
                 }
             }
         }
-    }
-
-    /// Return an iterator to extract the elements of the 128th layer.
-    ///
-    /// If there are not yet 128 layers, it'll return an empty iterator.
-    /// Dropping the iterator will not leave the cache in an inconsistent state. All remaining items
-    /// will be dropped.
-    pub fn commit(&mut self) -> Vec<(Arc<[u8]>, Arc<[u8]>)> {
-        let mut items = Vec::new();
-        self.data.retain(|key, entry| {
-            entry.layers <<= 1;
-            if entry.layers == 0 {
-                items.push((
-                    Arc::clone(key),
-                    if entry.previous.is_empty() {
-                        mem::take(&mut entry.value)
-                    } else {
-                        entry.previous.remove(0)
-                    },
-                ));
-
-                true
-            } else {
-                false
-            }
-        });
 
         items
     }

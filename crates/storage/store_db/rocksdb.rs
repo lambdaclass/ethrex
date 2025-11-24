@@ -19,7 +19,7 @@ use rocksdb::{
     Options, WriteBatch, checkpoint::Checkpoint,
 };
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -149,7 +149,7 @@ enum FKVGeneratorControlMessage {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<Mutex<HashMap<H256, Arc<TrieLayerCache>>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
@@ -444,14 +444,20 @@ impl Store {
                 match rx.recv() {
                     Ok((
                         notify,
-                        _parent_state_root,
-                        _child_state_root,
+                        parent_state_root,
+                        child_state_root,
                         account_updates,
                         storage_updates,
                     )) => {
                         // FIXME: what should we do on error?
                         let _ = store_clone
-                            .apply_trie_updates(notify, account_updates, storage_updates)
+                            .apply_trie_updates(
+                                parent_state_root,
+                                child_state_root,
+                                notify,
+                                account_updates,
+                                storage_updates,
+                            )
                             .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
                     }
                     Err(err) => error!("Error while reading diff layer: {err}"),
@@ -733,6 +739,8 @@ impl Store {
 
     fn apply_trie_updates(
         &self,
+        prev_state_root: H256,
+        curr_state_root: H256,
         notify: SyncSender<Result<(), StoreError>>,
         account_updates: Vec<(Nibbles, Vec<u8>)>,
         storage_updates: StorageUpdates,
@@ -742,13 +750,11 @@ impl Store {
         let trie_cache = &self.trie_cache;
 
         // Phase 1: update the in-memory diff-layers only, then notify block production.
-        let commit_data;
-        {
-            let mut lock = trie_cache.lock().map_err(|_| StoreError::LockError)?;
-            let trie = Arc::make_mut(&mut *lock);
-            commit_data = trie.commit();
+        let commit_data = {
+            let mut trie_caches = trie_cache.lock().map_err(|_| StoreError::LockError)?;
 
-            trie.put_iter(
+            let mut trie_cache = Arc::clone(trie_caches.get(&prev_state_root).unwrap());
+            let commit_data = trie_cache.commit_and_put_iter(
                 storage_updates
                     .into_iter()
                     .flat_map(|(account_hash, nodes)| {
@@ -759,7 +765,10 @@ impl Store {
                     .chain(account_updates)
                     .map(|(key, value)| (key.into_vec().into(), value.into())),
             );
-        }
+            trie_caches.insert(curr_state_root, trie_cache);
+
+            commit_data
+        };
 
         // Update finished, signal block processing.
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
@@ -1534,6 +1543,8 @@ impl StoreEngine for Store {
                 .trie_cache
                 .lock()
                 .map_err(|_| StoreError::LockError)?
+                .entry(state_root)
+                .or_default()
                 .clone(),
             db,
             prefix: Some(hashed_address),
@@ -1556,6 +1567,8 @@ impl StoreEngine for Store {
                 .trie_cache
                 .lock()
                 .map_err(|_| StoreError::LockError)?
+                .entry(state_root)
+                .or_default()
                 .clone(),
             db,
             prefix: None,
@@ -1603,6 +1616,8 @@ impl StoreEngine for Store {
                 .trie_cache
                 .lock()
                 .map_err(|_| StoreError::LockError)?
+                .entry(state_root)
+                .or_default()
                 .clone(),
             db,
             prefix: None,
@@ -1629,6 +1644,8 @@ impl StoreEngine for Store {
                 .trie_cache
                 .lock()
                 .map_err(|_| StoreError::LockError)?
+                .entry(state_root)
+                .or_default()
                 .clone(),
             db,
             prefix: Some(hashed_address),
