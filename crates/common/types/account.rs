@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{RLPEncode, list_length},
+    encode::RLPEncode,
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -64,6 +64,21 @@ impl Code {
             i += 1;
         }
         targets
+    }
+
+    /// Estimates the size of the Code struct in bytes
+    /// (including stack size and heap allocation).
+    ///
+    /// Note: This is an estimation and may not be exact.
+    ///
+    /// # Returns
+    ///
+    /// usize - Estimated size in bytes
+    pub fn size(&self) -> usize {
+        let hash_size = size_of::<H256>();
+        let bytes_size = size_of::<Bytes>();
+        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        hash_size + bytes_size + vec_size
     }
 }
 
@@ -156,11 +171,6 @@ impl RLPEncode for AccountInfo {
             .encode_field(&self.nonce)
             .finish();
     }
-
-    fn length(&self) -> usize {
-        let payload_len = self.code_hash.length() + self.balance.length() + self.nonce.length();
-        list_length(payload_len)
-    }
 }
 
 impl RLPDecode for AccountInfo {
@@ -186,14 +196,6 @@ impl RLPEncode for AccountState {
             .encode_field(&self.storage_root)
             .encode_field(&self.code_hash)
             .finish();
-    }
-
-    fn length(&self) -> usize {
-        let payload_len = self.nonce.length()
-            + self.balance.length()
-            + self.storage_root.length()
-            + self.code_hash.length();
-        list_length(payload_len)
     }
 }
 

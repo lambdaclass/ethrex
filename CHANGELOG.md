@@ -2,13 +2,20 @@
 
 ## Perf
 
-### 2025-11-19
+### 2025-11-24
 
 - Change some calls from `encode_to_vec().len()` to `.length()` when wanting to get the rlp encoded length [#5374](https://github.com/lambdaclass/ethrex/pull/5374)
 
+### 2025-11-20
+
+- Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding a alloc-less length method the default trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
+
+### 2025-11-19
+
+- Parallelize merkleization [#5377](https://github.com/lambdaclass/ethrex/pull/5377)
+
 ### 2025-11-17
 
-- Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding specialized length methods to each trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
 - Avoid temporary allocations when decoding and hashing trie nodes [#5353](https://github.com/lambdaclass/ethrex/pull/5353)
 
 ### 2025-11-13

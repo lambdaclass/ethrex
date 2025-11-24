@@ -2,7 +2,7 @@ use std::{cmp, mem};
 
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{RLPEncode, list_length},
+    encode::RLPEncode,
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -207,36 +207,6 @@ impl Nibbles {
         compact
     }
 
-    /// Returns the length of this Nibbles as if you call encode_compact, without allocating.
-    #[inline]
-    pub const fn compact_length(&self) -> usize {
-        let d = self.data.len();
-        // subtract 1 if odd
-        let hex_len = d - (d & 1);
-        // prefix + packed bytes
-        1 + (hex_len / 2)
-    }
-
-    /// Returns the first compacted byte, used to calculate the length without allocating.
-    #[inline]
-    pub fn compact_first_byte(&self) -> u8 {
-        let is_leaf = self.is_leaf();
-        let d = self.data.len();
-        let odd = d & 1 == 1;
-
-        let mut v = 0u8;
-
-        if odd {
-            v = 0x10 + self.data[0];
-        }
-
-        if is_leaf {
-            v += 0x20;
-        }
-
-        v
-    }
-
     /// Encodes the nibbles in compact form
     pub fn decode_compact(compact: &[u8]) -> Self {
         Self::from_hex(compact_to_hex(compact))
@@ -310,10 +280,6 @@ impl AsRef<[u8]> for Nibbles {
 impl RLPEncode for Nibbles {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf).encode_field(&self.data).finish();
-    }
-
-    fn length(&self) -> usize {
-        list_length(self.data.length())
     }
 }
 
