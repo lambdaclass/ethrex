@@ -218,7 +218,7 @@ pub trait RpcHandler: Sized {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
-fn get_error_kind(err: &RpcErr) -> String {
+fn get_error_kind(err: &RpcErr) -> &'static str {
     match err {
         RpcErr::MethodNotFound(_) => "MethodNotFound",
         RpcErr::WrongParam(_) => "WrongParam",
@@ -236,7 +236,6 @@ fn get_error_kind(err: &RpcErr) -> String {
         RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
         RpcErr::UnknownPayload(_) => "UnknownPayload",
     }
-    .to_string()
 }
 
 pub const FILTER_DURATION: Duration = {

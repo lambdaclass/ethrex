@@ -32,7 +32,7 @@ fn initialize_rpc_duration_histogram() -> HistogramVec {
 #[derive(Clone)]
 pub enum RpcOutcome {
     Success,
-    Error(String),
+    Error(&'static str),
 }
 
 impl RpcOutcome {
