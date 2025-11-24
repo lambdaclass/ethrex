@@ -20,6 +20,11 @@ pub static PROVE_CLIENT: OnceLock<ZiskProver<Asm>> = OnceLock::new();
 pub static EXECUTE_CLIENT: OnceLock<ZiskProver<Asm>> = OnceLock::new();
 
 pub fn execute_client() -> &'static ZiskProver<Asm> {
+    if PROVE_CLIENT.get().is_some() {
+        panic!(
+            "ZisK prover was previously initialized for proving, which is not allowed because of MPI requiring to be initialized just once."
+        );
+    }
     EXECUTE_CLIENT.get_or_init(|| {
         ProverClient::builder()
             .asm()
@@ -32,14 +37,19 @@ pub fn execute_client() -> &'static ZiskProver<Asm> {
 }
 
 pub fn prove_client() -> &'static ZiskProver<Asm> {
+    if EXECUTE_CLIENT.get().is_some() {
+        panic!(
+            "ZisK prover was previously initialized for execution, which is not allowed because of MPI requiring to be initialized just once."
+        );
+    }
     PROVE_CLIENT.get_or_init(|| {
         ProverClient::builder()
             .asm()
             .prove()
-            .gpu(Default::default())
             .aggregation(true)
             .elf_path(ELF_PATH.into())
             .unlock_mapped_memory(true)
+            .gpu(Default::default())
             .build()
             .unwrap_or_else(|e| panic!("Failed to setup ZisK prover client: {e}"))
     })
