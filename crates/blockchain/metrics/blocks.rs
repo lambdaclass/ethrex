@@ -55,7 +55,11 @@ impl MetricsBlocks {
                     "gigagas_summary",
                     "Summary of the block execution throughput through gigagas/s",
                 )
-                .buckets(prometheus::linear_buckets(0.0, 0.05, 60).unwrap()),
+                .buckets({
+                    let mut buckets = prometheus::linear_buckets(0.0, 0.02, 101).unwrap();
+                    buckets.extend(vec![2.5, 3.0, 4.0, 5.0, 10.0, 20.0]);
+                    buckets
+                }),
             )
             .unwrap(),
             gigagas_block_building: Gauge::new(
