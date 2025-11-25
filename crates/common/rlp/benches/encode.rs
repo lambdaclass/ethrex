@@ -222,12 +222,24 @@ fn bench_encode_strings(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_strings");
     for &len in &[5usize, 60, 500] {
         let label = format!("len_{len}");
-        let value = black_box("a".repeat(len));
+        let mut rng = StdRng::seed_from_u64(len as u64);
+        let values: Vec<String> = (0..10_000)
+            .map(|_| {
+                let mut s = String::with_capacity(len);
+                for _ in 0..len {
+                    s.push(rng.r#gen());
+                }
+                s
+            })
+            .collect();
+        let values = black_box(values);
         group.bench_function(label, move |b| {
             let mut buf = Vec::new();
             b.iter(|| {
                 buf.clear();
-                value.encode(&mut buf);
+                for v in &values {
+                    v.encode(&mut buf);
+                }
                 black_box(&buf);
             });
         });
@@ -239,7 +251,9 @@ fn bench_encode_int_lists(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_int_lists");
     for &count in &[10usize, 100, 1000] {
         let label = format!("len_{count}");
-        let value: Vec<_> = black_box((0..count as u64).collect());
+        let mut rng = StdRng::seed_from_u64(count as u64);
+        let values: Vec<u64> = (0..10_000).map(|_| rng.r#gen()).collect();
+        let value = black_box(values);
         group.bench_function(label, move |b| {
             let mut buf = Vec::new();
             b.iter(|| {
