@@ -2,11 +2,12 @@ use bytes::Bytes;
 use criterion::{Criterion, criterion_group, criterion_main};
 use ethereum_types::U256;
 use ethrex_common::{
-    Address, Bloom, H160, H256,
+    Address, Bloom, H32, H160, H256,
     constants::EMPTY_KECCACK_HASH,
     types::{
         AccountInfo, AccountState, BYTES_PER_BLOB, BlobsBundle, Block, BlockBody, BlockHeader,
-        Transaction, Withdrawal,
+        ForkId, Log, Receipt, ReceiptWithBloom, Transaction, TxType, Withdrawal,
+        requests::EncodedRequests,
     },
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -262,6 +263,131 @@ fn bench_encode_account_state(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_encode_fork_id(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_fork_id");
+
+    let fork_id = ForkId {
+        fork_hash: H32::from_slice(&[0xde, 0xad, 0xbe, 0xef]),
+        fork_next: 17_000_000,
+    };
+
+    group.bench_function("fork_id", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            fork_id.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_log(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_log");
+
+    let log_entry = Log {
+        address: Address::from_str("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba").unwrap(),
+        topics: vec![HASH, H256::repeat_byte(0x11), H256::repeat_byte(0x22)],
+        data: Bytes::from(vec![0x55; 128]),
+    };
+
+    group.bench_function("log", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            log_entry.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_receipt(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_receipt");
+
+    let receipt_logs = vec![
+        Log {
+            address: Address::from_str("0x1000000000000000000000000000000000000001").unwrap(),
+            topics: vec![HASH, H256::repeat_byte(0x33)],
+            data: Bytes::from(vec![0xaa; 96]),
+        },
+        Log {
+            address: Address::from_str("0x2000000000000000000000000000000000000002").unwrap(),
+            topics: vec![H256::repeat_byte(0xbb)],
+            data: Bytes::from(vec![0xbb; 64]),
+        },
+    ];
+
+    let receipt = Receipt {
+        tx_type: TxType::EIP1559,
+        succeeded: true,
+        cumulative_gas_used: 120_000,
+        logs: receipt_logs,
+    };
+
+    group.bench_function("receipt", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            receipt.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_receipt_with_bloom(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_receipt_with_bloom");
+
+    let logs_with_bloom = vec![
+        Log {
+            address: Address::from_str("0x3000000000000000000000000000000000000003").unwrap(),
+            topics: vec![H256::repeat_byte(0x44), H256::repeat_byte(0x55)],
+            data: Bytes::from(vec![0xcc; 80]),
+        },
+        Log {
+            address: Address::from_str("0x4000000000000000000000000000000000000004").unwrap(),
+            topics: vec![HASH],
+            data: Bytes::from(vec![0xdd; 48]),
+        },
+    ];
+
+    let receipt = ReceiptWithBloom::new(TxType::EIP4844, true, 240_000, logs_with_bloom);
+
+    group.bench_function("receipt_with_bloom", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            receipt.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_encoded_requests(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_encoded_requests");
+
+    let mut request_bytes: Vec<u8> = (0..192).map(|i| i as u8).collect();
+    request_bytes.insert(0, 0x00);
+    let encoded_requests = EncodedRequests(Bytes::from(request_bytes));
+
+    group.bench_function("encoded_requests", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            encoded_requests.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
 fn bench_encode_blobs_bundle(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_blobs_bundle");
 
@@ -462,6 +588,11 @@ criterion_group!(
     bench_encode_string_lists,
     bench_encode_account_info,
     bench_encode_account_state,
+    bench_encode_fork_id,
+    bench_encode_log,
+    bench_encode_receipt,
+    bench_encode_receipt_with_bloom,
+    bench_encode_encoded_requests,
     bench_encode_blobs_bundle,
     bench_encode_block_header,
     bench_encode_block,
