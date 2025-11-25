@@ -55,6 +55,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
+use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -191,10 +192,50 @@ pub trait RpcHandler: Sized {
 
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(context).await
+        let namespace = match req.namespace() {
+            Ok(RpcNamespace::Engine) => "engine",
+            _ => "rpc",
+        };
+        let method = req.method.as_str();
+
+        let result =
+            record_async_duration(
+                namespace,
+                method,
+                async move { request.handle(context).await },
+            )
+            .await;
+
+        let outcome = match &result {
+            Ok(_) => RpcOutcome::Success,
+            Err(err) => RpcOutcome::Error(get_error_kind(err)),
+        };
+        record_rpc_outcome(namespace, method, outcome);
+
+        result
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
+}
+
+fn get_error_kind(err: &RpcErr) -> &'static str {
+    match err {
+        RpcErr::MethodNotFound(_) => "MethodNotFound",
+        RpcErr::WrongParam(_) => "WrongParam",
+        RpcErr::BadParams(_) => "BadParams",
+        RpcErr::MissingParam(_) => "MissingParam",
+        RpcErr::TooLargeRequest => "TooLargeRequest",
+        RpcErr::BadHexFormat(_) => "BadHexFormat",
+        RpcErr::UnsuportedFork(_) => "UnsuportedFork",
+        RpcErr::Internal(_) => "Internal",
+        RpcErr::Vm(_) => "Vm",
+        RpcErr::Revert { .. } => "Revert",
+        RpcErr::Halt { .. } => "Halt",
+        RpcErr::AuthenticationError(_) => "AuthenticationError",
+        RpcErr::InvalidForkChoiceState(_) => "InvalidForkChoiceState",
+        RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
+        RpcErr::UnknownPayload(_) => "UnknownPayload",
+    }
 }
 
 pub const FILTER_DURATION: Duration = {
