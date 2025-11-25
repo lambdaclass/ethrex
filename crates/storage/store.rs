@@ -1,8 +1,8 @@
+use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
-use crate::{api::StoreEngine, apply_prefix};
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
@@ -12,18 +12,19 @@ use ethrex_common::{
         BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
         Transaction,
     },
+    utils::keccak,
 };
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
-use sha3::{Digest as _, Keccak256};
-use std::{collections::hash_map::Entry, sync::Arc};
+use std::{collections::hash_map::Entry, path::PathBuf, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Mutex,
 };
 use std::{fmt::Debug, path::Path};
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
@@ -238,14 +239,14 @@ impl Store {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         self.engine.get_block_bodies(from, to).await
     }
 
     pub async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         self.engine.get_block_bodies_by_hash(hashes).await
     }
 
@@ -352,25 +353,24 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
-    #[instrument(level = "trace", name = "Trie update", skip_all)]
     pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
 
         Ok(Some(self.apply_account_updates_from_trie_batch(
-            state_trie,
+            &mut state_trie,
             account_updates,
         )?))
     }
 
     pub fn apply_account_updates_from_trie_batch<'a>(
         &self,
-        mut state_trie: Trie,
+        state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
@@ -533,50 +533,43 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
-        let mut nodes = HashMap::new();
-        let mut genesis_state_trie = self.engine.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut account_trie = self.engine.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
+
             // Store account code (as this won't be stored in the trie)
             let code = Code::from_bytecode(account.code);
             let code_hash = code.hash;
             self.add_account_code(code).await?;
+
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
                 .open_direct_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
+
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
-            let (storage_root, new_nodes) = storage_trie.collect_changes_since_last_hash();
-            nodes.insert(H256::from_slice(&hashed_address), new_nodes);
+
+            // TODO(#5195): committing each storage trie individually is inefficient.
+            // We would benefit form a mass storage node insertion method.
+
             // Add account to trie
             let account_state = AccountState {
                 nonce: account.nonce,
                 balance: account.balance,
-                storage_root,
+                storage_root: storage_trie.hash()?,
                 code_hash,
             };
-            genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
-        }
-        let (state_root, state_nodes) = genesis_state_trie.collect_changes_since_last_hash();
 
-        // TODO: replace this with a Store method
-        genesis_state_trie.db().put_batch(
-            nodes
-                .into_iter()
-                .flat_map(|(account_hash, nodes)| {
-                    nodes
-                        .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                })
-                .chain(state_nodes)
-                .collect(),
-        )?;
-        Ok(state_root)
+            account_trie.insert(hashed_address, account_state.encode_to_vec())?;
+        }
+
+        Ok(account_trie.hash()?)
     }
 
     pub async fn add_receipt(
@@ -712,27 +705,39 @@ impl Store {
         self.engine.get_block_by_number(block_number).await
     }
 
-    pub async fn get_storage_at(
+    pub fn get_storage_at(
         &self,
         block_number: BlockNumber,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        match self.get_canonical_block_hash(block_number).await? {
-            Some(block_hash) => self.get_storage_at_hash(block_hash, address, storage_key),
+        match self.get_block_header(block_number)? {
+            Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
             None => Ok(None),
         }
     }
 
-    pub fn get_storage_at_hash(
+    pub fn get_storage_at_root(
         &self,
-        block_hash: BlockHash,
+        state_root: H256,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
-            return Ok(None);
+        let hashed_address = hash_address(&address);
+        let account_hash = H256::from_slice(&hashed_address);
+        let storage_root = if self.engine.flatkeyvalue_computed(account_hash)? {
+            // We will use FKVs, we don't need the root
+            *EMPTY_TRIE_HASH
+        } else {
+            let state_trie = self.open_state_trie(state_root)?;
+            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+                return Ok(None);
+            };
+            let account = AccountState::decode(&encoded_account)?;
+            account.storage_root
         };
+        let storage_trie = self.open_storage_trie(account_hash, storage_root, state_root)?;
+
         let hashed_key = hash_key(&storage_key);
         storage_trie
             .get(&hashed_key)?
@@ -883,14 +888,12 @@ impl Store {
         get_account_state_from_trie(&state_trie, address)
     }
 
-    pub fn get_account_state_by_hash(
+    pub fn get_account_state_by_root(
         &self,
-        block_hash: BlockHash,
+        state_root: H256,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
+        let state_trie = self.open_state_trie(state_root)?;
         self.get_account_state_from_trie(&state_trie, address)
     }
 
@@ -1346,7 +1349,7 @@ impl Store {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError> {
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
         self.engine.read_fullsync_batch(start, limit).await
     }
 
@@ -1361,6 +1364,10 @@ impl Store {
 
     pub async fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
         self.engine.create_checkpoint(path.as_ref()).await
+    }
+
+    pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
+        self.engine.get_store_directory()
     }
 }
 
@@ -1410,23 +1417,15 @@ impl Iterator for AncestorIterator {
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
-    Keccak256::new_with_prefix(address.to_fixed_bytes())
-        .finalize()
-        .to_vec()
+    keccak_hash(address.to_fixed_bytes()).to_vec()
 }
 
 fn hash_address_fixed(address: &Address) -> H256 {
-    H256(
-        Keccak256::new_with_prefix(address.to_fixed_bytes())
-            .finalize()
-            .into(),
-    )
+    keccak(address.to_fixed_bytes())
 }
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
-    Keccak256::new_with_prefix(key.to_fixed_bytes())
-        .finalize()
-        .to_vec()
+    keccak_hash(key.to_fixed_bytes()).to_vec()
 }
 
 #[derive(Debug, Default, Clone)]
@@ -1453,6 +1452,7 @@ mod tests {
         Bloom, H160,
         constants::EMPTY_KECCACK_HASH,
         types::{Transaction, TxType},
+        utils::keccak,
     };
     use ethrex_rlp::decode::RLPDecode;
     use std::{fs, str::FromStr};
@@ -1508,7 +1508,7 @@ mod tests {
         let mut accounts: Vec<_> = (0u64..1_000)
             .map(|i| {
                 (
-                    H256(Keccak256::digest(i.to_be_bytes()).into()),
+                    keccak(i.to_be_bytes()),
                     AccountState {
                         nonce: 2 * i,
                         balance: U256::from(3 * i),
@@ -1534,14 +1534,9 @@ mod tests {
     }
 
     async fn test_iter_storage(store: Store) {
-        let address = H256(Keccak256::digest(12345u64.to_be_bytes()).into());
+        let address = keccak(12345u64.to_be_bytes());
         let mut slots: Vec<_> = (0u64..1_000)
-            .map(|i| {
-                (
-                    H256(Keccak256::digest(i.to_be_bytes()).into()),
-                    U256::from(2 * i),
-                )
-            })
+            .map(|i| (keccak(i.to_be_bytes()), U256::from(2 * i)))
             .collect();
         slots.sort_by_key(|a| a.0);
         let mut trie = store

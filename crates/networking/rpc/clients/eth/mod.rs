@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 
 use crate::{
     clients::eth::errors::{
-        CallError, GetBlobBaseFeeRequestError, GetPeerCountError, GetWitnessError,
-        TxPoolContentError,
+        CallError, GetBlobBaseFeeRequestError, GetEthConfigError, GetPeerCountError,
+        GetWitnessError, TxPoolContentError,
     },
     debug::execution_witness::RpcExecutionWitness,
+    eth::client::EthConfigResponse,
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -65,9 +66,11 @@ pub struct Overrides {
     pub max_fee_per_gas: Option<u64>,
     pub max_priority_fee_per_gas: Option<u64>,
     pub access_list: Vec<(Address, Vec<H256>)>,
+    pub fee_token: Option<Address>,
     pub gas_price_per_blob: Option<U256>,
     pub block: Option<BlockIdentifier>,
     pub blobs_bundle: Option<BlobsBundle>,
+    pub wrapper_version: Option<u8>,
 }
 
 pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
@@ -571,6 +574,19 @@ impl EthClient {
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
                 Err(GetBalanceError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
+    pub async fn get_eth_config(&self) -> Result<EthConfigResponse, EthClientError> {
+        let request = RpcRequest::new("eth_config", None);
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetEthConfigError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(GetEthConfigError::RPCError(error_response.error.message).into())
             }
         }
     }

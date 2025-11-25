@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io run-hive-eest-blobs
+		load-test-fibonacci load-test-io run-hive-eels-blobs
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -126,19 +126,19 @@ run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
-# EEST Hive
-TEST_PATTERN_EEST ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
-run-hive-eest: build-image setup-hive ## 🧪 Generic command for running Hive EEST tests. Specify EEST_SIM
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EEST_SIM) --sim.limit "$(TEST_PATTERN_EEST)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/blockchain/.fixtures_url)
+# EELS Hive
+TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
+run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/blockchain/.fixtures_url)
 
-run-hive-eest-engine: ## Run hive EEST Engine tests
-	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-engine
+run-hive-eels-engine: ## Run hive EELS Engine tests
+	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-engine
 
-run-hive-eest-rlp: ## Run hive EEST RLP tests
-	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-rlp
+run-hive-eels-rlp: ## Run hive EELS RLP tests
+	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-rlp
 
-run-hive-eest-blobs: ## Run hive EEST Blobs tests
-	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/execute-blobs
+run-hive-eels-blobs: ## Run hive EELS Blobs tests
+	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
@@ -186,10 +186,19 @@ mermaid-init.js mermaid.min.js &:
 		&& exit 1)
 
 docs-deps: ## 📦 Install dependencies for generating the documentation
-	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck mdbook-katex
+	cargo install --version 0.9.4 mdbook-katex
+	cargo install --version 0.7.7 mdbook-linkcheck
+	cargo install --version 0.8.0 mdbook-alerts
+	cargo install --version 0.15.0 mdbook-mermaid
 
 docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 	mdbook build
 
 docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
 	mdbook serve --open
+
+update-cargo-lock: ## 📦 Update Cargo.lock files
+	cargo tree
+	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml
+	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml
+	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml

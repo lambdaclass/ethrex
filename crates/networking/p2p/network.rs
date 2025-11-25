@@ -11,7 +11,6 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
-        initiator::RLPxInitiator,
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
@@ -123,8 +122,6 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery server: {e}");
     })?;
 
-    RLPxInitiator::spawn(context.clone()).await;
-
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
     Ok(())
@@ -198,8 +195,11 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
             // Headers metrics
-            let headers_to_download = METRICS.headers_to_download.load(Ordering::Relaxed);
-            let headers_downloaded = METRICS.downloaded_headers.load(Ordering::Relaxed);
+            let headers_to_download = METRICS.sync_head_block.load(Ordering::Relaxed);
+            // We may download more than expected headers due to duplicates
+            // We just clamp it to the max to avoid showing the user confusing data
+            let headers_downloaded =
+                u64::min(METRICS.downloaded_headers.get(), headers_to_download);
             let headers_remaining = headers_to_download.saturating_sub(headers_downloaded);
             let headers_download_progress = if headers_to_download == 0 {
                 "0%".to_string()

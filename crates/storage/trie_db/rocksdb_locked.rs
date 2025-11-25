@@ -3,10 +3,7 @@ use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded, SnapshotWithThreadMode};
 use std::sync::Arc;
 
-use crate::{
-    store_db::rocksdb::{CF_FLATKEYVALUE, CF_MISC_VALUES},
-    trie_db::layering::apply_prefix,
-};
+use crate::trie_db::layering::apply_prefix;
 
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
 pub struct RocksDBLockedTrieDB {
@@ -26,30 +23,24 @@ pub struct RocksDBLockedTrieDB {
 impl RocksDBLockedTrieDB {
     pub fn new(
         db: Arc<DBWithThreadMode<MultiThreaded>>,
-        cf_name: &str,
+        trie_cf_name: &str,
+        fkv_cf_name: &str,
         address_prefix: Option<H256>,
+        last_written: Vec<u8>,
     ) -> Result<Self, TrieError> {
         // Leak the database reference to get 'static lifetime
         let db = Box::leak(Box::new(db));
 
         // Verify column family exists
-        let cf = db.cf_handle(cf_name).ok_or_else(|| {
-            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
+        let cf = db.cf_handle(trie_cf_name).ok_or_else(|| {
+            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", trie_cf_name))
         })?;
         // Verify column family exists
-        let cf_flatkeyvalue = db.cf_handle(CF_FLATKEYVALUE).ok_or_else(|| {
-            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
+        let cf_flatkeyvalue = db.cf_handle(fkv_cf_name).ok_or_else(|| {
+            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", trie_cf_name))
         })?;
 
-        let cf_misc = db
-            .cf_handle(CF_MISC_VALUES)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
-        let last_computed_flatkeyvalue = db
-            .get_cf(&cf_misc, "last_written")
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Error reading last_written: {e}")))?
-            .map(|v| Nibbles::from_hex(v.to_vec()))
-            .unwrap_or_default();
-        drop(cf_misc);
+        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
 
         // Create snapshot for consistent reads
         let snapshot = db.snapshot();

@@ -11,7 +11,17 @@ use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
 pub struct BranchNode {
     pub choices: [NodeRef; 16],
     pub value: ValueRLP,
@@ -253,7 +263,16 @@ impl BranchNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded(&self.encode_to_vec())
+        self.compute_hash_no_alloc(&mut vec![])
+    }
+
+    /// Computes the node's hash, using the provided buffer
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+        buf.clear();
+        self.encode(buf);
+        let hash = NodeHash::from_encoded(buf);
+        buf.clear();
+        hash
     }
 
     /// Traverses own subtrie until reaching the node containing `path`

@@ -10,15 +10,12 @@ use crate::{
 impl<'a> VM<'a> {
     // DUP operation
     pub fn op_dup<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
         // Increase the consumed gas
-        current_call_frame.increase_consumed_gas(gas_cost::DUPN)?;
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::DUPN)?;
 
-        // Get the value at the specified depth
-        let value_at_depth = *current_call_frame.stack.get(N)?;
-
-        // Push the duplicated value onto the stack
-        current_call_frame.stack.push1(value_at_depth)?;
+        // Duplicate the value at the specified depth
+        self.current_call_frame.stack.dup::<N>()?;
 
         Ok(OpcodeResult::Continue)
     }

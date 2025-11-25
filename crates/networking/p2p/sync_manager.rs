@@ -67,18 +67,6 @@ impl SyncManager {
         sync_manager
     }
 
-    /// Creates a dummy SyncManager for tests where syncing is not needed
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
-        Self {
-            snap_enabled: Arc::new(AtomicBool::new(false)),
-            syncer: Arc::new(Mutex::new(Syncer::dummy())),
-            last_fcu_head: Arc::new(Mutex::new(H256::zero())),
-            store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
-                .expect("Failed to start Storage Engine"),
-        }
-    }
-
     /// Sets the latest fcu head and starts the next sync cycle if the syncer is currently inactive
     pub fn sync_to_head(&self, fcu_head: H256) {
         self.set_head(fcu_head);
