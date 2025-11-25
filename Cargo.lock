@@ -3711,6 +3711,7 @@ dependencies = [
  "bytes",
  "criterion 0.7.0",
  "ethereum-types 0.15.1",
+ "ethrex-common",
  "hex",
  "hex-literal",
  "lazy_static",
