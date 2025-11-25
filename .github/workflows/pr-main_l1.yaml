@@ -56,6 +56,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       # We don't run with workspace, as members of the workspace require l2. We run it with workspace
       # om the l2 lint
       - name: Run cargo check
@@ -96,6 +102,12 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Run unit tests
         run: |
@@ -311,6 +323,12 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Compile ethrex binary
         run: cargo build --bin ethrex
