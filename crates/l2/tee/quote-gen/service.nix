@@ -37,7 +37,7 @@ let
     owner = "OpenZeppelin";
     repo = "openzeppelin-contracts";
     rev = "f7da70c26e7bbb54da485908b332df6b6b5b70ee";
-    hash = "sha256-5yqq6+BCn/XLwNsf/2Bmp49BkdzOfT0D8jPXHxAe0Ps=";
+    hash = "sha256-UrpIpJBQ7hPtRZE9HckUWhHjJ2Xq3LntgClm3HEbg00=";
   };
 in
 let
