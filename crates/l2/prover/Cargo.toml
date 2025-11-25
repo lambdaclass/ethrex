@@ -70,6 +70,8 @@ l2 = [
     "guest_program/l2",
     "ethrex-l2/l2",
 ] # the prover can work with either l1 or l2 blocks
+
+# temporary feature until we fix cargo-zisk setup-rom from failing in the CI
 ci = ["guest_program/ci"]
 
 [lints.clippy]
