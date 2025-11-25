@@ -26,6 +26,13 @@ let
   };
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
   solc_0_8_29 = pkgs.callPackage ./solc-0.8.29.nix { };
+  openzeppelinUpgradeable = pkgs.fetchFromGitHub {
+    owner = "OpenZeppelin";
+    repo = "openzeppelin-contracts-upgradeable";
+    rev = "6b9807b0639e1dd75e07fa062e9432eb3f35dd8c";
+    hash = "sha256-AdRgGkcSo5ULGYihLjySYvRnOK1ncuD21dtIFLvbK1Y=";
+    fetchSubmodules = true;
+  };
 in
 let
   quoteGen = rustPlatform.buildRustPackage rec {
@@ -55,7 +62,7 @@ let
     env = {
       OPENSSL_NO_VENDOR = 1;
       VERGEN_GIT_SHA = gitRev;
-      ETHREX_SDK_OPENZEPPELIN_DIR = "${src}/lib/openzeppelin-contracts-upgradeable";
+      ETHREX_SDK_OPENZEPPELIN_DIR = "${openzeppelinUpgradeable}";
     };
   };
 in
