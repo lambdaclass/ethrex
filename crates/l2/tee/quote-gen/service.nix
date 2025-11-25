@@ -30,7 +30,7 @@ let
     owner = "OpenZeppelin";
     repo = "openzeppelin-contracts-upgradeable";
     rev = "6b9807b0639e1dd75e07fa062e9432eb3f35dd8c";
-    hash = "sha256-AdRgGkcSo5ULGYihLjySYvRnOK1ncuD21dtIFLvbK1Y=";
+    hash = "sha256-aLWyvUuBtF1tDy531opzRi8myeMSipixUDkqcaQBRh0=";
     fetchSubmodules = true;
   };
 in
