@@ -62,6 +62,8 @@ pub struct L1WatcherConfig {
     pub l2s_rpc_urls: Vec<Url>,
     pub l2s_chain_ids: Vec<u64>,
     pub router_address: Address,
+    pub l2s_onchain_proposer_address: Vec<Address>,
+    pub beacon_rpc_url: Url,
 }
 
 #[derive(Clone, Debug)]

@@ -15,6 +15,7 @@ use ethrex_l2_sdk::{
     verify_message,
 };
 use ethrex_rpc::clients::EthClientError;
+use ethrex_rpc::clients::beacon::BeaconClient;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
@@ -28,9 +29,15 @@ use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
 };
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 use std::time::Duration;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
+
+// keccak256("BatchCommitted(bytes32)")
+pub static L2COMMIT_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
+    keccak("BatchCommitted(bytes32)".as_bytes())
+});
 
 #[derive(Clone)]
 pub enum CallMessage {
@@ -66,6 +73,7 @@ pub struct L1Watcher {
     pub sequencer_state: SequencerState,
     pub l1_blob_base_fee_update_interval: u64,
     pub chain_id_topic: H256,
+    pub beacon_client: BeaconClient,
 }
 
 pub struct L2Client {
@@ -73,6 +81,7 @@ pub struct L2Client {
     pub last_block_fetched_l2: U256,
     pub messenger_address: Address,
     pub chain_id: u64,
+    pub onchain_proposer_address: Address,
 }
 
 #[derive(Clone, Serialize)]
@@ -96,16 +105,17 @@ impl L1Watcher {
         l2_url: Url,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
+        let beacon_client = BeaconClient::new(watcher_config.beacon_rpc_url.clone());
         let this_l2_client = EthClient::new(l2_url)?;
         let mut l2_clients: Vec<L2Client> = vec![];
         info!(
             "Configuring L1 Watcher L2 clients {:?} {:?}",
             watcher_config.l2s_rpc_urls, watcher_config.l2s_chain_ids
         );
-        for (url, chain_id) in watcher_config
+        for ((url, chain_id), onchain_proposer_address) in watcher_config
             .l2s_rpc_urls
             .iter()
-            .zip(watcher_config.l2s_chain_ids.clone())
+            .zip(watcher_config.l2s_chain_ids.clone()).zip(watcher_config.l2s_onchain_proposer_address.clone())
         {
             info!(
                 "Adding L2 client with URL: {} and chain ID: {}",
@@ -117,6 +127,7 @@ impl L1Watcher {
                 last_block_fetched_l2: U256::zero(),
                 messenger_address: MESSENGER_ADDRESS,
                 chain_id,
+                onchain_proposer_address,
             });
         }
         let last_block_fetched = U256::zero();
@@ -143,6 +154,7 @@ impl L1Watcher {
             sequencer_state,
             l1_blob_base_fee_update_interval: watcher_config.l1_blob_base_fee_update_interval,
             chain_id_topic,
+            beacon_client,
         })
     }
 
@@ -445,30 +457,63 @@ impl L1Watcher {
 
         // TODO: On errors, we may want to try updating the rest of L2 clients.
         for l2_client in &mut self.l2_clients {
-            let (_, logs) = Self::get_privileged_transactions(
-                l2_client.last_block_fetched_l2,
-                block_delay,
-                &l2_client.eth_client,
-                topics.clone(),
-                l2_client.messenger_address,
-                self.max_block_step,
-            )
-            .await?;
 
-            info!("Fetched {} L2 logs from L2 client", logs.len());
+            if l2_client.eth_client.get_block_number().await.is_err() {
+                // get from l1
+                let l1_logs = self.eth_client.get_logs(U256::zero(), self.eth_client.get_block_number().await?, l2_client.onchain_proposer_address, vec![*L2COMMIT_EVENT_SELECTOR]).await?;
+                for log in l1_logs {
+                    info!("Found log");
+                    let tx = self.eth_client.get_transaction_by_hash(log.transaction_hash).await?.unwrap();
 
-            let verified_logs =
-                filter_verified_messages(self.router_address, &self.eth_client, l2_client, logs)
-                    .await?;
+                    let blob_versioned_hashes = tx.tx.blob_versioned_hashes();
+                    
+                    let block = self.eth_client.get_block_by_number(BlockIdentifier::Number(log.block_number), false).await?;
 
-            info!("Verified {} L2 logs from L2 client", verified_logs.len());
+                    let parent_beacon_hash = block
+                                            .header
+                                            .parent_beacon_block_root.unwrap();
 
-            // We need to update the last block fetched only if the logs were verified.
-            if let Some((_, block_number, _)) = verified_logs.last() {
-                l2_client.last_block_fetched_l2 = (*block_number).into();
+                    let parent_beacon_block =
+                                            self.beacon_client.get_block_by_hash(parent_beacon_hash).await?;
+                    let target_slot = parent_beacon_block.message.slot + 1;
+
+                    for blob in self.beacon_client
+                        .get_blobs_by_slot(target_slot)
+                        .await?
+                        .into_iter()
+                        .filter(|blob| blob_versioned_hashes.contains(&blob.versioned_hash()))
+                    {
+                        println!("Found blob with index: {}", blob.index);
+                        println!("Blob data: 0x{}", hex::encode(&blob.blob));
+                    }
+                }
+            } else {
+                // get from l2
+                let (_, logs) = Self::get_privileged_transactions(
+                    l2_client.last_block_fetched_l2,
+                    block_delay,
+                    &l2_client.eth_client,
+                    topics.clone(),
+                    l2_client.messenger_address,
+                    self.max_block_step,
+                )
+                .await?;
+
+                info!("Fetched {} L2 logs from L2 client", logs.len());
+
+                let verified_logs =
+                    filter_verified_messages(self.router_address, &self.eth_client, l2_client, logs)
+                        .await?;
+
+                info!("Verified {} L2 logs from L2 client", verified_logs.len());
+
+                // We need to update the last block fetched only if the logs were verified.
+                if let Some((_, block_number, _)) = verified_logs.last() {
+                    l2_client.last_block_fetched_l2 = (*block_number).into();
+                }
+
+                acc_logs.extend(verified_logs);
             }
-
-            acc_logs.extend(verified_logs);
         }
         Ok(acc_logs
             .iter()

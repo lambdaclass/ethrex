@@ -202,7 +202,9 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
                 l2s_rpc_urls: opts.watcher_opts.l2s_rpc_urls.unwrap_or_default(),
                 l2s_chain_ids: opts.watcher_opts.l2s_chain_ids.unwrap_or_default(),
+                l2s_onchain_proposer_address: opts.watcher_opts.l2s_onchain_proposer_address.unwrap_or_default(),
                 router_address: opts.watcher_opts.router_address.unwrap_or_default(),
+                beacon_rpc_url: opts.watcher_opts.beacon_rpc_url.unwrap_or_else(|| Url::from_str("http://localhost:5052").unwrap()),
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -442,6 +444,19 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub l2s_chain_ids: Option<Vec<u64>>,
+    #[arg(
+        long = "watcher.l2-onchain-proposer-address",
+        num_args = 1..,
+        env = "ETHREX_WATCHER_L2_ONCHAIN_PROPOSER_ADDRESS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2s_onchain_proposer_address: Option<Vec<Address>>,
+    #[arg(
+        long = "watcher.beacon-rpc-url",
+        env = "ETHREX_WATCHER_BEACON_RPC_URL",
+        help_heading = "L1 Watcher options"
+    )]
+    pub beacon_rpc_url: Option<Url>,
 }
 
 impl Default for WatcherOptions {
@@ -455,6 +470,8 @@ impl Default for WatcherOptions {
             router_address: None,
             l2s_rpc_urls: None,
             l2s_chain_ids: None,
+            l2s_onchain_proposer_address: None,
+            beacon_rpc_url: None,
         }
     }
 }
