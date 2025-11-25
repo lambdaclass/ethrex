@@ -130,3 +130,41 @@ Once the release is verified, **merge the branch via PR**.
 ## Dealing with hotfixes
 
 If hotfixes are needed before the final release, commit them to `release/vX.Y.Z`, push, and create a new pre-release tag. The final tag `vX.Y.Z` should always point to the exact commit you will merge via PR.
+
+## Troubleshooting
+
+### Failure on "latest release" workflow
+
+If the CI fails when setting a release as latest (step 4), Docker tags `latest` and `l2` may not be updated. To manually push that changes, follow these steps:
+
+- Create a new Github Personal Access Token (PAT) from the [settings](https://github.com/settings/tokens/new).
+- Check `write:packages` permission (this will auto-check `repo` permissions too), give a name and a short expiration time.
+- Save the token securely.
+- Click on `Configure SSO` button and authorize LambdaClass organization.
+- Log in to Github Container Registry: `docker login ghcr.io`. Put your Github's username and use the token as your password.
+- Pull RC images:
+
+```bash
+docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
+docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
+```
+
+- Retag them:
+
+```bash
+docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:X.Y.Z
+docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
+docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:latest
+docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:l2
+```
+
+- Push them:
+
+```bash
+docker push ghcr.io/lambdaclass/ethrex:X.Y.Z
+docker push ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
+docker push ghcr.io/lambdaclass/ethrex:latest
+docker push ghcr.io/lambdaclass/ethrex:l2
+```
+
+- Delete the PAT for security ([here](https://github.com/settings/tokens))
