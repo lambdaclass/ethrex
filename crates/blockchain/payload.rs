@@ -29,9 +29,9 @@ use ethrex_storage::{Store, error::StoreError};
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+use ethrex_metrics::blocks::METRICS_BLOCKS;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
+use ethrex_metrics::transactions::{METRICS_TX, MetricsTxType};
 use tokio_util::sync::CancellationToken;
 
 use crate::{

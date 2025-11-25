@@ -308,6 +308,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         contracts_path,
         Path::new("contracts/src/l2/CommonBridgeL2.sol"),
         false,
+        false,
         Some(&remappings),
         &[contracts_path],
     )?;
@@ -560,6 +561,7 @@ async fn test_erc20_roundtrip(
     compile_contract(
         contracts_path,
         &contracts_path.join("src/example/L2ERC20.sol"),
+        false,
         false,
         Some(&remappings),
         &[contracts_path],
@@ -1134,7 +1136,7 @@ async fn test_deposit(
     println!("test_deposit: Waiting for L1 deposit transaction receipt");
 
     let deposit_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, l1_client, 5).await?;
+        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, l1_client, 50).await?;
 
     let gas_used = deposit_tx_receipt.tx_info.gas_used;
 
@@ -1314,7 +1316,8 @@ async fn test_transfer_with_privileged_tx(
 
     println!("transfer_with_ptx: Waiting for L1 to L2 transaction receipt on L1");
 
-    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
+    let l1_to_l2_tx_receipt =
+        wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 50).await?;
 
     assert!(
         l1_to_l2_tx_receipt.receipt.status,
@@ -1362,7 +1365,8 @@ async fn test_gas_burning(
 
     println!("test_gas_burning: Waiting for L1 to L2 transaction receipt on L1");
 
-    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
+    let l1_to_l2_tx_receipt =
+        wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 50).await?;
 
     assert!(l1_to_l2_tx_receipt.receipt.status);
     assert!(l1_to_l2_tx_receipt.tx_info.gas_used > l2_gas_limit);
@@ -1414,7 +1418,8 @@ async fn test_privileged_tx_not_enough_balance(
 
     println!("ptx_not_enough_balance: Waiting for L1 to L2 transaction receipt on L1");
 
-    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 5).await?;
+    let l1_to_l2_tx_receipt =
+        wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 50).await?;
 
     assert!(
         l1_to_l2_tx_receipt.receipt.status,
@@ -1711,7 +1716,7 @@ async fn test_n_withdraws(
         )
         .await?;
         let withdraw_claim_tx_receipt =
-            wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 5).await?;
+            wait_for_transaction_receipt(withdraw_claim_tx, l1_client, 50).await?;
         withdraw_claim_txs_receipts.push(withdraw_claim_tx_receipt);
     }
 
@@ -1846,7 +1851,7 @@ async fn test_deploy(
     .await?;
 
     let deploy_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, l2_client, 5).await?;
+        ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, l2_client, 50).await?;
 
     assert!(
         deploy_tx_receipt.receipt.status,
@@ -1903,7 +1908,7 @@ async fn test_deploy_l1(
     )
     .await?;
 
-    ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, client, 5).await?;
+    ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, client, 50).await?;
 
     Ok(contract_address)
 }
@@ -1953,7 +1958,7 @@ async fn test_call_to_contract_with_deposit(
 
     println!("{test}: Waiting for L1 to L2 transaction receipt on L1");
 
-    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, l1_client, 5).await?;
+    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, l1_client, 50).await?;
 
     assert!(l1_to_l2_tx_receipt.receipt.status);
 
@@ -2015,6 +2020,7 @@ async fn test_fee_token(
     compile_contract(
         fee_token_path,
         &fee_token_path.join("FeeToken.sol"),
+        false,
         false,
         Some(&remappings),
         &allow_paths,

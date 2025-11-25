@@ -2,8 +2,18 @@
 
 ## Perf
 
+### 2025-11-19
+
+- Parallelize merkleization [#5377](https://github.com/lambdaclass/ethrex/pull/5377)
+
+### 2025-11-17
+
+- Avoid temporary allocations when decoding and hashing trie nodes [#5353](https://github.com/lambdaclass/ethrex/pull/5353)
+
 ### 2025-11-13
 
+- Use specialized DUP implementation [#5324](https://github.com/lambdaclass/ethrex/pull/5324)
+- Avoid recalculating blob base fee while preparing transactions [#5328](https://github.com/lambdaclass/ethrex/pull/5328)
 - Use BlobDB for account_codes column family [#5300](https://github.com/lambdaclass/ethrex/pull/5300)
 
 ### 2025-11-12
