@@ -26,9 +26,7 @@ fn main() {
     } else {
         git_clone(
             "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
-            oz_target
-                .to_str()
-                .expect("Failed to convert path to str"),
+            oz_target.to_str().expect("Failed to convert path to str"),
             Some("release-v5.4"),
             true,
         )
