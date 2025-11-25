@@ -226,6 +226,8 @@ impl Store {
         db_options.set_compression_type(rocksdb::DBCompressionType::None);
         db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
+        db_options.set_allow_mmap_reads(true);
+
         // db_options.enable_statistics();
         // db_options.set_stats_dump_period_sec(600);
 
@@ -325,6 +327,7 @@ impl Store {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_allow_mmap_reads(true);
 
                     let mut cuckoo_opts = CuckooTableOptions::default();
                     cuckoo_opts.set_identity_as_first_hash(true);
