@@ -374,11 +374,6 @@ impl PeerHandler {
 
             // run download_chunk_from_peer in a different Tokio task
             tokio::spawn(async move {
-                trace!(
-                    %peer_id,
-                    %chunk_limit,
-                    "request_block_headers: Requesting block headers"
-                );
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
                     &mut connection,
@@ -497,7 +492,11 @@ impl PeerHandler {
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
-        debug!(%peer_id, "Requesting block headers from peer");
+        trace!(
+            %peer_id,
+            %chunk_limit,
+            "Requesting block headers from peer"
+        );
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
@@ -876,7 +875,7 @@ impl PeerHandler {
                 .inspect_err(|err| {
                     error!(
                         error=%err.error,
-                        "We had an error dumping the last accounts to disk",
+                        "Failed to dump the last accounts to disk",
                     )
                 })
                 .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
@@ -1287,9 +1286,7 @@ impl PeerHandler {
                         .await
                         .expect("Shouldn't be empty")
                         .expect("Shouldn't have a join error")
-                        .inspect_err(|err| {
-                            error!(error=?err.error, "We found this error while dumping to file")
-                        })
+                        .inspect_err(|err| error!(error=?err.error, "Error dumping to file"))
                         .map_err(PeerHandlerError::DumpError)?;
                 }
                 disk_joinset.spawn(async move {
@@ -1670,9 +1667,7 @@ impl PeerHandler {
             .await
             .into_iter()
             .map(|result| {
-                result.inspect_err(
-                    |err| error!(error=?err.error, "We found this error while dumping to file"),
-                )
+                result.inspect_err(|err| error!(error=?err.error, "Error dumping to file"))
             })
             .collect::<Result<Vec<()>, DumpError>>()
             .map_err(PeerHandlerError::DumpError)?;
