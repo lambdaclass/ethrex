@@ -5,7 +5,7 @@ pkgs.stdenv.mkDerivation rec {
 
   src = pkgs.fetchurl {
     url = "https://github.com/ethereum/solidity/releases/download/v${version}/solc-static-linux";
-    sha256 = "sha256-0000000000000000000000000000000000000000000000000000";
+    sha256 = "sha256-DgN2aq6FlbXQCN81ErlLi6zzV7ilwba2UXTcANpBjUE=";
   };
 
   dontUnpack = true;
