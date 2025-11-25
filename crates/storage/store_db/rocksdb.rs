@@ -1184,7 +1184,7 @@ impl StoreEngine for Store {
         // Fill in with None for missing bodies
         let bodies = hashes
             .into_iter()
-            .flat_map(|opt| {
+            .map(|opt| {
                 opt.map(|_| {
                     let body_ref = bodies
                         .get_mut(i)
@@ -1193,6 +1193,7 @@ impl StoreEngine for Store {
                     i += 1;
                     body
                 })
+                .flatten()
             })
             .collect();
 
