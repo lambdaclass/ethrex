@@ -56,7 +56,14 @@ impl MetricsBlocks {
                     "Summary of the block execution throughput through gigagas/s",
                 )
                 .buckets({
-                    let mut buckets = prometheus::linear_buckets(0.0, 0.02, 101).unwrap();
+                    let mut buckets = vec![0.0];
+                    // 0.0 to 0.15 Ggas (30 Mgas resolution)
+                    buckets.extend(prometheus::linear_buckets(0.03, 0.03, 5).unwrap());
+                    // 0.15 to 1.5 Ggas (10 Mgas resolution)
+                    buckets.extend(prometheus::linear_buckets(0.16, 0.01, 135).unwrap());
+                    // 1.5 to 2.0 Ggas (100 Mgas resolution)
+                    buckets.extend(prometheus::linear_buckets(1.6, 0.1, 5).unwrap());
+                    // High values
                     buckets.extend(vec![2.5, 3.0, 4.0, 5.0, 10.0, 20.0]);
                     buckets
                 }),
