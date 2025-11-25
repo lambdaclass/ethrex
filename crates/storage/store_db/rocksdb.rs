@@ -17,7 +17,7 @@ use ethrex_trie::{Nibbles, Node, Trie};
 use lru::LruCache;
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode,
-    KeyEncodingType, MultiThreaded, Options, PlainTableFactoryOptions, WriteBatch,
+    KeyEncodingType, MultiThreaded, Options, PlainTableFactoryOptions, SliceTransform, WriteBatch,
     checkpoint::Checkpoint,
 };
 use rustc_hash::FxBuildHasher;
@@ -331,6 +331,14 @@ impl Store {
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     cf_opts.set_allow_mmap_reads(true);
+
+                    cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(
+                        if cf_name == CF_ACCOUNT_FLATKEYVALUE {
+                            0
+                        } else {
+                            32
+                        },
+                    ));
 
                     let factory_opts: PlainTableFactoryOptions = PlainTableFactoryOptions {
                         user_key_length: if cf_name == CF_ACCOUNT_FLATKEYVALUE {
