@@ -128,18 +128,18 @@ fn build_zisk_program() {
         .current_dir("./src/zisk");
     #[cfg(not(feature = "ci"))]
     {
-    setup_command
-        .env("RUSTC", rustc_path("zisk"))
-        .env_remove("RUSTFLAGS")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .args([
-            "rom-setup",
-            "-e",
-            "./target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
-        ])
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .current_dir("./src/zisk");
+        setup_command
+            .env("RUSTC", rustc_path("zisk"))
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .args([
+                "rom-setup",
+                "-e",
+                "./target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
+            ])
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .current_dir("./src/zisk");
     }
 
     println!("{build_command:?}");
