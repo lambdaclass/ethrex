@@ -14,15 +14,18 @@ use ethrex_common::{
     },
 };
 use ethrex_trie::{Nibbles, Node, Trie};
+use lru::LruCache;
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch, checkpoint::Checkpoint,
 };
+use rustc_hash::FxBuildHasher;
 use std::{
     collections::HashSet,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
+        atomic::AtomicU64,
         mpsc::{SyncSender, sync_channel},
     },
 };
@@ -95,10 +98,15 @@ const CF_CHAIN_DATA: &str = "chain_data";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
 const CF_SNAP_STATE: &str = "snap_state";
 
-/// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// Account State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
 /// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-const CF_TRIE_NODES: &str = "trie_nodes";
+const CF_ACCOUNT_TRIE_NODES: &str = "account_trie_nodes";
+
+/// Storage trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+const CF_STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -115,7 +123,15 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
 const CF_FULLSYNC_HEADERS: &str = "fullsync_headers";
 
-pub const CF_FLATKEYVALUE: &str = "flatkeyvalue";
+/// Account sate flat key-value store: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+pub const CF_ACCOUNT_FLATKEYVALUE: &str = "account_flatkeyvalue";
+
+/// Storage slots key-value store: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+pub const CF_STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const CF_MISC_VALUES: &str = "misc_values";
 
@@ -136,13 +152,40 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
-#[derive(Debug, Clone)]
+// 64mb
+const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
+type CodeCache = LruCache<H256, Code, FxBuildHasher>;
+
+#[derive(Debug)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    /// Cache for account bytecodes, keyed by the bytecode hash.
+    /// Note that we don't remove entries on account code changes, since
+    /// those changes already affect the code hash stored in the account, and only
+    /// may result in this cache having useless data.
+    account_code_cache: Arc<Mutex<CodeCache>>,
+    account_code_cache_size: AtomicU64,
+}
+
+impl Clone for Store {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            trie_cache: self.trie_cache.clone(),
+            flatkeyvalue_control_tx: self.flatkeyvalue_control_tx.clone(),
+            trie_update_worker_tx: self.trie_update_worker_tx.clone(),
+            last_computed_flatkeyvalue: self.last_computed_flatkeyvalue.clone(),
+            account_code_cache: self.account_code_cache.clone(),
+            account_code_cache_size: AtomicU64::new(
+                self.account_code_cache_size
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        }
+    }
 }
 
 impl Store {
@@ -197,11 +240,13 @@ impl Store {
             CF_TRANSACTION_LOCATIONS,
             CF_CHAIN_DATA,
             CF_SNAP_STATE,
-            CF_TRIE_NODES,
+            CF_ACCOUNT_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
             CF_FULLSYNC_HEADERS,
-            CF_FLATKEYVALUE,
+            CF_ACCOUNT_FLATKEYVALUE,
+            CF_STORAGE_FLATKEYVALUE,
             CF_MISC_VALUES,
         ];
 
@@ -263,7 +308,7 @@ impl Store {
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_TRIE_NODES => {
+                CF_ACCOUNT_TRIE_NODES | CF_STORAGE_TRIE_NODES => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
@@ -275,7 +320,7 @@ impl Store {
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_FLATKEYVALUE => {
+                CF_ACCOUNT_FLATKEYVALUE | CF_STORAGE_FLATKEYVALUE => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
@@ -287,7 +332,21 @@ impl Store {
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_RECEIPTS | CF_ACCOUNT_CODES => {
+                CF_ACCOUNT_CODES => {
+                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+
+                    cf_opts.set_enable_blob_files(true);
+                    // Small bytecodes should go inline (mainly for delegation indicators)
+                    cf_opts.set_min_blob_size(32);
+                    cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(32 * 1024); // 32KB
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                CF_RECEIPTS => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
@@ -370,6 +429,10 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            account_code_cache: Arc::new(Mutex::new(LruCache::unbounded_with_hasher(
+                FxBuildHasher,
+            ))),
+            account_code_cache_size: AtomicU64::new(0),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -540,7 +603,7 @@ impl Store {
         cf_name: &str,
         keys: Vec<K>,
         deserialize_fn: F,
-    ) -> Result<Vec<V>, StoreError>
+    ) -> Result<Vec<Option<V>>, StoreError>
     where
         K: AsRef<[u8]> + Send + 'static,
         V: Send + 'static,
@@ -560,10 +623,10 @@ impl Store {
                 match db.get_cf(&cf, key)? {
                     Some(bytes) => {
                         let value = deserialize_fn(bytes)?;
-                        results.push(value);
+                        results.push(Some(value));
                     }
                     None => {
-                        return Err(StoreError::Custom("Key not found in bulk read".to_string()));
+                        results.push(None);
                     }
                 }
             }
@@ -579,7 +642,8 @@ impl Store {
         control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
         let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
-        let cf_flatkeyvalue = self.cf_handle(CF_FLATKEYVALUE)?;
+        let cf_accounts_fkv = self.cf_handle(CF_ACCOUNT_FLATKEYVALUE)?;
+        let cf_storage_fkv = self.cf_handle(CF_STORAGE_FLATKEYVALUE)?;
 
         let last_written = self
             .db
@@ -590,11 +654,13 @@ impl Store {
         }
 
         self.db
-            .delete_range_cf(&cf_flatkeyvalue, last_written, vec![0xff])?;
+            .delete_range_cf(&cf_accounts_fkv, &last_written, vec![0xff].as_ref())?;
+        self.db
+            .delete_range_cf(&cf_storage_fkv, &last_written, vec![0xff].as_ref())?;
 
         loop {
             let root = self
-                .read_sync(CF_TRIE_NODES, [])?
+                .read_sync(CF_ACCOUNT_TRIE_NODES, [])?
                 .ok_or(StoreError::MissingLatestBlockNumber)?;
             let root: Node = ethrex_trie::Node::decode(&root)?;
             let state_root = root.compute_hash().finalize();
@@ -616,18 +682,18 @@ impl Store {
 
             let mut ctr = 0;
             let mut batch = WriteBatch::default();
-            let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
+            let mut account_iter = self.open_direct_state_trie(state_root)?.into_iter();
             if last_written_account > Nibbles::default() {
-                iter.advance(last_written_account.to_bytes())?;
+                account_iter.advance(last_written_account.to_bytes())?;
             }
-            let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
-                let Node::Leaf(node) = node else {
+            let res = account_iter.try_for_each(|(path, account_node)| -> Result<(), StoreError> {
+                let Node::Leaf(node) = account_node else {
                     return Ok(());
                 };
                 let account_state = AccountState::decode(&node.value)?;
                 let account_hash = H256::from_slice(&path.to_bytes());
                 batch.put_cf(&cf_misc, "last_written", path.as_ref());
-                batch.put_cf(&cf_flatkeyvalue, path.as_ref(), node.value);
+                batch.put_cf(&cf_accounts_fkv, path.as_ref(), node.value);
                 ctr += 1;
                 if ctr > 10_000 {
                     self.db.write(std::mem::take(&mut batch))?;
@@ -638,20 +704,20 @@ impl Store {
                     ctr = 0;
                 }
 
-                let mut iter_inner = self
+                let mut storage_iter = self
                     .open_direct_storage_trie(account_hash, account_state.storage_root)?
                     .into_iter();
                 if last_written_storage > Nibbles::default() {
-                    iter_inner.advance(last_written_storage.to_bytes())?;
+                    storage_iter.advance(last_written_storage.to_bytes())?;
                     last_written_storage = Nibbles::default();
                 }
-                iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
-                    let Node::Leaf(node) = node else {
+                storage_iter.try_for_each(|(path, storage_node)| -> Result<(), StoreError> {
+                    let Node::Leaf(node) = storage_node else {
                         return Ok(());
                     };
                     let key = apply_prefix(Some(account_hash), path);
                     batch.put_cf(&cf_misc, "last_written", key.as_ref());
-                    batch.put_cf(&cf_flatkeyvalue, key.as_ref(), node.value);
+                    batch.put_cf(&cf_storage_fkv, key.as_ref(), node.value);
                     ctr += 1;
                     if ctr > 10_000 {
                         self.db.write(std::mem::take(&mut batch))?;
@@ -754,22 +820,47 @@ impl Store {
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
         let mut trie_mut = (*trie).clone();
         let mut batch = WriteBatch::default();
-        let [cf_trie_nodes, cf_flatkeyvalue, cf_misc] =
-            open_cfs(db, [CF_TRIE_NODES, CF_FLATKEYVALUE, CF_MISC_VALUES])?;
+        let [
+            cf_accounts_trie_nodes,
+            cf_accounts_flatkeyvalue,
+            cf_storage_trie_nodes,
+            cf_storage_flatkeyvalue,
+            cf_misc,
+        ] = open_cfs(
+            db,
+            [
+                CF_ACCOUNT_TRIE_NODES,
+                CF_ACCOUNT_FLATKEYVALUE,
+                CF_STORAGE_TRIE_NODES,
+                CF_STORAGE_FLATKEYVALUE,
+                CF_MISC_VALUES,
+            ],
+        )?;
 
         let last_written = db.get_cf(&cf_misc, "last_written")?.unwrap_or_default();
+
+        // Before encoding, accounts have only the account address as their path, while storage keys have
+        // the account address (32 bytes) + storage path (up to 32 bytes).
+
         // Commit removes the bottom layer and returns it, this is the mutation step.
         let nodes = trie_mut.commit(root).unwrap_or_default();
         for (key, value) in nodes {
             let is_leaf = key.len() == 65 || key.len() == 131;
+            let is_account = key.len() <= 65;
 
             if is_leaf && key > last_written {
                 continue;
             }
             let cf = if is_leaf {
-                &cf_flatkeyvalue
+                if is_account {
+                    &cf_accounts_flatkeyvalue
+                } else {
+                    &cf_storage_flatkeyvalue
+                }
+            } else if is_account {
+                &cf_accounts_trie_nodes
             } else {
-                &cf_trie_nodes
+                &cf_storage_trie_nodes
             };
             if value.is_empty() {
                 batch.delete_cf(cf, key);
@@ -836,6 +927,7 @@ impl StoreEngine for Store {
                 CF_BODIES,
             ],
         )?;
+
         let mut batch = WriteBatch::default();
 
         let UpdateBatch {
@@ -1062,7 +1154,7 @@ impl StoreEngine for Store {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         let numbers: Vec<BlockNumber> = (from..=to).collect();
         let number_keys: Vec<Vec<u8>> = numbers.iter().map(|n| n.to_le_bytes().to_vec()).collect();
 
@@ -1076,10 +1168,10 @@ impl StoreEngine for Store {
 
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
-            .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
+            .flat_map(|hash_opt| hash_opt.map(|h| BlockHashRLP::from(h).bytes().clone()))
             .collect();
 
-        let bodies = self
+        let mut bodies = self
             .read_bulk_async(CF_BODIES, hash_keys, |bytes| {
                 BlockBodyRLP::from_bytes(bytes)
                     .to()
@@ -1087,13 +1179,30 @@ impl StoreEngine for Store {
             })
             .await?;
 
+        let mut i = 0;
+
+        // Fill in with None for missing bodies
+        let bodies = hashes
+            .into_iter()
+            .map(|opt| {
+                opt.and_then(|_| {
+                    let body_ref = bodies
+                        .get_mut(i)
+                        .expect("bodies length is equal to number of Somes in hashes");
+                    let body = std::mem::take(body_ref);
+                    i += 1;
+                    body
+                })
+            })
+            .collect();
+
         Ok(bodies)
     }
 
     async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
             .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
@@ -1305,7 +1414,21 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    /// Get account code by its hash.
+    ///
+    /// Check if the code exists in the cache (attribute `account_code_cache`), if not,
+    /// reads the database, and if it exists, decodes and returns it.
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
+        // check cache first
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)
+        {
+            return Ok(Some(code.clone()));
+        }
+
         let cf = self.cf_handle(CF_ACCOUNT_CODES)?;
         let Some(bytes) = self
             .db
@@ -1320,6 +1443,39 @@ impl StoreEngine for Store {
             bytecode: Bytes::copy_from_slice(bytecode),
             jump_targets: <Vec<_>>::decode(targets)?,
         };
+
+        // insert into cache and evict if needed
+        {
+            let mut cache = self
+                .account_code_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            let code_size = code.size();
+            self.account_code_cache_size
+                .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
+            let cache_len = cache.len() + 1;
+            let mut current_size = self
+                .account_code_cache_size
+                .load(std::sync::atomic::Ordering::SeqCst);
+            debug!(
+                "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+            );
+
+            while current_size > CODE_CACHE_MAX_SIZE {
+                if let Some((_, code)) = cache.pop_lru() {
+                    self.account_code_cache_size
+                        .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
+                    current_size = self
+                        .account_code_cache_size
+                        .load(std::sync::atomic::Ordering::SeqCst);
+                } else {
+                    break;
+                }
+            }
+
+            cache.get_or_insert(code_hash, || code.clone());
+        }
+
         Ok(Some(code))
     }
 
@@ -1327,10 +1483,6 @@ impl StoreEngine for Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
-        info!(
-            "[TRANSACTION BY HASH] Transaction hash: {:?}",
-            transaction_hash
-        );
         let (_block_number, block_hash, index) =
             match self.get_transaction_location(transaction_hash).await? {
                 Some(location) => location,
@@ -1482,7 +1634,8 @@ impl StoreEngine for Store {
         // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
+            CF_STORAGE_FLATKEYVALUE,
             None,
             self.last_written()?,
         )?);
@@ -1503,7 +1656,8 @@ impl StoreEngine for Store {
         // FIXME: use a DB snapshot here
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_ACCOUNT_TRIE_NODES,
+            CF_ACCOUNT_FLATKEYVALUE,
             None,
             self.last_written()?,
         )?);
@@ -1527,7 +1681,8 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
+            CF_STORAGE_FLATKEYVALUE,
             Some(hashed_address),
             self.last_written()?,
         )?);
@@ -1537,7 +1692,8 @@ impl StoreEngine for Store {
     fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_ACCOUNT_TRIE_NODES,
+            CF_ACCOUNT_FLATKEYVALUE,
             None,
             self.last_written()?,
         )?);
@@ -1547,7 +1703,8 @@ impl StoreEngine for Store {
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_ACCOUNT_TRIE_NODES,
+            CF_ACCOUNT_FLATKEYVALUE,
             None,
             self.last_written()?,
         )?);
@@ -1572,7 +1729,8 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
+            CF_STORAGE_FLATKEYVALUE,
             None,
             self.last_written()?,
         )?);
@@ -1848,8 +2006,8 @@ impl StoreEngine for Store {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
-            let cf = db.cf_handle(CF_TRIE_NODES).ok_or_else(|| {
-                StoreError::Custom("Column family not found: CF_TRIE_NODES".to_string())
+            let cf = db.cf_handle(CF_STORAGE_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom("Column family not found: CF_STORAGE_TRIE_NODES".to_string())
             })?;
 
             for (address_hash, nodes) in storage_trie_nodes {
@@ -1911,7 +2069,7 @@ impl StoreEngine for Store {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError> {
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
         self.read_bulk_async(
             CF_FULLSYNC_HEADERS,
             (start..start + limit).map(|n| n.to_le_bytes()).collect(),
@@ -1963,6 +2121,11 @@ impl StoreEngine for Store {
         })?;
 
         Ok(())
+    }
+
+    fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
+        let path = self.db.path();
+        Ok(path.to_path_buf())
     }
 
     fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
