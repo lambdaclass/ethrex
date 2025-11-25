@@ -2,7 +2,7 @@ use bytes::Bytes;
 use criterion::{Criterion, criterion_group, criterion_main};
 use ethereum_types::U256;
 use ethrex_common::{
-    Address, Bloom, H32, H160, H256,
+    Address, Bloom, H32, H160, H256, H264, H512,
     constants::EMPTY_KECCACK_HASH,
     types::{
         AccessList, AccountInfo, AccountState, AuthorizationList, AuthorizationTuple,
@@ -13,8 +13,20 @@ use ethrex_common::{
         WrappedEIP4844Transaction, requests::EncodedRequests,
     },
 };
+use ethrex_p2p::{
+    discv4::messages::{ENRRequestMessage, FindNodeMessage, NeighborsMessage, PingMessage},
+    rlpx::{
+        p2p::Capability,
+        snap::{AccountRangeUnit, AccountStateSlim, StorageSlot},
+    },
+    types::{Endpoint, Node, NodeRecord, NodeRecordPairs},
+};
 use ethrex_rlp::encode::RLPEncode;
-use std::{hint::black_box, str::FromStr};
+use std::{
+    hint::black_box,
+    net::{IpAddr, Ipv4Addr},
+    str::FromStr,
+};
 
 fn make_string_list(count: usize) -> Vec<String> {
     let entry = "abcdefghij".to_string();
@@ -27,14 +39,14 @@ fn make_u256_with_len(len: usize) -> U256 {
     U256::from(1u64) << shift
 }
 
-fn sample_access_list() -> AccessList {
+fn create_access_list() -> AccessList {
     vec![(
         Address::from_str("0x000000000000000000000000000000000000000a").unwrap(),
         vec![HASH],
     )]
 }
 
-fn sample_authorization_list() -> AuthorizationList {
+fn create_authorization_list() -> AuthorizationList {
     vec![AuthorizationTuple {
         chain_id: U256::from(1u64),
         address: Address::from_str("0x00000000000000000000000000000000000000bb").unwrap(),
@@ -43,6 +55,42 @@ fn sample_authorization_list() -> AuthorizationList {
         r_signature: U256::from(2u64),
         s_signature: U256::from(3u64),
     }]
+}
+
+fn create_endpoint(octet: u8, udp_port: u16, tcp_port: u16) -> Endpoint {
+    Endpoint {
+        ip: IpAddr::V4(Ipv4Addr::new(192, 168, 0, octet)),
+        udp_port,
+        tcp_port,
+    }
+}
+
+fn create_node(index: u8) -> Node {
+    Node::new(
+        IpAddr::V4(Ipv4Addr::new(10, 0, 0, index)),
+        30_300 + index as u16,
+        40_400 + index as u16,
+        H512::repeat_byte(index),
+    )
+}
+
+fn create_node_record() -> NodeRecord {
+    let pairs: Vec<(Bytes, Bytes)> = NodeRecordPairs {
+        id: Some("v4".to_string()),
+        ip: Some(Ipv4Addr::new(127, 0, 0, 1)),
+        ip6: None,
+        tcp_port: Some(30303),
+        udp_port: Some(30303),
+        secp256k1: Some(H264::repeat_byte(0x33)),
+        eth: None,
+    }
+    .into();
+
+    NodeRecord {
+        signature: H512::repeat_byte(0x22),
+        seq: 1,
+        pairs,
+    }
 }
 
 static HASH: H256 = H256::repeat_byte(0xab);
@@ -351,7 +399,7 @@ fn bench_encode_eip2930_transaction(c: &mut Criterion) {
         to: TxKind::Call(Address::from_str("0x0000000000000000000000000000000000000aaa").unwrap()),
         value: U256::from(42u64),
         data: Bytes::from(vec![0x12; 16]),
-        access_list: sample_access_list(),
+        access_list: create_access_list(),
         signature_y_parity: true,
         signature_r: U256::from(5u64),
         signature_s: U256::from(6u64),
@@ -382,7 +430,7 @@ fn bench_encode_eip1559_transaction(c: &mut Criterion) {
         to: TxKind::Create,
         value: U256::from(900u64),
         data: Bytes::from(vec![0x34; 24]),
-        access_list: sample_access_list(),
+        access_list: create_access_list(),
         signature_y_parity: false,
         signature_r: U256::from(7u64),
         signature_s: U256::from(8u64),
@@ -413,7 +461,7 @@ fn bench_encode_eip4844_transaction(c: &mut Criterion) {
         to: Address::from_str("0x0000000000000000000000000000000000000bbb").unwrap(),
         value: U256::from(1_500u64),
         data: Bytes::from(vec![0x56; 48]),
-        access_list: sample_access_list(),
+        access_list: create_access_list(),
         max_fee_per_blob_gas: U256::from(10u64),
         blob_versioned_hashes: vec![H256::repeat_byte(0x44)],
         signature_y_parity: true,
@@ -446,7 +494,7 @@ fn bench_encode_wrapped_eip4844_transaction(c: &mut Criterion) {
         to: Address::from_str("0x0000000000000000000000000000000000000ccc").unwrap(),
         value: U256::from(2_500u64),
         data: Bytes::from(vec![0x78; 64]),
-        access_list: sample_access_list(),
+        access_list: create_access_list(),
         max_fee_per_blob_gas: U256::from(12u64),
         blob_versioned_hashes: vec![H256::repeat_byte(0x55); 2],
         signature_y_parity: true,
@@ -492,8 +540,8 @@ fn bench_encode_eip7702_transaction(c: &mut Criterion) {
         to: Address::from_str("0x0000000000000000000000000000000000000ddd").unwrap(),
         value: U256::from(3_500u64),
         data: Bytes::from(vec![0x9a; 72]),
-        access_list: sample_access_list(),
-        authorization_list: sample_authorization_list(),
+        access_list: create_access_list(),
+        authorization_list: create_authorization_list(),
         signature_y_parity: false,
         signature_r: U256::from(13u64),
         signature_s: U256::from(14u64),
@@ -524,7 +572,7 @@ fn bench_encode_privileged_l2_transaction(c: &mut Criterion) {
         to: TxKind::Create,
         value: U256::from(4_500u64),
         data: Bytes::from(vec![0xbc; 40]),
-        access_list: sample_access_list(),
+        access_list: create_access_list(),
         from: Address::from_str("0x0000000000000000000000000000000000000eee").unwrap(),
         inner_hash: Default::default(),
     };
@@ -553,7 +601,7 @@ fn bench_encode_fee_token_transaction(c: &mut Criterion) {
         to: TxKind::Call(Address::from_str("0x0000000000000000000000000000000000000fff").unwrap()),
         value: U256::from(5_500u64),
         data: Bytes::from(vec![0xde; 44]),
-        access_list: sample_access_list(),
+        access_list: create_access_list(),
         fee_token: Address::from_str("0x0000000000000000000000000000000000000fed").unwrap(),
         signature_y_parity: true,
         signature_r: U256::from(15u64),
@@ -586,7 +634,7 @@ fn bench_encode_p2p_transaction(c: &mut Criterion) {
             to: Address::from_str("0x0000000000000000000000000000000000000abc").unwrap(),
             value: U256::from(6_500u64),
             data: Bytes::from(vec![0xef; 52]),
-            access_list: sample_access_list(),
+            access_list: create_access_list(),
             max_fee_per_blob_gas: U256::from(18u64),
             blob_versioned_hashes: vec![H256::repeat_byte(0x66)],
             signature_y_parity: false,
@@ -629,7 +677,7 @@ fn bench_encode_mempool_transaction(c: &mut Criterion) {
         to: TxKind::Create,
         value: U256::from(7_500u64),
         data: Bytes::from(vec![0xaa; 36]),
-        access_list: sample_access_list(),
+        access_list: create_access_list(),
         signature_y_parity: true,
         signature_r: U256::from(19u64),
         signature_s: U256::from(20u64),
@@ -645,6 +693,213 @@ fn bench_encode_mempool_transaction(c: &mut Criterion) {
         b.iter(|| {
             buf.clear();
             mempool_tx.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_p2p_endpoint(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_p2p_endpoint");
+
+    let endpoint = create_endpoint(10, 30303, 30303);
+
+    group.bench_function("endpoint", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            endpoint.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_p2p_node(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_p2p_node");
+
+    let node = create_node(1);
+
+    group.bench_function("node", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            node.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_node_record(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_node_record");
+
+    let node_record = create_node_record();
+
+    group.bench_function("node_record", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            node_record.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_ping_message(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_ping_message");
+
+    let from = create_endpoint(1, 30301, 30301);
+    let to = create_endpoint(2, 30302, 30302);
+    let ping = PingMessage::new(from, to, 1_700_000_000).with_enr_seq(42);
+
+    group.bench_function("ping_message", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            ping.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_find_node_message(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_find_node_message");
+
+    let msg = FindNodeMessage::new(H512::repeat_byte(0x77), 1_700_000_000);
+
+    group.bench_function("find_node_message", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            msg.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_neighbors_message(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_neighbors_message");
+
+    let neighbors = NeighborsMessage::new(vec![create_node(3), create_node(4)], 1_700_000_000);
+
+    group.bench_function("neighbors_message", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            neighbors.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_enr_request_message(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_enr_request_message");
+
+    let msg = ENRRequestMessage::new(1_700_000_000);
+
+    group.bench_function("enr_request_message", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            msg.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_capability(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_capability");
+
+    let capability = Capability::eth(68);
+
+    group.bench_function("capability", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            capability.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_account_state_slim(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_account_state_slim");
+
+    let account_state = AccountStateSlim {
+        nonce: 1,
+        balance: U256::from(1000u64),
+        storage_root: Bytes::from(vec![0xaa; 32]),
+        code_hash: Bytes::from(vec![0xbb; 32]),
+    };
+
+    group.bench_function("account_state_slim", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            account_state.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_account_range_unit(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_account_range_unit");
+
+    let account_state = AccountStateSlim {
+        nonce: 2,
+        balance: U256::from(2_000u64),
+        storage_root: Bytes::from(vec![0xcc; 32]),
+        code_hash: Bytes::from(vec![0xdd; 32]),
+    };
+
+    let unit = AccountRangeUnit {
+        hash: H256::repeat_byte(0x99),
+        account: account_state,
+    };
+
+    group.bench_function("account_range_unit", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            unit.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_storage_slot(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_storage_slot");
+
+    let slot = StorageSlot {
+        hash: H256::repeat_byte(0x42),
+        data: U256::from(1234u64),
+    };
+
+    group.bench_function("storage_slot", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            slot.encode(&mut buf);
             black_box(&buf);
         });
     });
@@ -977,6 +1232,17 @@ criterion_group!(
     bench_encode_string_lists,
     bench_encode_account_info,
     bench_encode_account_state,
+    bench_encode_p2p_endpoint,
+    bench_encode_p2p_node,
+    bench_encode_node_record,
+    bench_encode_ping_message,
+    bench_encode_find_node_message,
+    bench_encode_neighbors_message,
+    bench_encode_enr_request_message,
+    bench_encode_capability,
+    bench_encode_account_state_slim,
+    bench_encode_account_range_unit,
+    bench_encode_storage_slot,
     bench_encode_tx_kind,
     bench_encode_legacy_transaction,
     bench_encode_eip2930_transaction,

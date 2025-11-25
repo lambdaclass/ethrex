@@ -67,7 +67,7 @@ fn impl_encode<const N: usize>(value_be: [u8; N], buf: &mut dyn BufMut) {
         // if a string is 0-55 bytes long, the RLP encoding consists of a
         // single byte with value RLP_NULL (0x80) plus the length of the string followed by the string.
         _ => {
-            let mut bytes = ArrayVec::<[u8; 8]>::new();
+            let mut bytes = ArrayVec::<[u8; 16]>::new();
             bytes.extend_from_slice(&value_be);
             let start = bytes.iter().position(|&x| x != 0).unwrap();
             let len = bytes.len() - start;

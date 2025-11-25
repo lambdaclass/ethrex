@@ -34,6 +34,7 @@ rustc-hash.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+ethrex-p2p.workspace = true
 
 [features]
 default = []

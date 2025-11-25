@@ -18,6 +18,7 @@ snap.workspace = true
 hex-literal.workspace = true
 criterion = { version = "0.7.0", features = ["html_reports"] }
 ethrex-common.workspace = true
+ethrex-p2p.workspace = true
 
 [lib]
 path = "./rlp.rs"
