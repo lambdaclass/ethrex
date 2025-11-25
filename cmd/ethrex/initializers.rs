@@ -11,6 +11,7 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
+use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
@@ -30,13 +31,13 @@ use std::env;
 use std::{
     fs,
     io::IsTerminal,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{debug, error, info, warn};
+use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -54,22 +55,23 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let mut layer = fmt::layer();
-
-    if opts.log_color == LogColor::Never
-        || (opts.log_color == LogColor::Auto && !std::io::stdout().is_terminal())
-    {
-        layer = layer.with_ansi(false);
-    }
-
-    let fmt_layer = layer.with_filter(filter);
-
-    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
-        let profiling_layer = FunctionProfilingLayer;
-        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
-    } else {
-        Box::new(Registry::default().with(fmt_layer))
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let use_color = match opts.log_color {
+        LogColor::Always => true,
+        LogColor::Never => false,
+        LogColor::Auto => stdout_is_tty,
     };
+
+    let include_target = matches!(opts.log_level, Level::DEBUG | Level::TRACE);
+
+    let fmt_layer = fmt::layer()
+        .with_target(include_target)
+        .with_ansi(use_color)
+        .with_filter(filter);
+
+    let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
+
+    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
@@ -88,6 +90,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     );
 
     initialize_block_processing_profile();
+    initialize_rpc_metrics();
 
     tracker.spawn(metrics_api);
 }
@@ -120,7 +123,7 @@ pub fn open_store(datadir: &Path) -> Store {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
-        ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
+        ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type).expect("Failed to create Store")
     }
 }
@@ -298,22 +301,22 @@ pub fn get_signer(datadir: &Path) -> SecretKey {
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
-    let udp_socket_addr = parse_socket_addr("::", &opts.discovery_port)
-        .expect("Failed to parse discovery address and port");
-    let tcp_socket_addr =
-        parse_socket_addr("::", &opts.p2p_port).expect("Failed to parse addr and port");
+    let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
+    let udp_port = opts
+        .discovery_port
+        .parse()
+        .expect("Failed to parse discovery port");
 
-    let p2p_node_ip = local_ip()
-        .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"));
+    let p2p_node_ip: IpAddr = if let Some(addr) = &opts.p2p_addr {
+        addr.parse().expect("Failed to parse p2p address")
+    } else {
+        local_ip()
+            .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"))
+    };
 
     let local_public_key = public_key_from_signing_key(signer);
 
-    let node = Node::new(
-        p2p_node_ip,
-        udp_socket_addr.port(),
-        tcp_socket_addr.port(),
-        local_public_key,
-    );
+    let node = Node::new(p2p_node_ip, udp_port, tcp_port, local_public_key);
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
@@ -381,7 +384,11 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir = &opts.datadir;
+    let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
+        &opts.datadir.join("dev")
+    } else {
+        &opts.datadir
+    };
     init_datadir(datadir);
 
     let network = get_network(&opts);
@@ -394,6 +401,9 @@ pub async fn init_l1(
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store = init_store(datadir, genesis).await;
+    if opts.syncmode == SyncMode::Full {
+        store.generate_flatkeyvalue()?;
+    }
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
@@ -460,7 +470,7 @@ pub async fn init_l1(
     if opts.dev {
         #[cfg(feature = "dev")]
         init_dev_network(&opts, &store, tracker.clone()).await;
-    } else if opts.p2p_enabled {
+    } else if !opts.p2p_disabled {
         init_network(
             &opts,
             &network,

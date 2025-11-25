@@ -9,7 +9,10 @@ use ethrex_common::{
         LegacyTransaction, Transaction, TxKind,
     },
 };
-use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::VMType};
+use ethrex_levm::{
+    EVMConfig, Environment, tracing::LevmCallTracer, utils::get_base_fee_per_blob_gas, vm::VM,
+    vm::VMType,
+};
 
 use crate::modules::{
     error::RunnerError,
@@ -112,6 +115,9 @@ pub fn get_vm_env_for_test(
     let blob_schedule = EVMConfig::canonical_values(test_case.fork);
     let config = EVMConfig::new(test_case.fork, blob_schedule);
     let gas_price = effective_gas_price(&test_env, test_case)?;
+    let base_blob_fee_per_gas =
+        get_base_fee_per_blob_gas(test_env.current_excess_blob_gas, &config)
+            .map_err(|e| RunnerError::Custom(format!("Failed to get blob base fee: {e}")))?;
     Ok(Environment {
         origin: test_case.sender,
         gas_limit: test_case.gas,
@@ -123,6 +129,7 @@ pub fn get_vm_env_for_test(
         difficulty: test_env.current_difficulty,
         chain_id: U256::from(1),
         base_fee_per_gas: test_env.current_base_fee.unwrap_or_default(),
+        base_blob_fee_per_gas,
         gas_price,
         block_excess_blob_gas: test_env.current_excess_blob_gas,
         block_blob_gas_used: None,
@@ -133,6 +140,7 @@ pub fn get_vm_env_for_test(
         tx_nonce: test_case.nonce,
         block_gas_limit: test_env.current_gas_limit,
         is_privileged: false,
+        fee_token: None,
     })
 }
 

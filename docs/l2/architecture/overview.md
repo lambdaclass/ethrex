@@ -49,6 +49,11 @@ These two ideas will be used extensively throughout the rest of the documentatio
 
 ## Reconstructing state/Data Availability
 
+> [!WARNING]
+> The **state diff** mechanism is retained here for historical and conceptual reference.  
+> Ethrex now publishes **RLP-encoded blocks** (with fee configs) in blobs.  
+> The principles of verification and compression described below still apply conceptually to this new model.
+
 While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the chain. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the chain or some of their funds.
 
 This is called the **Data Availability** problem. As discussed before, sending the entire state of the chain on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:
@@ -76,6 +81,9 @@ With that, we can be sure that state diffs are published and that they are corre
 Because state diffs are compressed to save space on L1, this compression needs to be proven as well. Otherwise, once again, the sequencer could send the wrong (compressed) state diffs. This is easy though, we just make the prover run the compression and we're done.
 
 ## EIP 4844 (a.k.a. Blobs)
+
+> [!WARNING]  
+> The explanations below originally refer to *state diffs*, but the same blob-based mechanism now carries **RLP-encoded block data** and their associated **fee configs**.
 
 While we could send state diffs through calldata, there is a (hopefully) cheaper way to do it: blobs. The Ethereum Cancun upgrade introduced a new type of transaction where users can submit a list of opaque blobs of data, each one of size at most 128 KB. The main purpose of this new type of transaction is precisely to be used by rollups for data availability; they are priced separately through a `blob_gas` market instead of the regular `gas` one and for all intents and purposes should be much cheaper than calldata.
 
@@ -108,6 +116,12 @@ Our proof of equivalence implementation follows Method 1 [here](https://notes.et
   - The commitment's hash is equal to the versioned hash for that blob.
   - The evaluation is correct.
 
+## Transition to RLP-encoded Blocks
+
+The state diff approach has been deprecated. While it provided a more compact representation, it only guaranteed the availability of the modified state, not the original transactions themselves. To ensure that transactions are also publicly available, Ethrex now publishes **RLP-encoded blocks**, together with their corresponding **fee configurations**, directly in blobs (see [Transaction fees](../fundamentals/transaction_fees.md)).
+
+This new approach guarantees both transaction and state availability, at the cost of higher data size. According to our internal measurements ([`block_vs_state_diff_measurements.md`](../fundamentals/block_vs_state_diff_measurements.md)), sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately **2× for ETH transfers** and **3× for ERC20 transfers**.
+
 ## L1<->L2 communication
 
 To communicate between L1 and L2, we use two mechanisms called _Privileged transactions_, and _L1 messages_.
@@ -125,29 +139,30 @@ The mechanism for withdrawing funds from L2 back to L1 is explained in detail in
 
 ### Batch Commitment
 
-An L2 batch commitment is the hash of the following things:
+An L2 batch commitment contains:
 
 - The new L2 state root.
-- The state diff hash or polynomial commitments, depending on whether we are using calldata or blobs.
-- The Withdrawal logs merkle root.
+- The latest block's hash
+- The KZG versioned hash of the blobs published by the L2
+- The rolling hash of the processed privileged transactions
+- The Merkle root of the withdrawal logs
 
-The public input to the proof is then the hash of the previous batch commitment and the new one.
+These are committed as public inputs of the zk proof that validates a new L2 state.
 
 ## L1 contract checks
 
 ### Commit transaction
 
-For the `commit` transaction, the L1 verifier contract receives the following things from the sequencer:
-
-- The L2 batch number to be commited.
-- The new L2 state root.
-- The Withdrawal logs merkle root.
-- The state diffs hash or polynomial commitment scheme accordingly.
+For the `commit` transaction, the L1 verifier contract receives the batch commitment, as defined previously, for the new batch.
 
 The contract will then:
 
-- Check that the batch number is the immediate successor of the last batch processed.
-- Check that the state diffs are valid, either through hashing or the point evaluation precompile.
+- Check that the batch number is the immediate successor of the last committed batch.
+- Check that the batch has not been committed already.
+- Check that the `lastBlockHash` is not zero.
+- If privileged transactions were processed, it checks the submitted hash against the one in the `CommonBridge` contract.
+- If withdrawals were processed, it publishes them to the `CommonBridge` contract.
+- It checks that a blob was published if the L2 is running as a rollup, or that no blob was published if it's running as a validium.
 - Calculate the new batch commitment and store it.
 
 ### Verify transaction
@@ -155,11 +170,16 @@ The contract will then:
 On a `verification` transaction, the L1 contract receives the following:
 
 - The batch number.
-- The batch proof.
+- The RISC-V Zero-Knowledge proof of the batch execution (if enabled).
+- The SP1 Zero-Knowledge proof of the batch execution (if enabled).
+- The TDX Zero-Knowledge proof of the batch execution (if enabled).
 
 The contract will then:
 
-- Compute the proof public input from the new and previous batch commitments (both are already stored in the contract).
+- Check that the batch number is the immediate successor of the last verified batch.
+- Check that the batch has been committed.
+- It removes the pending transaction hashes from the `CommonBridge` contract.
+- It verifies the public data of the proof, checking that the data committed in the `commitBatch` call matches the data in the public inputs of the proof.
 - Pass the proof and public inputs to the verifier and assert the proof passes.
 - If the proof passes, finalize the L2 state, setting the latest batch as the given one and allowing any withdrawals for that batch to occur.
 

@@ -175,6 +175,7 @@ impl ReceiptWithBloom {
                     0x2 => TxType::EIP1559,
                     0x3 => TxType::EIP4844,
                     0x4 => TxType::EIP7702,
+                    0x7d => TxType::FeeToken,
                     0x7e => TxType::Privileged,
                     ty => {
                         return Err(RLPDecodeError::Custom(format!(
@@ -227,6 +228,8 @@ impl RLPDecode for ReceiptWithBloom {
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        // The minimum size for a ReceiptWithBloom is > 256 bytes (due to the Bloom type field) meaning that it is safe
+        // to check for bytes prefix to diferenticate between legacy receipts and non-legacy receipt payloads
         let (tx_type, rlp) = if is_encoded_as_bytes(rlp)? {
             let payload = get_rlp_bytes_item_payload(rlp)?;
             let tx_type = match payload.first().ok_or(RLPDecodeError::InvalidLength)? {
@@ -235,6 +238,7 @@ impl RLPDecode for ReceiptWithBloom {
                 0x2 => TxType::EIP1559,
                 0x3 => TxType::EIP4844,
                 0x4 => TxType::EIP7702,
+                0x7d => TxType::FeeToken,
                 0x7e => TxType::Privileged,
                 ty => {
                     return Err(RLPDecodeError::Custom(format!(

@@ -8,7 +8,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub enum AuthenticationError {
     InvalidIssuedAtClaim,
     TokenDecodingError,
@@ -63,4 +63,147 @@ fn invalid_issued_at_claim(token_data: TokenData<Claims>) -> Result<bool, Authen
         .map_err(|_| AuthenticationError::InvalidIssuedAtClaim)?
         .as_secs();
     Ok((now as i64 - token_data.claims.iat as i64).abs() > 60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use jsonwebtoken::{EncodingKey, Header, encode};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct FaultyClaims {
+        id: Option<String>,
+        clv: Option<String>,
+    }
+
+    #[test]
+    fn test_iat_missing_fails() {
+        // Our `Claims` type expect `iat` so JWTs with it would simply fail to deserialize.
+        let secret = Bytes::from("my_secret_key");
+        let faulty_claims = FaultyClaims {
+            id: None,
+            clv: None,
+        };
+        let token = encode(
+            &Header::default(),
+            &faulty_claims,
+            &EncodingKey::from_secret(&secret),
+        )
+        .unwrap();
+
+        let res = validate_jwt_authentication(&token, &secret);
+        assert_eq!(res.unwrap_err(), AuthenticationError::TokenDecodingError);
+    }
+
+    #[test]
+    fn test_iat_zero_fails() {
+        let secret = Bytes::from("my_secret_key");
+        let faulty_claims = Claims {
+            iat: 0,
+            id: None,
+            clv: None,
+        };
+        let token = encode(
+            &Header::default(),
+            &faulty_claims,
+            &EncodingKey::from_secret(&secret),
+        )
+        .unwrap();
+        let res = validate_jwt_authentication(&token, &secret);
+        assert_eq!(res.unwrap_err(), AuthenticationError::InvalidIssuedAtClaim);
+    }
+
+    #[test]
+    fn test_iat_too_old_fails() {
+        let secret = Bytes::from("my_secret_key");
+        let old_iat = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 120;
+        let faulty_claims = Claims {
+            iat: old_iat as usize,
+            id: None,
+            clv: None,
+        };
+        let token = encode(
+            &Header::default(),
+            &faulty_claims,
+            &EncodingKey::from_secret(&secret),
+        )
+        .unwrap();
+        let res = validate_jwt_authentication(&token, &secret);
+        assert_eq!(res.unwrap_err(), AuthenticationError::InvalidIssuedAtClaim);
+    }
+
+    #[test]
+    fn test_iat_future_fails() {
+        let secret = Bytes::from("my_secret_key");
+        let future_iat = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 120;
+        let faulty_claims = Claims {
+            iat: future_iat as usize,
+            id: None,
+            clv: None,
+        };
+        let token = encode(
+            &Header::default(),
+            &faulty_claims,
+            &EncodingKey::from_secret(&secret),
+        )
+        .unwrap();
+        let res = validate_jwt_authentication(&token, &secret);
+        assert_eq!(res.unwrap_err(), AuthenticationError::InvalidIssuedAtClaim);
+    }
+
+    #[test]
+    fn test_iat_within_range_passes() {
+        let secret = Bytes::from("my_secret_key");
+
+        // Test with iat 59 seconds in the past
+        let valid_iat = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 59;
+
+        let valid_claims = Claims {
+            iat: valid_iat as usize,
+            id: None,
+            clv: None,
+        };
+        let token = encode(
+            &Header::default(),
+            &valid_claims,
+            &EncodingKey::from_secret(&secret),
+        )
+        .unwrap();
+        let res = validate_jwt_authentication(&token, &secret);
+        assert!(res.is_ok());
+
+        // Test with iat 59 seconds in the future
+        let valid_iat_future = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 59;
+        let valid_claims_future = Claims {
+            iat: valid_iat_future as usize,
+            id: None,
+            clv: None,
+        };
+        let token_future = encode(
+            &Header::default(),
+            &valid_claims_future,
+            &EncodingKey::from_secret(&secret),
+        )
+        .unwrap();
+        let res_future = validate_jwt_authentication(&token_future, &secret);
+        assert!(res_future.is_ok());
+    }
 }

@@ -22,7 +22,7 @@ make build-prover-<sp1/risc0> # optional: GPU=true
 This will generate the SP1 ELF program and verification key under:
 
 - `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf`
-- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk`
+- `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32`
 
 ### 2. Deploying L1 Contracts
 
@@ -37,7 +37,7 @@ cargo run --release --features l2,l2-sql --manifest-path "../../Cargo.toml" -- l
         --eth-rpc-url <ETH_RPC_URL> \
         --private-key <YOUR_PRIVATE_KEY> \
         --on-chain-proposer-owner <ON_CHAIN_PROPOSER_OWNER>  \
-        --bridge-owner <ON_CHAIN_PROPOSER_OWNER>  \
+        --bridge-owner <BRIDGE_OWNER_ADDRESS>  \
         --genesis-l2-path "../../fixtures/genesis/l2.json" \
         --proof-sender.l1-address <PROOF_SENDER_L1_ADDRESS>
 ```
@@ -45,7 +45,7 @@ cargo run --release --features l2,l2-sql --manifest-path "../../Cargo.toml" -- l
 > [!NOTE]
 > In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers, you can find the address for the aligned aggegator service [here](https://docs.alignedlayer.com/guides/7_contract_addresses)
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
-> Both the private key and the addresses for the on chain proposer, bridge and proof sender should have funds.
+> Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add `--bridge-owner-pk <PRIVATE_KEY>` if you want the deployer to immediately call `acceptOwnership` on behalf of that owner; otherwise, they can accept later.
 
 ### 3. Deposit funds to the `AlignedBatcherPaymentService` contract from the proof sender
 
@@ -284,7 +284,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 - Sends proofs to the **Aligned Batcher** instead of the `OnChainProposer` contract.
 - Tracks the last proof sent using the rollup store.
 
-![Proof Sender Aligned Mode](../img/aligned_mode_proof_sender.png)
+![Proof Sender Aligned Mode](./img/aligned_mode_proof_sender.png)
 
 ### Proof Verifier
 
@@ -292,7 +292,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 - Monitors whether the next proof has been aggregated by Aligned.
 - Once verified, collects all already aggregated proofs and triggers the advancement of the `OnChainProposer` contract by sending a single transaction.
 
-![Aligned Mode Proof Verifier](../img/aligned_mode_proof_verifier.png)
+![Aligned Mode Proof Verifier](./img/aligned_mode_proof_verifier.png)
 
 ### OnChainProposer
 

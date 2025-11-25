@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
@@ -37,10 +38,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0xcecd5910a4404ccf2718feb58dac13e975a862a2
+// 0x39b37222708e21491b9126e0969a043baa09d5a7
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0xce, 0xcd, 0x59, 0x10, 0xa4, 0x40, 0x4c, 0xcf, 0x27, 0x18, 0xfe, 0xb5, 0x8d, 0xac, 0x13, 0xe9,
-    0x75, 0xa8, 0x62, 0xa2,
+    0x39, 0xb3, 0x72, 0x22, 0x70, 0x8e, 0x21, 0x49, 0x1b, 0x91, 0x26, 0xe0, 0x96, 0x9a, 0x04, 0x3b,
+    0xaa, 0x09, 0xd5, 0xa7,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -55,6 +56,12 @@ pub const L2_TO_L1_MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xfe,
 ]);
 
+// 0x000000000000000000000000000000000000fffc
+pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfc,
+]);
+
 // 0xee110000000000000000000000000000000011ff
 pub const ADDRESS_ALIASING: Address = H160([
     0xee, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -62,6 +69,8 @@ pub const ADDRESS_ALIASING: Address = H160([
 ]);
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
+
+pub const REGISTER_FEE_TOKEN_SIGNATURE: &str = "registerNewFeeToken(address)";
 
 /// Bytecode of the OpenZeppelin's ERC1967Proxy contract.
 const ERC1967_PROXY_BYTECODE: &[u8] = include_bytes!(concat!(
@@ -75,7 +84,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x36664d7c5031bd965bbb405b55495a90dd780740
+/// BRIDGE_ADDRESS or 0x39b37222708e21491b9126e0969a043baa09d5a7
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
@@ -430,7 +439,8 @@ pub async fn create2_deploy_from_path(
     salt: &[u8],
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
-    let bytecode = hex::decode(read_to_string(contract_path)?)?;
+    let bytecode_hex = read_to_string(contract_path)?;
+    let bytecode = hex::decode(bytecode_hex.trim_start_matches("0x").trim())?;
     create2_deploy_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
 }
 
@@ -674,12 +684,22 @@ pub async fn send_generic_transaction(
 
             tx.encode(&mut encoded_tx);
         }
+        TxType::FeeToken => {
+            let tx: FeeTokenTransaction = generic_tx.try_into()?;
+            let signed_tx = tx
+                .sign(signer)
+                .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+
+            signed_tx.encode(&mut encoded_tx);
+        }
         _ => {
             return Err(EthClientError::Custom(
                 "Unsupported transaction type".to_string(),
             ));
         }
     };
+
     client.send_raw_transaction(encoded_tx.as_slice()).await
 }
 
@@ -810,13 +830,18 @@ pub async fn build_generic_tx(
     overrides: Overrides,
 ) -> Result<GenericTransaction, EthClientError> {
     match r#type {
-        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged => {}
+        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged | TxType::FeeToken => {}
         TxType::EIP2930 | TxType::EIP7702 | TxType::Legacy => {
             return Err(EthClientError::Custom(
                 "Unsupported tx type in build_generic_tx".to_owned(),
             ));
         }
     }
+    if overrides.fee_token.is_none() && r#type == TxType::FeeToken {
+        return Err(EthClientError::Custom(
+            "fee_token must be set for FeeToken tx type".to_owned(),
+        ));
+    };
     let mut tx = GenericTransaction {
         r#type,
         to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
@@ -842,6 +867,7 @@ pub async fn build_generic_tx(
             .iter()
             .map(AccessListEntry::from)
             .collect(),
+        fee_token: overrides.fee_token,
         from,
         wrapper_version: overrides.wrapper_version,
         ..Default::default()
@@ -1085,4 +1111,25 @@ async fn _call_bytes32_variable(
         .map_err(|_| EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned()))?;
 
     Ok(arr)
+}
+
+pub async fn register_fee_token(
+    client: &EthClient,
+    bridge_address: Address,
+    fee_token: Address,
+    signer: &Signer,
+) -> Result<(), EthClientError> {
+    let calldata = encode_calldata(REGISTER_FEE_TOKEN_SIGNATURE, &[Value::Address(fee_token)])?;
+    let tx_register = build_generic_tx(
+        client,
+        TxType::EIP1559,
+        bridge_address,
+        signer.address(),
+        calldata.into(),
+        Overrides::default(),
+    )
+    .await?;
+    let tx_hash = send_generic_transaction(client, tx_register, signer).await?;
+    wait_for_transaction_receipt(tx_hash, client, 100).await?;
+    Ok(())
 }

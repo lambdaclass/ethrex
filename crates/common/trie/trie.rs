@@ -4,6 +4,7 @@ pub mod logger;
 mod nibbles;
 pub mod node;
 mod node_hash;
+pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
@@ -11,10 +12,11 @@ mod trie_iter;
 pub mod trie_sorted;
 mod verify_range;
 use ethereum_types::H256;
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, HashSet};
+use rustc_hash::FxHashSet;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -34,8 +36,8 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256::from_slice(
-        &Keccak256::digest([RLP_NULL]),
+    pub static ref EMPTY_TRIE_HASH: H256 = H256(
+        keccak_hash([RLP_NULL]),
     );
 }
 
@@ -52,8 +54,8 @@ pub type TrieNode = (Nibbles, NodeRLP);
 pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
-    pending_removal: HashSet<Nibbles>,
-    dirty: bool,
+    pending_removal: FxHashSet<Nibbles>,
+    dirty: FxHashSet<Nibbles>,
 }
 
 impl Default for Trie {
@@ -68,8 +70,8 @@ impl Trie {
         Self {
             db,
             root: NodeRef::default(),
-            pending_removal: HashSet::new(),
-            dirty: false,
+            pending_removal: Default::default(),
+            dirty: Default::default(),
         }
     }
 
@@ -82,8 +84,8 @@ impl Trie {
             } else {
                 Default::default()
             },
-            pending_removal: HashSet::new(),
-            dirty: false,
+            pending_removal: Default::default(),
+            dirty: Default::default(),
         }
     }
 
@@ -99,7 +101,7 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32 && !self.dirty && self.db().flatkeyvalue_computed(path.clone()) {
+        if !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(path.clone()) {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
@@ -128,7 +130,7 @@ impl Trie {
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
-        self.dirty = true;
+        self.dirty.insert(path.clone());
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -150,13 +152,11 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+        self.dirty.insert(Nibbles::from_bytes(path));
         if !self.root.is_valid() {
             return Ok(None);
         }
-        if path.len() == 32 {
-            self.pending_removal.insert(Nibbles::from_bytes(path));
-        }
-        self.dirty = true;
+        self.pending_removal.insert(Nibbles::from_bytes(path));
 
         // If the trie is not empty, call the root node's removal logic.
         let (is_trie_empty, value) = self
@@ -187,7 +187,9 @@ impl Trie {
     /// Returns keccak(RLP_NULL) if the trie is empty
     pub fn hash_no_commit(&self) -> H256 {
         if self.root.is_valid() {
-            self.root.compute_hash().finalize()
+            // 512 is the maximum size of an encoded node
+            let mut buf = Vec::with_capacity(512);
+            self.root.compute_hash_no_alloc(&mut buf).finalize()
         } else {
             *EMPTY_TRIE_HASH
         }
@@ -281,7 +283,7 @@ impl Trie {
         if self.root.is_valid() {
             let encoded_root = self.get_root_node(Nibbles::default())?.encode_to_vec();
 
-            let mut node_path = HashSet::new();
+            let mut node_path: FxHashSet<_> = Default::default();
             for path in paths {
                 let mut nodes = self.get_proof(path)?;
                 nodes.swap_remove(0);
@@ -302,7 +304,7 @@ impl Trie {
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
     pub fn get_embedded_root(
-        all_nodes: &BTreeMap<H256, Vec<u8>>,
+        all_nodes: &BTreeMap<H256, Node>,
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
@@ -315,21 +317,19 @@ impl Trie {
         })?;
 
         fn get_embedded_node(
-            all_nodes: &BTreeMap<H256, Vec<u8>>,
-            cur_node_rlp: &[u8],
+            all_nodes: &BTreeMap<H256, Node>,
+            cur_node: &Node,
         ) -> Result<Node, TrieError> {
-            let cur_node = Node::decode(cur_node_rlp)?;
-
-            Ok(match cur_node {
+            Ok(match cur_node.clone() {
                 Node::Branch(mut node) => {
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
+                            continue;
                         };
 
                         if hash.is_valid() {
                             *choice = match all_nodes.get(&hash.finalize()) {
-                                Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
+                                Some(node) => get_embedded_node(all_nodes, node)?.into(),
                                 None => hash.into(),
                             };
                         }
@@ -339,11 +339,11 @@ impl Trie {
                 }
                 Node::Extension(mut node) => {
                     let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
+                        return Ok(node.into());
                     };
 
                     node.child = match all_nodes.get(&hash.finalize()) {
-                        Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
+                        Some(node) => get_embedded_node(all_nodes, node)?.into(),
                         None => hash.into(),
                     };
 
@@ -366,7 +366,7 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
+        state_nodes: &BTreeMap<H256, Node>,
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
         let root = Self::get_embedded_root(state_nodes, root_hash)?;
@@ -511,9 +511,19 @@ impl Trie {
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
-    fn new_temp() -> Self {
+    pub fn new_temp() -> Self {
         let db = InMemoryTrieDB::new(Default::default());
         Trie::new(Box::new(db))
+    }
+
+    /// Creates a new Trie based on a temporary InMemory DB, with a specified root
+    ///
+    /// This is usually used to create a Trie from a root that was embedded with the rest of the nodes.
+    pub fn new_temp_with_root(root: NodeRef) -> Self {
+        let db = InMemoryTrieDB::new(Default::default());
+        let mut trie = Trie::new(Box::new(db));
+        trie.root = root;
+        trie
     }
 }
 

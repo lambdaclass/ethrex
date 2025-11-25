@@ -5,6 +5,7 @@ on:
   merge_group:
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -69,11 +70,7 @@ jobs:
       - name: Install RISC0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-          ~/.risc0/bin/rzup install risc0-groth16
-          ~/.risc0/bin/rzup install rust
+        uses: ./.github/actions/install-risc0
 
       - name: Create placeholder SP1 ELF
         run: |
@@ -138,13 +135,126 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
-          build_args: BUILD_FLAGS=--features l2
+          build_args: BUILD_FLAGS=--features l2,l2-sql
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ethrex_image_l2
           path: /tmp/ethrex_image_l2.tar
+
+  uniswap-swap:
+    name: Uniswap Swap Token Flow
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Yarn
+        run: npm install -g yarn
+
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
+      - name: Install rex
+        run: |
+          git clone https://github.com/lambdaclass/rex.git /tmp/rex
+          cd /tmp/rex
+          git checkout f853445
+          cargo build --release
+          sudo cp target/release/rex /usr/local/bin
+
+      - name: Build ethrex with L2 features and contracts
+        env:
+          COMPILE_CONTRACTS: "true"
+        run: |
+          cargo build --release --features "l2,l2-sql" --bin ethrex
+
+      - name: Run L2 dev node and Uniswap Swap Token Script
+        env:
+          COMPILE_CONTRACTS: "true"
+        run: |
+          set -euo pipefail
+
+          echo "Starting ethrex L2 dev node (logging to /tmp/ethrex.log)..."
+          ./target/release/ethrex \
+            l2 --dev \
+            --osaka-activation-time 1761677592 \
+            --no-monitor > /tmp/ethrex.log 2>&1 &
+          ETHREX_PID=$!
+
+          trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
+
+          if ! kill -0 "$ETHREX_PID" 2>/dev/null; then
+            echo "ethrex l2 --dev process exited unexpectedly"
+            exit 1
+          fi
+
+          echo "Waiting until rich account 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e has funds on the L2..."
+          MAX_BALANCE_TRIES=300
+          BALANCE_SLEEP_SECS=2
+          balance_wei=0
+          balance_output=""
+
+          for ((i = 1; i <= MAX_BALANCE_TRIES; i++)); do
+            if ! balance_output=$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e http://localhost:1729 2>/dev/null); then
+              sleep "${BALANCE_SLEEP_SECS}"
+              continue
+            fi
+
+            balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+
+            if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+              echo "Detected L2 balance for rich account: ${balance_wei} wei"
+              break
+            fi
+
+            sleep "${BALANCE_SLEEP_SECS}"
+          done
+
+          if [[ ! "${balance_wei}" =~ ^[0-9]+$ ]] || (( balance_wei == 0 )); then
+            echo "Timed out waiting for non-zero L2 balance for rich account."
+            echo "Last rex balance output:"
+            echo "${balance_output:-'<none>'}"
+            exit 1
+          fi
+
+          echo "Cloning ethrex-l2-contracts-kit..."
+          git clone https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
+            /tmp/ethrex-l2-contracts-kit
+
+          cd /tmp/ethrex-l2-contracts-kit
+
+          echo "Running Uniswap swap_token script..."
+          chmod +x examples/uniswap/swap_token
+          examples/uniswap/swap_token
+
+      - name: Dump ethrex logs on failure
+        if: ${{ failure() }}
+        run: |
+          echo "===== ethrex logs (/tmp/ethrex.log) ====="
+          if [ -f /tmp/ethrex.log ]; then
+            cat /tmp/ethrex.log
+          else
+            echo "Log file /tmp/ethrex.log not found"
+          fi
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
@@ -157,32 +267,22 @@ jobs:
           - name: "Validium"
             validium: true
             web3signer: false
-            use_native_token: false
             based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla"
             validium: false
             web3signer: false
-            use_native_token: false
             based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla with Web3signer"
             validium: false
             web3signer: true
-            use_native_token: false
             based: false
             compose_targets:
               [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
-          - name: "ERC20 as Native Token"
-            validium: false
-            web3signer: false
-            use_native_token: true
-            based: false
-            compose_targets: [docker-compose.yaml]
           - name: "Based"
             validium: false
             web3signer: false
-            use_native_token: false
             based: true
             compose_targets: [docker-compose.yaml]
     steps:
@@ -239,7 +339,7 @@ jobs:
           docker compose up --detach ethrex_l1
 
       - name: Install rex
-        if: ${{ matrix.use_native_token || matrix.based }}
+        if: ${{ matrix.based }}
         run: |
           cd ..
           git clone https://github.com/lambdaclass/rex.git
@@ -247,11 +347,6 @@ jobs:
           git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
           make cli
           echo "rex install successfully at $(which rex)"
-
-      - name: Deploy native token
-        if: matrix.use_native_token
-        run: |
-          rex deploy $(cat fixtures/contracts/ERC20/NativeTokenTest.bin) 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 
       - name: Deploy contracts
         run: |
@@ -261,18 +356,12 @@ jobs:
           #
           touch cmd/.env
           cd crates/l2
-          if [ "${{ matrix.use_native_token }}" = true ]; then
-            export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0xb4b46bdaa835f8e4b4d8e208b6559cd267851051
-          else
-            export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0x0000000000000000000000000000000000000000
-          fi
           if  [ "${{ matrix.based }}" = true ]; then
             export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
           fi
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          ETHREX_NATIVE_TOKEN_L1_ADDRESS=$ETHREX_NATIVE_TOKEN_L1_ADDRESS \
           docker compose up contract_deployer
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
@@ -325,9 +414,6 @@ jobs:
 
       - name: Run test
         run: |
-          if  [ "${{ matrix.based }}" = true ]; then
-            export INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true
-          fi
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
@@ -399,7 +485,7 @@ jobs:
           sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
           sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
           cd crates/l2/tee/quote-gen
-          make image.raw
+          make image.raw || { echo "if fails run in the root of the project: make update-cargo-lock"; exit 1; }
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -505,63 +591,6 @@ jobs:
           cd crates/l2
           make state-diff-test
 
-  integration-test-l2-dev:
-    name: Integration Test - L2 Dev
-    runs-on: ubuntu-latest
-    needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Free Disk Space
-        uses: ./.github/actions/free-disk
-
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-
-      - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
-
-      - name: Start ethrex
-        run: |
-          cd crates/l2
-          ETHREX_NO_MONITOR=true make init-l2-dev 2>&1 | tee /tmp/ethrex.log &
-
-      - name: Wait for ethrex l2
-        run: |
-          for i in {1..100}; do
-            echo "Checking if ethrex l2 is ready... (attempt $i)"
-            if nc -z localhost 3900; then
-              echo "ProofCoordinator ready!"
-              exit 0
-            fi
-            sleep 15
-          done
-          echo "ProofCoordinator not ready in time"
-          exit 1
-
-      - name: Init prover
-        run: |
-          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 2>&1 | tee /tmp/prover.log &
-
-      - name: show envs
-        run: |
-          cat crates/l2/.env
-
-      - name: Run test
-        run: |
-          cd crates/l2
-          tail -n 100 -f /tmp/ethrex.log &
-          tail -n 100 -f /tmp/prover.log &
-          export $(shell cat .env | xargs); \
-          INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true \
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
-          cargo test l2 --release -- --nocapture --test-threads=1
-
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test L2" is a required check, don't change the name
@@ -573,10 +602,10 @@ jobs:
         integration-test,
         state-diff-test,
         integration-test-tdx,
-        integration-test-l2-dev,
+        uniswap-swap,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-swap.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -590,7 +619,7 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ needs.integration-test-l2-dev.result }}" != "success" ]; then
-            echo "Job Integration Tests L2 Dev failed"
+          if [ "${{ needs.uniswap-swap.result }}" != "success" ]; then
+            echo "Job Uniswap Swap Token Flow failed"
             exit 1
           fi
