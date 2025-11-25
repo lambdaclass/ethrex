@@ -1,4 +1,6 @@
 use prometheus::{Encoder, Gauge, IntGauge, Registry, TextEncoder};
+use prometheus::Histogram;
+use prometheus::HistogramOpts;
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -11,6 +13,7 @@ pub struct MetricsBlocks {
     /// Keeps track of the block number of the last processed block
     block_number: IntGauge,
     gigagas: Gauge,
+    gigagas_summary: Histogram,
     gigagas_block_building: Gauge,
     block_building_ms: IntGauge,
     block_building_base_fee: IntGauge,
@@ -45,6 +48,16 @@ impl MetricsBlocks {
             gigagas: Gauge::new(
                 "gigagas",
                 "Keeps track of the block execution throughput through gigagas/s",
+            )
+            .unwrap(),
+            gigagas_summary: Histogram::with_opts(
+                HistogramOpts::new(
+                    "gigagas_summary",
+                    "Summary of the block execution throughput through gigagas/s",
+                )
+                .buckets(vec![
+                    0.0, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0,
+                ]),
             )
             .unwrap(),
             gigagas_block_building: Gauge::new(
@@ -117,6 +130,7 @@ impl MetricsBlocks {
 
     pub fn set_latest_gigagas(&self, gigagas: f64) {
         self.gigagas.set(gigagas);
+        self.gigagas_summary.observe(gigagas);
     }
 
     pub fn set_latest_gigagas_block_building(&self, gigagas: f64) {
@@ -155,6 +169,8 @@ impl MetricsBlocks {
         r.register(Box::new(self.block_number.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.gigagas.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.gigagas_summary.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.gigagas_block_building.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
