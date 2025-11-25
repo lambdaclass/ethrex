@@ -28,7 +28,6 @@ risc0-build = { version = "=3.0.3", optional = true }
 risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"] }
 sp1-build = { version = "=5.0.8", optional = true }
 sp1-sdk = { version = "=5.0.8", optional = true }
-openvm-build = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-build", optional = true }
 openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk", optional = true, features = [
     "evm-prove",
     "parallel",
@@ -49,7 +48,7 @@ zisk = [
     "ethrex-vm/zisk",
     "ethrex-l2-common/zisk",
 ]
-openvm = ["dep:openvm-build", "dep:openvm-sdk"]
+openvm = ["dep:openvm-sdk"]
 l2 = []
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 secp256k1 = [
