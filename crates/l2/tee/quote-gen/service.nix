@@ -48,6 +48,7 @@ let
     nativeBuildInputs = [
       pkgs.pkg-config
       rustPlatform.cargoSetupHook
+      pkgs.git
     ];
 
     env = {
