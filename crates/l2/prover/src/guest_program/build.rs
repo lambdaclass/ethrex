@@ -159,6 +159,14 @@ fn build_zisk_program() {
     if !setup_status.success() {
         panic!("Failed to setup compiled guest program with zisk toolchain");
     }
+
+    let _ = std::fs::create_dir("./src/zisk/out");
+
+    std::fs::copy(
+        "./src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
+        "./src/zisk/out/riscv64ima-zisk-elf",
+    )
+    .expect("could not copy Zisk elf to output directory");
 }
 
 #[cfg(all(not(clippy), feature = "zisk"))]
