@@ -16,8 +16,9 @@ use ethrex_common::{
 use ethrex_trie::{Nibbles, Node, Trie};
 use lru::LruCache;
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
-    Options, WriteBatch, checkpoint::Checkpoint,
+    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode,
+    KeyEncodingType, MultiThreaded, Options, PlainTableFactoryOptions, WriteBatch,
+    checkpoint::Checkpoint,
 };
 use rustc_hash::FxBuildHasher;
 use std::{
@@ -226,6 +227,9 @@ impl Store {
         db_options.set_compression_type(rocksdb::DBCompressionType::None);
         db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
+        db_options.set_use_direct_reads(true);
+        db_options.set_allow_mmap_reads(true);
+
         // db_options.enable_statistics();
         // db_options.set_stats_dump_period_sec(600);
 
@@ -327,10 +331,24 @@ impl Store {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    cf_opts.set_use_direct_reads(true);
+                    cf_opts.set_allow_mmap_reads(true);
+
+                    let factory_opts: PlainTableFactoryOptions = PlainTableFactoryOptions {
+                        user_key_length: if cf_name == CF_ACCOUNT_FLATKEYVALUE {
+                            32
+                        } else {
+                            64
+                        },
+                        bloom_bits_per_key: 10,
+                        hash_table_ratio: 0.75,
+                        index_sparseness: 16,
+                        huge_page_tlb_size: 0,
+                        encoding_type: KeyEncodingType::Plain,
+                        full_scan_mode: false,
+                        store_index_in_file: false,
+                    };
+                    cf_opts.set_plain_table_factory(&factory_opts);
                 }
                 CF_ACCOUNT_CODES => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
