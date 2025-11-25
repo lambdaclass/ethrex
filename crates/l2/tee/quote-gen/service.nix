@@ -68,8 +68,8 @@ let
     env = {
       OPENSSL_NO_VENDOR = 1;
       VERGEN_GIT_SHA = gitRev;
-      ETHREX_SDK_OPENZEPPELIN_DIR = "${openzeppelinUpgradeable}";
-      ETHREX_SDK_OPENZEPPELIN_BASE_DIR = "${openzeppelinContracts}";
+      ETHREX_SDK_OZ_UPGRADABLE_CONTRACTS_DIR = "${openzeppelinUpgradeable}";
+      ETHREX_SDK_OZ_CONTRACTS_DIR = "${openzeppelinContracts}";
     };
   };
 in
