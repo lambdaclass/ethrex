@@ -16,8 +16,8 @@ use ethrex_common::{
 use ethrex_trie::{Nibbles, Node, Trie};
 use lru::LruCache;
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
-    Options, WriteBatch, checkpoint::Checkpoint,
+    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, CuckooTableOptions,
+    DBWithThreadMode, MultiThreaded, Options, WriteBatch, checkpoint::Checkpoint,
 };
 use rustc_hash::FxBuildHasher;
 use std::{
@@ -325,12 +325,12 @@ impl Store {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    let mut cuckoo_opts = CuckooTableOptions::default();
+                    cuckoo_opts.set_identity_as_first_hash(true);
+                    cuckoo_opts.set_hash_ratio(0.8);
+
+                    cf_opts.set_cuckoo_table_factory(&cuckoo_opts);
                 }
                 CF_ACCOUNT_CODES => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
