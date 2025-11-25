@@ -26,6 +26,13 @@ let
   };
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
   solc_0_8_29 = pkgs.callPackage ./solc-0.8.29.nix { };
+  openzeppelinUpgradeable = pkgs.fetchFromGitHub {
+    owner = "OpenZeppelin";
+    repo = "openzeppelin-contracts-upgradeable";
+    rev = "release-v5.4";
+    hash = "sha256-0000000000000000000000000000000000000000000=";
+    fetchSubmodules = true;
+  };
 
 in
 let
@@ -56,7 +63,7 @@ let
     env = {
       OPENSSL_NO_VENDOR = 1;
       VERGEN_GIT_SHA = gitRev;
-      ETHREX_SDK_OPENZEPPELIN_DIR = "${src}/lib/openzeppelin-contracts-upgradeable";
+      ETHREX_SDK_OPENZEPPELIN_DIR = "${openzeppelinUpgradeable}";
     };
   };
 in
