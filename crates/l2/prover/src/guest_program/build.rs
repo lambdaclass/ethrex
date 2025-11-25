@@ -143,6 +143,7 @@ fn build_zisk_program() {
     }
 
     println!("{build_command:?}");
+    #[cfg(not(feature = "ci"))]
     println!("{setup_command:?}");
 
     println!("CWD = {}", std::env::current_dir().unwrap().display());
