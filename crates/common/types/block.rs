@@ -261,6 +261,12 @@ impl BlockBody {
             .collect::<Result<Vec<(&Transaction, Address)>, secp256k1::Error>>()
     }
 
+    pub fn precompute_tx_hashes(&self) {
+        self.transactions.par_iter().for_each(|tx| {
+            let _ = tx.hash();
+        });
+    }
+
     pub fn recover_with_cached_senders(
         &self,
         cached_senders: Vec<Address>,

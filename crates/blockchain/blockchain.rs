@@ -250,6 +250,7 @@ impl Blockchain {
                 .spawn_scoped(s, move || -> Result<_, ChainError> {
                     let block_senders = {
                         let mut tx_sender_cache = tx_sender_cache.lock().unwrap();
+                        block.body.precompute_tx_hashes();
                         block
                             .body
                             .transactions
