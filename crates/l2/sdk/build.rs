@@ -15,7 +15,12 @@ fn main() {
     fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
 
     let oz_target = contracts_path.join("lib/openzeppelin-contracts-upgradeable");
-    let oz_env_path = env::var("ETHREX_SDK_OPENZEPPELIN_DIR").ok().map(PathBuf::from);
+    let oz_env_path = env::var("ETHREX_SDK_OPENZEPPELIN_DIR")
+        .ok()
+        .map(PathBuf::from);
+    let oz_std_env_path = env::var("ETHREX_SDK_OPENZEPPELIN_BASE_DIR")
+        .ok()
+        .map(PathBuf::from);
     let env_path_exists = oz_env_path
         .as_ref()
         .map(|path| path.exists())
@@ -24,18 +29,33 @@ fn main() {
         oz_env_path.as_ref().unwrap().clone()
     } else {
         clone_openzeppelin(&oz_target);
-        oz_target.clone()
+        oz_target
     };
 
     // Compile the ERC1967Proxy contract
     let mut proxy_contract_path =
         oz_source_root.join("lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
     if !proxy_contract_path.exists() {
-        let alt = oz_source_root.join(
-            "lib/openzeppelin-contracts/contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
-        );
+        let alt = oz_source_root
+            .join("lib/openzeppelin-contracts/contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
         if alt.exists() {
             proxy_contract_path = alt;
+        } else if let Some(std_root) = oz_std_env_path.as_ref() {
+            let std_primary = std_root.join("contracts/proxy/ERC1967/ERC1967Proxy.sol");
+            if std_primary.exists() {
+                proxy_contract_path = std_primary;
+            } else {
+                let std_alt = std_root.join("contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
+                if std_alt.exists() {
+                    proxy_contract_path = std_alt;
+                } else {
+                    panic!(
+                        "ERC1967Proxy.sol not found in {} or {}",
+                        std_primary.display(),
+                        std_alt.display()
+                    );
+                }
+            }
         } else {
             panic!(
                 "ERC1967Proxy.sol not found in {}",
@@ -44,10 +64,11 @@ fn main() {
         }
     }
     let mut allow_paths: Vec<&Path> = vec![contracts_path.as_path(), oz_source_root.as_path()];
-    if env_path_exists {
-        if let Some(pre_fetched) = oz_env_path.as_ref() {
-            allow_paths.push(pre_fetched.as_path());
-        }
+    if env_path_exists && let Some(pre_fetched) = oz_env_path.as_ref() {
+        allow_paths.push(pre_fetched.as_path());
+    }
+    if let Some(std_root) = oz_std_env_path.as_ref() {
+        allow_paths.push(std_root.as_path());
     }
     ethrex_sdk_contract_utils::compile_contract(
         &contracts_path,

@@ -33,6 +33,12 @@ let
     hash = "sha256-aLWyvUuBtF1tDy531opzRi8myeMSipixUDkqcaQBRh0=";
     fetchSubmodules = true;
   };
+  openzeppelinContracts = pkgs.fetchFromGitHub {
+    owner = "OpenZeppelin";
+    repo = "openzeppelin-contracts";
+    rev = "f7da70c26e7bbb54da485908b332df6b6b5b70ee";
+    hash = "sha256-FI/gzWNsLrh2dfWhE3Q+CgiwuvcKBtpuE9vt+ANnpqU=";
+  };
 in
 let
   quoteGen = rustPlatform.buildRustPackage rec {
@@ -63,6 +69,7 @@ let
       OPENSSL_NO_VENDOR = 1;
       VERGEN_GIT_SHA = gitRev;
       ETHREX_SDK_OPENZEPPELIN_DIR = "${openzeppelinUpgradeable}";
+      ETHREX_SDK_OPENZEPPELIN_BASE_DIR = "${openzeppelinContracts}";
     };
   };
 in
