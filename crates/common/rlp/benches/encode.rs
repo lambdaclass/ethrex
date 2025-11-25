@@ -22,6 +22,7 @@ use ethrex_p2p::{
     types::{Endpoint, Node, NodeRecord, NodeRecordPairs},
 };
 use ethrex_rlp::encode::RLPEncode;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::{
     hint::black_box,
     net::{IpAddr, Ipv4Addr},
@@ -33,10 +34,9 @@ fn make_string_list(count: usize) -> Vec<String> {
     vec![entry; count]
 }
 
-fn make_u256_with_len(len: usize) -> U256 {
-    assert!((1..=32).contains(&len));
-    let shift = len.saturating_mul(8).saturating_sub(1);
-    U256::from(1u64) << shift
+fn random_u256(rng: &mut StdRng) -> U256 {
+    let bytes: [u8; 32] = rng.r#gen();
+    U256::from_big_endian(&bytes)
 }
 
 fn create_access_list() -> AccessList {
@@ -98,143 +98,123 @@ static HASH: H256 = H256::repeat_byte(0xab);
 fn bench_encode_integer(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_integer");
 
-    group.bench_function("u8", |b| {
+    let u8_values = {
+        let mut rng = StdRng::seed_from_u64(1);
+        (0..1_000_000)
+            .map(|_| {
+                let byte: u8 = rng.r#gen();
+                byte & 0x7f
+            })
+            .collect::<Vec<u8>>()
+    };
+    group.bench_function("u8_random_seeded", move |b| {
         let mut buf = Vec::new();
-        let value: u8 = 42;
         b.iter(|| {
             buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u8::MAX", |b| {
-        let mut buf = Vec::new();
-        let value: u8 = u8::MAX;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u16", |b| {
-        let mut buf = Vec::new();
-        let value: u16 = 42;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u16::MAX", |b| {
-        let mut buf = Vec::new();
-        let value: u16 = u16::MAX;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u32", |b| {
-        let mut buf = Vec::new();
-        let value: u32 = 42;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u32 > 0x7f", |b| {
-        let mut buf = Vec::new();
-        let value: u32 = u32::MAX;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u64", |b| {
-        let mut buf = Vec::new();
-        let value: u64 = 42;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u64::MAX", |b| {
-        let mut buf = Vec::new();
-        let value: u64 = u64::MAX;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u128", |b| {
-        let mut buf = Vec::new();
-        let value: u128 = 42;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u128::MAX", |b| {
-        let mut buf = Vec::new();
-        let value: u128 = u128::MAX;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u256", |b| {
-        let mut buf = Vec::new();
-        let value: U256 = U256::from(42u64);
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.bench_function("u256::MAX", |b| {
-        let mut buf = Vec::new();
-        let value: U256 = U256::MAX;
-        b.iter(|| {
-            buf.clear();
-            value.encode(&mut buf);
-            black_box(&buf);
-        });
-    });
-
-    group.finish();
-}
-
-fn bench_encode_integer_lengths(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_integer_lengths");
-    for &len in &[1usize, 2, 4, 8, 16, 32] {
-        let label = format!("bytes_{len}");
-        let value = make_u256_with_len(len);
-        group.bench_function(label, move |b| {
-            let mut buf = Vec::new();
-            b.iter(|| {
-                buf.clear();
+            for &value in &u8_values {
                 value.encode(&mut buf);
-                black_box(&buf);
-            });
+            }
+            black_box(&buf);
         });
-    }
+    });
+
+    let u16_values = {
+        let mut rng = StdRng::seed_from_u64(2);
+        (0..1_000_000)
+            .map(|_| {
+                let value: u16 = rng.r#gen();
+                value % 10_001
+            })
+            .collect::<Vec<u16>>()
+    };
+    group.bench_function("u16_random_seeded", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            for &value in &u16_values {
+                value.encode(&mut buf);
+            }
+            black_box(&buf);
+        });
+    });
+
+    let u32_values = {
+        let mut rng = StdRng::seed_from_u64(3);
+        (0..1_000_000)
+            .map(|_| {
+                let value: u32 = rng.r#gen();
+                value % 1_000_001
+            })
+            .collect::<Vec<u32>>()
+    };
+    group.bench_function("u32_random_seeded", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            for &value in &u32_values {
+                value.encode(&mut buf);
+            }
+            black_box(&buf);
+        });
+    });
+
+    let u64_values = {
+        let mut rng = StdRng::seed_from_u64(4);
+        (0..1_000_000)
+            .map(|_| {
+                let value: u64 = rng.r#gen();
+                value % 1_000_000_001
+            })
+            .collect::<Vec<u64>>()
+    };
+    group.bench_function("u64_random_seeded", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            for &value in &u64_values {
+                value.encode(&mut buf);
+            }
+            black_box(&buf);
+        });
+    });
+
+    let u128_values = {
+        let mut rng = StdRng::seed_from_u64(5);
+        (0..1_000_000)
+            .map(|_| {
+                let value: u128 = rng.r#gen();
+                value % (u64::MAX as u128 + 1)
+            })
+            .collect::<Vec<u128>>()
+    };
+    group.bench_function("u128_random_seeded", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            for &value in &u128_values {
+                value.encode(&mut buf);
+            }
+            black_box(&buf);
+        });
+    });
+
+    let u256_values = {
+        let mut rng = StdRng::seed_from_u64(6);
+        (0..1_000_000)
+            .map(|_| random_u256(&mut rng))
+            .collect::<Vec<U256>>()
+    };
+    group.bench_function("u256_random_seeded", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            for value in &u256_values {
+                value.encode(&mut buf);
+            }
+            black_box(&buf);
+        });
+    });
+
     group.finish();
 }
 
@@ -242,7 +222,7 @@ fn bench_encode_strings(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_strings");
     for &len in &[5usize, 60, 500] {
         let label = format!("len_{len}");
-        let value = "a".repeat(len);
+        let value = black_box("a".repeat(len));
         group.bench_function(label, move |b| {
             let mut buf = Vec::new();
             b.iter(|| {
@@ -259,7 +239,7 @@ fn bench_encode_int_lists(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_int_lists");
     for &count in &[10usize, 100, 1000] {
         let label = format!("len_{count}");
-        let value: Vec<_> = (0..count as u64).collect();
+        let value: Vec<_> = black_box((0..count as u64).collect());
         group.bench_function(label, move |b| {
             let mut buf = Vec::new();
             b.iter(|| {
@@ -276,7 +256,7 @@ fn bench_encode_string_lists(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_string_lists");
     for &count in &[10usize, 100, 1000] {
         let label = format!("len_{count}");
-        let value = make_string_list(count);
+        let value = make_string_list(black_box(count));
         group.bench_function(label, move |b| {
             let mut buf = Vec::new();
             b.iter(|| {
@@ -292,11 +272,11 @@ fn bench_encode_string_lists(c: &mut Criterion) {
 fn bench_encode_account_info(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_account_info");
 
-    let account_info = AccountInfo {
+    let account_info = black_box(AccountInfo {
         code_hash: HASH,
         balance: U256::from(0xf34ab23u64),
         nonce: 1,
-    };
+    });
 
     group.bench_function("account_info", move |b| {
         let mut buf = Vec::new();
@@ -1226,7 +1206,6 @@ fn bench_encode_withdrawals(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_encode_integer,
-    bench_encode_integer_lengths,
     bench_encode_strings,
     bench_encode_int_lists,
     bench_encode_string_lists,

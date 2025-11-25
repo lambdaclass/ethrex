@@ -3717,6 +3717,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "lazy_static",
+ "rand 0.8.5",
  "snap",
  "thiserror 2.0.17",
  "tinyvec",
