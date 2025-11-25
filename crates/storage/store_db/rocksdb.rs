@@ -332,13 +332,11 @@ impl Store {
 
                     cf_opts.set_allow_mmap_reads(true);
 
-                    cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(
-                        if cf_name == CF_ACCOUNT_FLATKEYVALUE {
-                            0
-                        } else {
-                            32
-                        },
-                    ));
+                    if cf_name == CF_ACCOUNT_FLATKEYVALUE {
+                        cf_opts.set_prefix_extractor(SliceTransform::create_noop())
+                    } else {
+                        cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(32))
+                    };
 
                     let factory_opts: PlainTableFactoryOptions = PlainTableFactoryOptions {
                         user_key_length: if cf_name == CF_ACCOUNT_FLATKEYVALUE {
