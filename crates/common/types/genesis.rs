@@ -427,9 +427,9 @@ impl ChainConfig {
             Fork::BPO4
         } else if self.is_bpo3_activated(block_timestamp) {
             Fork::BPO3
-        } else if self.is_BPO2_activated(block_timestamp) {
+        } else if self.is_bpo2_activated(block_timestamp) {
             Fork::BPO2
-        } else if self.is_BPO1_activated(block_timestamp) {
+        } else if self.is_bpo1_activated(block_timestamp) {
             Fork::BPO1
         } else if self.is_osaka_activated(block_timestamp) {
             Fork::Osaka
