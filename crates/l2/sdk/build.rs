@@ -2,6 +2,8 @@
 //! This script downloads dependencies and compiles contracts to be embedded as constants in the SDK.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::env;
+use std::fs;
+use std::io;
 use std::path::Path;
 
 use ethrex_sdk_contract_utils::git_clone;
@@ -13,16 +15,25 @@ fn main() {
     let contracts_path = Path::new(&out_dir).join("contracts");
     std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
 
-    git_clone(
-        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
-        contracts_path
-            .join("lib/openzeppelin-contracts-upgradeable")
-            .to_str()
-            .expect("Failed to convert path to str"),
-        Some("release-v5.4"),
-        true,
-    )
-    .unwrap();
+    let oz_target = contracts_path.join("lib/openzeppelin-contracts-upgradeable");
+    if let Ok(pre_fetched_path) = env::var("ETHREX_SDK_OPENZEPPELIN_DIR") {
+        let pre_fetched = Path::new(&pre_fetched_path);
+        if oz_target.exists() {
+            fs::remove_dir_all(&oz_target).expect("Failed to clear existing OpenZeppelin snapshot");
+        }
+        copy_dir_all(pre_fetched, &oz_target)
+            .expect("Failed to copy OpenZeppelin snapshot into build output");
+    } else {
+        git_clone(
+            "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
+            oz_target
+                .to_str()
+                .expect("Failed to convert path to str"),
+            Some("release-v5.4"),
+            true,
+        )
+        .unwrap();
+    }
 
     // Compile the ERC1967Proxy contract
     let proxy_contract_path = contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
@@ -47,4 +58,20 @@ fn main() {
         contract_bytecode,
     )
     .expect("failed to write ERC1967Proxy bytecode");
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else if ty.is_file() {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
