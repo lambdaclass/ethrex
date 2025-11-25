@@ -1,5 +1,5 @@
-use prometheus::{Encoder, HistogramTimer, HistogramVec, TextEncoder, register_histogram_vec};
-use std::{future::Future, sync::LazyLock};
+use prometheus::{HistogramTimer, HistogramVec, register_histogram_vec};
+use std::sync::LazyLock;
 use tracing::{
     Subscriber,
     field::{Field, Visit},
@@ -7,10 +7,11 @@ use tracing::{
 };
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
-use crate::MetricsError;
-
 pub static METRICS_BLOCK_PROCESSING_PROFILE: LazyLock<HistogramVec> =
     LazyLock::new(initialize_histogram_vec);
+
+// Metrics defined in this module register into the Prometheus default registry.
+// The metrics API exposes them by calling `gather_default_metrics()`.
 
 fn initialize_histogram_vec() -> HistogramVec {
     register_histogram_vec!(
@@ -109,45 +110,6 @@ where
             timer.observe_duration();
         }
     }
-}
-
-/// Records the duration of an async operation in the function profiling histogram.
-///
-/// This provides a lightweight alternative to the `#[instrument]` attribute when you need
-/// manual control over timing instrumentation, such as in RPC handlers.
-///
-/// # Parameters
-/// * `namespace` - Category for the metric (e.g., "rpc", "engine", "block_execution")
-/// * `function_name` - Name identifier for the operation being timed
-/// * `future` - The async operation to time
-///
-/// Use this function when you need to instrument an async operation for duration metrics,
-/// but cannot or do not want to use the `#[instrument]` attribute (for example, in RPC handlers).
-pub async fn record_async_duration<Fut, T>(namespace: &str, function_name: &str, future: Fut) -> T
-where
-    Fut: Future<Output = T>,
-{
-    let timer = METRICS_BLOCK_PROCESSING_PROFILE
-        .with_label_values(&[namespace, function_name])
-        .start_timer();
-
-    let output = future.await;
-    timer.observe_duration();
-    output
-}
-
-pub fn gather_profiling_metrics() -> Result<String, MetricsError> {
-    let encoder = TextEncoder::new();
-    let metric_families = prometheus::gather();
-
-    let mut buffer = Vec::new();
-    encoder
-        .encode(&metric_families, &mut buffer)
-        .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-
-    let res = String::from_utf8(buffer)?;
-
-    Ok(res)
 }
 
 pub fn initialize_block_processing_profile() {
