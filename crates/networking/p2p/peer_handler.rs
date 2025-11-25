@@ -899,7 +899,7 @@ impl PeerHandler {
         state_root: H256,
         tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
     ) -> Result<(), PeerHandlerError> {
-        debug!(
+        trace!(
             %peer_id,
             ?chunk_start,
             ?chunk_end,
@@ -1118,7 +1118,7 @@ impl PeerHandler {
                     remaining_start: chunk_start,
                     remaining_end: chunk_end,
                 };
-                debug!(
+                trace!(
                     %peer_id,
                     ?chunk_start,
                     ?chunk_end,
@@ -1488,7 +1488,7 @@ impl PeerHandler {
                                     tasks_queue_not_started.push_back(task);
                                     task_count += 1;
                                 }
-                                debug!(chunk_count, "Split big storage account into chunks.");
+                                trace!(chunk_count, "Split big storage account into chunks.");
                             }
                         } else {
                             account_storage_roots.accounts_with_storage_root.insert(
