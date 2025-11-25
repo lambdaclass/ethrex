@@ -29,6 +29,13 @@ let
   openzeppelinUpgradeable = pkgs.fetchFromGitHub {
     owner = "OpenZeppelin";
     repo = "openzeppelin-contracts-upgradeable";
+    rev = "3ea30e3818eaefca97a8e99e8c676975f8c06582";
+    hash = "sha256-0000000000000000000000000000000000000000000=";
+    fetchSubmodules = true;
+  };
+  openzeppelinUpgradeable = pkgs.fetchFromGitHub {
+    owner = "OpenZeppelin";
+    repo = "openzeppelin-contracts-upgradeable";
     rev = "release-v5.4";
     hash = "sha256-0000000000000000000000000000000000000000000=";
     fetchSubmodules = true;

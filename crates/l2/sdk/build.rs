@@ -18,19 +18,18 @@ fn main() {
     let oz_target = contracts_path.join("lib/openzeppelin-contracts-upgradeable");
     if let Ok(pre_fetched_path) = env::var("ETHREX_SDK_OPENZEPPELIN_DIR") {
         let pre_fetched = Path::new(&pre_fetched_path);
-        if oz_target.exists() {
-            fs::remove_dir_all(&oz_target).expect("Failed to clear existing OpenZeppelin snapshot");
+        if pre_fetched.exists() {
+            if oz_target.exists() {
+                fs::remove_dir_all(&oz_target)
+                    .expect("Failed to clear existing OpenZeppelin snapshot");
+            }
+            copy_dir_all(pre_fetched, &oz_target)
+                .expect("Failed to copy OpenZeppelin snapshot into build output");
+        } else {
+            clone_openzeppelin(&oz_target);
         }
-        copy_dir_all(pre_fetched, &oz_target)
-            .expect("Failed to copy OpenZeppelin snapshot into build output");
     } else {
-        git_clone(
-            "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
-            oz_target.to_str().expect("Failed to convert path to str"),
-            Some("release-v5.4"),
-            true,
-        )
-        .unwrap();
+        clone_openzeppelin(&oz_target);
     }
 
     // Compile the ERC1967Proxy contract
@@ -72,4 +71,14 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn clone_openzeppelin(target: &Path) {
+    git_clone(
+        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
+        target.to_str().expect("Failed to convert path to str"),
+        Some("release-v5.4"),
+        true,
+    )
+    .unwrap();
 }
