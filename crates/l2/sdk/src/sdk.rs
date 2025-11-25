@@ -25,7 +25,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::{fs::read_to_string, path::Path};
-use tracing::info;
 use tracing::{error, warn};
 
 pub mod calldata;
@@ -453,9 +452,16 @@ pub async fn create2_deploy_from_bytecode(
     salt: &[u8],
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
-    let init_code = [bytecode, constructor_args].concat();
-    let (deploy_tx_hash, contract_address) =
-        create2_deploy(salt, &init_code, deployer, eth_client).await?;
+    let (deploy_tx_hash, contract_address) = create2_deploy_from_bytecode_no_wait(
+        constructor_args,
+        bytecode,
+        deployer,
+        salt,
+        eth_client,
+        Overrides::default(),
+    )
+    .await?;
+    wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
     Ok((deploy_tx_hash, contract_address))
 }
 
@@ -550,12 +556,31 @@ pub async fn deploy_with_proxy_no_wait(
     eth_client: &EthClient,
     contract_path: &Path,
     salt: &[u8],
+    overrides: Overrides,
 ) -> Result<ProxyDeployment, DeployError> {
-    let (implementation_tx_hash, implementation_address) =
-        create2_deploy_from_path(&[], contract_path, deployer, salt, eth_client).await?;
+    let bytecode_hex = read_to_string(contract_path)?;
+    let bytecode = hex::decode(bytecode_hex.trim_start_matches("0x").trim())?;
+    let (implementation_tx_hash, implementation_address) = create2_deploy_from_bytecode_no_wait(
+        &[],
+        &bytecode,
+        deployer,
+        salt,
+        eth_client,
+        overrides.clone(),
+    )
+    .await?;
 
-    let (proxy_tx_hash, proxy_address) =
-        deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
+    let (proxy_tx_hash, proxy_address) = deploy_proxy_no_wait(
+        deployer,
+        eth_client,
+        implementation_address,
+        salt,
+        Overrides {
+            nonce: overrides.nonce.map(|nonce| nonce + 1),
+            ..overrides
+        },
+    )
+    .await?;
 
     Ok(ProxyDeployment {
         proxy_address,
@@ -604,10 +629,6 @@ pub async fn deploy_with_proxy_from_bytecode_no_wait(
     )
     .await?;
 
-    info!(
-        "Deployed implementation at {implementation_address:#x} with tx {implementation_tx_hash:#x}"
-    );
-
     let (proxy_tx_hash, proxy_address) = deploy_proxy_no_wait(
         deployer,
         eth_client,
@@ -619,8 +640,6 @@ pub async fn deploy_with_proxy_from_bytecode_no_wait(
         },
     )
     .await?;
-
-    info!("Deployed proxy at {proxy_address:#x} with tx {proxy_tx_hash:#x}");
 
     Ok(ProxyDeployment {
         proxy_address,
@@ -667,13 +686,10 @@ async fn create2_deploy(
     deployer: &Signer,
     eth_client: &EthClient,
 ) -> Result<(H256, Address), EthClientError> {
-    let deploy_tx =
-        build_create2_deploy_tx(salt, init_code, deployer, eth_client, Overrides::default())
-            .await?;
-    let deploy_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer).await?;
+    let (deploy_tx_hash, deployed_address) =
+        create2_deploy_no_wait(salt, init_code, deployer, eth_client, Overrides::default()).await?;
 
-    let deployed_address = create2_address(salt, keccak(init_code));
+    wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
 
     Ok((deploy_tx_hash, deployed_address))
 }
