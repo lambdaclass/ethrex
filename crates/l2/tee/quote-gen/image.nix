@@ -1,6 +1,7 @@
 { gitRev }:
 let
   pkgs = import <nixpkgs> { };
+  solc_0_8_29 = pkgs.callPackage ./solc-0.8.29.nix { };
 in
 (pkgs.nixos [
   (
@@ -22,7 +23,7 @@ in
       ];
 
       system.stateVersion = "25.11";
-      environment.systemPackages = lib.mkOverride 99 [];
+      environment.systemPackages = lib.mkOverride 99 [ solc_0_8_29 ];
       
       boot.kernelModules = [ "tdx_guest" "tsm" ];
       boot.initrd.availableKernelModules  = [ "dm_mod" "dm_verity" "erofs" "sd_mod" "ahci" ];

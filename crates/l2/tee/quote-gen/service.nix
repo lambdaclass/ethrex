@@ -25,6 +25,7 @@ let
     sha256 = "sha256-HG2cCnktfHsKV0s4XW83gU3F57gaTljL9KNSuG6bnQs";
   };
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
+  solc_0_8_29 = pkgs.callPackage ./solc-0.8.29.nix { };
 
 in
 let
@@ -49,6 +50,7 @@ let
       pkgs.pkg-config
       rustPlatform.cargoSetupHook
       pkgs.git
+      solc_0_8_29
     ];
 
     env = {
