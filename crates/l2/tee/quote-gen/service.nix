@@ -33,14 +33,6 @@ let
     hash = "sha256-0000000000000000000000000000000000000000000=";
     fetchSubmodules = true;
   };
-  openzeppelinUpgradeable = pkgs.fetchFromGitHub {
-    owner = "OpenZeppelin";
-    repo = "openzeppelin-contracts-upgradeable";
-    rev = "release-v5.4";
-    hash = "sha256-0000000000000000000000000000000000000000000=";
-    fetchSubmodules = true;
-  };
-
 in
 let
   quoteGen = rustPlatform.buildRustPackage rec {
