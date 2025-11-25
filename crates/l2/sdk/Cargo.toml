@@ -27,9 +27,6 @@ reqwest.workspace = true
 eyre.workspace = true
 lazy_static.workspace = true
 
-[features]
-l2 = []
-
 [lib]
 name = "ethrex_l2_sdk"
 path = "src/sdk.rs"

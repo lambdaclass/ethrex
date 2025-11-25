@@ -13,15 +13,6 @@ fn main() {
     let contracts_path = Path::new(&out_dir).join("contracts");
     std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
 
-    if cfg!(not(feature = "l2")) {
-        // Write an empty bytecode file to indicate that contracts are not compiled.
-        std::fs::create_dir_all(contracts_path.join("solc_out"))
-            .expect("failed to create contracts output directory");
-        std::fs::write(contracts_path.join("solc_out/ERC1967Proxy.bytecode"), [])
-            .expect("failed to write ERC1967Proxy bytecode");
-        return;
-    }
-
     git_clone(
         "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
         contracts_path
