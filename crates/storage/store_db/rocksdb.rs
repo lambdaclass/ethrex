@@ -227,7 +227,6 @@ impl Store {
         db_options.set_compression_type(rocksdb::DBCompressionType::None);
         db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
-        db_options.set_use_direct_reads(true);
         db_options.set_allow_mmap_reads(true);
 
         // db_options.enable_statistics();
@@ -331,7 +330,6 @@ impl Store {
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
-                    cf_opts.set_use_direct_reads(true);
                     cf_opts.set_allow_mmap_reads(true);
 
                     let factory_opts: PlainTableFactoryOptions = PlainTableFactoryOptions {
