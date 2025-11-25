@@ -192,7 +192,7 @@ jobs:
           SHELL: /bin/bash
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_RUNNER: 1
-        uses: actions/retry@v3
+        uses: nick-fields/retry@v3
         with:
           max_attempts: 3
           retry_wait_seconds: 0
