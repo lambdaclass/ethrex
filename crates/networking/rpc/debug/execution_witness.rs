@@ -55,7 +55,7 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
         Ok(Self {
             state: nodes
                 .into_iter()
-                .map(|n| Bytes::from(n.encode_to_vec()))
+                .map(Bytes::from)
                 .collect(),
             keys: value.keys.into_iter().map(Bytes::from).collect(),
             codes: value.codes.into_iter().map(Bytes::from).collect(),
