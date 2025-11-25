@@ -145,21 +145,6 @@ fn build_zisk_program() {
         .status()
         .expect("Failed to execute zisk build command");
 
-    println!(
-        "ELF (workspace target) exists? {}",
-        std::path::Path::new("target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program").exists()
-    );
-
-    println!(
-        "ELF (src/zisk/target) exists? {}",
-        std::path::Path::new("src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program").exists()
-    );
-
-    println!(
-        "ELF (cwd-relative) exists? {}",
-        std::path::Path::new("./target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program").exists()
-    );
-
     let setup_status = setup_command
         .status()
         .expect("Failed to execute zisk setup command");
