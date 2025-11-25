@@ -603,7 +603,7 @@ impl Store {
         cf_name: &str,
         keys: Vec<K>,
         deserialize_fn: F,
-    ) -> Result<Vec<V>, StoreError>
+    ) -> Result<Vec<Option<V>>, StoreError>
     where
         K: AsRef<[u8]> + Send + 'static,
         V: Send + 'static,
@@ -623,10 +623,10 @@ impl Store {
                 match db.get_cf(&cf, key)? {
                     Some(bytes) => {
                         let value = deserialize_fn(bytes)?;
-                        results.push(value);
+                        results.push(Some(value));
                     }
                     None => {
-                        return Err(StoreError::Custom("Key not found in bulk read".to_string()));
+                        results.push(None);
                     }
                 }
             }
@@ -1154,7 +1154,7 @@ impl StoreEngine for Store {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         let numbers: Vec<BlockNumber> = (from..=to).collect();
         let number_keys: Vec<Vec<u8>> = numbers.iter().map(|n| n.to_le_bytes().to_vec()).collect();
 
@@ -1168,10 +1168,10 @@ impl StoreEngine for Store {
 
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
-            .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
+            .flat_map(|hash_opt| hash_opt.map(|h| BlockHashRLP::from(h).bytes().clone()))
             .collect();
 
-        let bodies = self
+        let mut bodies = self
             .read_bulk_async(CF_BODIES, hash_keys, |bytes| {
                 BlockBodyRLP::from_bytes(bytes)
                     .to()
@@ -1179,13 +1179,30 @@ impl StoreEngine for Store {
             })
             .await?;
 
+        let mut i = 0;
+
+        // Fill in with None for missing bodies
+        let bodies = hashes
+            .into_iter()
+            .map(|opt| {
+                opt.and_then(|_| {
+                    let body_ref = bodies
+                        .get_mut(i)
+                        .expect("bodies length is equal to number of Somes in hashes");
+                    let body = std::mem::take(body_ref);
+                    i += 1;
+                    body
+                })
+            })
+            .collect();
+
         Ok(bodies)
     }
 
     async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
             .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
@@ -2052,7 +2069,7 @@ impl StoreEngine for Store {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError> {
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
         self.read_bulk_async(
             CF_FULLSYNC_HEADERS,
             (start..start + limit).map(|n| n.to_le_bytes()).collect(),

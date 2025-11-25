@@ -239,14 +239,14 @@ impl Store {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         self.engine.get_block_bodies(from, to).await
     }
 
     pub async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         self.engine.get_block_bodies_by_hash(hashes).await
     }
 
@@ -1349,7 +1349,7 @@ impl Store {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError> {
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
         self.engine.read_fullsync_batch(start, limit).await
     }
 

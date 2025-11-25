@@ -58,13 +58,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError>;
+    ) -> Result<Vec<Option<BlockBody>>, StoreError>;
 
     /// Obtain block bodies from a list of hashes
     async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError>;
+    ) -> Result<Vec<Option<BlockBody>>, StoreError>;
 
     /// Obtain any block body using the hash
     async fn get_block_body_by_hash(
@@ -372,7 +372,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError>;
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError>;
 
     /// Clear all headers downloaded during fullsync
     async fn clear_fullsync_headers(&self) -> Result<(), StoreError>;
