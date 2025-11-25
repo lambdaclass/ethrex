@@ -335,14 +335,14 @@ impl Store {
                     if cf_name == CF_ACCOUNT_FLATKEYVALUE {
                         cf_opts.set_prefix_extractor(SliceTransform::create_noop())
                     } else {
-                        cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(32))
+                        cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(66))
                     };
 
                     let factory_opts: PlainTableFactoryOptions = PlainTableFactoryOptions {
                         user_key_length: if cf_name == CF_ACCOUNT_FLATKEYVALUE {
-                            32
+                            65
                         } else {
-                            64
+                            131
                         },
                         bloom_bits_per_key: 10,
                         hash_table_ratio: 0.75,
