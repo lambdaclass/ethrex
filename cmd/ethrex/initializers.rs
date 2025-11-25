@@ -11,6 +11,7 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
+use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
@@ -89,6 +90,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     );
 
     initialize_block_processing_profile();
+    initialize_rpc_metrics();
 
     tracker.spawn(metrics_api);
 }
