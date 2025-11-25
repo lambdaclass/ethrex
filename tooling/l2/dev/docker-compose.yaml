@@ -407,7 +407,7 @@ services:
       - source: ethrex-sponsor-addresses
         target: /usr/local/bin/sponsorable-addresses.txt
     command: >
-      l2 --dev --no-monitor --proof-coordinator.addr 0.0.0.0 --admin-server.addr 0.0.0.0 --sponsorable-addresses sponsorable-addresses.txt
+      l2 --dev --no-monitor --proof-coordinator.addr 0.0.0.0 --admin-server.addr 0.0.0.0 --block-producer.block-time 1000 --sponsorable-addresses sponsorable-addresses.txt
 
   ethrex-prover:
     container_name: ethrex-prover
