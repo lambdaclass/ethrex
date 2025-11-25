@@ -213,7 +213,7 @@ fn build_openvm_program() {
     }
 
     let elf_src =
-        Path::new("./src/openvm/target/riscv32im-risc0-zkvm-elf/release/zkvm-openvm-program");
+        Path::new("./src/openvm/target/riscv32im-openvm-zkvm-elf/release/zkvm-openvm-program");
     let elf_dst = Path::new("./src/openvm/out/riscv32im-openvm-zkvm-elf");
 
     if let Some(parent) = elf_dst.parent() {
