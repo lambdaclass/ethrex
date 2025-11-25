@@ -249,7 +249,7 @@ jobs:
       - name: Upload ethrex guests artifact
         uses: actions/upload-artifact@v4
         with:
-          nam: ethrex-guests.tar.gz
+          name: ethrex-guests.tar.gz
           path: ethrex-guests.tar.gz
 
   package-contracts:
