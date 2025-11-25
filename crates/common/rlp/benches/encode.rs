@@ -5,9 +5,12 @@ use ethrex_common::{
     Address, Bloom, H32, H160, H256,
     constants::EMPTY_KECCACK_HASH,
     types::{
-        AccountInfo, AccountState, BYTES_PER_BLOB, BlobsBundle, Block, BlockBody, BlockHeader,
-        ForkId, Log, Receipt, ReceiptWithBloom, Transaction, TxType, Withdrawal,
-        requests::EncodedRequests,
+        AccessList, AccountInfo, AccountState, AuthorizationList, AuthorizationTuple,
+        BYTES_PER_BLOB, BlobsBundle, Block, BlockBody, BlockHeader, EIP1559Transaction,
+        EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, FeeTokenTransaction, ForkId,
+        LegacyTransaction, Log, MempoolTransaction, P2PTransaction, PrivilegedL2Transaction,
+        Receipt, ReceiptWithBloom, Transaction, TxKind, TxType, Withdrawal,
+        WrappedEIP4844Transaction, requests::EncodedRequests,
     },
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -22,6 +25,24 @@ fn make_u256_with_len(len: usize) -> U256 {
     assert!((1..=32).contains(&len));
     let shift = len.saturating_mul(8).saturating_sub(1);
     U256::from(1u64) << shift
+}
+
+fn sample_access_list() -> AccessList {
+    vec![(
+        Address::from_str("0x000000000000000000000000000000000000000a").unwrap(),
+        vec![HASH],
+    )]
+}
+
+fn sample_authorization_list() -> AuthorizationList {
+    vec![AuthorizationTuple {
+        chain_id: U256::from(1u64),
+        address: Address::from_str("0x00000000000000000000000000000000000000bb").unwrap(),
+        nonce: 1,
+        y_parity: U256::from(1u64),
+        r_signature: U256::from(2u64),
+        s_signature: U256::from(3u64),
+    }]
 }
 
 static HASH: H256 = H256::repeat_byte(0xab);
@@ -256,6 +277,374 @@ fn bench_encode_account_state(c: &mut Criterion) {
         b.iter(|| {
             buf.clear();
             account_state.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_tx_kind(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_tx_kind");
+
+    let create_kind = TxKind::Create;
+    let call_kind =
+        TxKind::Call(Address::from_str("0x00000000000000000000000000000000000000ff").unwrap());
+
+    group.bench_function("create", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            create_kind.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.bench_function("call", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            call_kind.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_legacy_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_legacy_transaction");
+
+    let legacy_tx = LegacyTransaction {
+        nonce: 1,
+        gas_price: U256::from(50_000),
+        gas: 21_000,
+        to: TxKind::Create,
+        value: U256::from(1_000_000u64),
+        data: Bytes::from(vec![0u8; 32]),
+        v: U256::from(27u64),
+        r: U256::from(1u64),
+        s: U256::from(2u64),
+        inner_hash: Default::default(),
+    };
+
+    group.bench_function("legacy_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            legacy_tx.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_eip2930_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_eip2930_transaction");
+
+    let eip2930_tx = EIP2930Transaction {
+        chain_id: 1,
+        nonce: 2,
+        gas_price: U256::from(30_000),
+        gas_limit: 50_000,
+        to: TxKind::Call(Address::from_str("0x0000000000000000000000000000000000000aaa").unwrap()),
+        value: U256::from(42u64),
+        data: Bytes::from(vec![0x12; 16]),
+        access_list: sample_access_list(),
+        signature_y_parity: true,
+        signature_r: U256::from(5u64),
+        signature_s: U256::from(6u64),
+        inner_hash: Default::default(),
+    };
+
+    group.bench_function("eip2930_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            eip2930_tx.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_eip1559_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_eip1559_transaction");
+
+    let eip1559_tx = EIP1559Transaction {
+        chain_id: 1,
+        nonce: 3,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 100,
+        gas_limit: 100_000,
+        to: TxKind::Create,
+        value: U256::from(900u64),
+        data: Bytes::from(vec![0x34; 24]),
+        access_list: sample_access_list(),
+        signature_y_parity: false,
+        signature_r: U256::from(7u64),
+        signature_s: U256::from(8u64),
+        inner_hash: Default::default(),
+    };
+
+    group.bench_function("eip1559_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            eip1559_tx.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_eip4844_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_eip4844_transaction");
+
+    let eip4844_tx = EIP4844Transaction {
+        chain_id: 1,
+        nonce: 4,
+        max_priority_fee_per_gas: 2,
+        max_fee_per_gas: 200,
+        gas: 120_000,
+        to: Address::from_str("0x0000000000000000000000000000000000000bbb").unwrap(),
+        value: U256::from(1_500u64),
+        data: Bytes::from(vec![0x56; 48]),
+        access_list: sample_access_list(),
+        max_fee_per_blob_gas: U256::from(10u64),
+        blob_versioned_hashes: vec![H256::repeat_byte(0x44)],
+        signature_y_parity: true,
+        signature_r: U256::from(9u64),
+        signature_s: U256::from(10u64),
+        inner_hash: Default::default(),
+    };
+
+    group.bench_function("eip4844_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            eip4844_tx.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_wrapped_eip4844_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_wrapped_eip4844_transaction");
+
+    let inner_tx = EIP4844Transaction {
+        chain_id: 1,
+        nonce: 5,
+        max_priority_fee_per_gas: 3,
+        max_fee_per_gas: 300,
+        gas: 130_000,
+        to: Address::from_str("0x0000000000000000000000000000000000000ccc").unwrap(),
+        value: U256::from(2_500u64),
+        data: Bytes::from(vec![0x78; 64]),
+        access_list: sample_access_list(),
+        max_fee_per_blob_gas: U256::from(12u64),
+        blob_versioned_hashes: vec![H256::repeat_byte(0x55); 2],
+        signature_y_parity: true,
+        signature_r: U256::from(11u64),
+        signature_s: U256::from(12u64),
+        inner_hash: Default::default(),
+    };
+
+    let blobs_bundle = BlobsBundle {
+        blobs: vec![[7u8; BYTES_PER_BLOB]; 2],
+        commitments: vec![[0x23u8; 48]; 2],
+        proofs: vec![[0x34u8; 48]; 2],
+        version: 1,
+    };
+
+    let wrapped = WrappedEIP4844Transaction {
+        tx: inner_tx,
+        wrapper_version: Some(1),
+        blobs_bundle,
+    };
+
+    group.bench_function("wrapped_eip4844_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            wrapped.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_eip7702_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_eip7702_transaction");
+
+    let eip7702_tx = EIP7702Transaction {
+        chain_id: 1,
+        nonce: 6,
+        max_priority_fee_per_gas: 4,
+        max_fee_per_gas: 400,
+        gas_limit: 140_000,
+        to: Address::from_str("0x0000000000000000000000000000000000000ddd").unwrap(),
+        value: U256::from(3_500u64),
+        data: Bytes::from(vec![0x9a; 72]),
+        access_list: sample_access_list(),
+        authorization_list: sample_authorization_list(),
+        signature_y_parity: false,
+        signature_r: U256::from(13u64),
+        signature_s: U256::from(14u64),
+        inner_hash: Default::default(),
+    };
+
+    group.bench_function("eip7702_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            eip7702_tx.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_privileged_l2_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_privileged_l2_transaction");
+
+    let privileged_tx = PrivilegedL2Transaction {
+        chain_id: 1,
+        nonce: 7,
+        max_priority_fee_per_gas: 5,
+        max_fee_per_gas: 500,
+        gas_limit: 150_000,
+        to: TxKind::Create,
+        value: U256::from(4_500u64),
+        data: Bytes::from(vec![0xbc; 40]),
+        access_list: sample_access_list(),
+        from: Address::from_str("0x0000000000000000000000000000000000000eee").unwrap(),
+        inner_hash: Default::default(),
+    };
+
+    group.bench_function("privileged_l2_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            privileged_tx.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_fee_token_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_fee_token_transaction");
+
+    let fee_token_tx = FeeTokenTransaction {
+        chain_id: 1,
+        nonce: 8,
+        max_priority_fee_per_gas: 6,
+        max_fee_per_gas: 600,
+        gas_limit: 160_000,
+        to: TxKind::Call(Address::from_str("0x0000000000000000000000000000000000000fff").unwrap()),
+        value: U256::from(5_500u64),
+        data: Bytes::from(vec![0xde; 44]),
+        access_list: sample_access_list(),
+        fee_token: Address::from_str("0x0000000000000000000000000000000000000fed").unwrap(),
+        signature_y_parity: true,
+        signature_r: U256::from(15u64),
+        signature_s: U256::from(16u64),
+        inner_hash: Default::default(),
+    };
+
+    group.bench_function("fee_token_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            fee_token_tx.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_p2p_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_p2p_transaction");
+
+    let wrapped_tx = WrappedEIP4844Transaction {
+        tx: EIP4844Transaction {
+            chain_id: 1,
+            nonce: 9,
+            max_priority_fee_per_gas: 7,
+            max_fee_per_gas: 700,
+            gas: 170_000,
+            to: Address::from_str("0x0000000000000000000000000000000000000abc").unwrap(),
+            value: U256::from(6_500u64),
+            data: Bytes::from(vec![0xef; 52]),
+            access_list: sample_access_list(),
+            max_fee_per_blob_gas: U256::from(18u64),
+            blob_versioned_hashes: vec![H256::repeat_byte(0x66)],
+            signature_y_parity: false,
+            signature_r: U256::from(17u64),
+            signature_s: U256::from(18u64),
+            inner_hash: Default::default(),
+        },
+        wrapper_version: Some(1),
+        blobs_bundle: BlobsBundle {
+            blobs: vec![[8u8; BYTES_PER_BLOB]],
+            commitments: vec![[0x44u8; 48]],
+            proofs: vec![[0x55u8; 48]],
+            version: 1,
+        },
+    };
+
+    let p2p_tx = P2PTransaction::EIP4844TransactionWithBlobs(wrapped_tx);
+
+    group.bench_function("p2p_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            p2p_tx.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_mempool_transaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_mempool_transaction");
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 10,
+        max_priority_fee_per_gas: 8,
+        max_fee_per_gas: 800,
+        gas_limit: 180_000,
+        to: TxKind::Create,
+        value: U256::from(7_500u64),
+        data: Bytes::from(vec![0xaa; 36]),
+        access_list: sample_access_list(),
+        signature_y_parity: true,
+        signature_r: U256::from(19u64),
+        signature_s: U256::from(20u64),
+        inner_hash: Default::default(),
+    });
+    let mempool_tx = MempoolTransaction::new(
+        tx,
+        Address::from_str("0x0000000000000000000000000000000000000cab").unwrap(),
+    );
+
+    group.bench_function("mempool_transaction", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            mempool_tx.encode(&mut buf);
             black_box(&buf);
         });
     });
@@ -588,6 +977,17 @@ criterion_group!(
     bench_encode_string_lists,
     bench_encode_account_info,
     bench_encode_account_state,
+    bench_encode_tx_kind,
+    bench_encode_legacy_transaction,
+    bench_encode_eip2930_transaction,
+    bench_encode_eip1559_transaction,
+    bench_encode_eip4844_transaction,
+    bench_encode_wrapped_eip4844_transaction,
+    bench_encode_eip7702_transaction,
+    bench_encode_privileged_l2_transaction,
+    bench_encode_fee_token_transaction,
+    bench_encode_p2p_transaction,
+    bench_encode_mempool_transaction,
     bench_encode_fork_id,
     bench_encode_log,
     bench_encode_receipt,
