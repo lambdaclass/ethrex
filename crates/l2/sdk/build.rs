@@ -28,7 +28,21 @@ fn main() {
     };
 
     // Compile the ERC1967Proxy contract
-    let proxy_contract_path = oz_source_root.join("lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    let mut proxy_contract_path =
+        oz_source_root.join("lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    if !proxy_contract_path.exists() {
+        let alt = oz_source_root.join(
+            "lib/openzeppelin-contracts/contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
+        );
+        if alt.exists() {
+            proxy_contract_path = alt;
+        } else {
+            panic!(
+                "ERC1967Proxy.sol not found in {}",
+                proxy_contract_path.display()
+            );
+        }
+    }
     let mut allow_paths: Vec<&Path> = vec![contracts_path.as_path(), oz_source_root.as_path()];
     if env_path_exists {
         if let Some(pre_fetched) = oz_env_path.as_ref() {
