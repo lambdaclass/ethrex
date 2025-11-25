@@ -104,7 +104,12 @@ fn build_sp1_program() {
 
 #[cfg(all(not(clippy), feature = "zisk"))]
 fn build_zisk_program() {
+    // cargo-zisk rom-setup fails with `Os { code: 2, kind: NotFound, message: "No such file or directory" }`
+    // when building in a GitHub CI environment. This command is not required if we won't generate a proof
+    // so we skip it under the `ci` feature flag.
+
     let mut build_command = std::process::Command::new("cargo");
+    #[cfg(not(feature = "ci"))]
     let mut setup_command = std::process::Command::new("cargo-zisk");
 
     build_command
@@ -121,6 +126,8 @@ fn build_zisk_program() {
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .current_dir("./src/zisk");
+    #[cfg(not(feature = "ci"))]
+    {
     setup_command
         .env("RUSTC", rustc_path("zisk"))
         .env_remove("RUSTFLAGS")
@@ -133,6 +140,7 @@ fn build_zisk_program() {
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .current_dir("./src/zisk");
+    }
 
     println!("{build_command:?}");
     println!("{setup_command:?}");
@@ -145,6 +153,7 @@ fn build_zisk_program() {
         .status()
         .expect("Failed to execute zisk build command");
 
+    #[cfg(not(feature = "ci"))]
     let setup_status = setup_command
         .status()
         .expect("Failed to execute zisk setup command");
@@ -159,6 +168,7 @@ fn build_zisk_program() {
     if !build_status.success() {
         panic!("Failed to build guest program with zisk toolchain");
     }
+    #[cfg(not(feature = "ci"))]
     if !setup_status.success() {
         panic!("Failed to setup compiled guest program with zisk toolchain");
     }
