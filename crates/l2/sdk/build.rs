@@ -48,19 +48,8 @@ fn main() {
                 let std_alt = std_root.join("contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
                 if std_alt.exists() {
                     proxy_contract_path = std_alt;
-                } else {
-                    panic!(
-                        "ERC1967Proxy.sol not found in {} or {}",
-                        std_primary.display(),
-                        std_alt.display()
-                    );
                 }
             }
-        } else {
-            panic!(
-                "ERC1967Proxy.sol not found in {}",
-                proxy_contract_path.display()
-            );
         }
     }
     let mut allow_paths: Vec<&Path> = vec![contracts_path.as_path(), oz_source_root.as_path()];
