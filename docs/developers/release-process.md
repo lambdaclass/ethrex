@@ -154,7 +154,7 @@ docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
 ```bash
 docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:X.Y.Z
 docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:lateset
+docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:latest
 docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:l2
 ```
 
@@ -163,7 +163,7 @@ docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:l
 ```bash
 docker push ghcr.io/lambdaclass/ethrex:X.Y.Z
 docker push ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker push ghcr.io/lambdaclass/ethrex:lateset
+docker push ghcr.io/lambdaclass/ethrex:latest
 docker push ghcr.io/lambdaclass/ethrex:l2
 ```
 
