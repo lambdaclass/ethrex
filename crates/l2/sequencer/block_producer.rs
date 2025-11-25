@@ -40,7 +40,7 @@ use super::errors::BlockProducerError;
 
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
+use ethrex_metrics::{blocks::METRICS_BLOCKS, transactions::METRICS_TX};
 
 #[derive(Clone)]
 pub enum CallMessage {

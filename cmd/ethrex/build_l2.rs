@@ -47,6 +47,7 @@ pub fn download_script() {
         &output_contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol"),
         "ERC1967Proxy",
         false,
+        false,
         None,
         &[&output_contracts_path]
     );
@@ -57,6 +58,7 @@ pub fn download_script() {
         &output_contracts_path
             .join("lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol"),
         "SP1Verifier",
+        false,
         false,
         None,
         &[&output_contracts_path],
@@ -72,6 +74,7 @@ pub fn download_script() {
         &output_contracts_path.join("lib/create2deployer/contracts/Create2Deployer.sol"),
         "Create2Deployer",
         true,
+        false,
         Some(&remappings),
         &[contracts_path],
     );
@@ -111,6 +114,7 @@ pub fn download_script() {
             path,
             name,
             false,
+            false,
             Some(&remappings),
             &[contracts_path],
         );
@@ -140,6 +144,7 @@ pub fn download_script() {
             path,
             name,
             true,
+            false,
             Some(&remappings),
             &[contracts_path],
         );
@@ -151,12 +156,14 @@ pub fn download_script() {
         Path::new("../../crates/l2/contracts/src/l1/based/SequencerRegistry.sol"),
         "SequencerRegistry",
         false,
+        false,
         Some(&remappings),
         &[contracts_path],
     );
     ethrex_l2_sdk::compile_contract(
         &output_contracts_path,
         Path::new("../../crates/l2/contracts/src/l1/based/OnChainProposer.sol"),
+        false,
         false,
         Some(&remappings),
         &[contracts_path],
@@ -240,6 +247,7 @@ fn compile_contract_to_bytecode(
     contract_path: &Path,
     contract_name: &str,
     runtime_bin: bool,
+    abi_json: bool,
     remappings: Option<&[(&str, PathBuf)]>,
     allow_paths: &[&Path],
 ) {
@@ -248,6 +256,7 @@ fn compile_contract_to_bytecode(
         output_dir,
         contract_path,
         runtime_bin,
+        abi_json,
         remappings,
         allow_paths,
     )

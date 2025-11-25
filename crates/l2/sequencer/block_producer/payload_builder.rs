@@ -15,8 +15,8 @@ use ethrex_levm::vm::VMType;
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
-    metrics_blocks::METRICS_BLOCKS,
-    metrics_transactions::{METRICS_TX, MetricsTxType},
+    blocks::METRICS_BLOCKS,
+    transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
