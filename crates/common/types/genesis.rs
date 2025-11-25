@@ -421,7 +421,17 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_osaka_activated(block_timestamp) {
+        if self.is_bpo5_activated(block_timestamp) {
+            Fork::BPO5
+        } else if self.is_bpo4_activated(block_timestamp) {
+            Fork::BPO4
+        } else if self.is_bpo3_activated(block_timestamp) {
+            Fork::BPO3
+        } else if self.is_BPO2_activated(block_timestamp) {
+            Fork::BPO2
+        } else if self.is_BPO1_activated(block_timestamp) {
+            Fork::BPO1
+        } else if self.is_osaka_activated(block_timestamp) {
             Fork::Osaka
         } else if self.is_prague_activated(block_timestamp) {
             Fork::Prague
