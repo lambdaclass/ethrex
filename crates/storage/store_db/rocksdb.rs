@@ -1185,7 +1185,7 @@ impl StoreEngine for Store {
         let bodies = hashes
             .into_iter()
             .map(|opt| {
-                opt.map(|_| {
+                opt.and_then(|_| {
                     let body_ref = bodies
                         .get_mut(i)
                         .expect("bodies length is equal to number of Somes in hashes");
@@ -1193,7 +1193,6 @@ impl StoreEngine for Store {
                     i += 1;
                     body
                 })
-                .flatten()
             })
             .collect();
 
