@@ -36,6 +36,7 @@ futures.workspace = true
 indexmap.workspace = true
 rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
+ethrex-metrics = { path = "../../blockchain/metrics", default-features = false }
 
 tokio-stream = "0.1.17"
 
@@ -63,6 +64,7 @@ c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
 l2 = ["dep:ethrex-storage-rollup"]
 test-utils = []
+metrics = ["ethrex-metrics/metrics"]
 
 [lints.clippy]
 unwrap_used = "deny"

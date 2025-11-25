@@ -1,3 +1,6 @@
+use ethrex_metrics::metrics;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::sync::METRICS_SYNC;
 #[cfg(feature = "l2")]
 use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[cfg(not(feature = "l2"))]
@@ -191,7 +194,9 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Common metrics
             let elapsed = format_duration(start.elapsed());
             let peer_number = peer_table.peer_count().await.unwrap_or(0);
+            metrics!(METRICS_SYNC.set_peer_count(peer_number as u64));
             let current_step = METRICS.current_step.get();
+            metrics!(METRICS_SYNC.set_sync_step(u8::from(current_step) as u64));
             let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
             // Headers metrics
@@ -200,6 +205,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // We just clamp it to the max to avoid showing the user confusing data
             let headers_downloaded =
                 u64::min(METRICS.downloaded_headers.get(), headers_to_download);
+            metrics!(METRICS_SYNC.set_headers_progress(headers_downloaded, headers_to_download));
             let headers_remaining = headers_to_download.saturating_sub(headers_downloaded);
             let headers_download_progress = if headers_to_download == 0 {
                 "0%".to_string()
@@ -214,6 +220,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let account_leaves_downloaded =
                 METRICS.downloaded_account_tries.load(Ordering::Relaxed);
             let account_leaves_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
+            metrics!(METRICS_SYNC.set_account_leaves_progress(
+                account_leaves_downloaded,
+                account_leaves_inserted
+            ));
             let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
                 (account_leaves_inserted as f64 / account_leaves_downloaded as f64) * 100.0
             } else {
