@@ -131,7 +131,7 @@ fn build_zisk_program() {
         .args([
             "rom-setup",
             "-e",
-            "target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
+            "./target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
         ])
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
@@ -140,11 +140,29 @@ fn build_zisk_program() {
     println!("{build_command:?}");
     println!("{setup_command:?}");
 
+    println!("CWD = {}", std::env::current_dir().unwrap().display());
+
     let start = std::time::Instant::now();
 
     let build_status = build_command
         .status()
         .expect("Failed to execute zisk build command");
+
+    println!(
+        "ELF (workspace target) exists? {}",
+        std::path::Path::new("target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program").exists()
+    );
+
+    println!(
+        "ELF (src/zisk/target) exists? {}",
+        std::path::Path::new("src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program").exists()
+    );
+
+    println!(
+        "ELF (cwd-relative) exists? {}",
+        std::path::Path::new("./target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program").exists()
+    );
+
     let setup_status = setup_command
         .status()
         .expect("Failed to execute zisk setup command");
@@ -162,6 +180,14 @@ fn build_zisk_program() {
     if !setup_status.success() {
         panic!("Failed to setup compiled guest program with zisk toolchain");
     }
+
+    let _ = std::fs::create_dir("./src/zisk/out");
+
+    std::fs::copy(
+        "./src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
+        "./src/zisk/out/riscv64ima-zisk-elf",
+    )
+    .expect("could not copy Zisk elf to output directory");
 }
 
 #[cfg(all(not(clippy), feature = "openvm"))]
