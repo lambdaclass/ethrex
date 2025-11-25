@@ -12,7 +12,7 @@ While the user performs just one interaction and waits for the result, a similar
 
 To understand the behind-the-scenes mechanics, we'll revisit the earlier example. For a quick recap, here's a high-level breakdown of what happens when Alice (on L2-A) wants to send ETH to Bob (on L2-B):
 
-[Image: Diagram illustrating the cross-L2 transfer flow from L2-A to L2-B]
+![Diagram illustrating the cross-L2 transfer flow from L2-A to L2-B](../img/shared_bridge.png)
 
 - **Source L2 (L2-A, Alice's side):** Alice invokes the sendToL2 function on the CommonBridgeL2 contract, specifying the destination chain ID (L2-B), Bob's address on L2-B, the ETH amount to send, the gas limit the sender is willing to consume for the final transaction on L2-B (notably, this gas is burned on the source L2-A), and optionally, the calldata for any custom transaction to execute on L2-B.
 - **Source L2 Sequencer (L2-A):** Alice's transaction is included in a block on L2-A. Eventually, a batch containing that block is sealed, and a commitment is submitted to L1 (Ethereum). This commitment includes, among other details, a Merkle root of all transactions directed to other destination L2s, along with a list of balances to transfer to those L2s.
