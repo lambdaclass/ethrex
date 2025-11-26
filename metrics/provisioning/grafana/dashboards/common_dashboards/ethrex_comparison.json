@@ -101,6 +101,7 @@
             "y": 1
           },
           "id": 13,
+          "interval": "10s",
           "options": {
             "legend": {
               "calcs": [
@@ -188,7 +189,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p99.9",
@@ -201,7 +202,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p50",
@@ -305,6 +306,7 @@
             "y": 49
           },
           "id": 7,
+          "interval": "10s",
           "options": {
             "legend": {
               "calcs": [
@@ -392,7 +394,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p99.9",
@@ -405,7 +407,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p50",
@@ -1106,6 +1108,7 @@
             "y": 167
           },
           "id": 1,
+          "interval": "10s",
           "options": {
             "legend": {
               "calcs": [
@@ -1180,7 +1183,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p99.9",
@@ -1193,7 +1196,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p50",
@@ -1481,6 +1484,7 @@
             "y": 168
           },
           "id": 11,
+          "interval": "10s",
           "options": {
             "legend": {
               "calcs": [
@@ -1555,7 +1559,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p99.9",
@@ -1568,7 +1572,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p50",

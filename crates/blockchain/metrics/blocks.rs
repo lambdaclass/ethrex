@@ -1,6 +1,6 @@
-use prometheus::{Encoder, Gauge, IntGauge, Registry, TextEncoder};
 use prometheus::Histogram;
 use prometheus::HistogramOpts;
+use prometheus::{Encoder, Gauge, IntGauge, Registry, TextEncoder};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -13,7 +13,7 @@ pub struct MetricsBlocks {
     /// Keeps track of the block number of the last processed block
     block_number: IntGauge,
     gigagas: Gauge,
-    gigagas_summary: Histogram,
+    gigagas_histogram: Histogram,
     gigagas_block_building: Gauge,
     block_building_ms: IntGauge,
     block_building_base_fee: IntGauge,
@@ -50,10 +50,10 @@ impl MetricsBlocks {
                 "Keeps track of the block execution throughput through gigagas/s",
             )
             .unwrap(),
-            gigagas_summary: Histogram::with_opts(
+            gigagas_histogram: Histogram::with_opts(
                 HistogramOpts::new(
-                    "gigagas_summary",
-                    "Summary of the block execution throughput through gigagas/s",
+                    "gigagas_histogram",
+                    "Histogram of the block execution throughput through gigagas/s",
                 )
                 .buckets({
                     let mut buckets = vec![0.0];
@@ -139,7 +139,7 @@ impl MetricsBlocks {
 
     pub fn set_latest_gigagas(&self, gigagas: f64) {
         self.gigagas.set(gigagas);
-        self.gigagas_summary.observe(gigagas);
+        self.gigagas_histogram.observe(gigagas);
     }
 
     pub fn set_latest_gigagas_block_building(&self, gigagas: f64) {
@@ -179,7 +179,7 @@ impl MetricsBlocks {
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.gigagas.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.gigagas_summary.clone()))
+        r.register(Box::new(self.gigagas_histogram.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.gigagas_block_building.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
