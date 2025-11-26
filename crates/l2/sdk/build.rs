@@ -16,23 +16,19 @@ fn main() {
         env::var_os("ETHREX_SDK_OZ_CONTRACTS_DIR")
             .expect("ETHREX_SDK_OZ_CONTRACTS_DIR must be set for contracts"),
     );
-    let openzeppelin_contracts_primary =
+    let proxy_contract_path =
         openzeppelin_contracts_root.join("contracts/proxy/ERC1967/ERC1967Proxy.sol");
-    let openzeppelin_contracts_fallback =
-        openzeppelin_contracts_root.join("contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
-    let proxy_contract_path = if openzeppelin_contracts_primary.exists() {
-        openzeppelin_contracts_primary
-    } else if openzeppelin_contracts_fallback.exists() {
-        openzeppelin_contracts_fallback
-    } else {
+    if !proxy_contract_path.exists() {
         panic!(
-            "ERC1967Proxy.sol not found at {} (primary) or {} (fallback)",
-            openzeppelin_contracts_primary.display(),
-            openzeppelin_contracts_fallback.display()
+            "ERC1967Proxy.sol not found at {}; try using the contracts/contracts/ path if needed",
+            proxy_contract_path.display()
         );
-    };
+    }
 
-    let allow_paths: Vec<&Path> = vec![contracts_path.as_path(), openzeppelin_contracts_root.as_path()];
+    let allow_paths: Vec<&Path> = vec![
+        contracts_path.as_path(),
+        openzeppelin_contracts_root.as_path(),
+    ];
     ethrex_sdk_contract_utils::compile_contract(
         &contracts_path,
         &proxy_contract_path,
