@@ -37,8 +37,8 @@ impl From<serde_json::Error> for RpcErr {
     }
 }
 
-impl From<secp256k1::Error> for RpcErr {
-    fn from(error: secp256k1::Error) -> Self {
+impl From<ethrex_common::EcdsaError> for RpcErr {
+    fn from(error: ethrex_common::EcdsaError) -> Self {
         Self::L1RpcErr(error.into())
     }
 }
