@@ -5,8 +5,7 @@ use openvm_sdk::{Sdk, StdIn, types::EvmProof};
 use openvm_stark_sdk::config::baby_bear_poseidon2::BabyBearPoseidon2Config;
 use rkyv::rancor::Error;
 
-static PROGRAM_ELF: &[u8] =
-    include_bytes!("../guest_program/src/openvm/out/riscv32im-openvm-elf");
+static PROGRAM_ELF: &[u8] = include_bytes!("../guest_program/src/openvm/out/riscv32im-openvm-elf");
 
 pub enum ProveOutput {
     Compressed(VmStarkProof<BabyBearPoseidon2Config>),
