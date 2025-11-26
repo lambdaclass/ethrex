@@ -4,7 +4,7 @@ use ethrex_common::serde_utils::bytes::deserialize;
 use ethrex_common::serde_utils::u64;
 use ethrex_common::serde_utils::u256;
 use ethrex_common::types::Code;
-use ethrex_common::types::{Account, AccountInfo, code_hash};
+use ethrex_common::types::{Account, AccountInfo};
 use ethrex_common::{Address, U256, types::Fork};
 use serde::Deserialize;
 use std::collections::HashMap;
