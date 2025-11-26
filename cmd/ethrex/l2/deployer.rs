@@ -918,12 +918,6 @@ async fn initialize_contracts(
         .map_err(|_| {
             EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
         })?;
-    let mut initializer_nonce = eth_client
-        .get_nonce(
-            initializer.address(),
-            BlockIdentifier::Tag(BlockTag::Pending),
-        )
-        .await?;
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
@@ -949,10 +943,6 @@ async fn initialize_contracts(
 
     let deployer_address = get_address_from_secret_key(&opts.private_key.secret_bytes())
         .map_err(DeployerError::InternalError)?;
-
-    let mut deployer_nonce = eth_client
-        .get_nonce(deployer_address, BlockIdentifier::Tag(BlockTag::Pending))
-        .await?;
 
     info!("Initializing OnChainProposer");
 
@@ -983,6 +973,9 @@ async fn initialize_contracts(
         )?;
 
         let deployer = Signer::Local(LocalSigner::new(opts.private_key));
+        let deployer_nonce = eth_client
+            .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Pending))
+            .await?;
 
         let initialize_tx_hash = initialize_contract_no_wait(
             contract_addresses.on_chain_proposer_address,
@@ -1001,11 +994,13 @@ async fn initialize_contracts(
 
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
 
-        deployer_nonce += 1;
         tx_hashes.push(initialize_tx_hash);
 
         info!("Initializing SequencerRegistry");
         let initialize_tx_hash = {
+            let deployer_nonce = eth_client
+                .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Pending))
+                .await?;
             let calldata_values = vec![
                 Value::Address(opts.sequencer_registry_owner.ok_or(
                     DeployerError::ConfigValueNotSet("--sequencer-registry-owner".to_string()),
@@ -1057,6 +1052,12 @@ async fn initialize_contracts(
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
+        let initializer_nonce = eth_client
+            .get_nonce(
+                initializer.address(),
+                BlockIdentifier::Tag(BlockTag::Pending),
+            )
+            .await?;
 
         let initialize_tx_hash = initialize_contract_no_wait(
             contract_addresses.on_chain_proposer_address,
@@ -1073,11 +1074,16 @@ async fn initialize_contracts(
         )
         .await?;
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
-        initializer_nonce += 1;
         tx_hashes.push(initialize_tx_hash);
     }
 
     let initialize_bridge_address_tx_hash = {
+        let initializer_nonce = eth_client
+            .get_nonce(
+                initializer.address(),
+                BlockIdentifier::Tag(BlockTag::Pending),
+            )
+            .await?;
         let calldata_values = vec![Value::Address(contract_addresses.bridge_address)];
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
@@ -1103,10 +1109,15 @@ async fn initialize_contracts(
         "OnChainProposer bridge address initialized"
     );
 
-    initializer_nonce += 1;
     tx_hashes.push(initialize_bridge_address_tx_hash);
 
     if opts.on_chain_proposer_owner != initializer.address() {
+        let initializer_nonce = eth_client
+            .get_nonce(
+                initializer.address(),
+                BlockIdentifier::Tag(BlockTag::Pending),
+            )
+            .await?;
         let transfer_ownership_tx_hash = {
             let owner_transfer_calldata = encode_calldata(
                 TRANSFER_OWNERSHIP_SIGNATURE,
@@ -1130,7 +1141,6 @@ async fn initialize_contracts(
         };
 
         tx_hashes.push(transfer_ownership_tx_hash);
-        initializer_nonce += 1;
 
         if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
             let signer = Signer::Local(LocalSigner::new(owner_pk));
@@ -1171,6 +1181,12 @@ async fn initialize_contracts(
 
     info!("Initializing CommonBridge");
     let initialize_tx_hash = {
+        let initializer_nonce = eth_client
+            .get_nonce(
+                initializer.address(),
+                BlockIdentifier::Tag(BlockTag::Pending),
+            )
+            .await?;
         let calldata_values = vec![
             Value::Address(initializer.address()),
             Value::Address(contract_addresses.on_chain_proposer_address),
@@ -1196,9 +1212,14 @@ async fn initialize_contracts(
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
     tx_hashes.push(initialize_tx_hash);
-    initializer_nonce += 1;
 
     if let Some(fee_token) = opts.initial_fee_token {
+        let initializer_nonce = eth_client
+            .get_nonce(
+                initializer.address(),
+                BlockIdentifier::Tag(BlockTag::Pending),
+            )
+            .await?;
         let register_tx_hash = register_fee_token_no_wait(
             eth_client,
             contract_addresses.bridge_address,
@@ -1216,10 +1237,15 @@ async fn initialize_contracts(
         info!(?fee_token, "CommonBridge initial fee token registered");
         info!(tx_hash = %format!("{register_tx_hash:#x}"), "Initial fee token registration transaction sent");
         tx_hashes.push(register_tx_hash);
-        initializer_nonce += 1;
     }
 
     if opts.bridge_owner != initializer.address() {
+        let initializer_nonce = eth_client
+            .get_nonce(
+                initializer.address(),
+                BlockIdentifier::Tag(BlockTag::Pending),
+            )
+            .await?;
         let transfer_calldata = encode_calldata(
             TRANSFER_OWNERSHIP_SIGNATURE,
             &[Value::Address(opts.bridge_owner)],
