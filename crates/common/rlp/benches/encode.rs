@@ -105,7 +105,7 @@ fn create_node_record() -> NodeRecord {
 static HASH: H256 = H256::repeat_byte(0xab);
 
 fn bench_encode_integer(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_integer");
+    let mut group = c.benchmark_group("basic_types");
 
     let u8_values = {
         let mut rng = StdRng::seed_from_u64(1);
@@ -228,7 +228,7 @@ fn bench_encode_integer(c: &mut Criterion) {
 }
 
 fn bench_encode_strings(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_strings");
+    let mut group = c.benchmark_group("basic_types");
     for &len in &[5usize, 60, 500] {
         let label = format!("len_{len}");
         let mut rng = StdRng::seed_from_u64(len as u64);
@@ -257,9 +257,9 @@ fn bench_encode_strings(c: &mut Criterion) {
 }
 
 fn bench_encode_int_lists(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_int_lists");
+    let mut group = c.benchmark_group("basic_types");
     for &count in &[10usize, 100, 1000] {
-        let label = format!("len_{count}");
+        let label = format!("int_list_len_{count}");
         let mut rng = StdRng::seed_from_u64(count as u64);
         let values: Vec<u64> = (0..10_000).map(|_| rng.r#gen()).collect();
         let value = black_box(values);
@@ -276,9 +276,9 @@ fn bench_encode_int_lists(c: &mut Criterion) {
 }
 
 fn bench_encode_string_lists(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_string_lists");
+    let mut group = c.benchmark_group("basic_types");
     for &count in &[10usize, 100, 1000] {
-        let label = format!("len_{count}");
+        let label = format!("string_list_len_{count}");
         let value = black_box(make_string_list(count));
         group.bench_function(label, move |b| {
             let mut buf = Vec::new();
@@ -293,7 +293,7 @@ fn bench_encode_string_lists(c: &mut Criterion) {
 }
 
 fn bench_encode_account_info(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_account_info");
+    let mut group = c.benchmark_group("common_types");
 
     let account_info = black_box(AccountInfo {
         code_hash: HASH,
@@ -314,7 +314,7 @@ fn bench_encode_account_info(c: &mut Criterion) {
 }
 
 fn bench_encode_account_state(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_account_state");
+    let mut group = c.benchmark_group("common_types");
 
     let account_state = black_box(AccountState {
         nonce: 1,
@@ -336,7 +336,7 @@ fn bench_encode_account_state(c: &mut Criterion) {
 }
 
 fn bench_encode_tx_kind(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_tx_kind");
+    let mut group = c.benchmark_group("transactions");
 
     let create_kind = black_box(TxKind::Create);
     let call_kind = black_box(TxKind::Call(
@@ -365,7 +365,7 @@ fn bench_encode_tx_kind(c: &mut Criterion) {
 }
 
 fn bench_encode_legacy_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_legacy_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let legacy_tx = black_box(LegacyTransaction {
         nonce: 1,
@@ -393,7 +393,7 @@ fn bench_encode_legacy_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_eip2930_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_eip2930_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let eip2930_tx = black_box(EIP2930Transaction {
         chain_id: 1,
@@ -423,7 +423,7 @@ fn bench_encode_eip2930_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_eip1559_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_eip1559_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let eip1559_tx = black_box(EIP1559Transaction {
         chain_id: 1,
@@ -454,7 +454,7 @@ fn bench_encode_eip1559_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_eip4844_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_eip4844_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let eip4844_tx = EIP4844Transaction {
         chain_id: 1,
@@ -487,7 +487,7 @@ fn bench_encode_eip4844_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_wrapped_eip4844_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_wrapped_eip4844_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let inner_tx = EIP4844Transaction {
         chain_id: 1,
@@ -533,7 +533,7 @@ fn bench_encode_wrapped_eip4844_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_eip7702_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_eip7702_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let eip7702_tx = black_box(EIP7702Transaction {
         chain_id: 1,
@@ -565,7 +565,7 @@ fn bench_encode_eip7702_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_privileged_l2_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_privileged_l2_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let privileged_tx = black_box(PrivilegedL2Transaction {
         chain_id: 1,
@@ -594,7 +594,7 @@ fn bench_encode_privileged_l2_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_fee_token_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_fee_token_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let fee_token_tx = black_box(FeeTokenTransaction {
         chain_id: 1,
@@ -626,7 +626,7 @@ fn bench_encode_fee_token_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_p2p_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_p2p_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let wrapped_tx = black_box(WrappedEIP4844Transaction {
         tx: EIP4844Transaction {
@@ -670,7 +670,7 @@ fn bench_encode_p2p_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_mempool_transaction(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_mempool_transaction");
+    let mut group = c.benchmark_group("transactions");
 
     let tx = black_box(Transaction::EIP1559Transaction(EIP1559Transaction {
         chain_id: 1,
@@ -705,7 +705,7 @@ fn bench_encode_mempool_transaction(c: &mut Criterion) {
 }
 
 fn bench_encode_p2p_endpoint(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_p2p_endpoint");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let endpoint = create_endpoint(10, 30303, 30303);
 
@@ -722,7 +722,7 @@ fn bench_encode_p2p_endpoint(c: &mut Criterion) {
 }
 
 fn bench_encode_p2p_node(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_p2p_node");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let node = create_node(1);
 
@@ -739,7 +739,7 @@ fn bench_encode_p2p_node(c: &mut Criterion) {
 }
 
 fn bench_encode_node_record(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_node_record");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let node_record = create_node_record();
 
@@ -756,7 +756,7 @@ fn bench_encode_node_record(c: &mut Criterion) {
 }
 
 fn bench_encode_ping_message(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_ping_message");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let from = create_endpoint(1, 30301, 30301);
     let to = create_endpoint(2, 30302, 30302);
@@ -775,7 +775,7 @@ fn bench_encode_ping_message(c: &mut Criterion) {
 }
 
 fn bench_encode_find_node_message(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_find_node_message");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let msg = FindNodeMessage::new(H512::repeat_byte(0x77), 1_700_000_000);
 
@@ -792,7 +792,7 @@ fn bench_encode_find_node_message(c: &mut Criterion) {
 }
 
 fn bench_encode_neighbors_message(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_neighbors_message");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let neighbors = NeighborsMessage::new(vec![create_node(3), create_node(4)], 1_700_000_000);
 
@@ -809,7 +809,7 @@ fn bench_encode_neighbors_message(c: &mut Criterion) {
 }
 
 fn bench_encode_enr_request_message(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_enr_request_message");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let msg = ENRRequestMessage::new(1_700_000_000);
 
@@ -826,7 +826,7 @@ fn bench_encode_enr_request_message(c: &mut Criterion) {
 }
 
 fn bench_encode_capability(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_capability");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let capability = Capability::eth(68);
 
@@ -843,7 +843,7 @@ fn bench_encode_capability(c: &mut Criterion) {
 }
 
 fn bench_encode_account_state_slim(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_account_state_slim");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let account_state = black_box(AccountStateSlim {
         nonce: 1,
@@ -865,7 +865,7 @@ fn bench_encode_account_state_slim(c: &mut Criterion) {
 }
 
 fn bench_encode_account_range_unit(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_account_range_unit");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let account_state = black_box(AccountStateSlim {
         nonce: 2,
@@ -892,7 +892,7 @@ fn bench_encode_account_range_unit(c: &mut Criterion) {
 }
 
 fn bench_encode_storage_slot(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_storage_slot");
+    let mut group = c.benchmark_group("networking_p2p");
 
     let slot = black_box(StorageSlot {
         hash: H256::repeat_byte(0x42),
@@ -938,7 +938,10 @@ fn bench_encode_node_hash(c: &mut Criterion) {
     };
     let hashed_hash = NodeHash::from(H256::repeat_byte(0x42));
 
-    for (label, node_hash) in [("encode_node_hash_inline", inline_hash), ("encode_node_hash_hashed", hashed_hash)] {
+    for (label, node_hash) in [
+        ("encode_node_hash_inline", inline_hash),
+        ("encode_node_hash_hashed", hashed_hash),
+    ] {
         let node_hash = black_box(node_hash);
         group.bench_function(label, move |b| {
             let mut buf = Vec::new();
@@ -1017,7 +1020,7 @@ fn bench_encode_leaf_node(c: &mut Criterion) {
 }
 
 fn bench_encode_fork_id(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_fork_id");
+    let mut group = c.benchmark_group("common_types");
 
     let fork_id = black_box(ForkId {
         fork_hash: H32::from_slice(&[0xde, 0xad, 0xbe, 0xef]),
@@ -1037,7 +1040,7 @@ fn bench_encode_fork_id(c: &mut Criterion) {
 }
 
 fn bench_encode_log(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_log");
+    let mut group = c.benchmark_group("common_types");
 
     let log_entry = black_box(Log {
         address: Address::from_str("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba").unwrap(),
@@ -1058,7 +1061,7 @@ fn bench_encode_log(c: &mut Criterion) {
 }
 
 fn bench_encode_receipt(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_receipt");
+    let mut group = c.benchmark_group("common_types");
 
     let receipt_logs = black_box(vec![
         Log {
@@ -1093,7 +1096,7 @@ fn bench_encode_receipt(c: &mut Criterion) {
 }
 
 fn bench_encode_receipt_with_bloom(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_receipt_with_bloom");
+    let mut group = c.benchmark_group("common_types");
 
     let logs_with_bloom = black_box(vec![
         Log {
@@ -1128,7 +1131,7 @@ fn bench_encode_receipt_with_bloom(c: &mut Criterion) {
 }
 
 fn bench_encode_encoded_requests(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_encoded_requests");
+    let mut group = c.benchmark_group("common_types");
 
     let mut request_bytes: Vec<u8> = (0..192).map(|i| i as u8).collect();
     request_bytes.insert(0, 0x00);
@@ -1147,7 +1150,7 @@ fn bench_encode_encoded_requests(c: &mut Criterion) {
 }
 
 fn bench_encode_blobs_bundle(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_blobs_bundle");
+    let mut group = c.benchmark_group("common_types");
 
     let blobs_bundle = black_box(BlobsBundle {
         blobs: vec![[6u8; BYTES_PER_BLOB]; 4],
@@ -1169,7 +1172,7 @@ fn bench_encode_blobs_bundle(c: &mut Criterion) {
 }
 
 fn bench_encode_block_header(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_block_header");
+    let mut group = c.benchmark_group("common_types");
 
     let block_header = black_box(BlockHeader {
         parent_hash: H256::from_str(
@@ -1227,7 +1230,7 @@ fn bench_encode_block_header(c: &mut Criterion) {
 }
 
 fn bench_encode_block(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_block");
+    let mut group = c.benchmark_group("common_types");
 
     let block_header = BlockHeader {
         parent_hash: H256::from_str(
@@ -1316,7 +1319,7 @@ fn bench_encode_block(c: &mut Criterion) {
 }
 
 fn bench_encode_withdrawals(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_withdrawals");
+    let mut group = c.benchmark_group("common_types");
 
     let withdrawal = black_box(Withdrawal {
         index: 0x00,
