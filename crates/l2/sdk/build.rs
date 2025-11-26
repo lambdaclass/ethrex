@@ -6,6 +6,7 @@ use std::{env, fs, path::PathBuf};
 use ethrex_sdk_contract_utils::git_clone;
 
 fn main() {
+    println!("cargo::rerun-if-env-changed=ETHREX_SDK_OZ_CONTRACTS_DIR");
     println!("cargo::rerun-if-changed=build.rs");
 
     let contracts_path =
