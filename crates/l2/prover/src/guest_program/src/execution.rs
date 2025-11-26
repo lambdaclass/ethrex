@@ -15,6 +15,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Block};
+use ethrex_l2_common::privileged_transactions::get_block_privileged_transactions;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
@@ -29,10 +30,7 @@ use ethrex_common::types::{
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
     messages::{L1Message, L2Message, get_block_l1_messages, get_block_l2_messages},
-    privileged_transactions::{
-        PrivilegedTransactionError, compute_privileged_transactions_hash,
-        get_block_privileged_transactions,
-    },
+    privileged_transactions::{PrivilegedTransactionError, compute_privileged_transactions_hash},
 };
 
 #[derive(Debug, thiserror::Error)]
