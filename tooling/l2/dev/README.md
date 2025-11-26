@@ -12,6 +12,14 @@ curl -L https://raw.githubusercontent.com/lambdaclass/ethrex/main/tooling/l2/dev
 docker compose up
 ```
 
+this will launch:
+
+- on localhost:8083 blockscout explorer for L1
+- on localhost:8082 blockscout explorer for L2
+- on localhost:1729 l2 rpc
+- on localhost:8545 l1 rpc
+- on localhost:5173 ethrex L2 hub for withdrawals deposits and account abstraction
+
 3. Stop the containers and delete the volumes
 
 > [!NOTE]
