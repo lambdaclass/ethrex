@@ -14,7 +14,10 @@ use ethrex_rpc::{
         EthClientError,
         eth::{
             RpcResponse,
-            errors::{GetBaseFeeVaultAddressError, GetBatchByNumberError, GetMessageProofError},
+            errors::{
+                GetBaseFeeVaultAddressError, GetBatchByNumberError, GetBatchNumberError,
+                GetMessageProofError,
+            },
         },
     },
     utils::RpcRequest,
@@ -51,6 +54,27 @@ pub async fn get_batch_by_number(
             .map_err(EthClientError::from),
         RpcResponse::Error(error_response) => {
             Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
+        }
+    }
+}
+
+pub async fn get_batch_number(client: &EthClient) -> Result<u64, EthClientError> {
+    let request = RpcRequest::new("ethrex_batchNumber", None);
+
+    match client.send_request(request).await? {
+        RpcResponse::Success(result) => {
+            let batch_number_hex: String = serde_json::from_value(result.result)
+                .map_err(GetBatchNumberError::SerdeJSONError)
+                .map_err(EthClientError::from)?;
+            let hex_str = batch_number_hex
+                .strip_prefix("0x")
+                .unwrap_or(&batch_number_hex);
+            u64::from_str_radix(hex_str, 16)
+                .map_err(GetBatchNumberError::ParseIntError)
+                .map_err(EthClientError::from)
+        }
+        RpcResponse::Error(error_response) => {
+            Err(GetBatchNumberError::RPCError(error_response.error.message).into())
         }
     }
 }

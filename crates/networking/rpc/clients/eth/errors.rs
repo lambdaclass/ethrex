@@ -65,6 +65,8 @@ pub enum EthClientError {
     FailedToGetTxPool(#[from] TxPoolContentError),
     #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
+    #[error("ethrex_batchNumber request error: {0}")]
+    GetBatchNumberError(#[from] GetBatchNumberError),
     #[error("ethrex_getBlobBaseFee request error: {0}")]
     GetBlobBaseFeeError(#[from] GetBlobBaseFeeRequestError),
     #[error("All RPC calls failed")]
@@ -325,6 +327,16 @@ pub enum GetBatchByNumberError {
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
     RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetBatchNumberError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }
 
 #[derive(Debug, thiserror::Error)]
