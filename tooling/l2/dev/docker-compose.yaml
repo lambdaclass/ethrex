@@ -395,7 +395,7 @@ services:
   # Ethrex Services
   ethrex-dev:
     container_name: ethrex-dev
-    image: "ghcr.io/lambdaclass/ethrex:6.0.0-l2"
+    image: "ghcr.io/lambdaclass/ethrex:l2"
     platform: linux/amd64
     depends_on:
       - proxy
@@ -411,7 +411,7 @@ services:
 
   ethrex-prover:
     container_name: ethrex-prover
-    image: "ghcr.io/lambdaclass/ethrex:6.0.0-l2"
+    image: "ghcr.io/lambdaclass/ethrex:l2"
     depends_on:
       - ethrex-dev
     platform: linux/amd64
@@ -419,7 +419,7 @@ services:
       l2 prover --proof-coordinators tcp://ethrex-dev:3900
 
   ethrex-delegation-contracts:
-    image: ghcr.io/lambdaclass/rex:7.0.0-rc.0
+    image: ghcr.io/lambdaclass/rex:latest
     platform: linux/amd64
     depends_on:
       - ethrex-dev
