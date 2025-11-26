@@ -62,6 +62,7 @@ interface IOnChainProposer {
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
+    /// @param balanceDiffs the balance diffs of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
