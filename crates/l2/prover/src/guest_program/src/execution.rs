@@ -29,7 +29,10 @@ use ethrex_common::types::{
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
     messages::{L1Message, L2Message, get_block_l1_messages, get_block_l2_messages},
-    privileged_transactions::{PrivilegedTransactionError, compute_privileged_transactions_hash, get_block_privileged_transactions},
+    privileged_transactions::{
+        PrivilegedTransactionError, compute_privileged_transactions_hash,
+        get_block_privileged_transactions,
+    },
 };
 
 #[derive(Debug, thiserror::Error)]
