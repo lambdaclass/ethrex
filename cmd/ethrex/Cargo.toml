@@ -77,8 +77,13 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "metrics", "jemalloc", "dev"]
+default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev"]
 dev = ["dep:ethrex-dev"]
+secp256k1 = [
+  "ethrex-vm/secp256k1",
+  "ethrex-common/secp256k1",
+  "ethrex-blockchain/secp256k1",
+]
 c-kzg = [
   "ethrex-vm/c-kzg",
   "ethrex-common/c-kzg",

@@ -76,8 +76,9 @@ use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot,
 };
+use tokio::time::timeout;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -339,7 +340,22 @@ pub async fn start_api(
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
+    let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
+
+    tokio::spawn(async move {
+        loop {
+            let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
+            if result.is_err() {
+                warn!("No messages from the consensus layer. Is the consensus client running?");
+            }
+        }
+    });
+
+    let authrpc_handler = move |ctx, auth, body| async move {
+        let _ = timer_sender.send(());
+        handle_authrpc_request(ctx, auth, body).await
+    };
+
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
         .with_state(service_context.clone())
@@ -932,7 +948,7 @@ mod tests {
                         "ID": "0x0000000000000000000000000000000000000004",
                         "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
                         "MODEXP": "0x0000000000000000000000000000000000000005",
-                        "P256_VERIFICATION":"0x0000000000000000000000000000000000000100",
+                        "P256VERIFY":"0x0000000000000000000000000000000000000100",
                         "RIPEMD160": "0x0000000000000000000000000000000000000003",
                         "SHA256": "0x0000000000000000000000000000000000000002"
                     },
