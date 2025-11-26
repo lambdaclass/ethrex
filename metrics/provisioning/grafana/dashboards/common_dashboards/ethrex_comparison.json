@@ -189,7 +189,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p99.9",
@@ -202,7 +202,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p50",
@@ -394,7 +394,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p99.9",
@@ -407,7 +407,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p50",
@@ -1183,7 +1183,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p99.9",
@@ -1196,7 +1196,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p50",
@@ -1559,7 +1559,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p99.9",
@@ -1572,7 +1572,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
               "hide": false,
               "instant": false,
               "legendFormat": "{{ instance }} p50",
