@@ -366,6 +366,7 @@ services:
     configs:
       - source: nginx_conf
         target: /etc/nginx/conf.d/default.conf
+    restart: always
     ports:
       - target: 8082
         published: 8082
