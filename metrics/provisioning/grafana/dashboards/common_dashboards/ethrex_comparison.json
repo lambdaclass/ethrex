@@ -181,6 +181,32 @@
               "legendFormat": "{{ instance }}",
               "range": true,
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.999, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{ instance }} p99.9",
+              "range": true,
+              "refId": "F"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{ instance }} p50",
+              "range": true,
+              "refId": "G"
             }
           ],
           "title": "Ggas/s vs other clients (MAINNET)",
@@ -359,6 +385,32 @@
               "legendFormat": "{{ instance }}",
               "range": true,
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.999, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{ instance }} p99.9",
+              "range": true,
+              "refId": "F"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{ instance }} p50",
+              "range": true,
+              "refId": "G"
             }
           ],
           "title": "Ggas/s vs other clients (MAINNET)",
@@ -1121,6 +1173,32 @@
               "legendFormat": "{{ instance }}",
               "range": true,
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.999, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{ instance }} p99.9",
+              "range": true,
+              "refId": "F"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{ instance }} p50",
+              "range": true,
+              "refId": "G"
             }
           ],
           "title": "Ggas/s vs other clients (HOODI)",
@@ -1470,6 +1548,32 @@
               "legendFormat": "{{ instance }}",
               "range": true,
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.999, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{ instance }} p99.9",
+              "range": true,
+              "refId": "F"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, rate(gigagas_summary_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])) * 1000000000",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "{{ instance }} p50",
+              "range": true,
+              "refId": "G"
             }
           ],
           "title": "Ggas/s vs other clients (SEPOLIA)",
