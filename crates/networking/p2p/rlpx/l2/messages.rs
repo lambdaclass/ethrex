@@ -117,7 +117,7 @@ impl RLPxMessage for BatchSealed {
             .encode_optional_field(&self.batch.commit_tx)
             .encode_optional_field(&self.batch.verify_tx)
             .encode_field(&self.signature)
-            .encode_field(&self.batch.l1_message_hashes)
+            .encode_field(&self.batch.l2_message_hashes)
             .encode_field(&self.batch.balance_diffs)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
