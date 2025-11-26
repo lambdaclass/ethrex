@@ -728,7 +728,8 @@ impl L1Committer {
             let l1_messages = get_block_l1_messages(&receipts);
             let l2_messages = get_block_l2_messages(&receipts);
             info!("Got l2 messages: {}", l2_messages.len());
-            let privileged_transactions = get_block_privileged_transactions(&txs);
+            let privileged_transactions =
+                get_block_privileged_transactions(&txs, self.store.chain_config.chain_id);
 
             // Get block account updates.
             let account_updates = if let Some(account_updates) = self

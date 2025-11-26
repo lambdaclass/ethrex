@@ -266,7 +266,7 @@ impl L1Watcher {
         for log in logs {
             let privileged_transaction_data = PrivilegedTransactionData::from_log(log.log)?;
 
-            let chain_id = self.eth_client.get_chain_id().await?.as_u64();
+            let chain_id = self.this_l2_client.get_chain_id().await?.as_u64();
 
             let gas_price = self.this_l2_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()
