@@ -211,7 +211,8 @@ pub async fn fill_transactions(
         }
 
         // Execute tx
-        let original_context = context.clone();
+        let previous_remaining_gas = context.remaining_gas;
+        let previous_block_value = context.block_value;
         let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => receipt,
             Err(e) => {
@@ -228,7 +229,9 @@ pub async fn fill_transactions(
         for msg in l2_messages {
             if !registered_chains.contains(&msg.chain_id) {
                 txs.pop();
-                *context = original_context.clone();
+                context.vm.undo_last_tx()?;
+                context.remaining_gas = previous_remaining_gas;
+                context.block_value = previous_block_value;
                 found_invalid_message = true;
                 break;
             }
