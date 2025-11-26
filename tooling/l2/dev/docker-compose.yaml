@@ -178,7 +178,6 @@ services:
         NEXT_PUBLIC_MARKETPLACE_ENABLED: false
         NEXT_PUBLIC_PROMOTE_BLOCKSCOUT_IN_TITLE: false
 
-
   stats-l1:
     image: ghcr.io/blockscout/stats:v2.12.0
     platform: linux/amd64
@@ -313,8 +312,6 @@ services:
         NEXT_PUBLIC_AD_TEXT_PROVIDER: none
         NEXT_PUBLIC_MARKETPLACE_ENABLED: false
         NEXT_PUBLIC_PROMOTE_BLOCKSCOUT_IN_TITLE: false
-
-
 
   stats:
     image: ghcr.io/blockscout/stats:v2.12.0
