@@ -5,7 +5,11 @@ use ethrex_common::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
-use std::{cmp::Ordering, collections::BTreeMap, sync::{Arc, Mutex}};
+use std::{
+    cmp::Ordering,
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -75,7 +79,10 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
-        let mut block_hash_cache = self.block_hash_cache.lock().map_err(|_| EvmError::Custom("LockError".to_string()))?;
+        let mut block_hash_cache = self
+            .block_hash_cache
+            .lock()
+            .map_err(|_| EvmError::Custom("LockError".to_string()))?;
         // Check if we have it cached
         if let Some(block_hash) = block_hash_cache.get(&block_number) {
             return Ok(*block_hash);
@@ -97,7 +104,10 @@ impl VmDatabase for StoreVmDatabase {
         // If our block is not canonical then we must look for the target in our block's ancestors
         } else {
             // Find the oldest known hash after the target block to shortcut the lookup
-            let oldest_succesor = block_hash_cache.iter().find_map(|(key, hash)| (*key > block_number).then_some(*hash)).unwrap_or(self.block_hash);
+            let oldest_succesor = block_hash_cache
+                .iter()
+                .find_map(|(key, hash)| (*key > block_number).then_some(*hash))
+                .unwrap_or(self.block_hash);
             for ancestor_res in self.store.ancestors(oldest_succesor) {
                 let (hash, ancestor) = ancestor_res.map_err(|e| EvmError::DB(e.to_string()))?;
                 block_hash_cache.insert(ancestor.number, hash);
