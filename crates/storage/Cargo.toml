@@ -30,7 +30,7 @@ qfilter = "0.2.5"
 rayon.workspace = true
 
 [features]
-default = []
+default = ["rocksdb"]
 rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb", "dep:tokio"]
 
 [dev-dependencies]

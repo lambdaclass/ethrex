@@ -625,6 +625,7 @@ impl Store {
         let genesis_block_number = genesis_block.header.number;
 
         let genesis_hash = genesis_block.hash();
+        dbg!(&genesis_hash);
 
         // Set chain config
         self.set_chain_config(&genesis.config).await?;

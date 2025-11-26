@@ -555,7 +555,6 @@ pub async fn map_engine_requests_ow(
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     dbg!(req.method.as_str());
-    panic!("stop");
     match req.method.as_str() {
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
         "engine_newPayloadV4" => {
@@ -929,7 +928,6 @@ mod tests {
     #[tokio::test]
     async fn test_blockhash() {
         println!("Starting BlockHash Test");
-        dbg!("starting");
         let storage =
             Store::new_from_genesis(Path::new("db_path"), EngineType::RocksDB, "genesis2.json")
                 .await
