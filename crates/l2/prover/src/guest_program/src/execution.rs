@@ -15,21 +15,21 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Block};
-#[cfg(feature = "l2")]
-use ethrex_l2_common::messages::{L1Message, L2Message, get_block_l2_messages};
-use ethrex_l2_common::privileged_transactions::get_block_privileged_transactions;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 
+#[cfg(not(feature = "l2"))]
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
     kzg_commitment_to_versioned_hash,
 };
+#[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    messages::get_block_l1_messages,
-    privileged_transactions::{PrivilegedTransactionError, compute_privileged_transactions_hash},
+    messages::{L1Message, L2Message, get_block_l1_messages, get_block_l2_messages},
+    privileged_transactions::{PrivilegedTransactionError, compute_privileged_transactions_hash, get_block_privileged_transactions},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -344,6 +344,7 @@ pub fn stateless_validation_l2(
     })
 }
 
+#[cfg_attr(not(feature = "l2"), expect(dead_code))]
 struct StatelessResult {
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,

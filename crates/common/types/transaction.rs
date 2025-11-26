@@ -1,12 +1,11 @@
 use std::{cmp::min, fmt::Display};
 
-use crate::utils::keccak;
+use crate::{errors::EcdsaError, utils::keccak};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 use ethrex_crypto::keccak::keccak_hash;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
-use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
 
@@ -1046,7 +1045,7 @@ impl RLPDecode for FeeTokenTransaction {
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Result<Address, secp256k1::Error> {
+    pub fn sender(&self) -> Result<Address, EcdsaError> {
         match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
@@ -1410,24 +1409,76 @@ impl Transaction {
 pub fn recover_address_from_message(
     signature: Signature,
     message: &Bytes,
-) -> Result<Address, secp256k1::Error> {
+) -> Result<Address, EcdsaError> {
     // Hash message
     let payload = keccak(message);
-    recover_address(signature, payload)
+    recover_address(signature, payload).map_err(EcdsaError::from)
 }
 
+#[cfg(all(
+    not(feature = "zisk"),
+    not(feature = "risc0"),
+    not(feature = "sp1"),
+    feature = "secp256k1"
+))]
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes[..64],
-        RecoveryId::try_from(signature_bytes[64] as i32)?, // cannot fail
+        secp256k1::ecdsa::RecoveryId::try_from(signature_bytes[64] as i32)?,
     )?;
     // Recover public key
-    let public = secp256k1::SECP256K1
-        .recover_ecdsa(&Message::from_digest(payload.to_fixed_bytes()), &signature)?;
+    let public = secp256k1::SECP256K1.recover_ecdsa(
+        &secp256k1::Message::from_digest(payload.to_fixed_bytes()),
+        &signature,
+    )?;
     // Hash public key to obtain address
     let hash = keccak_hash(&public.serialize_uncompressed()[1..]);
+    Ok(Address::from_slice(&hash[12..]))
+}
+
+#[cfg(any(
+    feature = "zisk",
+    feature = "risc0",
+    feature = "sp1",
+    not(feature = "secp256k1")
+))]
+pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k256::ecdsa::Error> {
+    use sha2::Digest;
+    use sha3::Keccak256;
+
+    // Create signature
+    let signature_bytes = signature.to_fixed_bytes();
+
+    let mut signature = k256::ecdsa::Signature::from_slice(&signature_bytes[..64])?;
+
+    let mut recovery_id_byte = signature_bytes[64];
+
+    if let Some(low_s) = signature.normalize_s() {
+        signature = low_s;
+        recovery_id_byte ^= 1;
+    }
+
+    let recovery_id = k256::ecdsa::RecoveryId::from_byte(recovery_id_byte).ok_or(
+        k256::ecdsa::Error::from_source("Failed to parse recovery id"),
+    )?;
+
+    // Recover public key
+    let public = k256::ecdsa::VerifyingKey::recover_from_prehash(
+        payload.as_bytes(),
+        &signature,
+        recovery_id,
+    )?;
+
+    let uncompressed = public.to_encoded_point(false);
+
+    let mut uncompressed = uncompressed.to_bytes();
+
+    let xy = &mut uncompressed[1..65];
+
+    let hash = Keccak256::digest(xy);
+
     Ok(Address::from_slice(&hash[12..]))
 }
 
