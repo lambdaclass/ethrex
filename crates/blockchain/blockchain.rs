@@ -19,8 +19,9 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
+    EIP4844Transaction, InvalidBlockBodyError, Receipt, Transaction, WrappedEIP4844Transaction,
+    compute_receipts_root, compute_transactions_root, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
@@ -1700,6 +1701,18 @@ pub fn validate_state_root(
     }
 }
 
+pub fn validate_transactions_root(block: &Block) -> Result<(), ChainError> {
+    let computed_transactions_root = compute_transactions_root(&block.body.transactions);
+
+    if computed_transactions_root == block.header.transactions_root {
+        Ok(())
+    } else {
+        Err(ChainError::InvalidBlock(InvalidBlockError::InvalidBody(
+            InvalidBlockBodyError::TransactionsRootNotMatch,
+        )))
+    }
+}
+
 pub fn validate_receipts_root(
     block_header: &BlockHeader,
     receipts: &[Receipt],
@@ -1751,6 +1764,8 @@ pub fn validate_block(
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header, elasticity_multiplier)
         .map_err(InvalidBlockError::from)?;
+
+    validate_transactions_root(block)?;
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
         let block_rlp_size = block.encode_to_vec().len();
@@ -1869,4 +1884,75 @@ pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+    use ethrex_common::constants::DEFAULT_OMMERS_HASH;
+    use ethrex_common::types::{BlockBody, INITIAL_BASE_FEE};
+
+    fn parent_header(gas_limit: u64, gas_used: u64, timestamp: u64) -> BlockHeader {
+        BlockHeader {
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            transactions_root: compute_transactions_root(&[]),
+            gas_limit,
+            gas_used,
+            timestamp,
+            base_fee_per_gas: Some(INITIAL_BASE_FEE),
+            ..BlockHeader::default()
+        }
+    }
+
+    fn block_with_transactions_root(parent_header: &BlockHeader, transactions_root: H256) -> Block {
+        let gas_limit = parent_header.gas_limit;
+        let header = BlockHeader {
+            parent_hash: parent_header.hash(),
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            transactions_root,
+            number: parent_header.number + 1,
+            gas_limit,
+            gas_used: 0,
+            timestamp: parent_header.timestamp + 1,
+            base_fee_per_gas: Some(INITIAL_BASE_FEE),
+            ..BlockHeader::default()
+        };
+
+        Block {
+            header,
+            body: BlockBody {
+                transactions: Vec::new(),
+                ommers: Vec::new(),
+                withdrawals: None,
+            },
+        }
+    }
+
+    #[test]
+    fn validate_block_accepts_matching_transactions_root() {
+        let gas_limit = 30_000_000;
+        let gas_used = gas_limit / ELASTICITY_MULTIPLIER;
+        let parent_header = parent_header(gas_limit, gas_used, 1);
+        let chain_config = ChainConfig::default();
+        let block = block_with_transactions_root(&parent_header, compute_transactions_root(&[]));
+
+        let result = validate_block(&block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_block_rejects_mismatching_transactions_root() {
+        let gas_limit = 30_000_000;
+        let gas_used = gas_limit / ELASTICITY_MULTIPLIER;
+        let parent_header = parent_header(gas_limit, gas_used, 1);
+        let chain_config = ChainConfig::default();
+        let block = block_with_transactions_root(&parent_header, H256::repeat_byte(1));
+
+        let result = validate_block(&block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER);
+
+        assert!(matches!(
+            result,
+            Err(ChainError::InvalidBlock(InvalidBlockError::InvalidBody(
+                InvalidBlockBodyError::TransactionsRootNotMatch
+            )))
+        ));
+    }
+}
