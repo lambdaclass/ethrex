@@ -426,8 +426,6 @@ impl L1Watcher {
         info!("Fetched {} L2 logs", l2_txs.len());
 
         // We may not have a privileged transaction nor a withdrawal, that means no events -> no logs.
-        // TODO: This was unchanged. We should continue from here.
-        // We should get privileged transactions from the new L2Message logs and inject them into the mempool.
         if !l2_txs.is_empty() {
             let _ = self
                 .process_l2_transactions(l2_txs)
