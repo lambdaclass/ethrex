@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 use crate::{
     PathRLP, Trie, TrieDB, TrieError, ValueRLP,
@@ -39,14 +39,17 @@ impl TrieIterator {
             db: &dyn TrieDB,
             prefix_nibbles: Nibbles,
             mut target_nibbles: Nibbles,
-            mut node: NodeRef,
+            node: NodeRef,
             new_stack: &mut Vec<(Nibbles, NodeRef)>,
         ) -> Result<(), TrieError> {
-            let Some(next_node) = node.get_node_mut(db, prefix_nibbles.clone()).ok().flatten()
+            let Some(mut next_node) = node
+                .get_node_checked(db, prefix_nibbles.clone())
+                .ok()
+                .flatten()
             else {
                 return Ok(());
             };
-            match &next_node {
+            match Arc::make_mut(&mut next_node) {
                 Node::Branch(branch_node) => {
                     // Add all children to the stack (in reverse order so we process first child frist)
                     let Some(choice) = target_nibbles.next_choice() else {
@@ -141,7 +144,7 @@ impl Iterator for TrieIterator {
         // Fetch the last node in the stack
         let (mut path, next_node_ref) = self.stack.pop()?;
         let next_node = next_node_ref
-            .get_node(self.db.as_ref(), path.clone())
+            .get_node_checked(self.db.as_ref(), path.clone())
             .ok()
             .flatten()?;
         match &(*next_node) {

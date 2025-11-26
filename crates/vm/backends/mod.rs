@@ -15,6 +15,8 @@ use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::mpsc::Sender;
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -71,9 +73,23 @@ impl Evm {
         }
     }
 
-    #[instrument(level = "trace", name = "Block execution", skip_all)]
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         LEVM::execute_block(block, &mut self.db, self.vm_type)
+    }
+
+    #[instrument(
+        level = "trace",
+        name = "Block execution",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    pub fn execute_block_pipeline(
+        &mut self,
+        block: &Block,
+        merkleizer: Sender<Vec<AccountUpdate>>,
+        queue_length: &AtomicUsize,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
     }
 
     /// Wraps [LEVM::execute_tx].
@@ -109,7 +125,7 @@ impl Evm {
     /// This function is used to run/apply all the system contracts to the state.
     pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
         let chain_config = self.db.store.get_chain_config()?;
-        let fork = chain_config.fork(block_header.timestamp);
+        let fork = chain_config.get_fork(block_header.timestamp);
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             LEVM::beacon_root_contract_call(block_header, &mut self.db, self.vm_type)?;

@@ -137,6 +137,31 @@ pub mod u256 {
                 .collect()
         }
     }
+    pub mod hex_str_opt {
+        use serde::Serialize;
+
+        use super::*;
+
+        pub fn serialize<S>(value: &Option<U256>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            Option::<String>::serialize(&value.map(|v| format!("{v:#x}")), serializer)
+        }
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<U256>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = Option::<String>::deserialize(d)?;
+            match value {
+                Some(s) if !s.is_empty() => U256::from_str_radix(s.trim_start_matches("0x"), 16)
+                    .map_err(|_| D::Error::custom("Failed to deserialize U256 value"))
+                    .map(Some),
+                _ => Ok(None),
+            }
+        }
+    }
 }
 
 pub mod u32 {

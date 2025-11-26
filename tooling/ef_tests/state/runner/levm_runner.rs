@@ -17,6 +17,7 @@ use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     tracing::LevmCallTracer,
+    utils::get_base_fee_per_blob_gas,
     vm::{VM, VMType},
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -189,6 +190,12 @@ pub fn prepare_vm_for_tx<'a>(
             ..Default::default()
         }),
     };
+    let base_blob_fee_per_gas =
+        get_base_fee_per_blob_gas(test.env.current_excess_blob_gas, &config).map_err(|e| {
+            EFTestRunnerError::FailedToEnsurePreState(format!(
+                "Failed to calculate base blob fee: {e}"
+            ))
+        })?;
 
     VM::new(
         Environment {
@@ -202,6 +209,7 @@ pub fn prepare_vm_for_tx<'a>(
             difficulty: test.env.current_difficulty,
             chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
+            base_blob_fee_per_gas,
             gas_price: effective_gas_price(test, &test_tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas,
             block_blob_gas_used: None,
@@ -212,6 +220,7 @@ pub fn prepare_vm_for_tx<'a>(
             tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
             is_privileged: false,
+            fee_token: None,
         },
         db,
         &tx,
@@ -381,7 +390,7 @@ pub async fn ensure_post_state(
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         Box::new(execution_report.clone()),
                         error_reason,
-                        cache,
+                        cache.into_iter().collect(),
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -401,7 +410,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             format!("Post-state root mismatch. LEVM runner, line:{}", line!()),
-                            cache,
+                            cache.into_iter().collect(),
                         ));
                     }
 
@@ -419,7 +428,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             format!("Logs mismatch. LEVM runner, line:{}", line!()),
-                            cache,
+                            cache.into_iter().collect(),
                         ));
                     }
                 }

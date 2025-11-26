@@ -139,6 +139,25 @@ impl RLPEncode for [u8] {
             buf.put_slice(self);
         }
     }
+
+    fn length(&self) -> usize {
+        const U8_MAX_PLUS_ONE: usize = u8::MAX as usize + 1;
+        const U16_MAX_PLUS_ONE: usize = u16::MAX as usize + 1;
+
+        match self.len() {
+            0 => 1,                                                  // encodes to RLP_NULL
+            1 if self[0] < 0x80 => 1,                                // `self` is its own encoding
+            1..56 => 1 + self.len(),                                 // single byte prefix
+            56..U8_MAX_PLUS_ONE => 1 + 1 + self.len(), // single byte prefix + payload len bytes
+            U8_MAX_PLUS_ONE..U16_MAX_PLUS_ONE => 1 + 2 + self.len(), // single byte prefix + payload len bytes
+            _ => {
+                // fallback if `self` is longer than 2^16 - 1 bytes
+                let payload_len_bytes =
+                    ((usize::BITS - self.len().leading_zeros()) as usize).div_ceil(8);
+                1 + payload_len_bytes + self.len()
+            }
+        }
+    }
 }
 
 impl<const N: usize> RLPEncode for [u8; N] {
@@ -203,31 +222,31 @@ pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
 
 impl<S: RLPEncode, T: RLPEncode> RLPEncode for (S, T) {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len = self.0.length() + self.1.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
+        super::structs::Encoder::new(buf)
+            .encode_field(&self.0)
+            .encode_field(&self.1)
+            .finish();
     }
 }
 
 impl<S: RLPEncode, T: RLPEncode, U: RLPEncode> RLPEncode for (S, T, U) {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len = self.0.length() + self.1.length() + self.2.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
-        self.2.encode(buf);
+        super::structs::Encoder::new(buf)
+            .encode_field(&self.0)
+            .encode_field(&self.1)
+            .encode_field(&self.2)
+            .finish();
     }
 }
 
 impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode> RLPEncode for (S, T, U, V) {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len = self.0.length() + self.1.length() + self.2.length() + self.3.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
-        self.2.encode(buf);
-        self.3.encode(buf);
+        super::structs::Encoder::new(buf)
+            .encode_field(&self.0)
+            .encode_field(&self.1)
+            .encode_field(&self.2)
+            .encode_field(&self.3)
+            .finish();
     }
 }
 
@@ -235,14 +254,13 @@ impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode, W: RLPEncode> RLPEn
     for (S, T, U, V, W)
 {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len =
-            self.0.length() + self.1.length() + self.2.length() + self.3.length() + self.4.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
-        self.2.encode(buf);
-        self.3.encode(buf);
-        self.4.encode(buf);
+        super::structs::Encoder::new(buf)
+            .encode_field(&self.0)
+            .encode_field(&self.1)
+            .encode_field(&self.2)
+            .encode_field(&self.3)
+            .encode_field(&self.4)
+            .finish();
     }
 }
 

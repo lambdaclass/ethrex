@@ -7,13 +7,12 @@ use bls12_381::{
 };
 use bytes::{Buf, Bytes};
 use ethrex_common::H160;
-use ethrex_common::utils::{keccak, u256_from_big_endian_const};
+use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H256, U256, serde_utils::bool, types::Fork, types::Fork::*,
     utils::u256_from_big_endian,
 };
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use k256::elliptic_curve::Field;
 use lambdaworks_math::cyclic_group::IsGroup;
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{
@@ -40,7 +39,7 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use sha3::Digest;
+use sha2::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 
@@ -53,8 +52,8 @@ use crate::{
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
         BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
-        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
-        G2_MUL_COST, POINT_EVALUATION_COST,
+        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, G1_MUL_COST, G2_MUL_COST,
+        POINT_EVALUATION_COST,
     },
 };
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
@@ -256,12 +255,12 @@ pub const BLS12_MAP_FP2_TO_G2: Precompile = Precompile {
     active_since_fork: Prague,
 };
 
-pub const P256_VERIFICATION: Precompile = Precompile {
+pub const P256VERIFY: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x01, 0x00,
     ]),
-    name: "P256_VERIFICATION",
+    name: "P256VERIFY",
     active_since_fork: Osaka,
 };
 
@@ -284,7 +283,7 @@ pub const PRECOMPILES: [Precompile; 19] = [
     BLS12_MAP_FP2_TO_G2,
     BLS12_MAP_FP_TO_G1,
     BLS12_PAIRING_CHECK,
-    P256_VERIFICATION,
+    P256VERIFY,
 ];
 
 pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
@@ -294,7 +293,7 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    (matches!(vm_type, VMType::L2(_)) && *address == P256_VERIFICATION.address)
+    (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
@@ -330,10 +329,9 @@ pub fn execute_precompile(
             Some(bls12_map_fp_to_g1 as PrecompileFn);
         precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
             Some(bls12_map_fp2_tp_g2 as PrecompileFn);
-        precompiles[u16::from_be_bytes([
-            P256_VERIFICATION.address.0[18],
-            P256_VERIFICATION.address.0[19],
-        ]) as usize] = Some(p_256_verify as PrecompileFn);
+        precompiles
+            [u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
+            Some(p_256_verify as PrecompileFn);
         precompiles
     };
 
@@ -375,6 +373,68 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
+#[cfg(all(
+    not(feature = "sp1"),
+    not(feature = "risc0"),
+    not(feature = "zisk"),
+    feature = "secp256k1"
+))]
+pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    use crate::gas_cost::ECRECOVER_COST;
+
+    increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
+
+    const INPUT_LEN: usize = 128;
+    const WORD: usize = 32;
+
+    let input = fill_with_zeros(calldata, INPUT_LEN);
+
+    // len(raw_hash) == 32, len(raw_v) == 32, len(raw_sig) == 64
+    let (raw_hash, tail) = input.split_at(WORD);
+    let (raw_v, raw_sig) = tail.split_at(WORD);
+
+    // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
+    let recovery_id_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
+        Ok(27) => 0_i32,
+        Ok(28) => 1_i32,
+        _ => return Ok(Bytes::new()),
+    };
+
+    // Recovery id from the adjusted byte.
+    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(recovery_id_byte) else {
+        return Ok(Bytes::new());
+    };
+
+    let Ok(recoverable_signature) =
+        secp256k1::ecdsa::RecoverableSignature::from_compact(raw_sig, recovery_id)
+    else {
+        return Ok(Bytes::new());
+    };
+
+    let message = secp256k1::Message::from_digest(
+        raw_hash
+            .try_into()
+            .map_err(|_err| InternalError::msg("Invalid message length for ecrecover"))?,
+    );
+
+    let Ok(public_key) = recoverable_signature.recover(&message) else {
+        return Ok(Bytes::new());
+    };
+
+    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
+    let public_key_hash =
+        ethrex_crypto::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
+
+    // Address is the last 20 bytes of the hash.
+    let recovered_address_bytes = &public_key_hash[12..];
+
+    let mut out = [0u8; 32];
+
+    out[12..32].copy_from_slice(recovered_address_bytes);
+
+    Ok(Bytes::copy_from_slice(&out))
+}
+
 /// ## ECRECOVER precompile.
 /// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
 ///
@@ -384,7 +444,18 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
+#[cfg(any(
+    feature = "sp1",
+    feature = "risc0",
+    feature = "zisk",
+    not(feature = "secp256k1"),
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    use ethrex_common::utils::keccak;
+    use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+
+    use crate::gas_cost::ECRECOVER_COST;
+
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
     const INPUT_LEN: usize = 128;
@@ -706,21 +777,23 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
 pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
-
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
-    let point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
-    let scalar = calldata.get(64..96).ok_or(InternalError::Slicing)?;
+    let (Some(g1), Some(scalar)) = (
+        parse_bn254_g1(&calldata, 0),
+        parse_bn254_scalar(&calldata, 64),
+    ) else {
+        return Err(InternalError::Slicing.into());
+    };
+    validate_bn254_g1_coords(&g1)?;
+    bn254_g1_mul(g1, scalar)
+}
 
-    if u256_from_big_endian(point_x) >= ALT_BN128_PRIME
-        || u256_from_big_endian(point_y) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    let x = ark_bn254::Fq::from_be_bytes_mod_order(point_x);
-    let y = ark_bn254::Fq::from_be_bytes_mod_order(point_y);
+#[cfg(not(feature = "sp1"))]
+#[inline]
+pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
+    let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_big_endian());
+    let y = ark_bn254::Fq::from_be_bytes_mod_order(&point.1.to_big_endian());
 
     if x.is_zero() && y.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
@@ -731,7 +804,7 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
         return Err(PrecompileError::InvalidPoint.into());
     }
 
-    let scalar = FrArk::from_be_bytes_mod_order(scalar);
+    let scalar = FrArk::from_be_bytes_mod_order(&scalar.to_big_endian());
     if scalar.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
@@ -743,6 +816,36 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
         result.y.into_bigint().to_bytes_be(),
     ]
     .concat();
+
+    Ok(Bytes::from(out))
+}
+
+#[cfg(feature = "sp1")]
+#[inline]
+pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
+    use substrate_bn::{AffineG1, Fq, Fr, G1, Group};
+
+    if g1.is_zero() || scalar.is_zero() {
+        return Ok(Bytes::from([0u8; 64].to_vec()));
+    }
+
+    let (g1_x, g1_y) = (
+        Fq::from_slice(&g1.0.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&g1.1.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
+    );
+
+    let g1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+
+    let scalar =
+        Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let result = g1 * scalar;
+
+    let mut x_bytes = [0u8; 32];
+    let mut y_bytes = [0u8; 32];
+    result.x().to_big_endian(&mut x_bytes);
+    result.y().to_big_endian(&mut y_bytes);
+    let out = [x_bytes, y_bytes].concat();
 
     Ok(Bytes::from(out))
 }
@@ -769,29 +872,50 @@ impl G2 {
     }
 }
 
+/// Parses 32 bytes as BN254 scalar
 #[inline]
-fn parse_bn254_coords(buf: &[u8; 192]) -> (G1, G2) {
-    let (g1_x, g1_y) = (
-        u256_from_big_endian(&buf[..32]),
-        u256_from_big_endian(&buf[32..64]),
-    );
-    let (g2_xy, g2_xx, g2_yy, g2_yx) = (
-        u256_from_big_endian(&buf[64..96]),
-        u256_from_big_endian(&buf[96..128]),
-        u256_from_big_endian(&buf[128..160]),
-        u256_from_big_endian(&buf[160..]),
-    );
+fn parse_bn254_scalar(buf: &[u8], offset: usize) -> Option<U256> {
+    buf.get(offset..offset.checked_add(32)?)
+        .map(u256_from_big_endian)
+}
 
-    (G1(g1_x, g1_y), G2(g2_xx, g2_xy, g2_yx, g2_yy))
+/// Parses 64 bytes as a BN254 G1 point
+#[inline]
+fn parse_bn254_g1(buf: &[u8], offset: usize) -> Option<G1> {
+    let chunk = buf.get(offset..offset.checked_add(64)?)?;
+    let (x_bytes, y_bytes) = chunk.split_at_checked(32)?;
+    Some(G1(
+        u256_from_big_endian(x_bytes),
+        u256_from_big_endian(y_bytes),
+    ))
+}
+
+/// Parses 128 bytes as a BN254 G2 point
+fn parse_bn254_g2(buf: &[u8], offset: usize) -> Option<G2> {
+    let chunk = buf.get(offset..offset.checked_add(128)?)?;
+    let (g2_xy, rest) = chunk.split_at_checked(32)?;
+    let (g2_xx, rest) = rest.split_at_checked(32)?;
+    let (g2_yy, g2_yx) = rest.split_at_checked(32)?;
+    Some(G2(
+        u256_from_big_endian(g2_xx),
+        u256_from_big_endian(g2_xy),
+        u256_from_big_endian(g2_yx),
+        u256_from_big_endian(g2_yy),
+    ))
 }
 
 #[inline]
-fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<bool, VMError> {
+fn validate_bn254_g1_coords(g1: &G1) -> Result<(), VMError> {
     // check each element is in field
     if g1.0 >= ALT_BN128_PRIME || g1.1 >= ALT_BN128_PRIME {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
+    Ok(())
+}
 
+#[inline]
+fn validate_bn254_g2_coords(g2: &G2) -> Result<(), VMError> {
+    // check each element is in field
     if g2.0 >= ALT_BN128_PRIME
         || g2.1 >= ALT_BN128_PRIME
         || g2.2 >= ALT_BN128_PRIME
@@ -799,8 +923,7 @@ fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<bool, VMError> {
     {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
-
-    Ok(true)
+    Ok(())
 }
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
@@ -816,12 +939,12 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     let mut batch = Vec::new();
     for input in calldata.chunks_exact(192) {
-        #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
-        let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
-        let (g1, g2) = parse_bn254_coords(&input);
-        if validate_bn254_coords(&g1, &g2)? {
-            batch.push((g1, g2));
-        }
+        let (Some(g1), Some(g2)) = (parse_bn254_g1(input, 0), parse_bn254_g2(input, 64)) else {
+            return Err(InternalError::Slicing.into());
+        };
+        validate_bn254_g1_coords(&g1)?;
+        validate_bn254_g2_coords(&g2)?;
+        batch.push((g1, g2));
     }
 
     let pairing_check = if batch.is_empty() {
@@ -835,7 +958,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     Ok(Bytes::from_owner(result))
 }
 
-#[cfg(feature = "sp1")]
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
@@ -891,7 +1014,7 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     Ok(result == substrate_bn::Gt::one())
 }
 
-#[cfg(not(feature = "sp1"))]
+#[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use lambdaworks_math::errors::PairingError;
@@ -941,8 +1064,10 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
         valid_batch.push((g1, g2));
     }
     let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
-    let result = BN254AtePairing::compute_batch(&valid_batch_refs)
-        .map_err(|PairingError::PointNotInSubgroup| PrecompileError::PointNotInSubgroup)?;
+    let result = BN254AtePairing::compute_batch(&valid_batch_refs).map_err(|e| match e {
+        PairingError::PointNotInSubgroup => PrecompileError::PointNotInSubgroup,
+        PairingError::DivisionByZero => PrecompileError::InvalidPoint,
+    })?;
 
     Ok(result == QuadraticExtensionFieldElement::one())
 }
@@ -1220,7 +1345,9 @@ pub fn bls12_g1add(
                     // equation holds since it has no solutions for an `x` coordinate where `y` is
                     // zero within the prime field space.
                     let x_squared = p0.0.square();
-                    let s = (x_squared.double() + &x_squared + BLS12381Curve::a()) / p0.1.double();
+                    let s = ((x_squared.double() + &x_squared + BLS12381Curve::a())
+                        / p0.1.double())
+                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
                     let x = s.square() - p0.0.double();
                     let y = s * (p0.0 - &x) - p0.1;
@@ -1233,7 +1360,8 @@ pub fn bls12_g1add(
             // The division may panic only when `t` has no inverse. This can only happen if
             // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
             // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
-            let l = (&p0.1 - p1.1) / (&p0.0 - &p1.0);
+            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
+                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
             let x = l.square() - &p0.0 - p1.0;
             let y = l * (p0.0 - &x) - p0.1;
@@ -1384,8 +1512,9 @@ pub fn bls12_g2add(
                     // equation holds since it has no solutions for an `x` coordinate where `y` is
                     // zero within the prime field space.
                     let x_squared = p0.0.square();
-                    let s =
-                        (x_squared.double() + &x_squared + BLS12381TwistCurve::a()) / p0.1.double();
+                    let s = ((x_squared.double() + &x_squared + BLS12381TwistCurve::a())
+                        / p0.1.double())
+                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
                     let x = s.square() - p0.0.double();
                     let y = s * (p0.0 - &x) - p0.1;
@@ -1398,7 +1527,8 @@ pub fn bls12_g2add(
             // The division may panic only when `t` has no inverse. This can only happen if
             // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
             // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
-            let l = (&p0.1 - p1.1) / (&p0.0 - &p1.0);
+            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
+                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
             let x = l.square() - &p0.0 - p1.0;
             let y = l * (p0.0 - &x) - p0.1;

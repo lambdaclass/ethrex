@@ -14,17 +14,28 @@ Examples:
 
 ## 2nd - Bump version
 
-In the release branch, update the `[workspace.package]` version to `X.Y.Z` in the root `Cargo.toml`, and push the change to the branch.
+The version must be updated to `X.Y.Z` in the release branch. There are multiple `Cargo.toml` and `Cargo.lock` files that need to be updated.
 
-An example can be found here:
+First, we need to update the version of the workspace package. You can find it in the `Cargo.toml` file in the root directory, under the `[workspace.package]` section.
 
-https://github.com/lambdaclass/ethrex/pull/4881/files#diff-2e9d962a08321605940b5a657135052fbcef87b5e360662bb527c96d9a615542
+Then, we need to update three more `Cargo.toml` files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:
 
-There are currently three `Cargo.lock` files that will be affected. Make sure you check them:
+- `crates/l2/prover/src/guest_program/src/sp1/Cargo.toml`
+- `crates/l2/prover/src/guest_program/src/risc0/Cargo.toml`
+- `crates/l2/tee/quote-gen/Cargo.toml`
 
-- root `Cargo.lock`
-- `sp1/Cargo.lock`
-- `risc0/Cargo.lock`
+After updating the version in the `Cargo.toml` files, we need to update the `Cargo.lock` files to reflect the new versions. Run `cargo tree` in their respective directories:
+
+- In the root directory
+- `crates/l2/prover/src/guest_program/src/sp1`
+- `crates/l2/prover/src/guest_program/src/risc0`
+- `crates/l2/tee/quote-gen`
+
+Then, go to the `CLI.md` file located in `docs/` and update the version of the `--builder.extra-data` flag default value to match the new version (for both ethrex and ethrex l2 sections).
+
+Finally, stage and commit the changes to the release branch.
+
+An example of a PR that bumps the version can be found [here](https://github.com/lambdaclass/ethrex/pull/4881/files#diff-2e9d962a08321605940b5a657135052fbcef87b5e360662bb527c96d9a615542).
 
 ## 3rd - Create & Push Tag
 
@@ -119,3 +130,41 @@ Once the release is verified, **merge the branch via PR**.
 ## Dealing with hotfixes
 
 If hotfixes are needed before the final release, commit them to `release/vX.Y.Z`, push, and create a new pre-release tag. The final tag `vX.Y.Z` should always point to the exact commit you will merge via PR.
+
+## Troubleshooting
+
+### Failure on "latest release" workflow
+
+If the CI fails when setting a release as latest (step 4), Docker tags `latest` and `l2` may not be updated. To manually push that changes, follow these steps:
+
+- Create a new Github Personal Access Token (PAT) from the [settings](https://github.com/settings/tokens/new).
+- Check `write:packages` permission (this will auto-check `repo` permissions too), give a name and a short expiration time.
+- Save the token securely.
+- Click on `Configure SSO` button and authorize LambdaClass organization.
+- Log in to Github Container Registry: `docker login ghcr.io`. Put your Github's username and use the token as your password.
+- Pull RC images:
+
+```bash
+docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
+docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
+```
+
+- Retag them:
+
+```bash
+docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:X.Y.Z
+docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
+docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:latest
+docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:l2
+```
+
+- Push them:
+
+```bash
+docker push ghcr.io/lambdaclass/ethrex:X.Y.Z
+docker push ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
+docker push ghcr.io/lambdaclass/ethrex:latest
+docker push ghcr.io/lambdaclass/ethrex:l2
+```
+
+- Delete the PAT for security ([here](https://github.com/settings/tokens))

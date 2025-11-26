@@ -45,8 +45,10 @@ pub enum EthClientError {
     GetWitnessError(#[from] GetWitnessError),
     #[error("eth_maxPriorityFeePerGas request error: {0}")]
     GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
+    #[error("eth_config request error: {0}")]
+    GetEthConfigError(#[from] GetEthConfigError),
     #[error("Unreachable nonce")]
-    UnrecheableNonce,
+    UnreachableNonce,
     #[error("Error: {0}")]
     Custom(String),
     #[error("Failed to encode calldata: {0}")]
@@ -77,6 +79,8 @@ pub enum EthClientError {
     GetOperatorFeeVaultAddressError(#[from] GetOperatorFeeVaultAddressError),
     #[error("ethrex_getOperatorFee request error: {0}")]
     GetOperatorFeeError(#[from] GetOperatorFeeError),
+    #[error("ethrex_getL1FeeVaultAddress request error: {0}")]
+    GetL1FeeVaultAddressError(#[from] GetL1FeeVaultAddressError),
     #[error("ethrex_getL1BlobBaseFee request error: {0}")]
     GetL1BlobBaseFeeError(#[from] GetL1BlobBaseFeeRequestError),
 }
@@ -324,6 +328,14 @@ pub enum GetBatchByNumberError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum GetEthConfigError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum GetBaseFeeVaultAddressError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
@@ -339,6 +351,14 @@ pub enum GetOperatorFeeVaultAddressError {
 }
 #[derive(Debug, thiserror::Error)]
 pub enum GetOperatorFeeError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetL1FeeVaultAddressError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
