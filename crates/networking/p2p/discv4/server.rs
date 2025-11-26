@@ -257,10 +257,10 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        let count_peers_contacts = self.peer_table.peer_count().await.unwrap_or(0);
-        let progress = ((count_peers_contacts / TARGET_PEERS) - 1) / (5 - 1);
+        let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
+        let progress = (peer_count as f32 / TARGET_PEERS as f32) * (5) as f32;
 
-        LOOKUP_INTERVAL + (LOOKUP_INTERVAL * progress as u32)
+        LOOKUP_INTERVAL + (LOOKUP_INTERVAL.mul_f32(progress))
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
