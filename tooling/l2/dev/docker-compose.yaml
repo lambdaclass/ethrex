@@ -136,8 +136,7 @@ services:
         RELEASE_COOKIE: secret_cookie
 
   visualizer-l1:
-    image: ghcr.io/blockscout/visualizer:${VISUALIZER_DOCKER_TAG:-latest}
-    pull_policy: always
+    image: ghcr.io/blockscout/visualizer:v0.2.1
     platform: linux/amd64
     restart: always
     container_name: 'visualizer-l1'
@@ -145,8 +144,7 @@ services:
         VISUALIZER__SERVER__GRPC__ENABLED: false
 
   sig-provider-l1:
-    image: ghcr.io/blockscout/sig-provider:${SIG_PROVIDER_DOCKER_TAG:-latest}
-    pull_policy: always
+    image: ghcr.io/blockscout/sig-provider:v1.1.1
     platform: linux/amd64
     restart: always
     container_name: 'sig-provider-l1'
@@ -154,7 +152,6 @@ services:
   frontend-l1:
     image: ghcr.io/lambdaclass/frontend-private:test
     platform: linux/amd64
-    pull_policy: always
     container_name: 'frontend-l1'
     depends_on:
       - backend-l1
@@ -183,8 +180,7 @@ services:
 
 
   stats-l1:
-    image: ghcr.io/blockscout/stats:${STATS_DOCKER_TAG:-latest}
-    pull_policy: always
+    image: ghcr.io/blockscout/stats:v2.12.0
     platform: linux/amd64
     restart: always
     container_name: 'stats-l1'
@@ -222,7 +218,6 @@ services:
   backend:
     image: ghcr.io/lambdaclass/blockscout-private:9.2.2.commit.763c41da
     platform: linux/arm64
-    pull_policy: always
     depends_on:
       db:
         condition: service_healthy
@@ -277,8 +272,7 @@ services:
         RELEASE_COOKIE: secret_cookie
 
   visualizer:
-    image: ghcr.io/blockscout/visualizer:${VISUALIZER_DOCKER_TAG:-latest}
-    pull_policy: always
+    image: ghcr.io/blockscout/visualizer:v0.2.1
     platform: linux/amd64
     restart: always
     container_name: 'visualizer'
@@ -286,8 +280,7 @@ services:
         VISUALIZER__SERVER__GRPC__ENABLED: false
 
   sig-provider:
-    image: ghcr.io/blockscout/sig-provider:${SIG_PROVIDER_DOCKER_TAG:-latest}
-    pull_policy: always
+    image: ghcr.io/blockscout/sig-provider:v1.1.1
     platform: linux/amd64
     restart: always
     container_name: 'sig-provider'
@@ -295,7 +288,6 @@ services:
   frontend:
     image: ghcr.io/lambdaclass/frontend-private:test
     platform: linux/amd64
-    pull_policy: always
     container_name: 'frontend'
     depends_on:
       - backend
@@ -325,8 +317,7 @@ services:
 
 
   stats:
-    image: ghcr.io/blockscout/stats:${STATS_DOCKER_TAG:-latest}
-    pull_policy: always
+    image: ghcr.io/blockscout/stats:v2.12.0
     platform: linux/amd64
     restart: always
     container_name: 'stats'
@@ -395,6 +386,7 @@ services:
   # Ethrex Services
   ethrex-dev:
     container_name: ethrex-dev
+    pull_policy: always
     image: "ghcr.io/lambdaclass/ethrex:l2"
     platform: linux/amd64
     depends_on:
@@ -411,6 +403,7 @@ services:
 
   ethrex-prover:
     container_name: ethrex-prover
+    pull_policy: always
     image: "ghcr.io/lambdaclass/ethrex:l2"
     depends_on:
       - ethrex-dev
