@@ -3714,6 +3714,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-p2p",
+ "ethrex-trie",
  "hex",
  "hex-literal",
  "lazy_static",

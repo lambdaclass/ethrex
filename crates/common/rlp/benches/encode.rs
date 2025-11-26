@@ -21,7 +21,11 @@ use ethrex_p2p::{
     },
     types::{Endpoint, Node, NodeRecord, NodeRecordPairs},
 };
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{encode::RLPEncode, structs::Encoder};
+use ethrex_trie::{
+    Nibbles, Node as TrieNode, NodeHash, NodeRef,
+    node::{BranchNode, ExtensionNode, LeafNode},
+};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use std::{
     hint::black_box,
@@ -32,6 +36,11 @@ use std::{
 fn make_string_list(count: usize) -> Vec<String> {
     let entry = "abcdefghij".to_string();
     vec![entry; count]
+}
+
+fn create_nibbles(len: usize) -> Nibbles {
+    let pattern = (0..len).map(|i| (i % 16) as u8).collect::<Vec<u8>>();
+    Nibbles::from_hex(pattern)
 }
 
 fn random_u256(rng: &mut StdRng) -> U256 {
@@ -902,6 +911,111 @@ fn bench_encode_storage_slot(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_encode_nibbles(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie");
+    for &len in &[65usize, 129, 130, 500] {
+        let label = format!("encode_nibbles_len_{len}");
+        let nibbles = black_box(create_nibbles(len));
+        group.bench_function(label, move |b| {
+            let mut buf = Vec::new();
+            b.iter(|| {
+                buf.clear();
+                nibbles.encode(&mut buf);
+                black_box(&buf);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_encode_node_hash(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie");
+
+    let inline_hash = {
+        let mut data = [0u8; 31];
+        data[..10].fill(0x2a);
+        NodeHash::Inline((data, 10))
+    };
+    let hashed_hash = NodeHash::from(H256::repeat_byte(0x42));
+
+    for (label, node_hash) in [("encode_node_hash_inline", inline_hash), ("encode_node_hash_hashed", hashed_hash)] {
+        let node_hash = black_box(node_hash);
+        group.bench_function(label, move |b| {
+            let mut buf = Vec::new();
+            b.iter(|| {
+                buf.clear();
+                let encoder = node_hash.encode(Encoder::new(&mut buf));
+                black_box(&encoder);
+                black_box(&buf);
+            });
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_encode_branch_node(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie");
+
+    let mut choices = BranchNode::EMPTY_CHOICES;
+    choices[0] = NodeHash::from(H256::repeat_byte(0x11)).into();
+    choices[1] = TrieNode::from(LeafNode::new(create_nibbles(6), vec![0x33; 12])).into();
+    choices[15] = NodeHash::from(H256::repeat_byte(0xaa)).into();
+
+    let branch = black_box(BranchNode {
+        choices,
+        value: vec![0x55; 32],
+    });
+
+    group.bench_function("encode_branch_node", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            branch.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_extension_node(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie");
+
+    let extension = black_box(ExtensionNode {
+        prefix: create_nibbles(20),
+        child: NodeRef::from(NodeHash::from(H256::repeat_byte(0x53))),
+    });
+
+    group.bench_function("encode_extension_node", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            extension.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_encode_leaf_node(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie");
+
+    let leaf = black_box(LeafNode::new(create_nibbles(18), vec![0x44; 40]));
+
+    group.bench_function("encode_leaf_node", move |b| {
+        let mut buf = Vec::new();
+        b.iter(|| {
+            buf.clear();
+            leaf.encode(&mut buf);
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
 fn bench_encode_fork_id(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_fork_id");
 
@@ -1242,6 +1356,11 @@ criterion_group!(
     bench_encode_account_state_slim,
     bench_encode_account_range_unit,
     bench_encode_storage_slot,
+    bench_encode_nibbles,
+    bench_encode_node_hash,
+    bench_encode_branch_node,
+    bench_encode_extension_node,
+    bench_encode_leaf_node,
     bench_encode_tx_kind,
     bench_encode_legacy_transaction,
     bench_encode_eip2930_transaction,
