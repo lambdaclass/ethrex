@@ -22,6 +22,11 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
+    // hash is only used for bytecodes stored in the DB, either for reading it from the DB
+    // or with the CODEHASH opcode, which needs an account address as argument and
+    // thus only accessed persisted bytedcodes.
+    // We use a bogus H256::zero() value for initcodes as there is no way for the VM or
+    // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
     pub bytecode: Bytes,
     // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
