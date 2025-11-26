@@ -437,14 +437,17 @@ services:
     image: "ghcr.io/lambdaclass/ethrex_l2_hub:latest"
     pull_policy: always
     depends_on:
-      - ethrex-dev
+      ethrex-delegation-contracts:
+        condition: service_completed_successfully
     ports:
       - 5173:5173
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     environment:
+      VITE_HEALTH_ENDPOINT: http://host.docker.internal:5555
       VITE_L1_NAME: "Ethrex L1 Local"
       VITE_L1_RPC_URL: "http://localhost:8545"
       VITE_L1_CHAIN_ID: 9
-      VITE_L1_BRIDGE_ADDRESS: "0xcecd5910a4404ccf2718feb58dac13e975a862a2"
       VITE_L2_NAME: "Ethrex L2 Local"
       VITE_L2_RPC_URL: "http://localhost:1729"
       VITE_L2_CHAIN_ID: 65536999
