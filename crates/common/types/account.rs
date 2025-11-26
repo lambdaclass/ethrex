@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::Trie;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use sha3::{Digest as _, Keccak256};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -24,8 +24,11 @@ use crate::{
 pub struct Code {
     pub hash: H256,
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u16]> (needs to enable serde rc feature)
-    pub jump_targets: Vec<u16>,
+    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
+    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
+    // this does not apply to previous forks. This is tested in the EEST tests, which would
+    // panic in debug mode.
+    pub jump_targets: Vec<u32>,
 }
 
 impl Code {
@@ -40,8 +43,8 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u16> {
-        debug_assert!(code.len() <= u16::MAX as usize);
+    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+        debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = Vec::new();
         let mut i = 0;
         while i < code.len() {
@@ -49,7 +52,7 @@ impl Code {
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    targets.push(i as u16);
+                    targets.push(i as u32);
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
@@ -61,6 +64,21 @@ impl Code {
             i += 1;
         }
         targets
+    }
+
+    /// Estimates the size of the Code struct in bytes
+    /// (including stack size and heap allocation).
+    ///
+    /// Note: This is an estimation and may not be exact.
+    ///
+    /// # Returns
+    ///
+    /// usize - Estimated size in bytes
+    pub fn size(&self) -> usize {
+        let hash_size = size_of::<H256>();
+        let bytes_size = size_of::<Bytes>();
+        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        hash_size + bytes_size + vec_size
     }
 }
 
@@ -200,10 +218,7 @@ impl RLPDecode for AccountState {
 
 pub fn compute_storage_root(storage: &HashMap<U256, U256>) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((
-            Keccak256::digest(k.to_big_endian()).to_vec(),
-            v.encode_to_vec(),
-        ))
+        (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
     });
     Trie::compute_hash_from_unsorted_iter(iter)
 }

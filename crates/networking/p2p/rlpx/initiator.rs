@@ -15,9 +15,6 @@ use spawned_concurrency::{
 use std::time::Duration;
 use tracing::{debug, error, info};
 
-#[cfg(any(test, feature = "test-utils"))]
-use crate::discv4::peer_table::PeerTable;
-
 #[derive(Debug, thiserror::Error)]
 pub enum RLPxInitiatorError {
     #[error(transparent)]
@@ -77,15 +74,6 @@ impl RLPxInitiator {
             debug!("Reached target number of peers. Using longer lookup interval.");
             self.lookup_interval
         }
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    /// Creates a dummy GenServer for tests
-    /// This should only be used in tests
-    pub async fn dummy(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
-        info!("Starting RLPx Initiator");
-        let state = RLPxInitiator::new(P2PContext::dummy(peer_table).await);
-        RLPxInitiator::start_on_thread(state)
     }
 }
 

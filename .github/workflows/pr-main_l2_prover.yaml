@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        backend: ["sp1", "risc0"]
+        backend: ["sp1", "risc0", "zisk"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -30,17 +30,11 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: RISC-V Risc0 toolchain install
+      - name: Install RISC0
         if: matrix.backend == 'risc0'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # should be able to specify a version for `rzup install rust` (toolchain version)
-        # but it throws a "error decoding response body" in that case
-        run: |
-          curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-          ~/.risc0/bin/rzup install risc0-groth16
-          ~/.risc0/bin/rzup install rust
+        uses: ./.github/actions/install-risc0
 
       - name: RISC-V SP1 toolchain install
         if: matrix.backend == 'sp1'
@@ -50,13 +44,29 @@ jobs:
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.8
 
+      - name: ZisK toolchain install
+        if: matrix.backend == 'zisk'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_RUNNER: 1
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 3
+          retry_wait_seconds: 0
+          timeout_minutes: 15
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+            curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
+            echo "$HOME/.zisk/bin" >> $GITHUB_PATH
+
       - name: Check ${{ matrix.backend }} backend
         run: |
-          cargo check -r -p ethrex-prover -F ${{ matrix.backend }}
+          cargo check -r -p ethrex-prover -F "${{ matrix.backend }},ci"
 
       - name: Clippy ${{ matrix.backend }} backend
         run: |
-          cargo clippy -r -p ethrex-prover --all-targets -F ${{ matrix.backend }}
+          cargo clippy -r -p ethrex-prover --all-targets -F "${{ matrix.backend }},ci"
 
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |

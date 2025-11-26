@@ -1,5 +1,5 @@
 use ethereum_types::H256;
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 
 use crate::{Nibbles, Node, NodeRLP, Trie, error::TrieError};
 use std::{
@@ -59,11 +59,16 @@ impl InMemoryTrieDB {
         }
     }
 
+    // Do not remove or make private as we use this in ethrex-replay
     pub fn from_nodes(
         root_hash: H256,
         state_nodes: &BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
-        let mut embedded_root = Trie::get_embedded_root(state_nodes, root_hash)?;
+        let state_nodes: BTreeMap<_, _> = state_nodes
+            .iter()
+            .map(|(h, b)| Ok((*h, Node::decode(b)?)))
+            .collect::<Result<_, RLPDecodeError>>()?;
+        let mut embedded_root = Trie::get_embedded_root(&state_nodes, root_hash)?;
         let mut hashed_nodes = vec![];
         embedded_root.commit(Nibbles::default(), &mut hashed_nodes);
 
@@ -81,6 +86,11 @@ impl InMemoryTrieDB {
             Some(prefix) => prefix.concat(&path),
             None => path,
         }
+    }
+
+    // Do not remove or make private as we use this in ethrex-replay
+    pub fn inner(&self) -> NodeMap {
+        Arc::clone(&self.inner)
     }
 }
 

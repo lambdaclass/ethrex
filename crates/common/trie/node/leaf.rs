@@ -13,7 +13,18 @@ use crate::{
 use super::{ExtensionNode, Node, ValueOrHash};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's hash, value & path
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    rkyv::Archive,
+)]
 pub struct LeafNode {
     pub partial: Nibbles,
     pub value: ValueRLP,
@@ -128,7 +139,16 @@ impl LeafNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded(&self.encode_to_vec())
+        self.compute_hash_no_alloc(&mut vec![])
+    }
+
+    /// Computes the node's hash, using the provided buffer
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+        buf.clear();
+        self.encode(buf);
+        let hash = NodeHash::from_encoded(buf);
+        buf.clear();
+        hash
     }
 
     /// Encodes the node and appends it to `node_path` if the encoded node is 32 or more bytes long

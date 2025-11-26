@@ -16,6 +16,7 @@ use ethrex_common::{
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::{calldata::Value, prover::ProverType, utils::get_address_from_secret_key};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
+use ethrex_l2_sdk::register_fee_token;
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode,
     deploy_with_proxy_from_bytecode, initialize_contract, send_generic_transaction,
@@ -256,7 +257,7 @@ pub struct DeployerOptions {
         env = "ETHREX_L2_VALIDIUM",
         action = ArgAction::Set,
         help_heading = "Deployer options",
-        help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
+        help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1."
     )]
     pub validium: bool,
     #[arg(
@@ -275,6 +276,16 @@ pub struct DeployerOptions {
         help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
     )]
     pub bridge_owner: Address,
+    #[arg(
+        long,
+        value_name = "PRIVATE_KEY",
+        value_parser = parse_private_key,
+        env = "ETHREX_BRIDGE_OWNER_PK",
+        help_heading = "Deployer options",
+        help = "Private key of the owner of the CommonBridge contract. If set, the deployer will send a transaction to accept the ownership.",
+        requires = "bridge_owner"
+    )]
+    pub bridge_owner_pk: Option<SecretKey>,
     #[arg(
         long,
         value_name = "PRIVATE_KEY",
@@ -339,12 +350,11 @@ pub struct DeployerOptions {
     #[arg(
         long,
         value_name = "ADDRESS",
-        default_value = "0x0000000000000000000000000000000000000000",
-        env = "ETHREX_NATIVE_TOKEN_L1_ADDRESS",
+        env = "ETHREX_DEPLOYER_INITIAL_FEE_TOKEN",
         help_heading = "Deployer options",
-        help = "The L1 address of the L2 native token (e.g., USDC, USDT, DAI, etc. Use address(0) for ETH)"
+        help = "This address will be registered as an initial fee token"
     )]
-    pub native_token_l1_address: Address,
+    pub initial_fee_token: Option<Address>,
 }
 
 impl Default for DeployerOptions {
@@ -405,6 +415,17 @@ impl Default for DeployerOptions {
                 0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
             ]),
+            // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
+            bridge_owner_pk: Some(
+                SecretKey::from_slice(
+                    H256::from_str(
+                        "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e",
+                    )
+                    .expect("Bridge owner private key is a valid hex string")
+                    .as_bytes(),
+                )
+                .expect("Bridge owner private key is valid"),
+            ),
             on_chain_proposer_owner_pk: None,
             sp1_vk_path: None,
             risc0_vk_path: None,
@@ -412,7 +433,7 @@ impl Default for DeployerOptions {
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
-            native_token_l1_address: H160::zero(),
+            initial_fee_token: None,
         }
     }
 }
@@ -497,15 +518,9 @@ const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bo
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256)";
 
-// deposit(uint256 _amount, address _l2Recipient)
-const NATIVE_TOKEN_DEPOSIT_SIGNATURE: &str = "deposit(uint256,address)";
-
-// approve(address spender, uint256 amount)
-const APPROVE_SIGNATURE: &str = "approve(address,uint256)";
-
-#[derive(Clone, Copy, Default)]
+#[derive(Clone)]
 pub struct ContractAddresses {
     pub on_chain_proposer_address: Address,
     pub bridge_address: Address,
@@ -538,15 +553,9 @@ pub async fn deploy_l1_contracts(
 
     info!("Initializing contracts");
 
-    initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
+    initialize_contracts(contract_addresses.clone(), &eth_client, &opts, &signer).await?;
 
     if opts.deposit_rich {
-        if opts.native_token_l1_address != Address::zero() {
-            info!(
-                "Begging deposits with {} ERC20 as the native tokens",
-                opts.native_token_l1_address
-            );
-        }
         let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
             .await
             .inspect_err(|err| {
@@ -554,11 +563,7 @@ pub async fn deploy_l1_contracts(
             });
     }
 
-    write_contract_addresses_to_env(
-        contract_addresses,
-        opts.native_token_l1_address,
-        opts.env_file_path,
-    )?;
+    write_contract_addresses_to_env(contract_addresses.clone(), opts.env_file_path)?;
     info!("Deployer binary finished successfully");
     Ok(contract_addresses)
 }
@@ -837,8 +842,8 @@ async fn initialize_contracts(
 
     info!("Risc0 vk read");
 
-    let deployer_address =
-        get_address_from_secret_key(&opts.private_key).map_err(DeployerError::InternalError)?;
+    let deployer_address = get_address_from_secret_key(&opts.private_key.secret_bytes())
+        .map_err(DeployerError::InternalError)?;
 
     info!("Initializing OnChainProposer");
 
@@ -1003,10 +1008,9 @@ async fn initialize_contracts(
     info!("Initializing CommonBridge");
     let initialize_tx_hash = {
         let calldata_values = vec![
-            Value::Address(opts.bridge_owner),
+            Value::Address(initializer.address()),
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
-            Value::Address(opts.native_token_l1_address),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
@@ -1020,6 +1024,56 @@ async fn initialize_contracts(
         .await?
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+
+    if let Some(fee_token) = opts.initial_fee_token {
+        register_fee_token(
+            eth_client,
+            contract_addresses.bridge_address,
+            fee_token,
+            initializer,
+        )
+        .await?;
+        info!(?fee_token, "CommonBridge initial fee token registered");
+    }
+
+    if opts.bridge_owner != initializer.address() {
+        let transfer_calldata = encode_calldata(
+            TRANSFER_OWNERSHIP_SIGNATURE,
+            &[Value::Address(opts.bridge_owner)],
+        )?;
+        let transfer_tx_hash = initialize_contract(
+            contract_addresses.bridge_address,
+            transfer_calldata,
+            initializer,
+            eth_client,
+        )
+        .await?;
+        if let Some(owner_pk) = opts.bridge_owner_pk {
+            let signer = Signer::Local(LocalSigner::new(owner_pk));
+            let accept_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
+            let accept_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                contract_addresses.bridge_address,
+                opts.bridge_owner,
+                accept_calldata.into(),
+                Overrides::default(),
+            )
+            .await?;
+            let accept_tx_hash = send_generic_transaction(eth_client, accept_tx, &signer).await?;
+            wait_for_transaction_receipt(accept_tx_hash, eth_client, 100).await?;
+            info!(
+                transfer_tx_hash = %format!("{transfer_tx_hash:#x}"),
+                accept_tx_hash = %format!("{accept_tx_hash:#x}"),
+                "CommonBridge ownership transferred and accepted"
+            );
+        } else {
+            info!(
+                transfer_tx_hash = %format!("{transfer_tx_hash:#x}"),
+                "CommonBridge ownership transfer pending acceptance"
+            );
+        }
+    }
 
     trace!("Contracts initialized");
     Ok(())
@@ -1058,6 +1112,8 @@ async fn make_deposits(
         .map(|line| line.trim().to_string())
         .collect();
 
+    let mut last_hash = None;
+
     for pk in private_keys.iter() {
         let secret_key = parse_private_key(pk).map_err(|_| {
             DeployerError::DecodingError("Error while parsing private key".to_string())
@@ -1075,84 +1131,13 @@ async fn make_deposits(
         let get_balance = eth_client
             .get_balance(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
-
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
 
-        let native_token_is_eth = opts.native_token_l1_address == Address::zero();
-        let nonce = eth_client
-            .get_nonce(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
-            .await?;
-
-        // approve the transfer in the L1 token contract if not ETH
-        if !native_token_is_eth {
-            let mint_tx = build_generic_tx(
-                eth_client,
-                TxType::EIP1559,
-                opts.native_token_l1_address,
-                signer.address(),
-                encode_calldata("freeMint()", &[])?.into(),
-                Default::default(),
-            )
-            .await?;
-            if let Err(e) = send_generic_transaction(eth_client, mint_tx, &signer).await {
-                error!(address =? signer.address(), "Failed to mint {e}");
-                continue;
-            }
-
-            let calldata = encode_calldata(
-                APPROVE_SIGNATURE,
-                &[Value::Address(bridge), Value::Uint(value_to_deposit * 2)],
-            )?;
-            let approve_tx = build_generic_tx(
-                eth_client,
-                TxType::EIP1559,
-                opts.native_token_l1_address,
-                signer.address(),
-                calldata.into(),
-                Overrides {
-                    from: Some(signer.address()),
-                    // We set the nonce and gas limit manually to avoid the estimation step and having nonce issues.
-                    // We do nonce + 1 because the mint transaction is sent just before.
-                    nonce: Some(nonce + 1),
-                    gas_limit: Some(1_000_000u64),
-                    ..Default::default()
-                },
-            )
-            .await?;
-            if let Err(e) = send_generic_transaction(eth_client, approve_tx, &signer).await {
-                error!(address =? signer.address(), "Failed to approve {e}");
-                continue;
-            }
-        }
-
-        let calldata_values = vec![
-            // uint256 _amount: amount of ERC20 to deposit
-            Value::Uint(if native_token_is_eth {
-                U256::zero()
-            } else {
-                value_to_deposit
-            }),
-            // address l2Recipient: the address on L2 to receive the funds
-            Value::Address(signer.address()),
-        ];
-
-        let native_token_deposit_calldata =
-            encode_calldata(NATIVE_TOKEN_DEPOSIT_SIGNATURE, &calldata_values)?;
-
         let overrides = Overrides {
-            value: native_token_is_eth.then_some(value_to_deposit).or(None),
+            value: Some(value_to_deposit),
             from: Some(signer.address()),
-            // When doing the deposits for ERC20 as the native token, we previously did an approve and mint.
-            // So to make the deposits fast and not wait for the node to have the nonce updated, we set it manually.
-            // Also we set the gas limit manually to avoid the estimation step and having nonce issues.
-            nonce: if !native_token_is_eth {
-                Some(nonce + 2)
-            } else {
-                None
-            },
-            gas_limit: Some(1_000_000u64),
             ..Overrides::default()
         };
 
@@ -1161,13 +1146,14 @@ async fn make_deposits(
             TxType::EIP1559,
             bridge,
             signer.address(),
-            native_token_deposit_calldata.into(),
+            Bytes::new(),
             overrides,
         )
         .await?;
 
         match send_generic_transaction(eth_client, build, &signer).await {
             Ok(hash) => {
+                last_hash = Some(hash);
                 info!(
                     address =? signer.address(),
                     ?value_to_deposit,
@@ -1182,12 +1168,14 @@ async fn make_deposits(
         }
     }
     trace!("Deposits finished");
+    if let Some(hash) = last_hash {
+        wait_for_transaction_receipt(hash, eth_client, 100).await?;
+    }
     Ok(())
 }
 
 fn write_contract_addresses_to_env(
     contract_addresses: ContractAddresses,
-    native_token_l1_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
@@ -1264,11 +1252,6 @@ fn write_contract_addresses_to_env(
         writer,
         "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={:#x}",
         contract_addresses.sequencer_registry_address
-    )?;
-    writeln!(
-        writer,
-        "ETHREX_NATIVE_TOKEN_L1_ADDRESS={:#x}",
-        native_token_l1_address
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
