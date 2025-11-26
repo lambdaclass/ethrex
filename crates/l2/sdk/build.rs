@@ -5,8 +5,6 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ethrex_sdk_contract_utils::git_clone;
-
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
 
@@ -14,41 +12,27 @@ fn main() {
     let contracts_path = out_dir.join("contracts");
     fs::create_dir_all(contracts_path.join("lib")).expect("failed to create contracts/lib");
 
-    let oz_target = contracts_path.join("lib/openzeppelin-contracts-upgradeable");
-    let oz_upgradable_env_path = env::var_os("ETHREX_SDK_OZ_UPGRADABLE_CONTRACTS_DIR")
-        .map(PathBuf::from)
-        .filter(|path| path.exists());
-    let oz_env_path = env::var_os("ETHREX_SDK_OZ_CONTRACTS_DIR").map(PathBuf::from);
-    let oz_source_root = oz_upgradable_env_path.clone().unwrap_or_else(|| {
-        clone_openzeppelin(&oz_target);
-        oz_target.clone()
-    });
-
-    let standard_root = oz_env_path
-        .as_ref()
-        .expect("ETHREX_SDK_OZ_CONTRACTS_DIR must be set for standard contracts");
-    let standard_primary = standard_root.join("contracts/proxy/ERC1967/ERC1967Proxy.sol");
-    let standard_fallback =
-        standard_root.join("contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
-    let proxy_contract_path = if standard_primary.exists() {
-        standard_primary
-    } else if standard_fallback.exists() {
-        standard_fallback
+    let openzeppelin_contracts_root = PathBuf::from(
+        env::var_os("ETHREX_SDK_OZ_CONTRACTS_DIR")
+            .expect("ETHREX_SDK_OZ_CONTRACTS_DIR must be set for contracts"),
+    );
+    let openzeppelin_contracts_primary =
+        openzeppelin_contracts_root.join("contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    let openzeppelin_contracts_fallback =
+        openzeppelin_contracts_root.join("contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    let proxy_contract_path = if openzeppelin_contracts_primary.exists() {
+        openzeppelin_contracts_primary
+    } else if openzeppelin_contracts_fallback.exists() {
+        openzeppelin_contracts_fallback
     } else {
         panic!(
             "ERC1967Proxy.sol not found at {} (primary) or {} (fallback)",
-            standard_primary.display(),
-            standard_fallback.display()
+            openzeppelin_contracts_primary.display(),
+            openzeppelin_contracts_fallback.display()
         );
     };
 
-    let mut allow_paths: Vec<&Path> = vec![contracts_path.as_path(), oz_source_root.as_path()];
-    if let Some(pre_fetched) = oz_upgradable_env_path.as_deref() {
-        allow_paths.push(pre_fetched);
-    }
-    if let Some(std_root) = oz_env_path.as_deref() {
-        allow_paths.push(std_root);
-    }
+    let allow_paths: Vec<&Path> = vec![contracts_path.as_path(), openzeppelin_contracts_root.as_path()];
     ethrex_sdk_contract_utils::compile_contract(
         &contracts_path,
         &proxy_contract_path,
@@ -70,14 +54,4 @@ fn main() {
         contract_bytecode,
     )
     .expect("failed to write ERC1967Proxy bytecode");
-}
-
-fn clone_openzeppelin(target: &Path) {
-    git_clone(
-        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
-        target.to_str().expect("Failed to convert path to str"),
-        Some("release-v5.4"),
-        true,
-    )
-    .unwrap();
 }
