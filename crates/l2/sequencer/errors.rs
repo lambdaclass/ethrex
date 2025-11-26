@@ -75,6 +75,8 @@ pub enum L1WatcherError {
     InternalError(#[from] GenServerError),
     #[error("Beacon client error: {0}")]
     BeaconClient(#[from] ethrex_rpc::clients::beacon::errors::BeaconClientError),
+    #[error("RLP Decode error: {0}")]
+    RLPDecode(#[from] ethrex_rlp::error::RLPDecodeError),
 }
 
 #[derive(Debug, thiserror::Error)]

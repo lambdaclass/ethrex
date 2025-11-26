@@ -5,7 +5,7 @@ use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::{Log, PrivilegedL2Transaction, TxKind, TxType};
+use ethrex_common::types::{BYTES_PER_BLOB, Block, Log, PrivilegedL2Transaction, TxKind, TxType, bytes_from_blob};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
 use ethrex_l2_common::messages::{L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS};
@@ -14,6 +14,7 @@ use ethrex_l2_sdk::{
     build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
     verify_message,
 };
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::clients::beacon::BeaconClient;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
@@ -483,8 +484,28 @@ impl L1Watcher {
                         .into_iter()
                         .filter(|blob| blob_versioned_hashes.contains(&blob.versioned_hash()))
                     {
-                        println!("Found blob with index: {}", blob.index);
-                        println!("Blob data: 0x{}", hex::encode(&blob.blob));
+                        if blob.blob.len() != BYTES_PER_BLOB {
+                            panic!("Invalid blob size");
+                        }
+
+                        let blob = bytes_from_blob(blob.blob.into());
+
+                        // Decode blocks
+                        let blocks_count = u64::from_be_bytes(
+                            blob[0..8].try_into().expect("Failed to get blob length"),
+                        );
+
+                        let mut buf = &blob[8..];
+                        let mut blocks = Vec::new();
+                        for _ in 0..blocks_count {
+                            let (item, rest) = Block::decode_unfinished(buf)?;
+                            blocks.push(item);
+                            buf = rest;
+                        }
+                        info!("Decoded {} blocks from blob", blocks.len());
+                        for block in blocks {
+                            info!("Block number: {} has {} txs", block.header.number, block.body.transactions.len());
+                        }
                     }
                 }
             } else {
