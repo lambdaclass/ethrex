@@ -37,7 +37,7 @@ contract CommonBridge is
     /// @dev Deprecated.
     mapping(bytes32 => bool) public claimedWithdrawals;
 
-    /// @notice Mapping of merkle roots to the L2 messages.
+    /// @notice Mapping of merkle roots to the L2 withdrawal transaction logs.
     /// @dev The key is the L2 batch number where the logs were emitted.
     /// @dev The value is the merkle root of the logs.
     /// @dev If there exist a merkle root for a given batch number it means
