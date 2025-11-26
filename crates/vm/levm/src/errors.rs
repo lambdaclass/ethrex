@@ -195,12 +195,8 @@ pub enum PrecompileError {
     ParsingInputError,
     #[error("There is not enough gas to execute precompiled contract")]
     NotEnoughGas,
-    #[error("Kzg error: {0}")]
-    KzgError(String),
     #[error("Invalid point")]
     InvalidPoint,
-    #[error("The point is not in the curve")]
-    PointNotInTheCurve,
     #[error("The point is not in the subgroup")]
     PointNotInSubgroup,
     #[error("The G1 point is not in the curve")]
