@@ -1,7 +1,7 @@
 use crate::{
     rlp::AccountCodeHashRLP,
     trie_db::{
-        layering::{TrieLayerCache, TrieWrapper, apply_prefix},
+        layering::{TrieLayerCache, TrieWrapper, apply_prefix, build_prefix},
         rocksdb_locked::RocksDBLockedTrieDB,
     },
 };
@@ -19,7 +19,7 @@ use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch, checkpoint::Checkpoint,
 };
-use rustc_hash::FxBuildHasher;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -792,19 +792,7 @@ impl Store {
         tracing::info!("Update 1: start phase 1 - elapsed {:?}", start.elapsed());
         let mut now = Instant::now();
         // Phase 1: update the in-memory diff-layers only, then notify block production.
-        let new_layer = storage_updates
-            .into_iter()
-            .flat_map(|(account_hash, nodes)| {
-                nodes.into_iter().map(move |(path, node)| {
-                    (apply_prefix(Some(account_hash), path).into_vec(), node)
-                })
-            })
-            .chain(
-                account_updates
-                    .into_iter()
-                    .map(|(path, node)| (path.into_vec(), node)),
-            )
-            .collect();
+        let new_layer = self.build_layer(account_updates, storage_updates);
         tracing::info!("Update 2: new layer - elapsed {:?}", now.elapsed());
         now = Instant::now();
         // Read-Copy-Update the trie cache with a new layer.
@@ -916,6 +904,27 @@ impl Store {
         tracing::info!("Update 11: end - elapsed {:?}", now.elapsed());
         tracing::info!("Update 12: total - elapsed {:?}", start.elapsed());
         Ok(())
+    }
+
+    fn build_layer(
+        &self,
+        account_updates: Vec<(Nibbles, Vec<u8>)>,
+        storage_updates: StorageUpdates,
+    ) -> FxHashMap<Vec<u8>, Vec<u8>> {
+        storage_updates
+            .into_iter()
+            .flat_map(|(account_hash, nodes)| {
+                let prefix = build_prefix(account_hash);
+                nodes
+                    .into_iter()
+                    .map(move |(path, node)| (prefix.concat(&path).into_vec(), node))
+            })
+            .chain(
+                account_updates
+                    .into_iter()
+                    .map(|(path, node)| (path.into_vec(), node)),
+            )
+            .collect()
     }
 
     fn last_written(&self) -> Result<Vec<u8>, StoreError> {
