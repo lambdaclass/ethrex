@@ -6,14 +6,15 @@ use std::{
 use crate::{
     constants::{
         TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-        TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
-        TX_INIT_CODE_WORD_GAS_COST,
+        TX_DATA_NON_ZERO_GAS, TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
     },
     error::MempoolError,
 };
 use ethrex_common::{
     Address, H160, H256, U256,
-    types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
+    types::{
+        BlobsBundle, BlockHeader, ChainConfig, Fork::*, MempoolTransaction, Transaction, TxType,
+    },
 };
 use ethrex_storage::error::StoreError;
 use std::collections::HashSet;
@@ -426,16 +427,10 @@ pub fn transaction_intrinsic_gas(
     let data_len = tx.data().len() as u64;
 
     if data_len > 0 {
-        let non_zero_gas_cost = if config.is_istanbul_activated(header.number) {
-            TX_DATA_NON_ZERO_GAS_EIP2028
-        } else {
-            TX_DATA_NON_ZERO_GAS
-        };
-
         let non_zero_count = tx.data().iter().filter(|&&x| x != 0u8).count() as u64;
 
         gas = gas
-            .checked_add(non_zero_count * non_zero_gas_cost)
+            .checked_add(non_zero_count * TX_DATA_NON_ZERO_GAS)
             .ok_or(MempoolError::TxGasOverflowError)?;
 
         let zero_count = data_len - non_zero_count;
@@ -444,7 +439,7 @@ pub fn transaction_intrinsic_gas(
             .checked_add(zero_count * TX_DATA_ZERO_GAS_COST)
             .ok_or(MempoolError::TxGasOverflowError)?;
 
-        if is_contract_creation && config.is_shanghai_activated(header.timestamp) {
+        if is_contract_creation && config.is_fork_activated(Shanghai, header.timestamp) {
             // Len in 32 bytes sized words
             let len_in_words = data_len.saturating_add(31) / 32;
 
@@ -477,8 +472,7 @@ mod tests {
     use crate::error::MempoolError;
     use crate::mempool::{
         Mempool, TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-        TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
-        TX_INIT_CODE_WORD_GAS_COST,
+        TX_DATA_NON_ZERO_GAS, TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
     };
     use std::collections::HashMap;
 
@@ -573,29 +567,6 @@ mod tests {
     }
 
     #[test]
-    fn transaction_intrinsic_data_gas_pre_istanbul() {
-        let (config, header) = build_basic_config_and_header(false, false);
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000,
-            to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-            value: U256::zero(),                           // Value zero
-            data: Bytes::from(vec![0x0, 0x1, 0x1, 0x0, 0x1, 0x1]), // 6 bytes of data
-            access_list: Default::default(),               // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let expected_gas_cost = TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS;
-        let intrinsic_gas =
-            transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-        assert_eq!(intrinsic_gas, expected_gas_cost);
-    }
-
-    #[test]
     fn transaction_intrinsic_data_gas_post_istanbul() {
         let (config, header) = build_basic_config_and_header(true, false);
 
@@ -612,8 +583,7 @@ mod tests {
         };
 
         let tx = Transaction::EIP1559Transaction(tx);
-        let expected_gas_cost =
-            TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS_EIP2028;
+        let expected_gas_cost = TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS;
         let intrinsic_gas =
             transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
         assert_eq!(intrinsic_gas, expected_gas_cost);
