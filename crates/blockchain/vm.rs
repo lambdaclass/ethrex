@@ -5,7 +5,7 @@ use ethrex_common::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
-use std::{cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::BTreeMap, sync::{Arc, Mutex}};
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -15,7 +15,7 @@ pub struct StoreVmDatabase {
     // Used to store known block hashes
     // We use this when executing blocks in batches, as we will only add the blocks at the end
     // And may need to access hashes of blocks previously executed in the batch
-    pub block_hash_cache: HashMap<BlockNumber, BlockHash>,
+    pub block_hash_cache: Arc<Mutex<BTreeMap<BlockNumber, BlockHash>>>,
     pub state_root: H256,
 }
 
@@ -24,7 +24,7 @@ impl StoreVmDatabase {
         StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
-            block_hash_cache: HashMap::new(),
+            block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             state_root: block_header.state_root,
         }
     }
@@ -32,12 +32,12 @@ impl StoreVmDatabase {
     pub fn new_with_block_hash_cache(
         store: Store,
         block_header: BlockHeader,
-        block_hash_cache: HashMap<BlockNumber, BlockHash>,
+        block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
     ) -> Self {
         StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
-            block_hash_cache,
+            block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             state_root: block_header.state_root,
         }
     }
@@ -75,8 +75,9 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+        let mut block_hash_cache = self.block_hash_cache.lock().map_err(|_| EvmError::Custom("LockError".to_string()))?;
         // Check if we have it cached
-        if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
+        if let Some(block_hash) = block_hash_cache.get(&block_number) {
             return Ok(*block_hash);
         }
         // First check if our block is canonical, if it is then it's ancestor will also be canonical and we can look it up directly
@@ -90,12 +91,16 @@ impl VmDatabase for StoreVmDatabase {
                 .get_canonical_block_hash_sync(block_number)
                 .map_err(|err| EvmError::DB(err.to_string()))?
             {
+                block_hash_cache.insert(block_number, hash);
                 return Ok(hash);
             }
         // If our block is not canonical then we must look for the target in our block's ancestors
         } else {
-            for ancestor_res in self.store.ancestors(self.block_hash) {
+            // Find the oldest known hash after the target block to shortcut the lookup
+            let oldest_succesor = block_hash_cache.iter().find_map(|(key, hash)| (*key > block_number).then_some(*hash)).unwrap_or(self.block_hash);
+            for ancestor_res in self.store.ancestors(oldest_succesor) {
                 let (hash, ancestor) = ancestor_res.map_err(|e| EvmError::DB(e.to_string()))?;
+                block_hash_cache.insert(ancestor.number, hash);
                 match ancestor.number.cmp(&block_number) {
                     Ordering::Greater => continue,
                     Ordering::Equal => return Ok(hash),
