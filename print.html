@@ -875,7 +875,7 @@ chmod +x ethrex
 <li><a href="https://www.rust-lang.org/tools/install">Rust toolchain</a> (use <code>rustup</code> for easiest setup)</li>
 <li><a href="https://clang.llvm.org/docs/index.html">libclang</a> (for RocksDB)</li>
 <li><a href="https://git-scm.com/downloads">Git</a></li>
-<li><a href="https://docs.soliditylang.org/en/v0.8.30/installing-solidity.html">solc</a> (for L2 development)</li>
+<li><a href="https://docs.soliditylang.org/en/v0.8.29/installing-solidity.html">solc (v0.8.29)</a> (for L2 development)</li>
 </ul>
 <h3 id="l2-contracts"><a class="header" href="#l2-contracts">L2 contracts</a></h3>
 <p>If you want to install ethrex for L2 development, you may set the <code>COMPILE_CONTRACTS</code> env var, so the binary have the necessary contract code.</p>
@@ -2241,7 +2241,7 @@ if is_stale &amp;&amp; nodes_to_heal.is_empty() &amp;&amp; inflight_tasks == 0 {
 <p>Ensure you have the following installed on your system:</p>
 <ul>
 <li>Rust and Cargo (install via <a href="https://rustup.rs/">rustup</a>)</li>
-<li>Solidity compiler (refer to <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">Solidity documentation</a>)</li>
+<li>Solidity compiler v0.8.29 (refer to <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">Solidity documentation</a>)</li>
 <li>SP1 Toolchain (if you plan to use SP1 proving, refer to <a href="https://docs.succinct.xyz/docs/sp1/getting-started/install">SP1 documentation</a>)</li>
 <li>RISC0 Toolchain (if you plan to use RISC0 proving, refer to <a href="https://dev.risczero.com/api/zkvm/install">RISC0 documentation</a>)</li>
 <li>CUDA Toolkit 12.9 (if you plan to use GPU acceleration for SP1 or RISC0 proving)</li>
@@ -3027,7 +3027,7 @@ rex l2 withdraw 111111111111111111 0x41443995d9eb6c6d6df51e55db2b188b12fe0f80d32
 <p>Ensure you have the following installed on your system:</p>
 <ul>
 <li>Rust and Cargo (install via <a href="https://rustup.rs/">rustup</a>)</li>
-<li>Solidity compiler (refer to <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">Solidity documentation</a>)</li>
+<li>Solidity compiler v0.8.29 (refer to <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">Solidity documentation</a>)</li>
 <li>SP1 Toolchain (if you plan to use SP1 proving, refer to <a href="https://docs.succinct.xyz/docs/sp1/getting-started/install">SP1 documentation</a>)</li>
 <li>RISC0 Toolchain (if you plan to use RISC0 proving, refer to <a href="https://dev.risczero.com/api/zkvm/install">RISC0 documentation</a>)</li>
 <li>CUDA Toolkit 12.9 (if you plan to use GPU acceleration for SP1 or RISC0 proving)</li>
@@ -5075,7 +5075,7 @@ rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; 0xbcdf20249abf0ed6d944c0288f
 <h1 id="deploy-a-contract-to-l2"><a class="header" href="#deploy-a-contract-to-l2">Deploy a Contract to L2</a></h1>
 <p>You can deploy smart contracts to your L2 using <a href="https://github.com/lambdaclass/rex"><code>rex</code></a>, a simple CLI tool for interacting with Ethereum-compatible networks.</p>
 <h2 id="1-generate-the-contract-bytecode"><a class="header" href="#1-generate-the-contract-bytecode">1. Generate the Contract Bytecode</a></h2>
-<p>First, compile your Solidity contract to get the deployment bytecode. You can use <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">solc</a> for this:</p>
+<p>First, compile your Solidity contract to get the deployment bytecode. You can use <a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">solc (v0.8.29)</a> for this:</p>
 <pre><code class="language-sh">solc --bin MyContract.sol -o out/
 </code></pre>
 <p>The bytecode will be in out/MyContract.bin</p>
@@ -9673,7 +9673,7 @@ Please report any issues you encounter while running the integration tests to he
 <li><code>sp1up --version 5.0.8</code></li>
 </ol>
 </li>
-<li><a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">SOLC</a></li>
+<li><a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">SOLC (v0.8.29)</a></li>
 </ul>
 <p>After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.</p>
 <h3 id="l1-block-proving"><a class="header" href="#l1-block-proving">L1 block proving</a></h3>
