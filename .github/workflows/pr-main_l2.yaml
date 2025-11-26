@@ -188,14 +188,10 @@ jobs:
           sudo cp target/release/rex /usr/local/bin
 
       - name: Build ethrex with L2 features and contracts
-        env:
-          COMPILE_CONTRACTS: "true"
         run: |
           cargo build --release --features "l2,l2-sql" --bin ethrex
 
       - name: Run L2 dev node and Uniswap Swap Token Script
-        env:
-          COMPILE_CONTRACTS: "true"
         run: |
           set -euo pipefail
 

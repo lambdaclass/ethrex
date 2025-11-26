@@ -49,7 +49,7 @@ Running the node with the deposits of the rich accounts will create `N-1.blob` f
 Start the local L2 with a 20 seconds per commit so we have at least 6 batches with transactions:
 
 ```sh
-COMPILE_CONTRACTS=true cargo run --release --bin ethrex --features l2,l2-sql -- l2 --dev --no-monitor --committer.commit-time 20000
+cargo run --release --bin ethrex --features l2,l2-sql -- l2 --dev --no-monitor --committer.commit-time 20000
 ```
 
 In another terminal run:
