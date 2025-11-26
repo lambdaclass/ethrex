@@ -31,7 +31,7 @@ resolver = "2"
 default-members = ["cmd/ethrex"]
 
 [workspace.package]
-version = "6.0.0"
+version = "7.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
@@ -49,8 +49,8 @@ inherits = "release"
 debug = 2
 
 [workspace.dependencies]
-ethrex-blockchain = { path = "./crates/blockchain" }
-ethrex-common = { path = "./crates/common" }
+ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
+ethrex-common = { path = "./crates/common", default-features = false }
 ethrex-config = { path = "./crates/common/config" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
@@ -75,7 +75,7 @@ tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
 
 async-trait = "0.1.88"
 ethereum-types = { version = "0.15.1", features = ["serialize"] }
-serde = { version = "1.0.203", features = ["derive"] }
+serde = { version = "1.0.203", features = ["derive", "rc"] }
 serde_with = "3.11.0"
 serde_json = "1.0.117"
 bytes = { version = "1.6.0", features = ["serde"] }
@@ -85,7 +85,8 @@ hex = "0.4.3"
 hex-literal = "0.4.1"
 crc32fast = "1.4.2"
 lazy_static = "1.5.0"
-sha2 = "0.10.8"
+sha2 = "0.10.9"
+sha3 = "0.10.8"
 tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
@@ -118,6 +119,7 @@ tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
 indexmap = { version = "2.11.4" }
+k256 = "0.13.4"
 
 rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",

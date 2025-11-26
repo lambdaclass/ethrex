@@ -2,6 +2,14 @@
 
 ## Perf
 
+### 2025-11-19
+
+- Parallelize merkleization [#5377](https://github.com/lambdaclass/ethrex/pull/5377)
+
+### 2025-11-17
+
+- Avoid temporary allocations when decoding and hashing trie nodes [#5353](https://github.com/lambdaclass/ethrex/pull/5353)
+
 ### 2025-11-13
 
 - Use specialized DUP implementation [#5324](https://github.com/lambdaclass/ethrex/pull/5324)

@@ -14,15 +14,18 @@ use ethrex_common::{
     },
 };
 use ethrex_trie::{Nibbles, Node, Trie};
+use lru::LruCache;
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded,
     Options, WriteBatch, checkpoint::Checkpoint,
 };
+use rustc_hash::FxBuildHasher;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
+        atomic::AtomicU64,
         mpsc::{SyncSender, sync_channel},
     },
 };
@@ -149,13 +152,40 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
-#[derive(Debug, Clone)]
+// 64mb
+const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
+type CodeCache = LruCache<H256, Code, FxBuildHasher>;
+
+#[derive(Debug)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    /// Cache for account bytecodes, keyed by the bytecode hash.
+    /// Note that we don't remove entries on account code changes, since
+    /// those changes already affect the code hash stored in the account, and only
+    /// may result in this cache having useless data.
+    account_code_cache: Arc<Mutex<CodeCache>>,
+    account_code_cache_size: AtomicU64,
+}
+
+impl Clone for Store {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            trie_cache: self.trie_cache.clone(),
+            flatkeyvalue_control_tx: self.flatkeyvalue_control_tx.clone(),
+            trie_update_worker_tx: self.trie_update_worker_tx.clone(),
+            last_computed_flatkeyvalue: self.last_computed_flatkeyvalue.clone(),
+            account_code_cache: self.account_code_cache.clone(),
+            account_code_cache_size: AtomicU64::new(
+                self.account_code_cache_size
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        }
+    }
 }
 
 impl Store {
@@ -399,6 +429,10 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            account_code_cache: Arc::new(Mutex::new(LruCache::unbounded_with_hasher(
+                FxBuildHasher,
+            ))),
+            account_code_cache_size: AtomicU64::new(0),
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
@@ -569,7 +603,7 @@ impl Store {
         cf_name: &str,
         keys: Vec<K>,
         deserialize_fn: F,
-    ) -> Result<Vec<V>, StoreError>
+    ) -> Result<Vec<Option<V>>, StoreError>
     where
         K: AsRef<[u8]> + Send + 'static,
         V: Send + 'static,
@@ -589,10 +623,10 @@ impl Store {
                 match db.get_cf(&cf, key)? {
                     Some(bytes) => {
                         let value = deserialize_fn(bytes)?;
-                        results.push(value);
+                        results.push(Some(value));
                     }
                     None => {
-                        return Err(StoreError::Custom("Key not found in bulk read".to_string()));
+                        results.push(None);
                     }
                 }
             }
@@ -1120,7 +1154,7 @@ impl StoreEngine for Store {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         let numbers: Vec<BlockNumber> = (from..=to).collect();
         let number_keys: Vec<Vec<u8>> = numbers.iter().map(|n| n.to_le_bytes().to_vec()).collect();
 
@@ -1134,10 +1168,10 @@ impl StoreEngine for Store {
 
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
-            .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
+            .flat_map(|hash_opt| hash_opt.map(|h| BlockHashRLP::from(h).bytes().clone()))
             .collect();
 
-        let bodies = self
+        let mut bodies = self
             .read_bulk_async(CF_BODIES, hash_keys, |bytes| {
                 BlockBodyRLP::from_bytes(bytes)
                     .to()
@@ -1145,13 +1179,30 @@ impl StoreEngine for Store {
             })
             .await?;
 
+        let mut i = 0;
+
+        // Fill in with None for missing bodies
+        let bodies = hashes
+            .into_iter()
+            .map(|opt| {
+                opt.and_then(|_| {
+                    let body_ref = bodies
+                        .get_mut(i)
+                        .expect("bodies length is equal to number of Somes in hashes");
+                    let body = std::mem::take(body_ref);
+                    i += 1;
+                    body
+                })
+            })
+            .collect();
+
         Ok(bodies)
     }
 
     async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
             .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
@@ -1363,7 +1414,21 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    /// Get account code by its hash.
+    ///
+    /// Check if the code exists in the cache (attribute `account_code_cache`), if not,
+    /// reads the database, and if it exists, decodes and returns it.
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
+        // check cache first
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)
+        {
+            return Ok(Some(code.clone()));
+        }
+
         let cf = self.cf_handle(CF_ACCOUNT_CODES)?;
         let Some(bytes) = self
             .db
@@ -1378,6 +1443,39 @@ impl StoreEngine for Store {
             bytecode: Bytes::copy_from_slice(bytecode),
             jump_targets: <Vec<_>>::decode(targets)?,
         };
+
+        // insert into cache and evict if needed
+        {
+            let mut cache = self
+                .account_code_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            let code_size = code.size();
+            self.account_code_cache_size
+                .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
+            let cache_len = cache.len() + 1;
+            let mut current_size = self
+                .account_code_cache_size
+                .load(std::sync::atomic::Ordering::SeqCst);
+            debug!(
+                "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+            );
+
+            while current_size > CODE_CACHE_MAX_SIZE {
+                if let Some((_, code)) = cache.pop_lru() {
+                    self.account_code_cache_size
+                        .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
+                    current_size = self
+                        .account_code_cache_size
+                        .load(std::sync::atomic::Ordering::SeqCst);
+                } else {
+                    break;
+                }
+            }
+
+            cache.get_or_insert(code_hash, || code.clone());
+        }
+
         Ok(Some(code))
     }
 
@@ -1385,10 +1483,6 @@ impl StoreEngine for Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
-        info!(
-            "[TRANSACTION BY HASH] Transaction hash: {:?}",
-            transaction_hash
-        );
         let (_block_number, block_hash, index) =
             match self.get_transaction_location(transaction_hash).await? {
                 Some(location) => location,
@@ -1975,7 +2069,7 @@ impl StoreEngine for Store {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError> {
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
         self.read_bulk_async(
             CF_FULLSYNC_HEADERS,
             (start..start + limit).map(|n| n.to_le_bytes()).collect(),
