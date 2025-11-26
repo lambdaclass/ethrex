@@ -261,7 +261,7 @@ fn bench_encode_int_lists(c: &mut Criterion) {
     for &count in &[10usize, 100, 1000] {
         let label = format!("encode_int_list_len_{count}");
         let mut rng = StdRng::seed_from_u64(count as u64);
-        let values: Vec<u64> = (0..10_000).map(|_| rng.r#gen()).collect();
+        let values: Vec<u64> = (0..count).map(|_| rng.r#gen()).collect();
         let value = black_box(values);
         group.bench_function(label, move |b| {
             let mut buf = Vec::new();
