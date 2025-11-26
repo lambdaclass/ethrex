@@ -4,7 +4,7 @@ inputs:
   components:
     description: "Rust components to install (e.g., rustfmt, clippy)"
     required: false
-    type: string
+    default: ""
 runs:
   using: "composite"
   steps:
@@ -25,3 +25,4 @@ runs:
 
     - name: Add Rust Cache
       uses: Swatinem/rust-cache@v2
+

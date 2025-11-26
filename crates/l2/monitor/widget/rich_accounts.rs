@@ -59,7 +59,7 @@ impl RichAccountsTable {
         for pk in private_keys.iter() {
             let secret_key = SecretKey::from_slice(&parse_hex(pk)?)
                 .map_err(|e| MonitorError::DecodingError(format!("Invalid private key: {e}")))?;
-            let address = get_address_from_secret_key(&secret_key).map_err(|e| {
+            let address = get_address_from_secret_key(&secret_key.secret_bytes()).map_err(|e| {
                 MonitorError::DecodingError(format!("Failed to get address from private key: {e}"))
             })?;
             let get_balance = rollup_client
