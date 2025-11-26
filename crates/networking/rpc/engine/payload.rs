@@ -1,5 +1,3 @@
-use core::panic;
-
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::payload::PayloadBundle;
@@ -191,92 +189,6 @@ impl RpcHandler for NewPayloadV4Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
-
-        let requests_hash = compute_requests_hash(&self.execution_requests);
-        let block = match get_block_from_payload(
-            &self.payload,
-            Some(self.parent_beacon_block_root),
-            Some(requests_hash),
-        ) {
-            Ok(block) => block,
-            Err(err) => {
-                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
-                    &err.to_string(),
-                ))?);
-            }
-        };
-
-        let chain_config = context.storage.get_chain_config();
-
-        if !chain_config.is_prague_activated(block.header.timestamp) {
-            return Err(RpcErr::UnsuportedFork(format!(
-                "{:?}",
-                chain_config.get_fork(block.header.timestamp)
-            )));
-        }
-        // We use v3 since the execution payload remains the same.
-        validate_execution_payload_v3(&self.payload)?;
-        let payload_status = handle_new_payload_v3(
-            &self.payload,
-            context,
-            block,
-            self.expected_blob_versioned_hashes.clone(),
-        )
-        .await?;
-        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
-    }
-}
-
-#[derive(Debug)]
-pub struct NewPayloadV4RequestOw {
-    pub payload: ExecutionPayload,
-    pub expected_blob_versioned_hashes: Vec<H256>,
-    pub parent_beacon_block_root: H256,
-    pub execution_requests: Vec<EncodedRequests>,
-}
-
-impl From<NewPayloadV4RequestOw> for RpcRequest {
-    fn from(val: NewPayloadV4RequestOw) -> Self {
-        RpcRequest {
-            method: "engine_newPayloadV4".to_string(),
-            params: Some(vec![
-                serde_json::json!(val.payload),
-                serde_json::json!(val.expected_blob_versioned_hashes),
-                serde_json::json!(val.parent_beacon_block_root),
-                serde_json::json!(val.execution_requests),
-            ]),
-            ..Default::default()
-        }
-    }
-}
-
-impl RpcHandler for NewPayloadV4RequestOw {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        panic!("stop");
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        dbg!(&params);
-        panic!("stop");
-        if params.len() != 4 {
-            return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
-        }
-        Ok(dbg!(NewPayloadV4RequestOw {
-            payload: serde_json::from_value(params[0].clone())
-                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
-                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
-                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
-                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
-        }))
-    }
-
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        // validate the received requests
-        validate_execution_requests(&self.execution_requests)?;
-        panic!("stop");
 
         let requests_hash = compute_requests_hash(&self.execution_requests);
         let block = match get_block_from_payload(
