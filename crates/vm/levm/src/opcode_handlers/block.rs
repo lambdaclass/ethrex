@@ -44,7 +44,7 @@ impl OpcodeHandler for OpBlockHashHandler {
             })
         {
             #[expect(unsafe_code, reason = "safe")]
-            vm.current_call_frame.stack.push1(unsafe {
+            vm.current_call_frame.stack.push(unsafe {
                 let mut bytes = vm.db.store.get_block_hash(block_number)?.0;
                 bytes.reverse();
                 U256(mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes))
@@ -67,7 +67,7 @@ impl OpcodeHandler for OpCoinbaseHandler {
 
         vm.current_call_frame
             .stack
-            .push1(address_to_word(vm.env.coinbase))?;
+            .push(address_to_word(vm.env.coinbase))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -81,7 +81,7 @@ impl OpcodeHandler for OpTimestampHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::TIMESTAMP)?;
 
-        vm.current_call_frame.stack.push1(vm.env.timestamp.into())?;
+        vm.current_call_frame.stack.push(vm.env.timestamp.into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -97,7 +97,7 @@ impl OpcodeHandler for OpNumberHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.env.block_number.into())?;
+            .push(vm.env.block_number.into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -114,7 +114,7 @@ impl OpcodeHandler for OpPrevRandaoHandler {
         // After Paris, `PREVRANDAO` is the prev_randao (or current_random) field.
         // Source: https://eips.ethereum.org/EIPS/eip-4399
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push1(U256(unsafe {
+        vm.current_call_frame.stack.push(U256(unsafe {
             let mut bytes = vm.env.prev_randao.unwrap_or_default().0;
             bytes.reverse();
             mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
@@ -134,7 +134,7 @@ impl OpcodeHandler for OpGasLimitHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.env.block_gas_limit.into())?;
+            .push(vm.env.block_gas_limit.into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -148,7 +148,7 @@ impl OpcodeHandler for OpChainIdHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CHAINID)?;
 
-        vm.current_call_frame.stack.push1(vm.env.chain_id.into())?;
+        vm.current_call_frame.stack.push(vm.env.chain_id.into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -164,7 +164,7 @@ impl OpcodeHandler for OpSelfBalanceHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.db.get_account(vm.current_call_frame.to)?.info.balance)?;
+            .push(vm.db.get_account(vm.current_call_frame.to)?.info.balance)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -181,7 +181,7 @@ impl OpcodeHandler for OpBaseFeeHandler {
         // https://eips.ethereum.org/EIPS/eip-3198
         vm.current_call_frame
             .stack
-            .push1(vm.env.base_fee_per_gas.into())?;
+            .push(vm.env.base_fee_per_gas.into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -202,7 +202,7 @@ impl OpcodeHandler for OpBlobHashHandler {
             Some(hash) =>
             {
                 #[expect(unsafe_code, reason = "safe")]
-                vm.current_call_frame.stack.push1(U256(unsafe {
+                vm.current_call_frame.stack.push(U256(unsafe {
                     let mut bytes = hash.0;
                     bytes.reverse();
                     mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
@@ -223,12 +223,9 @@ impl OpcodeHandler for OpBlobBaseFeeHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
-        vm.current_call_frame
-            .stack
-            .push1(get_base_fee_per_blob_gas(
-                vm.env.block_excess_blob_gas,
-                &vm.env.config,
-            )?)?;
+        vm.current_call_frame.stack.push(
+            get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?.into(),
+        )?;
 
         Ok(OpcodeResult::Continue)
     }

@@ -32,7 +32,7 @@ impl OpcodeHandler for OpAddHandler {
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         let (res, _) = lhs.overflowing_add(rhs);
-        vm.current_call_frame.stack.push1(res)?;
+        vm.current_call_frame.stack.push(res)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -47,7 +47,7 @@ impl OpcodeHandler for OpSubHandler {
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         let (res, _) = lhs.overflowing_sub(rhs);
-        vm.current_call_frame.stack.push1(res)?;
+        vm.current_call_frame.stack.push(res)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -62,7 +62,7 @@ impl OpcodeHandler for OpMulHandler {
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         let (res, _) = lhs.overflowing_mul(rhs);
-        vm.current_call_frame.stack.push1(res)?;
+        vm.current_call_frame.stack.push(res)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -77,7 +77,7 @@ impl OpcodeHandler for OpDivHandler {
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         match lhs.checked_div(rhs) {
-            Some(res) => vm.current_call_frame.stack.push1(res)?,
+            Some(res) => vm.current_call_frame.stack.push(res)?,
             None => vm.current_call_frame.stack.push_zero()?,
         }
 
@@ -111,7 +111,7 @@ impl OpcodeHandler for OpSDivHandler {
                     res = U256::zero().overflowing_sub(res).0;
                 }
 
-                vm.current_call_frame.stack.push1(res)?
+                vm.current_call_frame.stack.push(res)?
             }
             None => vm.current_call_frame.stack.push_zero()?,
         }
@@ -129,7 +129,7 @@ impl OpcodeHandler for OpModHandler {
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         match lhs.checked_rem(rhs) {
-            Some(res) => vm.current_call_frame.stack.push1(res)?,
+            Some(res) => vm.current_call_frame.stack.push(res)?,
             None => vm.current_call_frame.stack.push_zero()?,
         }
 
@@ -161,7 +161,7 @@ impl OpcodeHandler for OpSModHandler {
                     (res, _) = (!res).overflowing_add(U256::one());
                 }
 
-                vm.current_call_frame.stack.push1(res)?
+                vm.current_call_frame.stack.push(res)?
             }
             None => vm.current_call_frame.stack.push_zero()?,
         }
@@ -185,7 +185,7 @@ impl OpcodeHandler for OpAddModHandler {
             let res = U512::from(lhs).overflowing_add(rhs.into()).0 % r#mod;
             vm.current_call_frame
                 .stack
-                .push1(U256([res.0[0], res.0[1], res.0[2], res.0[3]]))?;
+                .push(U256([res.0[0], res.0[1], res.0[2], res.0[3]]))?;
         }
 
         Ok(OpcodeResult::Continue)
@@ -214,7 +214,7 @@ impl OpcodeHandler for OpMulModHandler {
                 Ordering::Greater => (res % r#mod).try_into().unwrap(),
             };
 
-            vm.current_call_frame.stack.push1(res)?;
+            vm.current_call_frame.stack.push(res)?;
         }
 
         Ok(OpcodeResult::Continue)
@@ -231,7 +231,7 @@ impl OpcodeHandler for OpExpHandler {
             .increase_consumed_gas(gas_cost::exp(exp)?)?;
 
         let (res, _) = base.overflowing_pow(exp);
-        vm.current_call_frame.stack.push1(res)?;
+        vm.current_call_frame.stack.push(res)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -248,12 +248,12 @@ impl OpcodeHandler for OpSignExtendHandler {
         let [index, mut value] = *vm.current_call_frame.stack.pop()?;
         vm.current_call_frame
             .stack
-            .push1(match usize::try_from(index) {
+            .push(match usize::try_from(index) {
                 Ok(x) if x < 32 => {
                     if value.bit(8 * x + 7) {
-                        value |= U256::MAX << 8 * (x + 1);
+                        value |= U256::MAX << (8 * (x + 1));
                     } else if x != 31 {
-                        value &= (U256::one() << 8 * (x + 1)) - 1;
+                        value &= (U256::one() << (8 * (x + 1))) - 1;
                     }
 
                     value
@@ -275,7 +275,7 @@ impl OpcodeHandler for OpClzHandler {
         let value = vm.current_call_frame.stack.pop1()?;
         vm.current_call_frame
             .stack
-            .push1(value.leading_zeros().into())?;
+            .push(value.leading_zeros().into())?;
 
         Ok(OpcodeResult::Continue)
     }

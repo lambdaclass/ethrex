@@ -9,11 +9,12 @@ documentation.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
-ethrex-storage-rollup.workspace = true
+ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-threadpool.workspace = true
 ethereum-types.workspace = true
 
@@ -32,11 +33,11 @@ spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 sha2.workspace = true
 futures.workspace = true
+indexmap.workspace = true
 rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
-sha3 = "0.10.8"
 
 serde_json = "1.0.117"
 
@@ -60,7 +61,9 @@ path = "./p2p.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
-rocksdb = ["dep:rocksdb"]
+l2 = ["dep:ethrex-storage-rollup"]
+test-utils = []
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"

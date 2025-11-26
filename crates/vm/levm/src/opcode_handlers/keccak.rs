@@ -12,7 +12,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::utils::u256_from_big_endian;
-use sha3::{Digest, Keccak256};
+use ethrex_crypto::keccak::keccak_hash;
 
 pub struct OpKeccak256Handler;
 impl OpcodeHandler for OpKeccak256Handler {
@@ -28,11 +28,11 @@ impl OpcodeHandler for OpKeccak256Handler {
                 len,
             )?)?;
 
-        let mut hasher = Keccak256::new();
-        hasher.update(vm.current_call_frame.memory.load_range(offset, len)?);
         vm.current_call_frame
             .stack
-            .push1(u256_from_big_endian(&hasher.finalize()))?;
+            .push(u256_from_big_endian(&keccak_hash(
+                vm.current_call_frame.memory.load_range(offset, len)?,
+            )))?;
 
         Ok(OpcodeResult::Continue)
     }

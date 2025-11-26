@@ -45,8 +45,9 @@ impl HiveResult {
             "snap" => ("P2P", "Snap capability"),
             "rpc-compat" => ("RPC", "RPC API Compatibility"),
             "sync" => ("Sync", "Node Syncing"),
-            "eest/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
-            "eest/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
+            "eels/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
+            "eels/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
+            "eels/execute-blobs" => ("EVM - Execute Blobs", "Execute Blobs"),
             other => {
                 eprintln!("Warn: Unknown suite: {other}. Skipping");
                 ("", "")
@@ -159,8 +160,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Both of these simulators have only 1 suite where we can find tests for 3 different forks.
             // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
-            if json_data.name.as_str() == "eest/consume-rlp"
-                || json_data.name.as_str() == "eest/consume-engine"
+            if json_data.name.as_str() == "eels/consume-rlp"
+                || json_data.name.as_str() == "eels/consume-engine"
             {
                 let result_paris = create_fork_result(&json_data, "Paris", "fork_Paris");
                 // Shanghai

@@ -4,9 +4,9 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
 use libsql::{
     Builder, Connection, Row, Rows, Transaction, Value,
@@ -28,7 +28,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 15] = [
+const DB_SCHEMA: [&str; 17] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -44,6 +44,8 @@ const DB_SCHEMA: [&str; 15] = [
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE batch_prover_input (batch INT, prover_version TEXT, prover_input BLOB, PRIMARY KEY (batch, prover_version))",
+    "CREATE TABLE fee_config (block_number INT PRIMARY KEY, fee_config BLOB)",
 ];
 
 impl SQLStore {
@@ -205,14 +207,14 @@ impl SQLStore {
     async fn store_blob_bundle_by_batch_number_in_tx(
         &self,
         batch_number: u64,
-        state_diff: Vec<Blob>,
+        blobs: Vec<Blob>,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
         let mut queries = vec![(
             "DELETE FROM blob_bundles WHERE batch = ?1",
             vec![batch_number].into_params()?,
         )];
-        for (index, blob) in state_diff.iter().enumerate() {
+        for (index, blob) in blobs.iter().enumerate() {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
@@ -277,6 +279,74 @@ impl SQLStore {
     ) -> Result<(), RollupStoreError> {
         for block_number in block_numbers {
             self.store_batch_number_by_block_in_tx(block_number, batch_number, db_tx)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn store_prover_input_by_batch_and_version_in_tx(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+        db_tx: Option<&Transaction>,
+    ) -> Result<(), RollupStoreError> {
+        let prover_input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&prover_input)
+            .map_err(|e| {
+                RollupStoreError::Custom(format!("Failed to serialize prover input: {e}"))
+            })?
+            .to_vec();
+
+        let queries = vec![(
+            "INSERT OR REPLACE INTO batch_prover_input VALUES (?1, ?2, ?3)",
+            (batch_number, prover_version, prover_input_bytes).into_params()?,
+        )];
+
+        self.execute_in_tx(queries, db_tx).await
+    }
+
+    async fn seal_batch_in_tx(
+        &self,
+        batch: Batch,
+        transaction: &Transaction,
+    ) -> Result<(), RollupStoreError> {
+        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
+        for block_number in blocks.iter() {
+            self.store_batch_number_by_block_in_tx(*block_number, batch.number, Some(transaction))
+                .await?;
+        }
+        self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(transaction))
+            .await?;
+        self.store_message_hashes_by_batch_in_tx(
+            batch.number,
+            batch.message_hashes,
+            Some(transaction),
+        )
+        .await?;
+        self.store_privileged_transactions_hash_by_batch_number_in_tx(
+            batch.number,
+            batch.privileged_transactions_hash,
+            Some(transaction),
+        )
+        .await?;
+        self.store_blob_bundle_by_batch_number_in_tx(
+            batch.number,
+            batch.blobs_bundle.blobs,
+            Some(transaction),
+        )
+        .await?;
+        self.store_state_root_by_batch_number_in_tx(
+            batch.number,
+            batch.state_root,
+            Some(transaction),
+        )
+        .await?;
+        if let Some(commit_tx) = batch.commit_tx {
+            self.store_commit_tx_by_batch_in_tx(batch.number, commit_tx, Some(transaction))
+                .await?;
+        }
+        if let Some(verify_tx) = batch.verify_tx {
+            self.store_verify_tx_by_batch_in_tx(batch.number, verify_tx, Some(transaction))
                 .await?;
         }
         Ok(())
@@ -509,22 +579,22 @@ impl StoreEngineRollup for SQLStore {
         Ok(row.next().await?.is_some())
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         let mut rows = self.query("SELECT * from latest_sent", ()).await?;
         if let Some(row) = rows.next().await? {
             return read_from_row_int(&row, 1);
         }
         Err(RollupStoreError::Custom(
-            "missing operation_count row".to_string(),
+            "missing latest_sent row".to_string(),
         ))
     }
 
-    async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
-            .await?;
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.execute(
+            "INSERT OR REPLACE INTO latest_sent (_id, batch) VALUES (0, ?1)",
+            [batch_number],
+        )
+        .await?;
         Ok(())
     }
 
@@ -580,6 +650,10 @@ impl StoreEngineRollup for SQLStore {
                 "DELETE FROM batch_proofs WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
+            (
+                "DELETE FROM batch_prover_input WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
         ];
         self.execute_in_tx(queries, None).await
     }
@@ -629,48 +703,33 @@ impl StoreEngineRollup for SQLStore {
     }
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
-        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
         let conn = self.write_conn.lock().await;
         let transaction = conn.transaction().await?;
 
-        for block_number in blocks.iter() {
-            self.store_batch_number_by_block_in_tx(*block_number, batch.number, Some(&transaction))
-                .await?;
-        }
-        self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(&transaction))
-            .await?;
-        self.store_message_hashes_by_batch_in_tx(
+        self.seal_batch_in_tx(batch, &transaction).await?;
+
+        transaction.commit().await.map_err(RollupStoreError::from)
+    }
+
+    async fn seal_batch_with_prover_input(
+        &self,
+        batch: Batch,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        let conn = self.write_conn.lock().await;
+        let transaction = conn.transaction().await?;
+
+        self.store_prover_input_by_batch_and_version_in_tx(
             batch.number,
-            batch.message_hashes,
+            prover_version,
+            prover_input,
             Some(&transaction),
         )
         .await?;
-        self.store_privileged_transactions_hash_by_batch_number_in_tx(
-            batch.number,
-            batch.privileged_transactions_hash,
-            Some(&transaction),
-        )
-        .await?;
-        self.store_blob_bundle_by_batch_number_in_tx(
-            batch.number,
-            batch.blobs_bundle.blobs,
-            Some(&transaction),
-        )
-        .await?;
-        self.store_state_root_by_batch_number_in_tx(
-            batch.number,
-            batch.state_root,
-            Some(&transaction),
-        )
-        .await?;
-        if let Some(commit_tx) = batch.commit_tx {
-            self.store_commit_tx_by_batch_in_tx(batch.number, commit_tx, Some(&transaction))
-                .await?;
-        }
-        if let Some(verify_tx) = batch.verify_tx {
-            self.store_verify_tx_by_batch_in_tx(batch.number, verify_tx, Some(&transaction))
-                .await?;
-        }
+
+        self.seal_batch_in_tx(batch, &transaction).await?;
+
         transaction.commit().await.map_err(RollupStoreError::from)
     }
 
@@ -781,6 +840,84 @@ impl StoreEngineRollup for SQLStore {
             .map(|row| read_from_row_int(&row, 0))
             .transpose()
     }
+
+    async fn store_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        self.store_prover_input_by_batch_and_version_in_tx(
+            batch_number,
+            prover_version,
+            prover_input,
+            None,
+        )
+        .await
+    }
+
+    async fn get_prover_input_by_batch_and_version(
+        &self,
+        batch_number: u64,
+        prover_version: &str,
+    ) -> Result<Option<ProverInputData>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT prover_input FROM batch_prover_input WHERE batch = ?1 AND prover_version = ?2",
+                (batch_number, prover_version),
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 0)?;
+
+            let prover_input = rkyv::from_bytes::<ProverInputData, rkyv::rancor::Error>(&vec)
+                .map_err(|e| {
+                    RollupStoreError::Custom(format!(
+                        "Failed to deserialize prover input for batch {batch_number} and version {prover_version}: {e}",
+                    ))
+                })?;
+
+            return Ok(Some(prover_input));
+        }
+        Ok(None)
+    }
+
+    async fn store_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+        fee_config: FeeConfig,
+    ) -> Result<(), RollupStoreError> {
+        let serialized = bincode::serialize(&fee_config)?;
+        let queries = vec![
+            (
+                "DELETE FROM fee_config WHERE block_number = ?1",
+                vec![block_number].into_params()?,
+            ),
+            (
+                "INSERT INTO fee_config VALUES (?1, ?2)",
+                (block_number, serialized).into_params()?,
+            ),
+        ];
+        self.execute_in_tx(queries, None).await
+    }
+
+    async fn get_fee_config_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<FeeConfig>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT * FROM fee_config WHERE block_number = ?1",
+                vec![block_number],
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 1)?;
+            return Ok(Some(bincode::deserialize(&vec)?));
+        }
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -802,6 +939,7 @@ mod tests {
             "batch_proofs",
             "block_signatures",
             "batch_signatures",
+            "batch_prover_input",
         ];
         let mut attributes = Vec::new();
         for table in tables {
@@ -846,6 +984,9 @@ mod tests {
                 ("block_signatures", "signature") => "BLOB",
                 ("batch_signatures", "batch") => "INT",
                 ("batch_signatures", "signature") => "BLOB",
+                ("batch_prover_input", "batch") => "INT",
+                ("batch_prover_input", "prover_version") => "TEXT",
+                ("batch_prover_input", "prover_input") => "BLOB",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",

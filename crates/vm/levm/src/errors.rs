@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use derive_more::derive::Display;
-use ethrex_common::{Address, H256, U256, types::Log};
+use ethrex_common::{
+    Address, H256, U256,
+    types::{FakeExponentialError, Log},
+};
 use serde::{Deserialize, Serialize};
 use thiserror;
 
@@ -113,7 +116,7 @@ pub enum TxValidationError {
         "Insufficient max fee per blob gas. Expected at least {base_fee_per_blob_gas}, got: {tx_max_fee_per_blob_gas}"
     )]
     InsufficientMaxFeePerBlobGas {
-        base_fee_per_blob_gas: U256,
+        base_fee_per_blob_gas: u64,
         tx_max_fee_per_blob_gas: U256,
     },
     #[error("Type 3 transactions are not supported before the Cancun fork")]
@@ -176,6 +179,8 @@ pub enum InternalError {
     /// Unexpected error when accessing the database, used in trait `Database`.
     #[error("Database access error: {0}")]
     Database(#[from] DatabaseError),
+    #[error("{0}")]
+    FakeExponentialError(#[from] FakeExponentialError),
 }
 
 impl InternalError {
@@ -190,16 +195,10 @@ pub enum PrecompileError {
     ParsingInputError,
     #[error("There is not enough gas to execute precompiled contract")]
     NotEnoughGas,
-    #[error("Kzg error: {0}")]
-    KzgError(String),
     #[error("Invalid point")]
     InvalidPoint,
-    #[error("The point is not in the curve")]
-    PointNotInTheCurve,
     #[error("The point is not in the subgroup")]
     PointNotInSubgroup,
-    #[error("BN254 ate pairing error")]
-    BN254AtePairingError,
     #[error("The G1 point is not in the curve")]
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]

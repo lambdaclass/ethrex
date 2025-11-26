@@ -1,8 +1,7 @@
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, BlockHash, BlockNumber, ChainConfig},
+    types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code},
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
@@ -17,46 +16,64 @@ pub struct StoreVmDatabase {
     // We use this when executing blocks in batches, as we will only add the blocks at the end
     // And may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: HashMap<BlockNumber, BlockHash>,
+    pub state_root: H256,
 }
 
 impl StoreVmDatabase {
-    pub fn new(store: Store, block_hash: BlockHash) -> Self {
+    pub fn new(store: Store, block_header: BlockHeader) -> Self {
         StoreVmDatabase {
             store,
-            block_hash,
+            block_hash: block_header.hash(),
             block_hash_cache: HashMap::new(),
+            state_root: block_header.state_root,
         }
     }
 
     pub fn new_with_block_hash_cache(
         store: Store,
-        block_hash: BlockHash,
+        block_header: BlockHeader,
         block_hash_cache: HashMap<BlockNumber, BlockHash>,
     ) -> Self {
         StoreVmDatabase {
             store,
-            block_hash,
+            block_hash: block_header.hash(),
             block_hash_cache,
+            state_root: block_header.state_root,
         }
     }
 }
 
 impl VmDatabase for StoreVmDatabase {
-    #[instrument(level = "trace", name = "Account read", skip_all)]
-    fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
+    #[instrument(
+        level = "trace",
+        name = "Account read",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.store
-            .get_account_info_by_hash(self.block_hash, address)
+            .get_account_state_by_root(self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    #[instrument(level = "trace", name = "Storage read", skip_all)]
+    #[instrument(
+        level = "trace",
+        name = "Storage read",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
-            .get_storage_at_hash(self.block_hash, address, key)
+            .get_storage_at_root(self.state_root, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    #[instrument(level = "trace", name = "Block hash read", skip_all)]
+    #[instrument(
+        level = "trace",
+        name = "Block hash read",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         // Check if we have it cached
         if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
@@ -98,15 +115,18 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.store
-            .get_chain_config()
-            .map_err(|e| EvmError::DB(e.to_string()))
+        Ok(self.store.get_chain_config())
     }
 
-    #[instrument(level = "trace", name = "Account code read", skip_all)]
-    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+    #[instrument(
+        level = "trace",
+        name = "Account code read",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
-            return Ok(Bytes::new());
+            return Ok(Code::default());
         }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),

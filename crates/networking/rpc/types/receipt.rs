@@ -154,7 +154,7 @@ pub struct RpcReceiptTxInfo {
     pub effective_gas_price: u64,
     #[serde(
         skip_serializing_if = "Option::is_none",
-        with = "ethrex_common::serde_utils::u64::hex_str_opt",
+        with = "serde_utils::u64::hex_str_opt",
         default = "Option::default"
     )]
     pub blob_gas_price: Option<u64>,
@@ -177,12 +177,12 @@ impl RpcReceiptTxInfo {
         let nonce = transaction.nonce();
         let from = transaction.sender()?;
         let transaction_hash = transaction.hash();
-        let effective_gas_price =
-            transaction
-                .effective_gas_price(base_fee_per_gas)
-                .ok_or(RpcErr::Internal(
-                    "Could not get effective gas price from tx".into(),
-                ))?;
+        let effective_gas_price = transaction
+            .effective_gas_price(base_fee_per_gas)
+            .ok_or(RpcErr::Internal(
+                "Could not get effective gas price from tx".into(),
+            ))?
+            .as_u64();
         let transaction_index = index;
         let (blob_gas_price, blob_gas_used) = match &transaction {
             Transaction::EIP4844Transaction(tx) => (

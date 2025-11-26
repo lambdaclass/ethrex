@@ -96,7 +96,7 @@ As mentioned in the previous point, the VM execution doesn't directly mutate the
 This is a key piece of code in `Blockchain.execute_block`:
 
 ```rust
-let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header);
 let mut vm = Evm::new(vm_db);
 let execution_result = vm.execute_block(block)?;
 let account_updates = vm.get_state_transitions()?;

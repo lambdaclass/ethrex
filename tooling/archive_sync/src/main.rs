@@ -5,7 +5,7 @@ lazy_static::lazy_static! {
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};
-use ethrex_common::types::BlockHash;
+use ethrex_common::types::{BlockHash, Code};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
@@ -133,7 +133,7 @@ pub async fn archive_sync(
 /// This could be improved in the future to use an in_memory trie with async db writes
 async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Result<H256> {
     let mut storage_tasks = JoinSet::new();
-    let mut state_trie = store.open_state_trie(current_root)?;
+    let mut state_trie = store.open_direct_state_trie(current_root)?;
     for (address, dump_account) in dump.accounts.into_iter() {
         let hashed_address = dump_account
             .hashed_address
@@ -147,7 +147,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
         // Add code to DB if it is not empty
         if dump_account.code_hash != *EMPTY_KECCACK_HASH {
             store
-                .add_account_code(dump_account.code_hash, dump_account.code.clone())
+                .add_account_code(Code::from_bytecode(dump_account.code.clone()))
                 .await?;
         }
         // Process storage trie if it is not empty
@@ -172,7 +172,7 @@ async fn process_dump_storage(
     hashed_address: H256,
     storage_root: H256,
 ) -> eyre::Result<()> {
-    let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
+    let mut trie = store.open_direct_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
         // The key we receive is the preimage of the one stored in the trie
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;

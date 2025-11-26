@@ -16,10 +16,8 @@ For instructions on how to get started using ethrex L1 and/or L2, please refer t
 
 This client supports running in two different modes:
 
-- As a regular Ethereum execution client
-- As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
-
-We call the first one ethrex L1 and the second one ethrex L2.
+* **ethrex L1** - As a regular Ethereum execution client
+* **ethrex L2** - As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
 
 ## Philosophy
 
@@ -70,14 +68,10 @@ The following links, repos, companies and projects have been important in the de
 - [Taiko](https://taiko.xyz/)
 - [RISC Zero](https://risczero.com/)
 - [SP1](https://github.com/succinctlabs/sp1)
-- [Aleo](https://aleo.org/)
-- [Neptune](https://neptune.cash/)
-- [Mina](https://minaprotocol.com/)
 - [Nethermind](https://www.nethermind.io/)
 - [Gattaca](https://github.com/gattaca-com)
 - [Spire](https://www.spire.dev/)
 - [Commonware](https://commonware.xyz/)
-- [Parity Technologies](https://github.com/paritytech)
 
 If we forgot to include anyone, please file an issue so we can add you. We always strive to reference the inspirations and code we use, but as an organization with multiple people, mistakes can happen, and someone might forget to include a reference.
 

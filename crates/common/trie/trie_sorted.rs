@@ -1,5 +1,5 @@
 use crate::{
-    EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError,
+    EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
 };
 use crossbeam::channel::{Receiver, Sender, bounded};
@@ -79,38 +79,47 @@ fn create_parent(center_side: &CenterSide, closest_nibbles: &Nibbles) -> StackEl
 }
 
 fn add_center_to_parent_and_write_queue(
-    nodes_to_write: &mut Vec<(NodeHash, Node)>,
+    nodes_to_write: &mut Vec<(Nibbles, Node)>,
     center_side: &CenterSide,
     parent_element: &mut StackElement,
 ) -> Result<(), TrieGenerationError> {
     debug!("{:x?}", center_side.path);
     debug!("{:x?}", parent_element.path);
+    let mut nodehash_buffer = Vec::with_capacity(512);
     let mut path = center_side.path.clone();
     path.skip_prefix(&parent_element.path);
     let index = path
         .next()
         .ok_or(TrieGenerationError::IndexNotFound(center_side.path.clone()))?;
-    let node: Node = match &center_side.element {
+    let top_path = parent_element.path.append_new(index);
+    let (target_path, node): (Nibbles, Node) = match &center_side.element {
         CenterSideElement::Branch { node } => {
             if path.is_empty() {
-                node.clone().into()
+                (top_path, node.clone().into())
             } else {
-                let hash = node.compute_hash();
-                nodes_to_write.push((hash, node.clone().into()));
-                ExtensionNode {
-                    prefix: path,
-                    child: hash.into(),
-                }
-                .into()
+                let hash = node.compute_hash_no_alloc(&mut nodehash_buffer);
+                nodes_to_write.push((center_side.path.clone(), node.clone().into()));
+                (
+                    top_path,
+                    ExtensionNode {
+                        prefix: path,
+                        child: hash.into(),
+                    }
+                    .into(),
+                )
             }
         }
-        CenterSideElement::Leaf { value } => LeafNode {
-            partial: path,
-            value: value.clone(),
-        }
-        .into(),
+        CenterSideElement::Leaf { value } => (
+            top_path,
+            LeafNode {
+                partial: path,
+                value: value.clone(),
+            }
+            .into(),
+        ),
     };
-    parent_element.element.choices[index as usize] = node.compute_hash().into();
+    parent_element.element.choices[index as usize] =
+        node.compute_hash_no_alloc(&mut nodehash_buffer).into();
     debug!(
         "branch {:x?}",
         parent_element
@@ -121,14 +130,14 @@ fn add_center_to_parent_and_write_queue(
             .filter_map(|(index, child)| child.is_valid().then_some(index))
             .collect::<Vec<_>>()
     );
-    nodes_to_write.push((node.compute_hash(), node));
+    nodes_to_write.push((target_path, node));
     Ok(())
 }
 
 fn flush_nodes_to_write(
-    mut nodes_to_write: Vec<(NodeHash, Node)>,
+    mut nodes_to_write: Vec<(Nibbles, Node)>,
     db: &dyn TrieDB,
-    sender: Sender<Vec<(NodeHash, Node)>>,
+    sender: Sender<Vec<(Nibbles, Node)>>,
 ) -> Result<(), TrieGenerationError> {
     db.put_batch_no_alloc(&nodes_to_write)
         .map_err(TrieGenerationError::FlushToDbError)?;
@@ -137,13 +146,14 @@ fn flush_nodes_to_write(
     Ok(())
 }
 
+// TODO: why this inline(never)?
 #[inline(never)]
 pub fn trie_from_sorted_accounts<'scope, T>(
     db: &'scope dyn TrieDB,
     data_iter: &mut T,
     scope: Arc<ThreadPool<'scope>>,
-    buffer_sender: Sender<Vec<(NodeHash, Node)>>,
-    buffer_receiver: Receiver<Vec<(NodeHash, Node)>>,
+    buffer_sender: Sender<Vec<(Nibbles, Node)>>,
+    buffer_receiver: Receiver<Vec<(Nibbles, Node)>>,
 ) -> Result<H256, TrieGenerationError>
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
@@ -151,14 +161,15 @@ where
     let Some(initial_value) = data_iter.next() else {
         return Ok(*EMPTY_TRIE_HASH);
     };
-    let mut nodes_to_write: Vec<(NodeHash, Node)> = buffer_receiver
+    let mut nodes_to_write: Vec<(Nibbles, Node)> = buffer_receiver
         .recv()
         .expect("This channel shouldn't close");
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64); // Optimized for H256
 
     let mut left_side = StackElement::default();
-    let mut center_side: CenterSide = CenterSide::from_value(initial_value.clone());
+    let mut center_side: CenterSide = CenterSide::from_value(initial_value);
     let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
+    let mut nodehash_buffer = Vec::with_capacity(512);
 
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
@@ -238,8 +249,7 @@ where
             .find(|(_, child)| child.is_valid())
             .unwrap();
 
-        debug_assert!(nodes_to_write.last().unwrap().0 == child.compute_hash());
-        let (node_hash, node_hash_ref) = nodes_to_write.iter_mut().last().unwrap();
+        let (target_path, node_hash_ref) = nodes_to_write.iter_mut().last().unwrap();
         match node_hash_ref {
             Node::Branch(_) => {
                 let node: Node = ExtensionNode {
@@ -247,31 +257,41 @@ where
                     child,
                 }
                 .into();
-                nodes_to_write.push((node.compute_hash(), node));
+                nodes_to_write.push((Nibbles::default(), node));
                 nodes_to_write
                     .last()
                     .expect("we just inserted")
-                    .0
+                    .1
+                    .compute_hash_no_alloc(&mut nodehash_buffer)
                     .finalize()
             }
             Node::Extension(extension_node) => {
-                extension_node.prefix.data.insert(0, index as u8);
-                *node_hash = extension_node.compute_hash();
-                node_hash.finalize()
+                extension_node.prefix.prepend(index as u8);
+                // This next works because this target path is always length of 1 element,
+                // and we're just removing that one element
+                target_path.next();
+                extension_node
+                    .compute_hash_no_alloc(&mut nodehash_buffer)
+                    .finalize()
             }
             Node::Leaf(leaf_node) => {
-                leaf_node.partial.data.insert(0, index as u8);
-                *node_hash = leaf_node.compute_hash();
-                node_hash.finalize()
+                leaf_node.partial.prepend(index as u8);
+                // This next works because this target path is always length of 1 element,
+                // and we're just removing that one element
+                target_path.next();
+                leaf_node
+                    .compute_hash_no_alloc(&mut nodehash_buffer)
+                    .finalize()
             }
         }
     } else {
         let node: Node = left_side.element.into();
-        nodes_to_write.push((node.compute_hash(), node));
+        nodes_to_write.push((Nibbles::default(), node));
         nodes_to_write
             .last()
             .expect("we just inserted")
-            .0
+            .1
+            .compute_hash_no_alloc(&mut nodehash_buffer)
             .finalize()
     };
 
@@ -286,7 +306,7 @@ pub fn trie_from_sorted_accounts_wrap<T>(
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
-    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(BUFFER_COUNT as usize);
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<(Nibbles, Node)>>(BUFFER_COUNT as usize);
     for _ in 0..BUFFER_COUNT {
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
@@ -415,9 +435,13 @@ mod test {
 
         let computed_data = computed_data.lock().unwrap();
         let expected_data = expected_data.lock().unwrap();
-        for (k, v) in computed_data.iter() {
-            assert!(expected_data.contains_key(k));
-            assert_eq!(*v, expected_data[k]);
+        for (k, v) in expected_data.iter() {
+            // skip flatkeyvalues, we don't want them
+            if k.last().cloned() == Some(16) {
+                continue;
+            }
+            assert!(computed_data.contains_key(k));
+            assert_eq!(*v, computed_data[k]);
         }
     }
 

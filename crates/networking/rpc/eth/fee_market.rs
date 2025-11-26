@@ -86,7 +86,7 @@ impl RpcHandler for FeeHistoryRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
-        let config = storage.get_chain_config()?;
+        let config = storage.get_chain_config();
         debug!(
             "Requested fee history for {} blocks starting from {}",
             self.block_count, self.newest_block
@@ -253,6 +253,9 @@ fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64
                 .max_priority_fee_per_gas
                 .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
             Transaction::PrivilegedL2Transaction(t) => t
+                .max_priority_fee_per_gas
+                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+            Transaction::FeeTokenTransaction(t) => t
                 .max_priority_fee_per_gas
                 .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
         })

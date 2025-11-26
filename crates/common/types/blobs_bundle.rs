@@ -1,6 +1,8 @@
 use std::ops::AddAssign;
 
 use crate::serde_utils;
+#[cfg(feature = "c-kzg")]
+use crate::types::Fork;
 use crate::types::constants::VERSIONED_HASH_VERSION_KZG;
 use crate::{Bytes, H256};
 
@@ -78,25 +80,40 @@ impl BlobsBundle {
         Self::default()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.blobs.is_empty() && self.commitments.is_empty() && self.proofs.is_empty()
+    }
+
     // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
     #[cfg(feature = "c-kzg")]
-    pub fn create_from_blobs(blobs: &Vec<Blob>) -> Result<Self, BlobsBundleError> {
-        use ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof;
+    pub fn create_from_blobs(
+        blobs: &Vec<Blob>,
+        wrapper_version: Option<u8>,
+    ) -> Result<Self, BlobsBundleError> {
+        use ethrex_crypto::kzg::{
+            blob_to_commitment_and_cell_proofs, blob_to_kzg_commitment_and_proof,
+        };
         let mut commitments = Vec::new();
         let mut proofs = Vec::new();
 
         // Populate the commitments and proofs
         for blob in blobs {
-            let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
-            commitments.push(commitment);
-            proofs.push(proof);
+            if wrapper_version.unwrap_or(0) == 0 {
+                let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
+                commitments.push(commitment);
+                proofs.push(proof);
+            } else {
+                let (commitment, cell_proofs) = blob_to_commitment_and_cell_proofs(blob)?;
+                commitments.push(commitment);
+                proofs.extend(cell_proofs);
+            }
         }
 
         Ok(Self {
             blobs: blobs.clone(),
             commitments,
             proofs,
-            version: 0,
+            version: wrapper_version.unwrap_or(0),
         })
     }
 
@@ -127,6 +144,10 @@ impl BlobsBundle {
             return Err(BlobsBundleError::BlobBundleEmptyError);
         }
 
+        if self.version == 0 && fork >= Fork::Osaka || self.version != 0 && fork < Fork::Osaka {
+            return Err(BlobsBundleError::InvalidBlobVersionForFork);
+        }
+
         // Check if the blob versioned hashes and blobs bundle content length mismatch
         if blob_count != self.commitments.len()
             || (self.version == 0 && blob_count != self.proofs.len())
@@ -153,20 +174,30 @@ impl BlobsBundle {
             }
         } else {
             // Validate the blobs with the commitments and proofs
-            for ((blob, commitment), proof) in self
-                .blobs
-                .iter()
-                .zip(self.commitments.iter())
-                .zip(self.proofs.iter())
-            {
-                use ethrex_crypto::kzg::verify_blob_kzg_proof;
+            use ethrex_crypto::kzg::verify_kzg_proof_batch;
 
-                if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
-                    return Err(BlobsBundleError::BlobToCommitmentAndProofError);
-                }
+            if !verify_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
+                return Err(BlobsBundleError::BlobToCommitmentAndProofError);
             }
         }
 
+        Ok(())
+    }
+
+    pub fn validate_blob_commitment_hashes(
+        &self,
+        blob_versioned_hashes: &[H256],
+    ) -> Result<(), BlobsBundleError> {
+        if self.commitments.len() != blob_versioned_hashes.len() {
+            return Err(BlobsBundleError::BlobVersionedHashesError);
+        }
+        for (commitment, blob_versioned_hash) in
+            self.commitments.iter().zip(blob_versioned_hashes.iter())
+        {
+            if *blob_versioned_hash != kzg_commitment_to_versioned_hash(commitment) {
+                return Err(BlobsBundleError::BlobVersionedHashesError);
+            }
+        }
         Ok(())
     }
 }
@@ -238,6 +269,8 @@ pub enum BlobsBundleError {
     BlobToCommitmentAndProofError,
     #[error("Max blobs per block exceeded")]
     MaxBlobsExceeded,
+    #[error("Invalid blob version for the current fork")]
+    InvalidBlobVersionForFork,
     #[cfg(feature = "c-kzg")]
     #[error("KZG related error: {0}")]
     Kzg(#[from] ethrex_crypto::kzg::KzgError),
@@ -266,7 +299,7 @@ mod tests {
             })
             .collect();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, None)
             .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -286,6 +319,78 @@ mod tests {
         };
 
         assert!(matches!(
+            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn transaction_with_valid_blobs_should_pass_on_osaka() {
+        let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
+            .into_iter()
+            .map(|data| {
+                crate::types::blobs_bundle::blob_from_bytes(data.into())
+                    .expect("Failed to create blob")
+            })
+            .collect();
+
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, Some(1))
+            .expect("Failed to create blobs bundle");
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let tx = crate::types::transaction::EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
+            blob_versioned_hashes,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            blobs_bundle.validate(&tx, crate::types::Fork::Osaka),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn transaction_with_invalid_fork_should_fail() {
+        let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
+            .into_iter()
+            .map(|data| {
+                crate::types::blobs_bundle::blob_from_bytes(data.into())
+                    .expect("Failed to create blob")
+            })
+            .collect();
+
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, Some(1))
+            .expect("Failed to create blobs bundle");
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let tx = crate::types::transaction::EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
+            blob_versioned_hashes,
+            ..Default::default()
+        };
+
+        assert!(!matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
             Ok(())
         ));
@@ -403,7 +508,7 @@ mod tests {
         let blobs =
             std::iter::repeat_n(blob, super::MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, None)
             .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();

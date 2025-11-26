@@ -20,7 +20,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Fork, Log, Transaction},
+    types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
 use std::{
     cell::{OnceCell, RefCell},
@@ -35,7 +35,7 @@ pub type Storage = HashMap<U256, H256>;
 pub enum VMType {
     #[default]
     L1,
-    L2,
+    L2(FeeConfig),
 }
 
 /// Information that changes during transaction execution.
@@ -327,6 +327,7 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn; 256],
@@ -364,7 +365,7 @@ impl<'a> VM<'a> {
                 env.origin,
                 callee,
                 Address::default(), // Will be assigned at the end of prepare_execution
-                Bytes::new(),       // Will be assigned at the end of prepare_execution
+                Code::default(),    // Will be assigned at the end of prepare_execution
                 tx.value(),
                 tx.data().clone(),
                 false,

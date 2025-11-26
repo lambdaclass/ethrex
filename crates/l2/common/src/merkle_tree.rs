@@ -1,6 +1,6 @@
 use ethrex_common::H256;
+use ethrex_crypto::keccak::Keccak256;
 use lambdaworks_crypto::merkle_tree::{merkle::MerkleTree, traits::IsMerkleTreeBackend};
-use sha3::{Digest, Keccak256};
 
 // We use a newtype wrapper around `H256` because Rust's orphan rule
 // prevents implementing a foreign trait (`IsMerkleTreeBackend`) for a foreign type (`H256`).
@@ -37,7 +37,7 @@ impl IsMerkleTreeBackend for TreeData {
             hasher.update(child_2);
             hasher.update(child_1);
         }
-        hasher.finalize().into()
+        hasher.finalize()
     }
 }
 

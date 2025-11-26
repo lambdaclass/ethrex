@@ -57,6 +57,7 @@ impl LEVM {
             })?,
             block_header,
             db,
+            vm_type,
         )?;
         let mut vm = VM::new(
             env,

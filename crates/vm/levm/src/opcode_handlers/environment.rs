@@ -38,7 +38,7 @@ impl OpcodeHandler for OpAddressHandler {
             .increase_consumed_gas(gas_cost::ADDRESS)?;
 
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push1(U256(unsafe {
+        vm.current_call_frame.stack.push(U256(unsafe {
             let mut bytes: [u8; 32] = [0; 32];
             bytes[12..].copy_from_slice(&vm.current_call_frame.to.0);
             bytes.reverse();
@@ -62,7 +62,7 @@ impl OpcodeHandler for OpBalanceHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.db.get_account(address)?.info.balance)?;
+            .push(vm.db.get_account(address)?.info.balance)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -77,7 +77,7 @@ impl OpcodeHandler for OpOriginHandler {
             .increase_consumed_gas(gas_cost::ORIGIN)?;
 
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push1(U256(unsafe {
+        vm.current_call_frame.stack.push(U256(unsafe {
             let mut bytes: [u8; 32] = [0; 32];
             bytes[12..].copy_from_slice(&vm.env.origin.0);
             bytes.reverse();
@@ -96,7 +96,7 @@ impl OpcodeHandler for OpGasPriceHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::GASPRICE)?;
 
-        vm.current_call_frame.stack.push1(vm.env.gas_price)?;
+        vm.current_call_frame.stack.push(vm.env.gas_price)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -111,7 +111,7 @@ impl OpcodeHandler for OpCallerHandler {
             .increase_consumed_gas(gas_cost::CALLER)?;
 
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push1(U256(unsafe {
+        vm.current_call_frame.stack.push(U256(unsafe {
             let mut bytes: [u8; 32] = [0; 32];
             bytes[12..].copy_from_slice(&vm.current_call_frame.msg_sender.0);
             bytes.reverse();
@@ -132,7 +132,7 @@ impl OpcodeHandler for OpCallValueHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.current_call_frame.msg_value)?;
+            .push(vm.current_call_frame.msg_value)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -149,7 +149,7 @@ impl OpcodeHandler for OpCallDataLoadHandler {
         let value_bytes = usize::try_from(vm.current_call_frame.stack.pop1()?)
             .ok()
             .and_then(|offset| vm.current_call_frame.calldata.get(offset..));
-        vm.current_call_frame.stack.push1(match value_bytes {
+        vm.current_call_frame.stack.push(match value_bytes {
             Some(data) if data.len() >= 32 => U256::from_big_endian(&data[..32]),
             Some(data) => {
                 let mut bytes = [0; 32];
@@ -173,7 +173,7 @@ impl OpcodeHandler for OpCallDataSizeHandler {
 
         vm.current_call_frame
             .stack
-            .push1(U256::from(vm.current_call_frame.calldata.len()))?;
+            .push(U256::from(vm.current_call_frame.calldata.len()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -225,7 +225,7 @@ impl OpcodeHandler for OpCodeSizeHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.current_call_frame.bytecode.len().into())?;
+            .push(vm.current_call_frame.bytecode.bytecode.len().into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -250,6 +250,7 @@ impl OpcodeHandler for OpCodeCopyHandler {
         if len > 0 {
             let data = vm
                 .current_call_frame
+                .bytecode
                 .bytecode
                 .get(src_offset..)
                 .unwrap_or_default();
@@ -280,7 +281,7 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.db.get_account_code(address)?.len().into())?;
+            .push(vm.db.get_account_code(address)?.bytecode.len().into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -308,6 +309,7 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
             let data = vm
                 .db
                 .get_account_code(address)?
+                .bytecode
                 .get(src_offset..)
                 .unwrap_or_default();
             let data = data.get(..len).unwrap_or(data);
@@ -340,7 +342,7 @@ impl OpcodeHandler for OpExtCodeHashHandler {
             vm.current_call_frame.stack.push_zero()?;
         } else {
             #[expect(unsafe_code, reason = "safe")]
-            vm.current_call_frame.stack.push1(U256(unsafe {
+            vm.current_call_frame.stack.push(U256(unsafe {
                 let mut bytes = account.info.code_hash.0;
                 bytes.reverse();
                 mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
@@ -361,7 +363,7 @@ impl OpcodeHandler for OpReturnDataSizeHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.current_call_frame.sub_return_data.len().into())?;
+            .push(vm.current_call_frame.sub_return_data.len().into())?;
 
         Ok(OpcodeResult::Continue)
     }

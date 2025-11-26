@@ -16,9 +16,9 @@ impl<const N: usize> OpcodeHandler for OpSwapHandler<N> {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
-            .increase_consumed_gas(gas_cost::DUPN)?;
+            .increase_consumed_gas(gas_cost::SWAPN)?;
 
-        vm.current_call_frame.stack.swap(N)?;
+        vm.current_call_frame.stack.swap::<N>()?;
 
         Ok(OpcodeResult::Continue)
     }

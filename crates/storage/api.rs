@@ -1,20 +1,21 @@
-use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
+    Transaction,
 };
+use std::path::{Path, PathBuf};
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch from a vec of blocks
-    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
+    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
@@ -57,13 +58,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError>;
+    ) -> Result<Vec<Option<BlockBody>>, StoreError>;
 
     /// Obtain block bodies from a list of hashes
     async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError>;
+    ) -> Result<Vec<Option<BlockBody>>, StoreError>;
 
     /// Obtain any block body using the hash
     async fn get_block_body_by_hash(
@@ -76,7 +77,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError>;
 
-    async fn add_pending_block(&self, block: Block) -> Result<(), StoreError>;
+    fn add_pending_block(&self, block: Block) -> Result<(), StoreError>;
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError>;
 
     /// Add block number for a given hash
@@ -121,13 +122,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Option<Receipt>, StoreError>;
 
     /// Add account code
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError>;
+    async fn add_account_code(&self, code: Code) -> Result<(), StoreError>;
 
     /// Clears all checkpoint data created during the last snap sync
     async fn clear_snap_state(&self) -> Result<(), StoreError>;
 
     /// Obtain account code via code hash
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError>;
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError>;
 
     async fn get_transaction_by_hash(
         &self,
@@ -220,12 +221,27 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError>;
 
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
+
+    /// Obtain a storage trie from the given address and storage_root
+    /// Doesn't check if the account is stored
+    /// Used for internal store operations
+    fn open_direct_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError>;
+
+    /// Obtain a state trie from the given state root
+    /// Doesn't check if the state root is valid
+    /// Used for internal store operations
+    fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
 
     /// Obtain a state trie locked for reads from the given state root
     /// Doesn't check if the state root is valid
@@ -241,8 +257,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError> {
-        self.open_storage_trie(hashed_address, storage_root)
+        self.open_storage_trie(hashed_address, storage_root, state_root)
     }
 
     async fn forkchoice_update(
@@ -339,11 +356,34 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError>;
 
     async fn write_account_code_batch(
         &self,
-        account_codes: Vec<(H256, Bytes)>,
+        account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError>;
+
+    /// Add a batch of headers downloaded during fullsync
+    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError>;
+
+    /// Read a batch of headers downloaded during fullsync
+    async fn read_fullsync_batch(
+        &self,
+        start: BlockNumber,
+        limit: u64,
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError>;
+
+    /// Clear all headers downloaded during fullsync
+    async fn clear_fullsync_headers(&self) -> Result<(), StoreError>;
+
+    fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
+
+    async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    fn get_store_directory(&self) -> Result<PathBuf, StoreError>;
+
+    fn flatkeyvalue_computed(&self, _account: H256) -> Result<bool, StoreError> {
+        Ok(false)
+    }
 }

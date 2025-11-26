@@ -34,7 +34,7 @@ impl OpcodeHandler for OpLtHandler {
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         vm.current_call_frame
             .stack
-            .push1(((lhs < rhs) as u64).into())?;
+            .push(((lhs < rhs) as u64).into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -50,7 +50,7 @@ impl OpcodeHandler for OpGtHandler {
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         vm.current_call_frame
             .stack
-            .push1(((lhs > rhs) as u64).into())?;
+            .push(((lhs > rhs) as u64).into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -69,7 +69,7 @@ impl OpcodeHandler for OpSLtHandler {
 
         vm.current_call_frame
             .stack
-            .push1(match (lhs_sign, rhs_sign) {
+            .push(match (lhs_sign, rhs_sign) {
                 (false, true) => U256::zero(),
                 (true, false) => U256::one(),
                 _ => ((lhs < rhs) as u64).into(),
@@ -92,7 +92,7 @@ impl OpcodeHandler for OpSGtHandler {
 
         vm.current_call_frame
             .stack
-            .push1(match (lhs_sign, rhs_sign) {
+            .push(match (lhs_sign, rhs_sign) {
                 (false, true) => U256::one(),
                 (true, false) => U256::zero(),
                 _ => ((lhs > rhs) as u64).into(),
@@ -112,7 +112,7 @@ impl OpcodeHandler for OpEqHandler {
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         vm.current_call_frame
             .stack
-            .push1(((lhs == rhs) as u64).into())?;
+            .push(((lhs == rhs) as u64).into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -129,7 +129,7 @@ impl OpcodeHandler for OpIsZeroHandler {
         let value = vm.current_call_frame.stack.pop1()?;
         vm.current_call_frame
             .stack
-            .push1((value.is_zero() as u64).into())?;
+            .push((value.is_zero() as u64).into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -143,7 +143,7 @@ impl OpcodeHandler for OpAndHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::AND)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        vm.current_call_frame.stack.push1(lhs & rhs)?;
+        vm.current_call_frame.stack.push(lhs & rhs)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -157,7 +157,7 @@ impl OpcodeHandler for OpOrHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::OR)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        vm.current_call_frame.stack.push1(lhs | rhs)?;
+        vm.current_call_frame.stack.push(lhs | rhs)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -171,7 +171,7 @@ impl OpcodeHandler for OpXorHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        vm.current_call_frame.stack.push1(lhs ^ rhs)?;
+        vm.current_call_frame.stack.push(lhs ^ rhs)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -185,7 +185,7 @@ impl OpcodeHandler for OpNotHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
 
         let value = vm.current_call_frame.stack.pop1()?;
-        vm.current_call_frame.stack.push1(!value)?;
+        vm.current_call_frame.stack.push(!value)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -202,7 +202,7 @@ impl OpcodeHandler for OpByteHandler {
         let [index, value] = *vm.current_call_frame.stack.pop()?;
         vm.current_call_frame
             .stack
-            .push1(match usize::try_from(index) {
+            .push(match usize::try_from(index) {
                 Ok(x) if x < 32 => value.byte(31 - x).into(),
                 _ => U256::zero(),
             })?;
@@ -221,7 +221,7 @@ impl OpcodeHandler for OpShlHandler {
         let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
         vm.current_call_frame
             .stack
-            .push1(match u8::try_from(shift_amount) {
+            .push(match u8::try_from(shift_amount) {
                 Ok(shift_amount) => value << shift_amount,
                 Err(_) => U256::zero(),
             })?;
@@ -240,7 +240,7 @@ impl OpcodeHandler for OpShrHandler {
         let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
         vm.current_call_frame
             .stack
-            .push1(match u8::try_from(shift_amount) {
+            .push(match u8::try_from(shift_amount) {
                 Ok(shift_amount) => value >> shift_amount,
                 Err(_) => U256::zero(),
             })?;
@@ -259,7 +259,7 @@ impl OpcodeHandler for OpSarHandler {
         let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
         vm.current_call_frame
             .stack
-            .push1(match (u8::try_from(shift_amount), value.bit(255)) {
+            .push(match (u8::try_from(shift_amount), value.bit(255)) {
                 (Ok(shift_amount), false) => value >> shift_amount,
                 (Ok(shift_amount), true) => !(!value >> shift_amount),
                 (Err(_), false) => U256::zero(),

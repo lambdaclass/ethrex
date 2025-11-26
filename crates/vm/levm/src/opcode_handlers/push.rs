@@ -41,8 +41,13 @@ impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::PUSHN)?;
 
-        vm.current_call_frame.stack.push1(
-            match vm.current_call_frame.bytecode.get(literal_offset..) {
+        vm.current_call_frame.stack.push(
+            match vm
+                .current_call_frame
+                .bytecode
+                .bytecode
+                .get(literal_offset..)
+            {
                 Some(data) if data.len() >= N => U256::from_big_endian(&data[..N]),
                 Some(data) => {
                     let mut bytes = [0; 32];

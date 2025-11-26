@@ -9,19 +9,20 @@ documentation.workspace = true
 
 [dependencies]
 ethrex-rlp.workspace = true
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, default-features = false }
+ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
+ethrex-trie.workspace = true
 ethrex-vm.workspace = true
-secp256k1.workspace = true
+ethrex-metrics = { path = "./metrics", default-features = false }
 
 thiserror.workspace = true
-sha3.workspace = true
 tracing.workspace = true
 bytes.workspace = true
+hex.workspace = true
+rustc-hash.workspace = true
 tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
-
-ethrex-metrics = { path = "./metrics", default-features = false }
 
 [dev-dependencies]
 serde_json.workspace = true
@@ -32,9 +33,14 @@ tokio = { workspace = true, features = ["full"] }
 path = "./blockchain.rs"
 
 [features]
-default = []
+default = ["secp256k1"]
+secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
+sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1"]
+risc0 = ["ethrex-common/risc0", "ethrex-vm/risc0", "c-kzg"]
+zisk = ["ethrex-common/zisk", "ethrex-vm/zisk"]
 
 [lints.clippy]
 unwrap_used = "deny"
+redundant_clone = "warn"

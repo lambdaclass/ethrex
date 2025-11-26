@@ -44,7 +44,8 @@ use crate::utils::{
 };
 use crate::{admin, net};
 use crate::{eth, mempool};
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::ws::WebSocket;
+use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
 use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
     TypedHeader,
@@ -52,7 +53,9 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
+use ethrex_blockchain::error::ChainError;
+use ethrex_common::types::Block;
+use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -67,9 +70,15 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tokio::net::TcpListener;
+use tokio::sync::{
+    Mutex as TokioMutex,
+    mpsc::{UnboundedSender, unbounded_channel},
+    oneshot,
+};
+use tokio::time::timeout;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -158,12 +167,15 @@ pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub active_filters: ActiveFilters,
-    pub syncer: Arc<SyncManager>,
-    pub peer_handler: PeerHandler,
+    // L2 nodes don't need to initialize the syncer
+    pub syncer: Option<Arc<SyncManager>>,
+    // L2 nodes don't need to initialize the peer handler
+    pub peer_handler: Option<PeerHandler>,
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     pub gas_ceil: u64,
+    pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,10 +193,50 @@ pub trait RpcHandler: Sized {
 
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(context).await
+        let namespace = match req.namespace() {
+            Ok(RpcNamespace::Engine) => "engine",
+            _ => "rpc",
+        };
+        let method = req.method.as_str();
+
+        let result =
+            record_async_duration(
+                namespace,
+                method,
+                async move { request.handle(context).await },
+            )
+            .await;
+
+        let outcome = match &result {
+            Ok(_) => RpcOutcome::Success,
+            Err(err) => RpcOutcome::Error(get_error_kind(err)),
+        };
+        record_rpc_outcome(namespace, method, outcome);
+
+        result
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
+}
+
+fn get_error_kind(err: &RpcErr) -> &'static str {
+    match err {
+        RpcErr::MethodNotFound(_) => "MethodNotFound",
+        RpcErr::WrongParam(_) => "WrongParam",
+        RpcErr::BadParams(_) => "BadParams",
+        RpcErr::MissingParam(_) => "MissingParam",
+        RpcErr::TooLargeRequest => "TooLargeRequest",
+        RpcErr::BadHexFormat(_) => "BadHexFormat",
+        RpcErr::UnsuportedFork(_) => "UnsuportedFork",
+        RpcErr::Internal(_) => "Internal",
+        RpcErr::Vm(_) => "Vm",
+        RpcErr::Revert { .. } => "Revert",
+        RpcErr::Halt { .. } => "Halt",
+        RpcErr::AuthenticationError(_) => "AuthenticationError",
+        RpcErr::InvalidForkChoiceState(_) => "InvalidForkChoiceState",
+        RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
+        RpcErr::UnknownPayload(_) => "UnknownPayload",
+    }
 }
 
 pub const FILTER_DURATION: Duration = {
@@ -195,9 +247,28 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
+pub fn start_block_executor(
+    blockchain: Arc<Blockchain>,
+) -> UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)> {
+    let (block_worker_channel, mut block_receiver) =
+        unbounded_channel::<(oneshot::Sender<Result<(), ChainError>>, Block)>();
+    std::thread::Builder::new()
+        .name("block_executor".to_string())
+        .spawn(move || {
+            while let Some((notify, block)) = block_receiver.blocking_recv() {
+                let _ = notify
+                    .send(blockchain.add_block_pipeline(block))
+                    .inspect_err(|_| tracing::error!("failed to notify caller"));
+            }
+        })
+        .expect("Falied to spawn block_executor thread");
+    block_worker_channel
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
+    ws_addr: Option<SocketAddr>,
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
@@ -208,18 +279,19 @@ pub async fn start_api(
     peer_handler: PeerHandler,
     client_version: String,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: Option<u64>,
+    gas_ceil: u64,
     extra_data: String,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let block_worker_channel = start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         storage,
         blockchain,
         active_filters: active_filters.clone(),
-        syncer: Arc::new(syncer),
-        peer_handler,
+        syncer: Some(Arc::new(syncer)),
+        peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
             local_p2p_node,
@@ -229,7 +301,8 @@ pub async fn start_api(
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
-        gas_ceil: gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
+        gas_ceil,
+        block_worker_channel,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -257,7 +330,7 @@ pub async fn start_api(
             axum::routing::get(handle_get_heap_flamegraph),
         )
         .route("/", post(handle_http_request))
-        .layer(cors)
+        .layer(cors.clone())
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr)
         .await
@@ -267,10 +340,25 @@ pub async fn start_api(
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
+    let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
+
+    tokio::spawn(async move {
+        loop {
+            let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
+            if result.is_err() {
+                warn!("No messages from the consensus layer. Is the consensus client running?");
+            }
+        }
+    });
+
+    let authrpc_handler = move |ctx, auth, body| async move {
+        let _ = timer_sender.send(());
+        handle_authrpc_request(ctx, auth, body).await
+    };
+
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
-        .with_state(service_context)
+        .with_state(service_context.clone())
         // Bump the body limit for the engine API to 256MB
         // This is needed to receive payloads bigger than the default limit of 2MB
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
@@ -283,8 +371,28 @@ pub async fn start_api(
         .into_future();
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
-    let _ = tokio::try_join!(authrpc_server, http_server)
-        .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    if let Some(address) = ws_addr {
+        let ws_handler = |ws: WebSocketUpgrade, ctx| async {
+            ws.on_upgrade(|socket| handle_websocket(socket, ctx))
+        };
+        let ws_router = Router::new()
+            .route("/", axum::routing::any(ws_handler))
+            .layer(cors)
+            .with_state(service_context);
+        let ws_listener = TcpListener::bind(address)
+            .await
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
+        let ws_server = axum::serve(ws_listener, ws_router)
+            .with_graceful_shutdown(shutdown_signal())
+            .into_future();
+        info!("Starting WS server at {address}");
+
+        let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
+            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    } else {
+        let _ = tokio::try_join!(authrpc_server, http_server)
+            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    }
 
     Ok(())
 }
@@ -348,6 +456,29 @@ pub async fn handle_authrpc_request(
             Ok(Json(
                 rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
             ))
+        }
+    }
+}
+
+async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
+    while let Some(message) = socket.recv().await {
+        let Ok(body) = message
+            .and_then(|msg| msg.into_text())
+            .map(|msg| msg.to_string())
+        else {
+            return;
+        };
+
+        // ok-clone: increase arc reference count
+        let Ok(response) = handle_http_request(state.clone(), body)
+            .await
+            .map(|res| res.to_string())
+        else {
+            return;
+        };
+
+        if socket.send(response.into()).await.is_err() {
+            return;
         }
     }
 }
@@ -486,6 +617,7 @@ pub async fn map_admin_requests(
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
+        "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -538,13 +670,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::default_context_with_storage;
+    use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
         H160,
         types::{ChainConfig, Genesis},
     };
+    use ethrex_crypto::keccak::keccak_hash;
     use ethrex_storage::{EngineType, Store};
-    use sha3::{Digest, Keccak256};
     use std::io::BufReader;
     use std::str::FromStr;
     use std::{fs::File, path::Path};
@@ -559,7 +691,7 @@ mod tests {
     async fn admin_nodeinfo_request() {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())
@@ -584,7 +716,7 @@ mod tests {
             "result": {
                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
                 "enr": enr_url,
-                "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
+                "id": hex::encode(keccak_hash(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
                 "name": "ethrex/test",
                 "ports": {
@@ -648,7 +780,7 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","nonce":"0x0","to":"0x0100000000000000000000000000000000000000","value":"0xa"},"0x00"]}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         // Setup initial storage
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let genesis = read_execution_api_genesis_file();
         storage
@@ -695,17 +827,13 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0","method":"net_version","params":[],"id":67}"#;
         let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
         // Setup initial storage
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())
             .await
             .unwrap();
-        let chain_id = storage
-            .get_chain_config()
-            .expect("failed to get chain_id")
-            .chain_id
-            .to_string();
+        let chain_id = storage.get_chain_config().chain_id.to_string();
         let context = default_context_with_storage(storage).await;
         // Process request
         let result = map_http_requests(&request, context).await;
@@ -820,7 +948,7 @@ mod tests {
                         "ID": "0x0000000000000000000000000000000000000004",
                         "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
                         "MODEXP": "0x0000000000000000000000000000000000000005",
-                        "P256_VERIFICATION":"0x0000000000000000000000000000000000000100",
+                        "P256VERIFY":"0x0000000000000000000000000000000000000100",
                         "RIPEMD160": "0x0000000000000000000000000000000000000003",
                         "SHA256": "0x0000000000000000000000000000000000000002"
                     },

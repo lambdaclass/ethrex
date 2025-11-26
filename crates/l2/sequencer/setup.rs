@@ -72,7 +72,8 @@ pub async fn register_tdx_key(
         eth_client,
         TxType::EIP1559,
         tdx_address,
-        get_address_from_secret_key(private_key).map_err(ProofCoordinatorError::InternalError)?,
+        get_address_from_secret_key(&private_key.secret_bytes())
+            .map_err(ProofCoordinatorError::InternalError)?,
         calldata.into(),
         Overrides {
             max_fee_per_gas: Some(gas_price),
@@ -95,7 +96,7 @@ async fn get_tdx_address(
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
 ) -> Result<Address, ProofCoordinatorError> {
-    let calldata = keccak("TDXVERIFIER()")[..4].to_vec();
+    let calldata = keccak("TDX_VERIFIER_ADDRESS()")[..4].to_vec();
 
     let response = eth_client
         .call(
@@ -109,7 +110,7 @@ async fn get_tdx_address(
 
     Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
         ProofCoordinatorError::InternalError(
-            "Failed to convert TDXVERIFIER result to address".to_owned(),
+            "Failed to convert TDX_VERIFIER_ADDRESS result to address".to_owned(),
         )
     })
 }

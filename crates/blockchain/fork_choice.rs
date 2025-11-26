@@ -2,6 +2,7 @@ use ethrex_common::{
     H256,
     types::{BlockHash, BlockHeader, BlockNumber},
 };
+use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
 
 use crate::{
@@ -107,6 +108,12 @@ pub async fn apply_fork_choice(
             finalized_res.map(|h| h.number),
         )
         .await?;
+
+    metrics!(
+        use ethrex_metrics::blocks::METRICS_BLOCKS;
+
+        METRICS_BLOCKS.set_head_height(head.number);
+    );
 
     Ok(head)
 }

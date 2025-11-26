@@ -4,12 +4,9 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, get_client_version, store_node_config_file},
 };
-use ethrex_p2p::{discv4::peer_table::PeerTableHandle, types::NodeRecord};
-use std::{path::Path, sync::Arc, time::Duration};
-use tokio::{
-    signal::unix::{SignalKind, signal},
-    sync::Mutex,
-};
+use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
+use std::{path::Path, time::Duration};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -35,14 +32,14 @@ pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0
 async fn server_shutdown(
     datadir: &Path,
     cancel_token: &CancellationToken,
-    peer_table: PeerTableHandle,
-    local_node_record: Arc<Mutex<NodeRecord>>,
+    peer_table: PeerTable,
+    local_node_record: NodeRecord,
 ) {
     info!("Server shut down started...");
     let node_config_path = datadir.join("node_config.json");
     info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+    let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
     store_node_config_file(node_config, node_config_path).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
@@ -51,6 +48,11 @@ async fn server_shutdown(
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
+
+    rayon::ThreadPoolBuilder::default()
+        .thread_name(|i| format!("rayon-worker-{i}"))
+        .build_global()
+        .expect("failed to build rayon threadpool");
 
     if let Some(subcommand) = command {
         return subcommand.run(&opts).await;

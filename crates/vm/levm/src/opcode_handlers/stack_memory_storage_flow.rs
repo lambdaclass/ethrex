@@ -52,7 +52,7 @@ impl OpcodeHandler for OpGasHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.current_call_frame.gas_remaining.into())?;
+            .push(vm.current_call_frame.gas_remaining.into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -69,7 +69,7 @@ impl OpcodeHandler for OpPcHandler {
         //   offset will never cause an underflow condition.
         vm.current_call_frame
             .stack
-            .push1(vm.current_call_frame.pc.wrapping_sub(1).into())?;
+            .push(vm.current_call_frame.pc.wrapping_sub(1).into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -89,7 +89,7 @@ impl OpcodeHandler for OpMLoadHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.current_call_frame.memory.load_word(offset)?)?;
+            .push(vm.current_call_frame.memory.load_word(offset)?)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -177,7 +177,7 @@ impl OpcodeHandler for OpMSizeHandler {
 
         vm.current_call_frame
             .stack
-            .push1(vm.current_call_frame.memory.len().into())?;
+            .push(vm.current_call_frame.memory.len().into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -194,7 +194,7 @@ impl OpcodeHandler for OpTLoadHandler {
         let key = vm.current_call_frame.stack.pop1()?;
         vm.current_call_frame
             .stack
-            .push1(vm.substate.get_transient(&vm.current_call_frame.to, &key))?;
+            .push(vm.substate.get_transient(&vm.current_call_frame.to, &key))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -239,7 +239,7 @@ impl OpcodeHandler for OpSLoadHandler {
             )?)?;
 
         let value = vm.get_storage_value(vm.current_call_frame.to, key)?;
-        vm.current_call_frame.stack.push1(value)?;
+        vm.current_call_frame.stack.push(value)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -372,13 +372,16 @@ fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
     if vm
         .current_call_frame
         .bytecode
+        .bytecode
         .get(target)
         .is_some_and(|&value| {
             value == Opcode::JUMPDEST as u8
-                && !vm
+                && vm
                     .current_call_frame
-                    .jump_target_filter
-                    .is_blacklisted(target)
+                    .bytecode
+                    .jump_targets
+                    .binary_search(&(target as u32))
+                    .is_ok()
         })
     {
         // Update PC and skip the JUMPDEST instruction.

@@ -2,6 +2,7 @@ use super::{
     BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
+use crate::errors::EcdsaError;
 use crate::utils::keccak;
 use crate::{
     Address, H256, U256,
@@ -250,15 +251,13 @@ impl BlockBody {
         }
     }
 
-    pub fn get_transactions_with_sender(
-        &self,
-    ) -> Result<Vec<(&Transaction, Address)>, secp256k1::Error> {
+    pub fn get_transactions_with_sender(&self) -> Result<Vec<(&Transaction, Address)>, EcdsaError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
             .par_iter()
             .map(|tx| Ok((tx, tx.sender()?)))
-            .collect::<Result<Vec<(&Transaction, Address)>, secp256k1::Error>>()
+            .collect::<Result<Vec<(&Transaction, Address)>, EcdsaError>>()
     }
 }
 
@@ -317,7 +316,7 @@ impl RLPDecode for BlockBody {
 }
 
 impl BlockHeader {
-    fn compute_block_hash(&self) -> H256 {
+    pub fn compute_block_hash(&self) -> H256 {
         let mut buf = vec![];
         self.encode(&mut buf);
         keccak(buf)
@@ -393,61 +392,72 @@ pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fract
         parent_excess_blob_gas,
         update_fraction,
     )
+    .unwrap_or_default()
 }
 
-// Defined in [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844)
-pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u64 {
-    let mut i = 1;
-    let mut output = 0;
-    let mut numerator_accum = factor * denominator;
-    while numerator_accum > 0 {
-        output += numerator_accum;
-        numerator_accum = numerator_accum * numerator / (denominator * i);
-        i += 1;
-    }
-    output / denominator
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum FakeExponentialError {
-    #[error("Denominator cannot be zero.")]
-    DenominatorIsZero,
-    #[error("Checked div failed is None.")]
-    CheckedDiv,
-    #[error("Checked mul failed is None.")]
-    CheckedMul,
-}
-
-pub fn fake_exponential_checked(
+/// Approximates factor * e ** (numerator / denominator) using Taylor expansion
+/// https://eips.ethereum.org/EIPS/eip-4844#helpers
+/// 400_000_000 numerator is the limit for this operation to work with U256,
+/// it will overflow with a larger numerator
+pub fn fake_exponential(
     factor: u64,
     numerator: u64,
     denominator: u64,
 ) -> Result<u64, FakeExponentialError> {
-    let mut i = 1_u64;
-    let mut output = 0_u64;
-    let mut numerator_accum = factor * denominator;
     if denominator == 0 {
         return Err(FakeExponentialError::DenominatorIsZero);
     }
 
-    while numerator_accum > 0 {
-        output = output.saturating_add(numerator_accum);
-
-        let denominator_i = denominator
-            .checked_mul(i)
-            .ok_or(FakeExponentialError::CheckedMul)?;
-
-        if denominator_i == 0 {
-            return Err(FakeExponentialError::DenominatorIsZero);
-        }
-
-        numerator_accum = numerator_accum * numerator / denominator_i;
-        i += 1;
+    if numerator == 0 {
+        return Ok(factor);
     }
 
-    output
-        .checked_div(denominator)
-        .ok_or(FakeExponentialError::CheckedDiv)
+    let mut output = 0u64;
+
+    // Initial multiplication: factor * denominator
+    let mut numerator_accum = factor
+        .checked_mul(denominator)
+        .ok_or(FakeExponentialError::CheckedMul)?;
+
+    let mut denominator_by_i = denominator;
+
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "division can't overflow since denominator is not 0"
+    )]
+    {
+        while numerator_accum != 0 {
+            // Safe addition to output
+            output = output
+                .checked_add(numerator_accum)
+                .ok_or(FakeExponentialError::CheckedAdd)?;
+
+            // Safe multiplication and division within loop
+            numerator_accum = numerator_accum
+                .checked_mul(numerator.into())
+                .ok_or(FakeExponentialError::CheckedMul)?
+                / denominator_by_i;
+
+            // denominator comes from a u64 value, will never overflow before other variables.
+            denominator_by_i += denominator;
+        }
+
+        output
+            .checked_div(denominator.into())
+            .ok_or(FakeExponentialError::CheckedDiv)
+    }
+}
+
+#[derive(Debug, thiserror::Error, Serialize, Clone, PartialEq, Deserialize, Eq)]
+pub enum FakeExponentialError {
+    #[error("FakeExponentialError: Denominator cannot be zero.")]
+    DenominatorIsZero,
+    #[error("FakeExponentialError: Checked div failed is None.")]
+    CheckedDiv,
+    #[error("FakeExponentialError: Checked mul failed is None.")]
+    CheckedMul,
+    #[error("FakeExponentialError: Checked add failed is None.")]
+    CheckedAdd,
 }
 
 // Calculates the base fee for the current block based on its gas_limit and parent's gas and fee
@@ -503,6 +513,8 @@ pub fn calculate_base_fee_per_gas(
 pub enum InvalidBlockHeaderError {
     #[error("Gas used is greater than gas limit")]
     GasUsedGreaterThanGasLimit,
+    #[error("Gas limit changed more than allowed from the parent")]
+    GasLimitTooFarFromParent,
     #[error("Base fee per gas is incorrect")]
     BaseFeePerGasIncorrect,
     #[error("Timestamp is not greater than parent timestamp")]
@@ -570,7 +582,7 @@ pub fn validate_block_header(
     ) {
         base_fee
     } else {
-        return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
+        return Err(InvalidBlockHeaderError::GasLimitTooFarFromParent);
     };
 
     if expected_base_fee_per_gas != header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE) {
@@ -744,8 +756,8 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
     }
 
     if fork >= Fork::Osaka
-        && BLOB_BASE_COST * parent_base_fee_per_gas
-            > (GAS_PER_BLOB as u64)
+        && U256::from(BLOB_BASE_COST * parent_base_fee_per_gas)
+            > (U256::from(GAS_PER_BLOB))
                 * calculate_base_fee_per_blob_gas(
                     parent_excess_blob_gas,
                     schedule.base_fee_update_fraction,
@@ -763,7 +775,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
 mod test {
     use super::*;
     use crate::constants::EMPTY_KECCACK_HASH;
-    use crate::types::ELASTICITY_MULTIPLIER;
+    use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;
@@ -982,5 +994,23 @@ mod test {
 
         let res = calc_excess_blob_gas(&parent, schedule, fork);
         assert_eq!(res, 3538944)
+    }
+
+    #[test]
+    fn test_fake_exponential_overflow() {
+        // With u64 this overflows
+        assert!(fake_exponential(57532635, 3145728, 3338477).is_ok());
+    }
+
+    #[test]
+    fn test_fake_exponential_bounds_overflow() {
+        // Making sure the limit we state in the documentation of 400_000_000 works
+        let thing = fake_exponential(
+            MIN_BASE_FEE_PER_BLOB_GAS.into(),
+            400_000_000,
+            BLOB_BASE_FEE_UPDATE_FRACTION,
+        );
+        // With u64 this overflows
+        assert!(thing.is_ok());
     }
 }

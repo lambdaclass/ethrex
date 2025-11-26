@@ -18,8 +18,7 @@ impl<const N: usize> OpcodeHandler for OpDupHandler<N> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::DUPN)?;
 
-        let value = *vm.current_call_frame.stack.get(N)?;
-        vm.current_call_frame.stack.push1(value)?;
+        vm.current_call_frame.stack.dup::<N>()?;
 
         Ok(OpcodeResult::Continue)
     }

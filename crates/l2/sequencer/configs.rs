@@ -23,6 +23,8 @@ pub struct SequencerConfig {
 pub struct BlockProducerConfig {
     pub block_time_ms: u64,
     pub coinbase_address: Address,
+    pub base_fee_vault_address: Option<Address>,
+    pub operator_fee_vault_address: Option<Address>,
     pub elasticity_multiplier: u64,
     pub block_gas_limit: u64,
 }
@@ -40,13 +42,14 @@ pub struct CommitterConfig {
 
 #[derive(Clone, Debug)]
 pub struct EthConfig {
-    pub rpc_url: Vec<String>,
+    pub rpc_url: Vec<Url>,
     pub maximum_allowed_max_fee_per_gas: u64,
     pub maximum_allowed_max_fee_per_blob_gas: u64,
     pub max_number_of_retries: u64,
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
     pub max_retry_delay: u64,
+    pub osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +58,7 @@ pub struct L1WatcherConfig {
     pub check_interval_ms: u64,
     pub max_block_step: U256,
     pub watcher_block_delay: u64,
+    pub l1_blob_base_fee_update_interval: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -94,7 +98,6 @@ pub struct AlignedConfig {
     pub beacon_urls: Vec<Url>,
     pub network: Network,
     pub fee_estimate: String,
-    pub aligned_sp1_elf_path: String,
 }
 
 #[derive(Clone, Debug)]

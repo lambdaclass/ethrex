@@ -1,4 +1,6 @@
-use ethrex_common::types::{Block, block_execution_witness::ExecutionWitness};
+use ethrex_common::types::{
+    Block, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
+};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -16,6 +18,8 @@ pub struct ProgramInput {
     pub execution_witness: ExecutionWitness,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
+    /// Configuration for L2 fees used for each block
+    pub fee_configs: Option<Vec<FeeConfig>>,
     #[cfg(feature = "l2")]
     /// KZG commitment to the blob data
     #[serde_as(as = "[_; 48]")]
@@ -32,10 +36,11 @@ impl Default for ProgramInput {
             blocks: Default::default(),
             execution_witness: ExecutionWitness::default(),
             elasticity_multiplier: Default::default(),
+            fee_configs: None,
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],
             #[cfg(feature = "l2")]
-            blob_proof: [0; 48],
+            blob_proof: [0u8; 48],
         }
     }
 }
