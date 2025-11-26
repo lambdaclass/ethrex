@@ -3356,6 +3356,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "lru 0.16.2",
  "rustc-hash 2.1.1",
  "secp256k1",
  "serde_json",
