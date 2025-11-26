@@ -931,7 +931,9 @@ impl Syncer {
                                     .drain(..)
                                     .zip(bytecodes)
                                     // SAFETY: hash already checked by the download worker
-                                    .map(Code::from_bytecode_unchecked)
+                                    .map(|(hash, code)| {
+                                        (hash, Code::from_bytecode_unchecked(code, hash))
+                                    })
                                     .collect(),
                             )
                             .await?;
@@ -954,7 +956,7 @@ impl Syncer {
                         .drain(..)
                         .zip(bytecodes)
                         // SAFETY: hash already checked by the download worker
-                        .map(Code::from_bytecode_unchecked)
+                        .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
                         .collect(),
                 )
                 .await?;
