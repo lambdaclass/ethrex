@@ -24,20 +24,21 @@ fn main() {
         oz_target.clone()
     });
 
-    let upgradeable_primary = oz_source_root.join(
-        "lib/openzeppelin-contracts/contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
-    );
-    let upgradeable_fallback =
-        oz_source_root.join("lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
-    let proxy_contract_path = if upgradeable_primary.exists() {
-        upgradeable_primary
-    } else if upgradeable_fallback.exists() {
-        upgradeable_fallback
+    let standard_root = oz_env_path
+        .as_ref()
+        .expect("ETHREX_SDK_OZ_CONTRACTS_DIR must be set for standard contracts");
+    let standard_primary = standard_root.join("contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    let standard_fallback =
+        standard_root.join("contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    let proxy_contract_path = if standard_primary.exists() {
+        standard_primary
+    } else if standard_fallback.exists() {
+        standard_fallback
     } else {
         panic!(
             "ERC1967Proxy.sol not found at {} (primary) or {} (fallback)",
-            upgradeable_primary.display(),
-            upgradeable_fallback.display()
+            standard_primary.display(),
+            standard_fallback.display()
         );
     };
 
