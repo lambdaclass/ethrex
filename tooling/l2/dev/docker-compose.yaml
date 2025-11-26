@@ -80,7 +80,6 @@ services:
   # L1 Blockscout Services
   backend-l1:
     image: ghcr.io/lambdaclass/blockscout-private:9.2.2.commit.763c41da
-    platform: linux/arm64
     pull_policy: always
     depends_on:
       db:
@@ -216,7 +215,6 @@ services:
   # L2 Blockscout Services
   backend:
     image: ghcr.io/lambdaclass/blockscout-private:9.2.2.commit.763c41da
-    platform: linux/arm64
     depends_on:
       db:
         condition: service_healthy
