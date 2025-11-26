@@ -388,7 +388,6 @@ services:
     container_name: ethrex-dev
     pull_policy: always
     image: "ghcr.io/lambdaclass/ethrex:l2"
-    platform: linux/amd64
     depends_on:
       - proxy
     ports:
@@ -407,7 +406,6 @@ services:
     image: "ghcr.io/lambdaclass/ethrex:l2"
     depends_on:
       - ethrex-dev
-    platform: linux/amd64
     command: >
       l2 prover --proof-coordinators tcp://ethrex-dev:3900
 
