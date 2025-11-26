@@ -24,11 +24,11 @@ fn main() {
         oz_target.clone()
     });
 
-    let upgradeable_primary =
-        oz_source_root.join("lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
-    let upgradeable_fallback = oz_source_root.join(
+    let upgradeable_primary = oz_source_root.join(
         "lib/openzeppelin-contracts/contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
     );
+    let upgradeable_fallback =
+        oz_source_root.join("lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
     let proxy_contract_path = if upgradeable_primary.exists() {
         upgradeable_primary
     } else if upgradeable_fallback.exists() {
