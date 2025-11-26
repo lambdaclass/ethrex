@@ -1,8 +1,7 @@
 use ethrex_common::H256;
+use ethrex_trie::{Nibbles, TrieDB, TrieError};
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
-
-use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
@@ -31,16 +30,34 @@ impl Default for TrieLayerCache {
 }
 
 impl TrieLayerCache {
-    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
-        self.stacked_layers
-            .lock()
-            .unwrap()
-            .get(&state_root)
-            .and_then(|layer_map| {
-                layer_map
+    fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
+        match self.stacked_layers.lock().unwrap().get(&state_root) {
+            Some(stack) => {
+                stack
                     .get(key)
                     .and_then(|layer| layer.nodes.get(key).cloned())
-            })
+            }
+            None => {
+                let mut current_state_root = state_root;
+
+                while let Some(layer) = self.layers.get(&current_state_root) {
+                    if let Some(value) = layer.nodes.get(key) {
+                        return Some(value.clone());
+                    }
+                    current_state_root = layer.parent;
+                    if current_state_root == state_root {
+                        // TODO: check if this is possible in practice
+                        // This can't happen in L1, due to system contracts irreversibly modifying state
+                        // at each block.
+                        // On L2, if no transactions are included in a block, the state root remains the same,
+                        // but we handle that case in put_batch. It may happen, however, if someone modifies
+                        // state with a privileged tx and later reverts it (since it doesn't update nonce).
+                        panic!("State cycle found");
+                    }
+                }
+                None
+            }
+        }
     }
 
     // TODO: use finalized hash to know when to commit
@@ -86,11 +103,37 @@ impl TrieLayerCache {
         });
 
         let mut sl = self.stacked_layers.lock().unwrap();
-        let mut new_layer_map = sl.get(&parent).cloned().unwrap_or_default();
-        new_layer_map.extend(nodes.into_iter().map(|(key, _)| (key, entry.clone())));
-        tracing::info!("New layer map size {}", new_layer_map.len());
-        sl.insert(state_root, new_layer_map);
+        match sl.remove(&parent) {
+            Some(mut map) => {
+                map.extend(nodes.into_iter().map(|(key, _)| (key, entry.clone())));
+                tracing::info!("New layer map size {}", map.len());
+                sl.insert(state_root, map);
+            }
+            None => {
+                let mut map = self.stack_from_layers(&parent);
+                map.extend(nodes.into_iter().map(|(key, _)| (key, entry.clone())));
+                sl.insert(state_root, map);
+            }
+        }
         self.layers.insert(state_root, entry.clone());
+    }
+
+    fn stack_from_layers(&self, state_root: &H256) -> FxHashMap<Vec<u8>, Arc<TrieLayer>> {
+        let mut layers_to_stack = vec![];
+        let mut current_state_root = state_root;
+        while let Some(layer) = self.layers.get(current_state_root) {
+            layers_to_stack.push(layer);
+            current_state_root = &layer.parent;
+        }
+        let mut map: FxHashMap<Vec<u8>, Arc<TrieLayer>> = Default::default();
+        map.extend(layers_to_stack.into_iter().rev().flat_map(|entry| {
+            entry
+                .nodes
+                .iter()
+                .map(|(key, _)| (key.clone(), entry.clone()))
+        }));
+        tracing::info!("Built stack from layers, map size: {}", map.len());
+        map
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -104,10 +147,11 @@ impl TrieLayerCache {
         let top_layer_id = layers_to_commit.first()?.id;
         // older layers are useless
         self.layers.retain(|_, item| item.id > top_layer_id);
-        let mut sl = self.stacked_layers.lock().unwrap();
-        sl.remove(&state_root);
-        sl.iter_mut()
-            .for_each(|(_, layer_map)| layer_map.retain(|_, item| item.id > top_layer_id));
+        self.stacked_layers
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .for_each(|(_, map)| map.retain(|_, item| item.id > top_layer_id));
         let nodes_to_commit = layers_to_commit
             .into_iter()
             .rev()
