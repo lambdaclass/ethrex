@@ -24,25 +24,22 @@ fn main() {
         oz_target.clone()
     });
 
-    let mut proxy_candidates: Vec<PathBuf> = [
-        "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
+    let upgradeable_primary =
+        oz_source_root.join("lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    let upgradeable_fallback = oz_source_root.join(
         "lib/openzeppelin-contracts/contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
-    ]
-    .into_iter()
-    .map(|relative| oz_source_root.join(relative))
-    .collect();
-    if let Some(root) = oz_env_path.as_ref() {
-        proxy_candidates.extend([
-            "contracts/proxy/ERC1967/ERC1967Proxy.sol",
-            "contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
-        ]
-        .into_iter()
-        .map(|relative| root.join(relative)));
-    }
-    let proxy_contract_path = proxy_candidates
-        .into_iter()
-        .find(|path| path.exists())
-        .expect("failed to locate ERC1967Proxy.sol");
+    );
+    let proxy_contract_path = if upgradeable_primary.exists() {
+        upgradeable_primary
+    } else if upgradeable_fallback.exists() {
+        upgradeable_fallback
+    } else {
+        panic!(
+            "ERC1967Proxy.sol not found at {} (primary) or {} (fallback)",
+            upgradeable_primary.display(),
+            upgradeable_fallback.display()
+        );
+    };
 
     let mut allow_paths: Vec<&Path> = vec![contracts_path.as_path(), oz_source_root.as_path()];
     if let Some(pre_fetched) = oz_upgradable_env_path.as_deref() {
