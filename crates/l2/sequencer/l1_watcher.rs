@@ -71,7 +71,6 @@ pub struct L1Watcher {
 pub struct L2Client {
     pub eth_client: EthClient,
     pub last_block_fetched_l2: U256,
-    pub messenger_address: Address,
     pub chain_id: u64,
 }
 
@@ -115,7 +114,6 @@ impl L1Watcher {
             l2_clients.push(L2Client {
                 eth_client: l2_client,
                 last_block_fetched_l2: U256::zero(),
-                messenger_address: MESSENGER_ADDRESS,
                 chain_id,
             });
         }
@@ -448,7 +446,7 @@ impl L1Watcher {
                 block_delay,
                 &l2_client.eth_client,
                 topics.clone(),
-                l2_client.messenger_address,
+                MESSENGER_ADDRESS,
                 self.max_block_step,
             )
             .await?;
@@ -534,7 +532,6 @@ pub async fn filter_verified_messages(
             break;
         }
 
-        // info!("L2 Message with id {message_id:#} has been verified on L1.",);
         verified_logs.push((l2_message, rpc_log.block_number, l2_client.chain_id));
     }
 

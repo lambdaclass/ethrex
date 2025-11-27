@@ -13,6 +13,9 @@ pub const MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xfe,
 ]);
 
+pub static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
+    LazyLock::new(|| keccak("L1Message(address,bytes32,uint256)".as_bytes()));
+
 // keccak256("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)")
 pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
     keccak("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)".as_bytes())
@@ -68,9 +71,6 @@ pub fn get_block_l1_message_hashes(receipts: &[Receipt]) -> Vec<H256> {
 }
 
 pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
-    static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
-        LazyLock::new(|| keccak("L1Message(address,bytes32,uint256)".as_bytes()));
-
     receipts
         .iter()
         .flat_map(|receipt| {

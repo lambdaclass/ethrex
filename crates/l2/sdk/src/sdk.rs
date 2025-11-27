@@ -80,6 +80,8 @@ const ERC1967_PROXY_BYTECODE: &[u8] = include_bytes!(concat!(
     "/contracts/solc_out/ERC1967Proxy.bytecode"
 ));
 
+const VERIFY_MESSAGE_SIGNATURE: &str = "verifyMessage(uint256,uint256,bytes32,bytes32[])";
+
 #[derive(Debug, thiserror::Error)]
 pub enum SdkError {
     #[error("Failed to parse address from hex")]
@@ -1049,7 +1051,6 @@ pub async fn verify_message(
     router_address: Address,
 ) -> Result<bool, EthClientError> {
     info!("Verifying L2 message on chain id {chain_id} via router at {router_address:#x}");
-    const VERIFY_MESSAGE_SIGNATURE: &str = "verifyMessage(uint256,uint256,bytes32,bytes32[])";
 
     let message_leaf: Vec<u8> = get_l2_message_hash(l2_message).as_bytes().to_vec();
     info!("L2 message leaf: 0x{}", hex::encode(&message_leaf));
