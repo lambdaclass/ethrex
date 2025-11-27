@@ -31,7 +31,6 @@ use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fmt::format;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use std::{
