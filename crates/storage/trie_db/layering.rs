@@ -75,9 +75,9 @@ impl TrieLayerCache {
         &mut self,
         parent: H256,
         state_root: H256,
-        key_values: FxHashMap<Vec<u8>, Vec<u8>>,
+        nodes: FxHashMap<Vec<u8>, Vec<u8>>,
     ) {
-        if parent == state_root && key_values.is_empty() {
+        if parent == state_root && nodes.is_empty() {
             return;
         } else if parent == state_root {
             tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
@@ -90,7 +90,7 @@ impl TrieLayerCache {
 
         self.last_id += 1;
         let entry = Arc::new(TrieLayer {
-            nodes: key_values.clone(),
+            nodes: nodes.clone(),
             parent,
             id: self.last_id,
         });
@@ -98,13 +98,13 @@ impl TrieLayerCache {
         let mut sl = self.stacked_layers.lock().unwrap();
         match sl.remove(&parent) {
             Some(mut map) => {
-                map.extend(key_values.into_iter().map(|(key, _)| (key, entry.clone())));
+                map.extend(nodes.into_iter().map(|(key, _)| (key, entry.clone())));
                 tracing::info!("New layer map size {}", map.len());
                 sl.insert(state_root, map);
             }
             None => {
                 let mut map = self.stack_from_layers(&parent);
-                map.extend(key_values.into_iter().map(|(key, _)| (key, entry.clone())));
+                map.extend(nodes.into_iter().map(|(key, _)| (key, entry.clone())));
                 sl.insert(state_root, map);
             }
         }
