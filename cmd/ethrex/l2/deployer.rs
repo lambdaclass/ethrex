@@ -649,6 +649,7 @@ async fn deploy_contracts(
     )
     .await?;
 
+    // We can increase the nonce after each deployment since the deployer is the same
     nonce += 2;
 
     info!(
