@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2025-11-21
+### 2025-11-27
 
 - When decoding a `Vec<T>`, count the number of elements to pre allocate [#5400](https://github.com/lambdaclass/ethrex/pull/5400)
+
+### 2025-11-20
+
+- Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding a alloc-less length method the default trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
 
 ### 2025-11-19
 

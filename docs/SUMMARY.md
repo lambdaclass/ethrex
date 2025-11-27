@@ -50,7 +50,6 @@
   - [Overview](./l2/architecture/overview.md)
   - [Sequencer](./l2/architecture/sequencer.md)
   - [Prover](./l2/architecture/prover.md)
-  - [Aligned mode](./l2/architecture/aligned_mode.md)
   - [TDX execution module](./l2/architecture/tdx.md)
 - [Interacting with the L2](./l2/interacting/README.md)
   - [Deposit assets](./l2/interacting/deposit.md)
