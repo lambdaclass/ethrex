@@ -262,6 +262,98 @@ rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
 rex balance <COUNTER_ADDRESS> http://localhost:1729
 ```
 
+## ERC20 Transfer
+
+### Add the token contract
+
+Create a `TestToken.sol` file with the following content
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity =0.8.29;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+/// @title Example L2-side bridgeable token
+/// @author LambdaClass
+contract TestToken is ERC20 {
+    address public constant BRIDGE =  0x000000000000000000000000000000000000FFff;
+
+    constructor() ERC20("TestTokenL2", "TEST") {
+        _mint(msg.sender, 1_000_000 * (10 ** 18));
+    }
+
+    modifier onlyBridge() {
+        require(msg.sender == BRIDGE, "TestToken: not authorized to mint");
+        _;
+    }
+
+    function crosschainMint(address destination, uint256 amount) external onlyBridge {
+        _mint(destination, amount);
+    }
+
+    function crosschainBurn(address from, uint256 value) external onlyBridge {
+        _burn(from, value);
+    }
+}
+```
+
+### Deploy the contract on both L2s
+
+Destination L2:
+
+```bash
+rex deploy 0 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+    --rpc-url http://localhost:1729 \
+    --contract-path TestToken.sol \
+    --remappings "@openzeppelin=https://github.com/OpenZeppelin/openzeppelin-contracts.git"
+```
+
+Source L2:
+
+```bash
+rex deploy 0 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+    --rpc-url http://localhost:1730 \
+    --contract-path TestToken.sol \
+    --remappings "@openzeppelin=https://github.com/OpenZeppelin/openzeppelin-contracts.git" 
+```
+
+Remember both addresses
+
+### Check balances
+
+Source L2:
+
+```bash
+rex call <TOKEN_ADDRESS_L2_SOURCE> "balanceOf(address)" 0x4417092b70a3e5f10dc504d0947dd256b965fc62  --rpc-url http://localhost:1730
+```
+
+Destination L2:
+
+```bash
+rex call <TOKEN_ADDRESS_L2_DESTINATION> "balanceOf(address)" 0x8943545177806ed17b9f23f0a21ee5948ecaa776 --rpc-url http://localhost:1729
+```
+
+### Send the transfer
+
+```bash
+rex send --rpc-url http://localhost:1730 --private-key 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e 0x000000000000000000000000000000000000FFFF 'sendERC20ToL2(uint256,address,uint256,address,address,uint256)' 65536999 0x8943545177806ed17b9f23f0a21ee5948ecaa776 100000 <TOKEN_ADDRESS_L2_SOURCE> <TOKEN_ADDRESS_L2_DESTINATION> 100 --gas-price 3946771033
+```
+
+### Check balances
+
+Source L2:
+
+```bash
+rex call <TOKEN_ADDRESS_L2_SOURCE> "balanceOf(address)" 0x4417092b70a3e5f10dc504d0947dd256b965fc62 --rpc-url http://localhost:1730
+```
+
+Destination L2:
+
+```bash
+rex call <TOKEN_ADDRESS_L2_DESTINATION> "balanceOf(address)" 0x8943545177806ed17b9f23f0a21ee5948ecaa776 --rpc-url http://localhost:1729
+```
+
 ## Troubleshooting
 
 If you can't deploy the counter contract, either because of `Transaction intrinsic gas overflow` or because the transaction is never included in a block.
