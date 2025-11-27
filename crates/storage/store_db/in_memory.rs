@@ -503,6 +503,22 @@ impl StoreEngine for Store {
         self.get_canonical_block_hash_sync(block_number)
     }
 
+    fn get_canonical_block_hashes(
+        &self,
+        start: BlockNumber,
+        end: BlockNumber,
+    ) -> Result<Vec<BlockHash>, StoreError> {
+        let db = self.inner()?;
+        let mut res = Vec::new();
+        for number in start..end {
+            let Some(hash) = db.canonical_hashes.get(&number) else {
+                break;
+            };
+            res.push(*hash);
+        }
+        Ok(res)
+    }
+
     async fn forkchoice_update(
         &self,
         new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,

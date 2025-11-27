@@ -1529,6 +1529,31 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
+    fn get_canonical_block_hashes(
+        &self,
+        start: BlockNumber,
+        end: BlockNumber,
+    ) -> Result<Vec<BlockHash>, StoreError> {
+        let db = self.db.clone();
+
+        let cf = db.cf_handle(CF_CANONICAL_BLOCK_HASHES).ok_or_else(|| {
+            StoreError::Custom(format!(
+                "Column family not found: {}",
+                CF_CANONICAL_BLOCK_HASHES
+            ))
+        })?;
+
+        let mut results = Vec::with_capacity(end.saturating_sub(start) as usize);
+        for number in start..end {
+            match db.get_cf(&cf, number.to_le_bytes().to_vec())? {
+                Some(res) => results.push(BlockHashRLP::from_bytes(res).to()?),
+                None => break,
+            }
+        }
+
+        Ok(results)
+    }
+
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::ChainConfig);
         let value = serde_json::to_string(chain_config)

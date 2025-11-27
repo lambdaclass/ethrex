@@ -804,6 +804,14 @@ impl Store {
         self.engine.get_canonical_block_hash(block_number).await
     }
 
+    pub fn get_canonical_block_hashes(
+        &self,
+        start: BlockNumber,
+        end: BlockNumber,
+    ) -> Result<Vec<BlockHash>, StoreError> {
+        self.engine.get_canonical_block_hashes(start, end)
+    }
+
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
         Ok(Some(self.latest_block_header.get().hash()))
     }

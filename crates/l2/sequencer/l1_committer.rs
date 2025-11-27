@@ -466,7 +466,7 @@ impl L1Committer {
 
             // Here we use the checkpoint store because we need the previous
             // state available (i.e. not pruned) for re-execution.
-            let vm_db = StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header);
+            let vm_db = StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header)?;
 
             let mut vm = Evm::new_for_l2(vm_db, *fee_config)?;
 
@@ -726,7 +726,7 @@ impl L1Committer {
 
                 // Here we use the checkpoint store because we need the previous
                 // state available (i.e. not pruned) for re-execution.
-                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header);
+                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header)?;
 
                 let fee_config = self
                     .rollup_store

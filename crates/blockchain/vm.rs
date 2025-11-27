@@ -3,7 +3,7 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{Store, error::StoreError};
 use ethrex_vm::{EvmError, VmDatabase};
 use std::{cmp::Ordering, collections::HashMap};
 use tracing::instrument;
@@ -12,34 +12,60 @@ use tracing::instrument;
 pub struct StoreVmDatabase {
     pub store: Store,
     pub block_hash: BlockHash,
-    // Used to store known block hashes
-    // We use this when executing blocks in batches, as we will only add the blocks at the end
-    // And may need to access hashes of blocks previously executed in the batch
+    // The 256 block hashes before the current block will be pre-loaded to optimize block hash lookup (BLOCKHASH opcode)
+    // This will also be loaded with the block hashes for the full block batch in the case of batch execution
     pub block_hash_cache: HashMap<BlockNumber, BlockHash>,
     pub state_root: H256,
 }
 
-impl StoreVmDatabase {
-    pub fn new(store: Store, block_header: BlockHeader) -> Self {
-        StoreVmDatabase {
-            store,
-            block_hash: block_header.hash(),
-            block_hash_cache: HashMap::new(),
-            state_root: block_header.state_root,
+fn fill_prev_block_hashes(
+    block_header: &BlockHeader,
+    block_hash_cache: &mut HashMap<BlockNumber, BlockHash>,
+    store: Store,
+) -> Result<(), StoreError> {
+    let mut current_block = block_header.number;
+    let mut current_hash = block_header.hash();
+    let oldest_block = current_block + 256;
+    let is_canonic = store
+        .get_canonical_block_hash_sync(block_header.number)?
+        .is_some_and(|hash| hash == block_header.hash());
+    // If the block is canonical, look up hashes directly
+    if is_canonic {
+        let hashes = store.get_canonical_block_hashes(current_block, oldest_block)?;
+        current_block = current_block + hashes.len() as u64;
+        current_hash = *hashes.last().unwrap_or(&current_hash);
+        block_hash_cache.extend((block_header.number..current_block).zip(hashes));
+    }
+    // Lookup the rest of the hashes via ancestor lookup
+    for ancestor_res in store.ancestors(current_hash) {
+        let (hash, ancestor) = ancestor_res?;
+        block_hash_cache.insert(ancestor.number, hash);
+        match ancestor.number.cmp(&oldest_block) {
+            Ordering::Greater => continue,
+            _ => break,
         }
+    }
+    Ok(())
+}
+
+impl StoreVmDatabase {
+    pub fn new(store: Store, block_header: BlockHeader) -> Result<Self, EvmError> {
+        Self::new_with_block_hash_cache(store, block_header, HashMap::new())
     }
 
     pub fn new_with_block_hash_cache(
         store: Store,
         block_header: BlockHeader,
-        block_hash_cache: HashMap<BlockNumber, BlockHash>,
-    ) -> Self {
-        StoreVmDatabase {
+        mut block_hash_cache: HashMap<BlockNumber, BlockHash>,
+    ) -> Result<Self, EvmError> {
+        // Fill up block hash cache with prev 256 block hashes
+        fill_prev_block_hashes(&block_header, &mut block_hash_cache, store.clone()).map_err(|err| EvmError::DB(err.to_string()))?;
+        Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache,
             state_root: block_header.state_root,
-        }
+        })
     }
 }
 

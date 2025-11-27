@@ -183,6 +183,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
 
+    // Get the canonical block hashes for the given block range
+    fn get_canonical_block_hashes(
+        &self,
+        start: BlockNumber,
+        end: BlockNumber,
+    ) -> Result<Vec<BlockHash>, StoreError>;
+
     /// Stores the chain configuration values, should only be called once after reading the genesis file
     /// Ignores previously stored values if present
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError>;

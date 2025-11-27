@@ -172,7 +172,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -220,7 +220,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
         let mut vm = self.new_evm(vm_db)?;
 
         let exec_merkle_start = Instant::now();
@@ -733,7 +733,7 @@ impl Blockchain {
             // doesn't fail, later in this function we store the new state after
             // re-execution.
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header));
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
@@ -1252,7 +1252,7 @@ impl Blockchain {
             self.storage.clone(),
             parent_header,
             block_hash_cache,
-        );
+        ).map_err(|e| (e.into(), None))?;
         let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
