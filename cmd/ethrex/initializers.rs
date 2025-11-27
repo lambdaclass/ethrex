@@ -48,7 +48,12 @@ const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
-pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
+pub fn init_tracing(
+    opts: &Options,
+) -> (
+    reload::Handle<EnvFilter, Registry>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
@@ -69,13 +74,34 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
         .with_ansi(use_color)
         .with_filter(filter);
 
+    let (file_layer, guard) = if let Some(log_file) = &opts.log_file {
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .write(true)
+            .open(log_file)
+            .expect("Failed to open log file");
+
+        let (non_blocking, guard) = tracing_appender::non_blocking(file);
+        let file_layer = fmt::layer()
+            .with_target(include_target)
+            .with_ansi(false)
+            .with_writer(non_blocking);
+        (Some(file_layer), Some(guard))
+    } else {
+        (None, None)
+    };
+
     let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
 
-    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
+    let subscriber = Registry::default()
+        .with(fmt_layer)
+        .with(file_layer)
+        .with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    filter_handle
+    (filter_handle, guard)
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {

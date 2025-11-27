@@ -125,6 +125,13 @@ pub struct Options {
     )]
     pub log_color: LogColor,
     #[arg(
+        long = "log.file",
+        value_name = "LOG_FILE",
+        help = "Path to the log file.",
+        help_heading = "Node options"
+    )]
+    pub log_file: Option<PathBuf>,
+    #[arg(
         help = "Maximum size of the mempool in number of transactions",
         long = "mempool.maxsize",
         default_value_t = 10_000,
@@ -420,12 +427,18 @@ pub enum Subcommand {
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
+        let _guard = match self {
+            #[cfg(feature = "l2")]
+            Self::L2(_) => None,
+            _ => {
+                let (_, guard) = init_tracing(opts);
+                guard
+            }
+        };
         match self {
             #[cfg(feature = "l2")]
             Self::L2(_) => {}
-            _ => {
-                init_tracing(opts);
-            }
+            _ => {}
         }
         match self {
             Subcommand::RemoveDB { datadir, force } => {
