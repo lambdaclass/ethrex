@@ -139,7 +139,7 @@ rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 http://localhost:1730 # S
 ### Send the transfer
 
 ```bash
-cast send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 10000000000000001 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 0xe25583099ba105d9ec0a67f5ae86d90e50036425 100000 0x --gas-price 3946771033 --legacy
+rex send --rpc-url http://localhost:1729 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 10000000000000001 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 0xe25583099ba105d9ec0a67f5ae86d90e50036425 100000 "" --gas-price 3946771033
 ```
 
 
