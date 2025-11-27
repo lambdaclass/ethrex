@@ -9,6 +9,9 @@ fn main() {
 
     #[cfg(all(not(clippy), feature = "zisk"))]
     build_zisk_program();
+
+    #[cfg(all(not(clippy), feature = "pico"))]
+    build_pico_program();
 }
 
 #[cfg(all(not(clippy), feature = "risc0"))]
@@ -181,6 +184,33 @@ fn build_zisk_program() {
         "./src/zisk/out/riscv64ima-zisk-elf",
     )
     .expect("could not copy Zisk elf to output directory");
+}
+
+#[cfg(all(not(clippy), feature = "pico"))]
+fn build_pico_program() {
+    let mut build_command = std::process::Command::new("cargo");
+    build_command
+        .args([
+            "pico",
+            "build",
+            "--output-directory",
+            "out",
+        ])
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .current_dir("./src/pico");
+
+    println!("{build_command:?}");
+
+    println!("CWD = {}", std::env::current_dir().unwrap().display());
+
+    let build_status = build_command
+        .status()
+        .expect("Failed to execute zisk build command");
+
+    if !build_status.success() {
+        panic!("Failed to build guest program with zisk toolchain");
+    }
 }
 
 #[cfg(all(not(clippy), feature = "zisk"))]

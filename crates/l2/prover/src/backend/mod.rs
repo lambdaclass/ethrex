@@ -28,7 +28,7 @@ pub enum Backend {
     RISC0,
     #[cfg(feature = "zisk")]
     ZisK,
-    #[cfg(feature = "zisk")]
+    #[cfg(feature = "pico")]
     Pico,
 }
 

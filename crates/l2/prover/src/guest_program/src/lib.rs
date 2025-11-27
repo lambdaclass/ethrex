@@ -23,7 +23,7 @@ pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 
 #[cfg(all(not(clippy), feature = "pico"))]
 pub const ZKVM_PICO_PROGRAM_ELF: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/riscv32im-pico-zkvm-elf"));
+    include_bytes!("./pico/out/riscv32im-pico-zkvm-elf");
 #[cfg(any(clippy, not(feature = "pico")))]
 pub const ZKVM_PICO_PROGRAM_ELF: &[u8] = &[0];
 
