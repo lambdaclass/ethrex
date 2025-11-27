@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-27
+
+- Use unchecked swap for stack [#5439](https://github.com/lambdaclass/ethrex/pull/5439)
+
 ### 2025-11-19
 
 - Parallelize merkleization [#5377](https://github.com/lambdaclass/ethrex/pull/5377)
