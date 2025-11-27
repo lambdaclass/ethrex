@@ -189,6 +189,14 @@ impl Store {
         self.engine.get_block_header(block_number)
     }
 
+    pub async fn get_block_headers(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
+        self.engine.get_block_headers(from, to).await
+    }
+
     pub fn get_block_header_by_hash(
         &self,
         block_hash: BlockHash,

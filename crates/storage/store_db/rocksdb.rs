@@ -1102,6 +1102,55 @@ impl StoreEngine for Store {
         self.get_block_header_by_hash(block_hash)
     }
 
+    async fn get_block_headers(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
+        let numbers: Vec<BlockNumber> = (from..=to).collect();
+        let number_keys: Vec<Vec<u8>> = numbers.iter().map(|n| n.to_le_bytes().to_vec()).collect();
+
+        let hashes = self
+            .read_bulk_async(CF_CANONICAL_BLOCK_HASHES, number_keys, |bytes| {
+                BlockHashRLP::from_bytes(bytes)
+                    .to()
+                    .map_err(StoreError::from)
+            })
+            .await?;
+
+        let hash_keys: Vec<Vec<u8>> = hashes
+            .iter()
+            .flat_map(|hash_opt| hash_opt.map(|h| BlockHashRLP::from(h).bytes().clone()))
+            .collect();
+
+        let mut headers = self
+            .read_bulk_async(CF_HEADERS, hash_keys, |bytes| {
+                BlockHeaderRLP::from_bytes(bytes)
+                    .to()
+                    .map_err(StoreError::from)
+            })
+            .await?;
+
+        let mut i = 0;
+
+        // Fill in with None for missing headers
+        let headers = hashes
+            .into_iter()
+            .map(|opt| {
+                opt.and_then(|_| {
+                    let header_ref = headers
+                        .get_mut(i)
+                        .expect("headers length is equal to number of Somes in hashes");
+                    let header = std::mem::take(header_ref);
+                    i += 1;
+                    header
+                })
+            })
+            .collect();
+
+        Ok(headers)
+    }
+
     async fn add_block_body(
         &self,
         block_hash: BlockHash,

@@ -187,6 +187,23 @@ impl StoreEngine for Store {
         }
     }
 
+    async fn get_block_headers(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
+        let store = self.inner()?;
+        let mut res = Vec::new();
+        for block_number in from..=to {
+            let header_opt = store
+                .canonical_hashes
+                .get(&block_number)
+                .and_then(|hash| store.headers.get(hash));
+            res.push(header_opt.cloned());
+        }
+        Ok(res)
+    }
+
     async fn get_block_body(&self, block_number: u64) -> Result<Option<BlockBody>, StoreError> {
         let store = self.inner()?;
         if let Some(hash) = store.canonical_hashes.get(&block_number) {
