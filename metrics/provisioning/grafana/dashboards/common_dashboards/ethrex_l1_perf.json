@@ -636,6 +636,98 @@
           ],
           "title": "Account Leaves",
           "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "fillOpacity": 80,
+                "lineWidth": 0,
+                "spanNulls": false
+              },
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "text": "None"
+                    },
+                    "1": {
+                      "text": "HealingStorage"
+                    },
+                    "2": {
+                      "text": "HealingState"
+                    },
+                    "3": {
+                      "text": "RequestingBytecodes"
+                    },
+                    "4": {
+                      "text": "RequestingAccountRanges"
+                    },
+                    "5": {
+                      "text": "RequestingStorageRanges"
+                    },
+                    "6": {
+                      "text": "DownloadingHeaders"
+                    },
+                    "7": {
+                      "text": "InsertingStorageRanges"
+                    },
+                    "8": {
+                      "text": "InsertingAccountRanges"
+                    },
+                    "9": {
+                      "text": "InsertingAccountRangesNoDb"
+                    }
+                  },
+                  "type": "value"
+                }
+              ]
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 14
+          },
+          "id": 205,
+          "options": {
+            "alignValue": "left",
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "mergeValues": true,
+            "rowHeight": 0.9,
+            "showValue": "auto",
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "ethrex_sync_step{instance=~\"$instance(:\\\\d+)?$\"}",
+              "legendFormat": "{{instance}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Sync Step History",
+          "type": "state-timeline"
         }
       ],
       "title": "Sync",
