@@ -2,6 +2,7 @@ use super::{
     BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
+use crate::errors::EcdsaError;
 use crate::utils::keccak;
 use crate::{
     Address, H256, U256,
@@ -250,15 +251,13 @@ impl BlockBody {
         }
     }
 
-    pub fn get_transactions_with_sender(
-        &self,
-    ) -> Result<Vec<(&Transaction, Address)>, secp256k1::Error> {
+    pub fn get_transactions_with_sender(&self) -> Result<Vec<(&Transaction, Address)>, EcdsaError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
             .par_iter()
             .map(|tx| Ok((tx, tx.sender()?)))
-            .collect::<Result<Vec<(&Transaction, Address)>, secp256k1::Error>>()
+            .collect::<Result<Vec<(&Transaction, Address)>, EcdsaError>>()
     }
 }
 
@@ -515,6 +514,8 @@ pub fn calculate_base_fee_per_gas(
 pub enum InvalidBlockHeaderError {
     #[error("Gas used is greater than gas limit")]
     GasUsedGreaterThanGasLimit,
+    #[error("Gas limit changed more than allowed from the parent")]
+    GasLimitTooFarFromParent,
     #[error("Base fee per gas is incorrect")]
     BaseFeePerGasIncorrect,
     #[error("Timestamp is not greater than parent timestamp")]
@@ -582,7 +583,7 @@ pub fn validate_block_header(
     ) {
         base_fee
     } else {
-        return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
+        return Err(InvalidBlockHeaderError::GasLimitTooFarFromParent);
     };
 
     if expected_base_fee_per_gas != header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE) {
@@ -730,9 +731,13 @@ fn validate_excess_blob_gas(
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockHeaderError> {
     let expected_excess_blob_gas = chain_config
-        .get_fork_blob_schedule(header.timestamp)
+        .get_blob_schedule_for_time(header.timestamp)
         .map(|schedule| {
-            calc_excess_blob_gas(parent_header, schedule, chain_config.fork(header.timestamp))
+            calc_excess_blob_gas(
+                parent_header,
+                schedule,
+                chain_config.get_fork(header.timestamp),
+            )
         })
         .unwrap_or_default();
     if header

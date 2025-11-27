@@ -65,6 +65,8 @@ pub enum EthClientError {
     FailedToGetTxPool(#[from] TxPoolContentError),
     #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
+    #[error("ethrex_batchNumber request error: {0}")]
+    GetBatchNumberError(#[from] GetBatchNumberError),
     #[error("ethrex_getBlobBaseFee request error: {0}")]
     GetBlobBaseFeeError(#[from] GetBlobBaseFeeRequestError),
     #[error("All RPC calls failed")]
@@ -79,8 +81,12 @@ pub enum EthClientError {
     GetOperatorFeeVaultAddressError(#[from] GetOperatorFeeVaultAddressError),
     #[error("ethrex_getOperatorFee request error: {0}")]
     GetOperatorFeeError(#[from] GetOperatorFeeError),
+    #[error("ethrex_getL1FeeVaultAddress request error: {0}")]
+    GetL1FeeVaultAddressError(#[from] GetL1FeeVaultAddressError),
     #[error("ethrex_getL1BlobBaseFee request error: {0}")]
     GetL1BlobBaseFeeError(#[from] GetL1BlobBaseFeeRequestError),
+    #[error("ethrex_sendTransaction request error: {0}")]
+    SendEthrexTransactionError(#[from] SendEthrexTransactionError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -326,6 +332,16 @@ pub enum GetBatchByNumberError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum GetBatchNumberError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum GetEthConfigError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
@@ -356,6 +372,14 @@ pub enum GetOperatorFeeError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum GetL1FeeVaultAddressError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum GetL1BlobBaseFeeRequestError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
@@ -363,4 +387,14 @@ pub enum GetL1BlobBaseFeeRequestError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SendEthrexTransactionError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseHashError(String),
 }

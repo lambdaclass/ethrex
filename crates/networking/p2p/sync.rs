@@ -14,17 +14,19 @@ use crate::utils::{
 };
 use crate::{
     metrics::METRICS,
-    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    peer_handler::{MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+#[cfg(not(feature = "rocksdb"))]
+use ethrex_common::U256;
 use ethrex_common::types::Code;
 use ethrex_common::{
-    BigEndianHash, H256, U256,
+    H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-use ethrex_storage::{STATE_TRIE_SEGMENTS, Store, error::StoreError};
+use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -32,7 +34,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use std::{
-    array,
     cmp::min,
     collections::HashMap,
     sync::{
@@ -66,19 +67,6 @@ lazy_static::lazy_static! {
 #[cfg(not(feature = "sync-test"))]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
-}
-
-lazy_static::lazy_static! {
-    // Size of each state trie segment
-    static ref STATE_TRIE_SEGMENT_SIZE: U256 = HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS;
-    // Starting hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_START: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * i)))
-    };
-    // Ending hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_END: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * (i+1))))
-    };
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -395,7 +383,12 @@ impl Syncer {
             let final_batch = end_block_number == start + batch_size as u64;
             // Retrieve batch from DB
             if !single_batch {
-                headers = store.read_fullsync_batch(start, batch_size as u64).await?;
+                headers = store
+                    .read_fullsync_batch(start, batch_size as u64)
+                    .await?
+                    .into_iter()
+                    .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
+                    .collect::<Result<Vec<_>, SyncError>>()?;
             }
             let mut blocks = Vec::new();
             // Request block bodies
@@ -538,21 +531,25 @@ impl Syncer {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
-            let mut last_valid_hash = H256::default();
-            for block in blocks {
-                let block_hash = block.hash();
-                blockchain.add_block_pipeline(block).map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
-                last_valid_hash = block_hash;
-            }
-            Ok(())
+            tokio::task::spawn_blocking(move || {
+                let mut last_valid_hash = H256::default();
+                for block in blocks {
+                    let block_hash = block.hash();
+                    blockchain.add_block_pipeline(block).map_err(|e| {
+                        (
+                            e,
+                            Some(BatchBlockProcessingFailure {
+                                last_valid_hash,
+                                failed_block_hash: block_hash,
+                            }),
+                        )
+                    })?;
+                    last_valid_hash = block_hash;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| (ChainError::Custom(e.to_string()), None))?
         } else {
             blockchain.add_blocks_in_batch(blocks, cancel_token).await
         }
@@ -1174,6 +1171,8 @@ pub enum SyncError {
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
+    #[error("Missing fullsync batch")]
+    MissingFullsyncBatch,
 }
 
 impl SyncError {
@@ -1197,7 +1196,8 @@ impl SyncError {
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
-            | SyncError::PeerTableError(_) => false,
+            | SyncError::PeerTableError(_)
+            | SyncError::MissingFullsyncBatch => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

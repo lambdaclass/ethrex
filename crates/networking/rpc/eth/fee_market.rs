@@ -123,7 +123,7 @@ impl RpcHandler for FeeHistoryRequest {
                 )))?;
 
             let max_blob_gas_per_block = config
-                .get_fork_blob_schedule(header.timestamp)
+                .get_blob_schedule_for_time(header.timestamp)
                 .map(|schedule| schedule.max * GAS_PER_BLOB);
             let blob_gas_used_r = match (header.blob_gas_used, max_blob_gas_per_block) {
                 (Some(blob_gas_used), Some(max_blob_gas)) => {
@@ -133,7 +133,7 @@ impl RpcHandler for FeeHistoryRequest {
             };
 
             let blob_schedule = config
-                .get_fork_blob_schedule(header.timestamp)
+                .get_blob_schedule_for_time(header.timestamp)
                 .unwrap_or_default();
 
             let fork = config.get_fork(header.timestamp);
@@ -255,6 +255,9 @@ fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64
                 .max_priority_fee_per_gas
                 .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
             Transaction::PrivilegedL2Transaction(t) => t
+                .max_priority_fee_per_gas
+                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+            Transaction::FeeTokenTransaction(t) => t
                 .max_priority_fee_per_gas
                 .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
         })

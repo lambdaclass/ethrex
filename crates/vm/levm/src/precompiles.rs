@@ -39,7 +39,7 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use sha3::Digest;
+use sha2::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 
@@ -255,12 +255,12 @@ pub const BLS12_MAP_FP2_TO_G2: Precompile = Precompile {
     active_since_fork: Prague,
 };
 
-pub const P256_VERIFICATION: Precompile = Precompile {
+pub const P256VERIFY: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x01, 0x00,
     ]),
-    name: "P256_VERIFICATION",
+    name: "P256VERIFY",
     active_since_fork: Osaka,
 };
 
@@ -283,7 +283,7 @@ pub const PRECOMPILES: [Precompile; 19] = [
     BLS12_MAP_FP2_TO_G2,
     BLS12_MAP_FP_TO_G1,
     BLS12_PAIRING_CHECK,
-    P256_VERIFICATION,
+    P256VERIFY,
 ];
 
 pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
@@ -293,7 +293,7 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    (matches!(vm_type, VMType::L2(_)) && *address == P256_VERIFICATION.address)
+    (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
@@ -329,10 +329,9 @@ pub fn execute_precompile(
             Some(bls12_map_fp_to_g1 as PrecompileFn);
         precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
             Some(bls12_map_fp2_tp_g2 as PrecompileFn);
-        precompiles[u16::from_be_bytes([
-            P256_VERIFICATION.address.0[18],
-            P256_VERIFICATION.address.0[19],
-        ]) as usize] = Some(p_256_verify as PrecompileFn);
+        precompiles
+            [u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
+            Some(p_256_verify as PrecompileFn);
         precompiles
     };
 
@@ -374,10 +373,13 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+#[cfg(all(
+    not(feature = "sp1"),
+    not(feature = "risc0"),
+    not(feature = "zisk"),
+    feature = "secp256k1"
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
-    use sha3::Keccak256;
-
     use crate::gas_cost::ECRECOVER_COST;
 
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
@@ -420,10 +422,10 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     };
 
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
-    let public_key_hash = Keccak256::digest(&public_key.serialize_uncompressed()[1..]);
+    let public_key_hash =
+        ethrex_crypto::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
 
     // Address is the last 20 bytes of the hash.
-    #[expect(clippy::indexing_slicing)]
     let recovered_address_bytes = &public_key_hash[12..];
 
     let mut out = [0u8; 32];
@@ -442,7 +444,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-#[cfg(any(feature = "sp1", feature = "risc0"))]
+#[cfg(any(
+    feature = "sp1",
+    feature = "risc0",
+    feature = "zisk",
+    not(feature = "secp256k1"),
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     use ethrex_common::utils::keccak;
     use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
@@ -951,7 +958,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     Ok(Bytes::from_owner(result))
 }
 
-#[cfg(any(feature = "sp1", feature = "risc0"))]
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
@@ -1007,7 +1014,7 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     Ok(result == substrate_bn::Gt::one())
 }
 
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+#[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use lambdaworks_math::errors::PairingError;
@@ -1057,8 +1064,10 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
         valid_batch.push((g1, g2));
     }
     let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
-    let result = BN254AtePairing::compute_batch(&valid_batch_refs)
-        .map_err(|PairingError::PointNotInSubgroup| PrecompileError::PointNotInSubgroup)?;
+    let result = BN254AtePairing::compute_batch(&valid_batch_refs).map_err(|e| match e {
+        PairingError::PointNotInSubgroup => PrecompileError::PointNotInSubgroup,
+        PairingError::DivisionByZero => PrecompileError::InvalidPoint,
+    })?;
 
     Ok(result == QuadraticExtensionFieldElement::one())
 }
@@ -1336,7 +1345,9 @@ pub fn bls12_g1add(
                     // equation holds since it has no solutions for an `x` coordinate where `y` is
                     // zero within the prime field space.
                     let x_squared = p0.0.square();
-                    let s = (x_squared.double() + &x_squared + BLS12381Curve::a()) / p0.1.double();
+                    let s = ((x_squared.double() + &x_squared + BLS12381Curve::a())
+                        / p0.1.double())
+                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
                     let x = s.square() - p0.0.double();
                     let y = s * (p0.0 - &x) - p0.1;
@@ -1349,7 +1360,8 @@ pub fn bls12_g1add(
             // The division may panic only when `t` has no inverse. This can only happen if
             // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
             // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
-            let l = (&p0.1 - p1.1) / (&p0.0 - &p1.0);
+            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
+                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
             let x = l.square() - &p0.0 - p1.0;
             let y = l * (p0.0 - &x) - p0.1;
@@ -1500,8 +1512,9 @@ pub fn bls12_g2add(
                     // equation holds since it has no solutions for an `x` coordinate where `y` is
                     // zero within the prime field space.
                     let x_squared = p0.0.square();
-                    let s =
-                        (x_squared.double() + &x_squared + BLS12381TwistCurve::a()) / p0.1.double();
+                    let s = ((x_squared.double() + &x_squared + BLS12381TwistCurve::a())
+                        / p0.1.double())
+                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
                     let x = s.square() - p0.0.double();
                     let y = s * (p0.0 - &x) - p0.1;
@@ -1514,7 +1527,8 @@ pub fn bls12_g2add(
             // The division may panic only when `t` has no inverse. This can only happen if
             // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
             // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
-            let l = (&p0.1 - p1.1) / (&p0.0 - &p1.0);
+            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
+                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
             let x = l.square() - &p0.0 - p1.0;
             let y = l * (p0.0 - &x) - p0.1;
