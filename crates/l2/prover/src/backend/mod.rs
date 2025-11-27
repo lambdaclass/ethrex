@@ -15,6 +15,9 @@ pub mod sp1;
 #[cfg(feature = "zisk")]
 pub mod zisk;
 
+#[cfg(feature = "pico")]
+pub mod pico;
+
 #[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum)]
 pub enum Backend {
     #[default]
@@ -25,6 +28,8 @@ pub enum Backend {
     RISC0,
     #[cfg(feature = "zisk")]
     ZisK,
+    #[cfg(feature = "zisk")]
+    Pico,
 }
 
 // Needed for Clap
@@ -40,6 +45,8 @@ impl FromStr for Backend {
             "risc0" => Ok(Backend::RISC0),
             #[cfg(feature = "zisk")]
             "zisk" => Ok(Backend::ZisK),
+            #[cfg(feature = "pico")]
+            "pico" => Ok(Backend::Pico),
             _ => Err(Self::Err::from("Invalid backend")),
         }
     }
@@ -53,4 +60,6 @@ pub enum ProveOutput {
     RISC0(risc0_zkvm::Receipt),
     #[cfg(feature = "zisk")]
     ZisK(zisk::ProveOutput),
+    #[cfg(feature = "pico")]
+    Pico(pico::ProveOutput),
 }

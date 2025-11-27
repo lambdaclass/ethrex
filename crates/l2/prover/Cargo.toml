@@ -63,6 +63,7 @@ risc0 = [
 ]
 sp1 = ["guest_program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
 zisk = ["guest_program/zisk"]
+pico = ["guest_program/pico"]
 profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]

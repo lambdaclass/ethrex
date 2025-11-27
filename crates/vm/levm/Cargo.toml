@@ -62,6 +62,7 @@ debug = []
 sp1 = ["dep:substrate-bn"]
 risc0 = ["dep:substrate-bn", "c-kzg"]
 zisk = ["dep:substrate-bn"]
+pico = ["dep:substrate-bn"]
 
 [lints.rust]
 unsafe_code = "warn"
