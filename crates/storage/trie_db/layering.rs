@@ -48,21 +48,12 @@ impl TrieLayerCache {
     }
 
     fn fingerprint(key: &[u8]) -> u64 {
-        let mut lo = [key.len() as u8; 8];
-        let mut hi = [key.len() as u8; 8];
-        for i in 0..8 {
-            hi[i] ^= key.get(2 * i).copied().unwrap_or_default();
-            lo[i] ^= key.get(2 * i + 1).copied().unwrap_or_default();
+        let mut h = 5381u32;
+        h = ((h << 5) | h) ^ (key.len() as u32);
+        for b in key {
+            h = ((h << 5) | h) ^ (*b as u32);
         }
-        if key.len() > 67 {
-            for i in 0..8 {
-                hi[i] ^= key.get(67 + 2 * i).copied().unwrap_or_default();
-                lo[i] ^= key.get(67 + 2 * i + 1).copied().unwrap_or_default();
-            }
-        }
-        let lo = u64::from_be_bytes(lo);
-        let hi = u64::from_be_bytes(hi);
-        ((hi << 4) ^ lo).to_be()
+        h as u64
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
