@@ -89,8 +89,11 @@ async fn get_batch_message_hashes_and_balance_diffs(
         let (l1_block_messages, l2_block_messages) =
             extract_block_messages(store, block.header.number).await?;
 
-        for (l1_msg, l2_msg) in l1_block_messages.iter().zip(l2_block_messages.iter()) {
+        for l1_msg in l1_block_messages.iter() {
             l1_message_hashes.push(get_l1_message_hash(l1_msg));
+        }
+
+        for l2_msg in l2_block_messages.iter() {
             l2_messages.push(l2_msg.clone());
         }
     }
