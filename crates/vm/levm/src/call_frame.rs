@@ -148,7 +148,16 @@ impl Stack {
             return Err(ExceptionalHalt::StackUnderflow);
         }
 
-        self.values.swap(self.offset, index);
+        #[expect(
+            unsafe_code,
+            reason = "self.offset always < STACK_LIMIT, index just checked to be < STACK_LIMIT"
+        )]
+        unsafe {
+            let base = self.values.as_mut_ptr();
+            let pa = base.add(self.offset);
+            let pb = base.add(index);
+            std::ptr::swap(pa, pb);
+        }
         Ok(())
     }
 
