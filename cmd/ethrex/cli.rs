@@ -842,5 +842,5 @@ pub async fn export_blocks(
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
     }
-    info!(blocks = end.saturating_sub(start), path = %path, "Exported blocks to file");
+    info!(blocks = end.saturating_sub(start) + 1, path = %path, "Exported blocks to file");
 }
