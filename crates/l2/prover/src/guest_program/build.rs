@@ -6,6 +6,9 @@ fn main() {
 
     #[cfg(all(not(clippy), feature = "sp1"))]
     build_sp1_program();
+
+    #[cfg(all(not(clippy), feature = "zisk"))]
+    build_zisk_program();
 }
 
 #[cfg(all(not(clippy), feature = "risc0"))]
@@ -97,4 +100,106 @@ fn build_sp1_program() {
         format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
     )
     .expect("could not write SP1 vk-u32 to file");
+}
+
+#[cfg(all(not(clippy), feature = "zisk"))]
+fn build_zisk_program() {
+    // cargo-zisk rom-setup fails with `Os { code: 2, kind: NotFound, message: "No such file or directory" }`
+    // when building in a GitHub CI environment. This command is not required if we won't generate a proof
+    // so we skip it under the `ci` feature flag.
+
+    let mut build_command = std::process::Command::new("cargo");
+    #[cfg(not(feature = "ci"))]
+    let mut setup_command = std::process::Command::new("cargo-zisk");
+
+    build_command
+        .env("RUSTC", rustc_path("zisk"))
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .args([
+            "+zisk",
+            "build",
+            "--release",
+            "--target",
+            "riscv64ima-zisk-zkvm-elf",
+        ])
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .current_dir("./src/zisk");
+    #[cfg(not(feature = "ci"))]
+    {
+        setup_command
+            .env("RUSTC", rustc_path("zisk"))
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .args([
+                "rom-setup",
+                "-e",
+                "./target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
+            ])
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .current_dir("./src/zisk");
+    }
+
+    println!("{build_command:?}");
+    #[cfg(not(feature = "ci"))]
+    println!("{setup_command:?}");
+
+    println!("CWD = {}", std::env::current_dir().unwrap().display());
+
+    let start = std::time::Instant::now();
+
+    let build_status = build_command
+        .status()
+        .expect("Failed to execute zisk build command");
+
+    #[cfg(not(feature = "ci"))]
+    let setup_status = setup_command
+        .status()
+        .expect("Failed to execute zisk setup command");
+
+    let duration = start.elapsed();
+
+    println!(
+        "ZisK guest program built in {:.2?} seconds",
+        duration.as_secs_f64()
+    );
+
+    if !build_status.success() {
+        panic!("Failed to build guest program with zisk toolchain");
+    }
+    #[cfg(not(feature = "ci"))]
+    if !setup_status.success() {
+        panic!("Failed to setup compiled guest program with zisk toolchain");
+    }
+
+    let _ = std::fs::create_dir("./src/zisk/out");
+
+    std::fs::copy(
+        "./src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
+        "./src/zisk/out/riscv64ima-zisk-elf",
+    )
+    .expect("could not copy Zisk elf to output directory");
+}
+
+#[cfg(all(not(clippy), feature = "zisk"))]
+/// Returns the path to `rustc` executable of the given toolchain.
+///
+/// Taken from https://github.com/eth-act/ere/blob/master/crates/compile-utils/src/rust.rs#L166
+pub fn rustc_path(toolchain: &str) -> std::path::PathBuf {
+    let mut cmd = std::process::Command::new("rustc");
+    let output = cmd
+        .env("RUSTUP_TOOLCHAIN", toolchain)
+        .args(["--print", "sysroot"])
+        .output()
+        .expect("Failed to execute rustc command");
+
+    if !output.status.success() {
+        panic!("Failed to get sysroot for toolchain {}", toolchain);
+    }
+
+    std::path::PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+        .join("bin")
+        .join("rustc")
 }
