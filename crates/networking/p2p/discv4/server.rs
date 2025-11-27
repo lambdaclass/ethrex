@@ -497,12 +497,11 @@ impl DiscoveryServer {
         {
             return Ok(());
         }
-        let pairs = enr_response_message.node_record.decode_pairs();
-        trace!(pairs=?pairs, "ENRResponse pairs");
 
         self.peer_table
             .set_node_record(&node_id, enr_response_message.node_record)
             .await?;
+
         Ok(())
     }
 
@@ -534,7 +533,7 @@ impl DiscoveryServer {
                 debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
                 Err(DiscoveryServerError::InvalidContact)
             }
-            PeerTableOutMessage::Contact(contact) => Ok(contact),
+            PeerTableOutMessage::Contact(contact) => Ok(*contact),
             _ => unreachable!(),
         }
     }

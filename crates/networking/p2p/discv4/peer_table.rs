@@ -389,7 +389,7 @@ impl PeerTable {
     /// Provide a contact to initiate a connection
     pub async fn get_contact_to_initiate(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactToInitiate).await? {
-            OutMessage::Contact(contact) => Ok(Some(contact)),
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
@@ -398,7 +398,7 @@ impl PeerTable {
     /// Provide a contact to perform Discovery lookup
     pub async fn get_contact_for_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactForLookup).await? {
-            OutMessage::Contact(contact) => Ok(Some(contact)),
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
@@ -411,7 +411,7 @@ impl PeerTable {
             .call(CallMessage::GetContactForEnrLookup)
             .await?
         {
-            OutMessage::Contact(contact) => Ok(Some(contact)),
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
@@ -715,7 +715,7 @@ impl PeerTableServer {
         if sender_ip != contact.node.ip {
             return OutMessage::IpMismatch;
         }
-        OutMessage::Contact(contact.clone())
+        OutMessage::Contact(Box::new(contact.clone()))
     }
 
     fn get_closest_nodes(&mut self, node_id: H256) -> Vec<Node> {
@@ -937,7 +937,7 @@ pub enum OutMessage {
     TargetReached(bool),
     IsNew(bool),
     Nodes(Vec<Node>),
-    Contact(Contact),
+    Contact(Box<Contact>),
     InvalidContact,
     UnknownContact,
     IpMismatch,
@@ -985,14 +985,17 @@ impl GenServer for PeerTableServer {
             )),
             CallMessage::GetContactToInitiate => CallResponse::Reply(
                 self.get_contact_to_initiate()
+                    .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
             CallMessage::GetContactForLookup => CallResponse::Reply(
                 self.get_contact_for_lookup()
+                    .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
             CallMessage::GetContactForEnrLookup => CallResponse::Reply(
                 self.get_contact_for_enr_lookup()
+                    .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
             CallMessage::GetContactsToRevalidate(revalidation_interval) => CallResponse::Reply(
