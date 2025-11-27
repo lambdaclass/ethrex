@@ -44,12 +44,6 @@ pub struct Endpoint {
     pub tcp_port: u16,
 }
 
-impl Endpoint {
-    pub fn tcp_address(&self) -> Option<SocketAddr> {
-        (self.tcp_port != 0).then_some(SocketAddr::new(self.ip, self.tcp_port))
-    }
-}
-
 impl RLPEncode for Endpoint {
     fn encode(&self, buf: &mut dyn BufMut) {
         Encoder::new(buf)

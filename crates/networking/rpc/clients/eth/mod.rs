@@ -2,11 +2,10 @@ use std::collections::BTreeMap;
 
 use crate::{
     clients::eth::errors::{
-        CallError, GetBlobBaseFeeRequestError, GetEthConfigError, GetPeerCountError,
-        GetWitnessError, TxPoolContentError,
+        CallError, GetBlobBaseFeeRequestError, GetPeerCountError, GetWitnessError,
+        TxPoolContentError,
     },
     debug::execution_witness::RpcExecutionWitness,
-    eth::client::EthConfigResponse,
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -20,15 +19,12 @@ use bytes::Bytes;
 use errors::{
     EstimateGasError, EthClientError, GetBalanceError, GetBlockByHashError, GetBlockByNumberError,
     GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError, GetMaxPriorityFeeError,
-    GetNonceError, GetRawBlockError, GetTransactionByHashError, GetTransactionReceiptError,
-    SendRawTransactionError,
+    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlobsBundle, Block, GenericTransaction, TxKind},
-    utils::decode_hex,
+    types::{BlobsBundle, GenericTransaction, TxKind},
 };
-use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -460,26 +456,6 @@ impl EthClient {
         }
     }
 
-    pub async fn get_raw_block(&self, block: BlockIdentifier) -> Result<Block, EthClientError> {
-        let request = RpcRequest::new("debug_getRawBlock", Some(vec![block.into()]));
-
-        let encoded_block: Result<String, _> = match self.send_request(request).await? {
-            RpcResponse::Success(result) => {
-                serde_json::from_value(result.result).map_err(GetRawBlockError::SerdeJSONError)
-            }
-            RpcResponse::Error(error_response) => {
-                Err(GetRawBlockError::RPCError(error_response.error.message))
-            }
-        };
-
-        let encoded_block = decode_hex(&encoded_block?)
-            .map_err(|e| EthClientError::Custom(format!("Failed to decode hex: {e}")))?;
-
-        let block = Block::decode_unfinished(&encoded_block)
-            .map_err(|e| GetRawBlockError::RLPDecodeError(e.to_string()))?;
-        Ok(block.0)
-    }
-
     pub async fn get_logs(
         &self,
         from_block: U256,
@@ -574,19 +550,6 @@ impl EthClient {
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
                 Err(GetBalanceError::RPCError(error_response.error.message).into())
-            }
-        }
-    }
-
-    pub async fn get_eth_config(&self) -> Result<EthConfigResponse, EthClientError> {
-        let request = RpcRequest::new("eth_config", None);
-
-        match self.send_request(request).await? {
-            RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetEthConfigError::SerdeJSONError)
-                .map_err(EthClientError::from),
-            RpcResponse::Error(error_response) => {
-                Err(GetEthConfigError::RPCError(error_response.error.message).into())
             }
         }
     }

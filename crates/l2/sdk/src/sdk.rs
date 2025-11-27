@@ -21,9 +21,7 @@ use ethrex_rpc::clients::eth::{EthClient, Overrides, errors::EthClientError};
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
 use secp256k1::SecretKey;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
-use std::str::FromStr;
 use std::{fs::read_to_string, path::Path};
 use tracing::{error, warn};
 
@@ -341,21 +339,6 @@ pub async fn deposit_erc20(
     send_generic_transaction(eth_client, deposit_tx, from_signer).await
 }
 
-pub fn secret_key_deserializer<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let hex = H256::deserialize(deserializer)?;
-    SecretKey::from_slice(hex.as_bytes()).map_err(serde::de::Error::custom)
-}
-
-pub fn secret_key_serializer<S>(secret_key: &SecretKey, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let hex = H256::from_slice(&secret_key.secret_bytes());
-    hex.serialize(serializer)
-}
 // https://github.com/Arachnid/deterministic-deployment-proxy
 // 0x4e59b44847b379578588920cA78FbF26c0B4956C
 pub const DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS: Address = H160([
@@ -1077,22 +1060,6 @@ async fn _call_u64_variable(
             EthClientError::Custom("Failed to convert from_hex_string_to_u256()".to_owned())
         })?;
 
-    Ok(value)
-}
-
-async fn _call_address_variable(
-    eth_client: &EthClient,
-    selector: &[u8],
-    on_chain_proposer_address: Address,
-) -> Result<Address, EthClientError> {
-    let hex_string = _generic_call(eth_client, selector, on_chain_proposer_address).await?;
-
-    let hex_str = &hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
-        "Couldn't strip prefix from request.".to_owned(),
-    ))?[24..]; // Get the needed bytes
-
-    let value = Address::from_str(hex_str)
-        .map_err(|_| EthClientError::Custom("Failed to convert from_str()".to_owned()))?;
     Ok(value)
 }
 
