@@ -556,7 +556,7 @@ impl Syncer {
     }
 }
 
-/// Fetches all block bodies for the given block hashes via p2p and stores them
+/// Fetches all block bodies for the given block headers via p2p and stores them
 async fn store_block_bodies(
     mut block_headers: Vec<BlockHeader>,
     mut peers: PeerHandler,
