@@ -1268,6 +1268,10 @@ impl Store {
         self.engine.clear_snap_state().await
     }
 
+    pub async fn clear_bad_block(&self, block: BlockHash) -> Result<(), StoreError> {
+        self.engine.clear_bad_block(block).await
+    }
+
     /// Fetches the latest valid ancestor for a block that was previously marked as invalid
     /// Returns None if the block was never marked as invalid
     pub async fn get_latest_valid_ancestor(

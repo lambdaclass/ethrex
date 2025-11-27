@@ -1948,6 +1948,12 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
+    async fn clear_bad_block(&self, block: BlockHash) -> Result<(), StoreError> {
+        let key = block.encode_to_vec();
+        let cf = self.cf_handle(CF_INVALID_ANCESTORS)?;
+        self.db.delete_cf(&cf, key).map_err(StoreError::from)
+    }
+
     async fn set_latest_valid_ancestor(
         &self,
         bad_block: BlockHash,

@@ -723,6 +723,9 @@ async fn try_execute_payload(
     // Execute and store the block
     info!(%block_hash, %block_number, "Executing payload");
 
+    // Clear from invalid blocks table, if consensus is insisting
+    // we should retry.
+
     match add_block(context, block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync

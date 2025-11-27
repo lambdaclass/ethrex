@@ -642,6 +642,11 @@ impl StoreEngine for Store {
             .clone())
     }
 
+    async fn clear_bad_block(&self, block: BlockHash) -> Result<(), StoreError> {
+        self.inner()?.invalid_ancestors.remove(&block);
+        Ok(())
+    }
+
     async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,

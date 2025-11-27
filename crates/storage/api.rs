@@ -324,6 +324,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
 
+    async fn clear_bad_block(&self, block: BlockHash) -> Result<(), StoreError>;
+
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
     ///
