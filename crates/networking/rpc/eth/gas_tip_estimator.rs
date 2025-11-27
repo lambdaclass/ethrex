@@ -86,7 +86,7 @@ impl GasTipEstimator {
             };
 
             let base_fee = storage
-                .get_block_header(latest_block_number)
+                .get_block_header(block_num)
                 .ok()
                 .flatten()
                 .and_then(|header| header.base_fee_per_gas);
