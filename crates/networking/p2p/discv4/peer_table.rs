@@ -45,7 +45,13 @@ pub struct Contact {
     /// None if no ping was sent yet or it was already acknowledged.
     pub ping_hash: Option<H256>,
 
+    /// The hash of the last unacknowledged ENRRequest sent to this contact, or
+    /// None if no request was sent yet or it was already acknowledged.
+    pub enr_request_hash: Option<H256>,
+
     pub n_find_node_sent: u64,
+    /// ENR associated with this contact, if it was provided by the peer.
+    pub record: Option<NodeRecord>,
     // This contact failed to respond our Ping.
     pub disposable: bool,
     // Set to true after we send a successful ENRResponse to it.
@@ -67,6 +73,20 @@ impl Contact {
         self.validation_timestamp = Some(Instant::now());
         self.ping_hash = Some(ping_hash);
     }
+
+    pub fn record_enr_request_sent(&mut self, request_hash: H256) {
+        self.validation_timestamp = Some(Instant::now());
+        self.enr_request_hash = Some(request_hash);
+    }
+
+    // If hash does not match, ignore. Otherwise, reset enr_request_hash
+    pub fn record_enr_response_received(&mut self, request_hash: H256) {
+        self.enr_request_hash.take_if(|h| *h == request_hash);
+    }
+
+    pub fn has_pending_enr_request(&self) -> bool {
+        self.enr_request_hash.is_some()
+    }
 }
 
 impl From<Node> for Contact {
@@ -75,7 +95,9 @@ impl From<Node> for Contact {
             node,
             validation_timestamp: None,
             ping_hash: None,
+            enr_request_hash: None,
             n_find_node_sent: 0,
+            record: None,
             disposable: false,
             knows_us: true,
             unwanted: false,
@@ -248,6 +270,51 @@ impl PeerTable {
         Ok(())
     }
 
+    /// Record request sent, store the request hash for later check
+    pub async fn record_enr_request_sent(
+        &mut self,
+        node_id: &H256,
+        request_hash: H256,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordEnrRequestSent {
+                node_id: *node_id,
+                request_hash,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a response received. Check previously saved hash and reset it if it matches
+    pub async fn record_enr_response_received(
+        &mut self,
+        node_id: &H256,
+        request_hash: H256,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordEnrResponseReceived {
+                node_id: *node_id,
+                request_hash,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Set node record for peer.
+    pub async fn set_node_record(
+        &mut self,
+        node_id: &H256,
+        record: NodeRecord,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::SetNodeRecord {
+                node_id: *node_id,
+                record,
+            })
+            .await?;
+        Ok(())
+    }
+
     /// Set peer as disposable
     pub async fn set_disposable(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle
@@ -331,6 +398,19 @@ impl PeerTable {
     /// Provide a contact to perform Discovery lookup
     pub async fn get_contact_for_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactForLookup).await? {
+            OutMessage::Contact(contact) => Ok(Some(contact)),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Provide a contact to perform ENR lookup
+    pub async fn get_contact_for_enr_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetContactForEnrLookup)
+            .await?
+        {
             OutMessage::Contact(contact) => Ok(Some(contact)),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
@@ -597,6 +677,21 @@ impl PeerTableServer {
             .cloned()
     }
 
+    fn get_contact_for_enr_lookup(&mut self) -> Option<Contact> {
+        self.contacts
+            .values()
+            .filter(|c| {
+                c.was_validated()
+                    && !c.has_pending_enr_request()
+                    && c.record.is_none()
+                    && !c.disposable
+            })
+            .collect::<Vec<_>>()
+            .choose(&mut rand::rngs::OsRng)
+            .cloned()
+            .cloned()
+    }
+
     fn get_contacts_to_revalidate(&mut self, revalidation_interval: Duration) -> Vec<Contact> {
         self.contacts
             .values()
@@ -780,6 +875,18 @@ enum CastMessage {
         node_id: H256,
         ping_hash: H256,
     },
+    RecordEnrRequestSent {
+        node_id: H256,
+        request_hash: H256,
+    },
+    RecordEnrResponseReceived {
+        node_id: H256,
+        request_hash: H256,
+    },
+    SetNodeRecord {
+        node_id: H256,
+        record: NodeRecord,
+    },
     SetDisposable {
         node_id: H256,
     },
@@ -801,6 +908,7 @@ enum CallMessage {
     TargetPeersReached,
     GetContactToInitiate,
     GetContactForLookup,
+    GetContactForEnrLookup,
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
     GetScore { node_id: H256 },
@@ -881,6 +989,10 @@ impl GenServer for PeerTableServer {
             ),
             CallMessage::GetContactForLookup => CallResponse::Reply(
                 self.get_contact_for_lookup()
+                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
+            ),
+            CallMessage::GetContactForEnrLookup => CallResponse::Reply(
+                self.get_contact_for_enr_lookup()
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
             CallMessage::GetContactsToRevalidate(revalidation_interval) => CallResponse::Reply(
@@ -1028,6 +1140,27 @@ impl GenServer for PeerTableServer {
                     {
                         contact.ping_hash = None
                     }
+                });
+            }
+            CastMessage::RecordEnrRequestSent {
+                node_id,
+                request_hash,
+            } => {
+                self.contacts
+                    .entry(node_id)
+                    .and_modify(|contact| contact.record_enr_request_sent(request_hash));
+            }
+            CastMessage::RecordEnrResponseReceived {
+                node_id,
+                request_hash,
+            } => {
+                self.contacts.entry(node_id).and_modify(|contact| {
+                    contact.record_enr_response_received(request_hash);
+                });
+            }
+            CastMessage::SetNodeRecord { node_id, record } => {
+                self.contacts.entry(node_id).and_modify(|contact| {
+                    contact.record = Some(record);
                 });
             }
             CastMessage::SetDisposable { node_id } => {

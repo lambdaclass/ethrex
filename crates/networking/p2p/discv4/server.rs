@@ -2,8 +2,8 @@ use crate::{
     discv4::{
         codec::Discv4Codec,
         messages::{
-            ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
-            PacketDecodeErr, PingMessage, PongMessage,
+            ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage,
+            Packet, PacketDecodeErr, PingMessage, PongMessage,
         },
         peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     },
@@ -41,6 +41,11 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
 pub const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
 pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
+/// The initial interval between enr lookups, until the number of peers reaches
+/// [target_peers](DiscoverySideCarState::target_peers), or the number of
+/// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
+pub const INITIAL_ENR_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
+pub const ENR_LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -65,6 +70,7 @@ pub enum InMessage {
     Message(Box<Discv4Message>),
     Revalidate,
     Lookup,
+    EnrLookup,
     Prune,
     ChangeFindNodeMessage,
     Shutdown,
@@ -203,6 +209,8 @@ impl DiscoveryServer {
                     - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
                 */
                 trace!(received = "ENRResponse", msg = ?enrresponse_message, from = %format!("{sender_public_key:#x}"));
+                self.handle_enr_response(sender_public_key, from, enrresponse_message)
+                    .await?;
             }
         }
         Ok(())
@@ -260,6 +268,44 @@ impl DiscoveryServer {
         } else {
             trace!("Reached target number of peers or contacts. Using longer lookup interval.");
             LOOKUP_INTERVAL
+        }
+    }
+
+    async fn enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {
+        if let Some(contact) = self.peer_table.get_contact_for_enr_lookup().await? {
+            let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+            let enr_request = Message::ENRRequest(ENRRequestMessage { expiration });
+
+            let mut buf = Vec::new();
+            enr_request.encode_with_header(&mut buf, &self.signer);
+            let enr_request_hash: [u8; 32] = buf[..32]
+                .try_into()
+                .expect("first 32 bytes are the message hash");
+
+            if self.udp_socket.send_to(&buf, contact.node.udp_addr())
+                .await
+                .inspect_err( |e| error!(sending = "ENRRequest", addr = ?&contact.node.udp_addr(), to = %format!("{:#x}", contact.node.public_key), err=?e, "Error sending message"),)
+                .is_err()
+            {
+                self.peer_table
+                    .set_disposable(&contact.node.node_id())
+                    .await?;
+                METRICS.record_new_discarded_node().await;
+            }
+
+            self.peer_table
+                .record_enr_request_sent(&contact.node.node_id(), H256::from(enr_request_hash))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn get_enr_lookup_interval(&mut self) -> Duration {
+        if !self.peer_table.target_reached().await.unwrap_or(false) {
+            INITIAL_ENR_LOOKUP_INTERVAL
+        } else {
+            trace!("Reached target number of peers or contacts. Using longer enr lookup interval.");
+            ENR_LOOKUP_INTERVAL
         }
     }
 
@@ -436,6 +482,30 @@ impl DiscoveryServer {
         Ok(())
     }
 
+    async fn handle_enr_response(
+        &mut self,
+        sender_public_key: H512,
+        from: SocketAddr,
+        enr_response_message: ENRResponseMessage,
+    ) -> Result<(), DiscoveryServerError> {
+        let node_id = node_id(&sender_public_key);
+
+        if self
+            .validate_contact(sender_public_key, node_id, from, "ENRResponse")
+            .await
+            .is_err()
+        {
+            return Ok(());
+        }
+        let pairs = enr_response_message.node_record.decode_pairs();
+        trace!(pairs=?pairs, "ENRResponse pairs");
+
+        self.peer_table
+            .set_node_record(&node_id, enr_response_message.node_record)
+            .await?;
+        Ok(())
+    }
+
     async fn validate_contact(
         &mut self,
         sender_public_key: H512,
@@ -521,6 +591,7 @@ impl GenServer for DiscoveryServer {
             InMessage::ChangeFindNodeMessage,
         );
         let _ = handle.clone().cast(InMessage::Lookup).await;
+        let _ = handle.clone().cast(InMessage::EnrLookup).await;
         send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
 
         Ok(Success(self))
@@ -554,6 +625,16 @@ impl GenServer for DiscoveryServer {
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
+            }
+            Self::CastMsg::EnrLookup => {
+                trace!(received = "EnrLookup");
+                let _ = self
+                    .enr_lookup()
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
+
+                let interval = self.get_enr_lookup_interval().await;
+                send_after(interval, handle.clone(), Self::CastMsg::EnrLookup);
             }
             Self::CastMsg::Prune => {
                 trace!(received = "Prune");
