@@ -44,22 +44,20 @@ impl Receipt {
     }
 
     pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
-        let mut encode_buff = match self.tx_type {
-            TxType::Legacy => {
-                vec![]
-            }
-            _ => {
-                vec![self.tx_type as u8]
-            }
-        };
+        // Bloom is already 512 bytes, so we preallocate at least that much plus some,
+        // to avoid multiple small allocations.
+        let mut encode_buf = Vec::with_capacity(512);
+        if self.tx_type != TxType::Legacy {
+            encode_buf.push(self.tx_type as u8);
+        }
         let bloom = bloom_from_logs(&self.logs);
-        Encoder::new(&mut encode_buff)
+        Encoder::new(&mut encode_buf)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
             .encode_field(&bloom)
             .encode_field(&self.logs)
             .finish();
-        encode_buff
+        encode_buf
     }
 }
 
