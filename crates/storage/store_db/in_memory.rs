@@ -505,12 +505,12 @@ impl StoreEngine for Store {
 
     fn get_canonical_block_hashes(
         &self,
-        start: BlockNumber,
-        end: BlockNumber,
+        newest: BlockNumber,
+        oldest: BlockNumber,
     ) -> Result<Vec<BlockHash>, StoreError> {
         let db = self.inner()?;
         let mut res = Vec::new();
-        for number in start..end {
+        for number in (oldest..newest).rev() {
             let Some(hash) = db.canonical_hashes.get(&number) else {
                 break;
             };

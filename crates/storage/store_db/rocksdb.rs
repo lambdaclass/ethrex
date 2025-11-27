@@ -1531,8 +1531,8 @@ impl StoreEngine for Store {
 
     fn get_canonical_block_hashes(
         &self,
-        start: BlockNumber,
-        end: BlockNumber,
+        newest: BlockNumber,
+        oldest: BlockNumber,
     ) -> Result<Vec<BlockHash>, StoreError> {
         let db = self.db.clone();
 
@@ -1544,7 +1544,7 @@ impl StoreEngine for Store {
         })?;
 
         let mut results = Vec::with_capacity(end.saturating_sub(start) as usize);
-        for number in start..end {
+        for number in (oldest..newest).rev() {
             match db.get_cf(&cf, number.to_le_bytes())? {
                 Some(res) => results.push(BlockHashRLP::from_bytes(res).to()?),
                 None => break,

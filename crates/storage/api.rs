@@ -186,8 +186,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     // Get the canonical block hashes for the given block range
     fn get_canonical_block_hashes(
         &self,
-        start: BlockNumber,
-        end: BlockNumber,
+        newest: BlockNumber,
+        oldest: BlockNumber,
     ) -> Result<Vec<BlockHash>, StoreError>;
 
     /// Stores the chain configuration values, should only be called once after reading the genesis file

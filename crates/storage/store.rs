@@ -806,10 +806,10 @@ impl Store {
 
     pub fn get_canonical_block_hashes(
         &self,
-        start: BlockNumber,
-        end: BlockNumber,
+        newest: BlockNumber,
+        oldest: BlockNumber,
     ) -> Result<Vec<BlockHash>, StoreError> {
-        self.engine.get_canonical_block_hashes(start, end)
+        self.engine.get_canonical_block_hashes(newest, oldest)
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
