@@ -4,7 +4,7 @@ use crate::{
     apply_prefix,
     error::StoreError,
     store::STATE_TRIE_SEGMENTS,
-    trie_db::layering::{TrieLayerCache, TrieWrapper},
+    trie_db::layering::{TrieLayerCache, TrieWrapper, build_prefix},
 };
 use ethereum_types::H256;
 use ethrex_common::types::{
@@ -134,9 +134,10 @@ impl StoreEngine for Store {
             .storage_updates
             .into_iter()
             .flat_map(|(account_hash, nodes)| {
-                nodes.into_iter().map(move |(path, node)| {
-                    (apply_prefix(Some(account_hash), path).into_vec(), node)
-                })
+                let prefix = build_prefix(account_hash);
+                nodes
+                    .into_iter()
+                    .map(move |(path, node)| (prefix.concat(&path).into_vec(), node))
             })
             .chain(
                 update_batch

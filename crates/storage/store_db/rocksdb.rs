@@ -1,7 +1,7 @@
 use crate::{
     rlp::AccountCodeHashRLP,
     trie_db::{
-        layering::{TrieLayerCache, TrieWrapper, apply_prefix},
+        layering::{TrieLayerCache, TrieWrapper, apply_prefix, build_prefix},
         rocksdb_locked::RocksDBLockedTrieDB,
     },
 };
@@ -914,9 +914,10 @@ impl Store {
         storage_updates
             .into_iter()
             .flat_map(|(account_hash, nodes)| {
+                let prefix = build_prefix(account_hash);
                 nodes
                     .into_iter()
-                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path).into_vec(), node))
+                    .map(move |(path, node)| (prefix.concat(&path).into_vec(), node))
             })
             .chain(
                 account_updates
