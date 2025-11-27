@@ -397,7 +397,7 @@ impl Syncer {
                 let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
                 let bodies = self
                     .peers
-                    .request_and_validate_block_bodies(header_batch)
+                    .request_block_bodies(header_batch)
                     .await?
                     .ok_or(SyncError::BodiesNotFound)?;
                 debug!("Obtained: {} block bodies", bodies.len());
@@ -564,10 +564,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers
-            .request_and_validate_block_bodies(&block_headers)
-            .await?
-        {
+        if let Some(block_bodies) = peers.request_block_bodies(&block_headers).await? {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_headers = block_headers.drain(..block_bodies.len());
