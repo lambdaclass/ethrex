@@ -31,6 +31,7 @@ use std::{
     hint::black_box,
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
+    time::Duration,
 };
 
 fn make_string_list(count: usize) -> Vec<String> {
@@ -1335,9 +1336,17 @@ fn bench_encode_withdrawals(c: &mut Criterion) {
     group.finish();
 }
 
+fn criterion_config() -> Criterion {
+    Criterion::default()
+        .sample_size(200)
+        .warm_up_time(Duration::from_secs(3))
+        .measurement_time(Duration::from_secs(10))
+}
+
 criterion_group!(
-    benches,
-    bench_encode_integer,
+    name = benches;
+    config = criterion_config();
+    targets = bench_encode_integer,
     bench_encode_strings,
     bench_encode_int_lists,
     bench_encode_string_lists,
