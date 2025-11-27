@@ -38,6 +38,7 @@ use std::{
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{Level, debug, error, info, warn};
+use tracing_flame::FlameLayer;
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -71,7 +72,11 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
 
-    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
+    let (flame_layer, _guard) = FlameLayer::with_file("./tracing.folded").unwrap();
+    let subscriber = Registry::default()
+        .with(fmt_layer)
+        .with(flame_layer)
+        .with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
