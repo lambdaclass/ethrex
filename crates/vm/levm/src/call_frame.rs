@@ -9,7 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, hint::assert_unchecked};
 
 /// [`u64`]s that make up a [`U256`]
 const U64_PER_U256: usize = U256::MAX.0.len();
@@ -148,16 +148,12 @@ impl Stack {
             return Err(ExceptionalHalt::StackUnderflow);
         }
 
-        #[expect(
-            unsafe_code,
-            reason = "self.offset always < STACK_LIMIT, index just checked to be < STACK_LIMIT"
-        )]
+        #[expect(unsafe_code, reason = "self.offset always < STACK_LIMIT")]
         unsafe {
-            let base = self.values.as_mut_ptr();
-            let pa = base.add(self.offset);
-            let pb = base.add(index);
-            std::ptr::swap(pa, pb);
-        }
+            assert_unchecked(self.offset < STACK_LIMIT)
+        };
+
+        self.values.swap(self.offset, index);
         Ok(())
     }
 
