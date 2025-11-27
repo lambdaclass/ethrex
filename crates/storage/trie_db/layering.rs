@@ -47,11 +47,36 @@ impl TrieLayerCache {
             .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
     }
 
+    fn fingerprint(key: &[u8]) -> u64 {
+        match key.len() {
+            0..3 => 0, // Just assume first 3 levels are always present
+            3..66 => {
+                let mut bytes = [0u8; 8];
+                for (i, nibbles) in key.chunks(2).take(8).enumerate() {
+                    bytes[i] = nibbles[0] << 4;
+                    bytes[i] |= *nibbles.get(1).unwrap_or(&0);
+                }
+                u64::from_be_bytes(bytes)
+            }
+            66.. => {
+                let mut bytes = [0u8; 8];
+                for (i, nibbles) in key[..8].chunks_exact(2).enumerate() {
+                    bytes[i] = (nibbles[0] << 4) | nibbles[1];
+                }
+                for (i, nibbles) in key[66..].chunks(2).take(4).enumerate() {
+                    bytes[4 + i] = nibbles[0] << 4;
+                    bytes[4 + i] |= *nibbles.get(1).unwrap_or(&0);
+                }
+                u64::from_be_bytes(bytes)
+            }
+        }
+    }
+
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         // Fast check to know if any layer may contains the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or not exist (false positive).
         if let Some(filter) = &self.bloom
-            && !filter.contains(key)
+            && !filter.contains_fingerprint(Self::fingerprint(key))
         {
             // TrieWrapper goes to db when returning None.
             return None;
@@ -110,7 +135,9 @@ impl TrieLayerCache {
         // add this new bloom to the global one.
         if let Some(filter) = &mut self.bloom {
             for (p, _) in &key_values {
-                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
+                let fp = Self::fingerprint(p.as_ref());
+                if let Err(qfilter::Error::CapacityExceeded) = filter.insert_fingerprint(false, fp)
+                {
                     tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
                     self.bloom = None;
                     break;
@@ -144,7 +171,10 @@ impl TrieLayerCache {
 
         for layer in self.layers.values() {
             for path in layer.nodes.keys() {
-                if let Err(qfilter::Error::CapacityExceeded) = new_global_filter.insert(path) {
+                let fp = Self::fingerprint(path);
+                if let Err(qfilter::Error::CapacityExceeded) =
+                    new_global_filter.insert_fingerprint(false, fp)
+                {
                     tracing::warn!(
                         "TrieLayerCache: rebuild_bloom capacity exceeded. Poisoning bloom."
                     );
