@@ -3167,6 +3167,16 @@ cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
 <p>The flag <code>--proof-coordinators</code> is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to <code>localhost:3900</code> because the command above command uses the port <code>3900</code> for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
 We choose SP1 as the backend to indicate the prover to generate SP1 proofs.</p>
 </div>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="docker-error-response-from-daemon-could-not-select-device-driver--with-capabilities-gpu"><a class="header" href="#docker-error-response-from-daemon-could-not-select-device-driver--with-capabilities-gpu"><code>docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]</code></a></h3>
+<p>If you encounter the following error when starting the SP1 prover with GPU support:</p>
+<pre><code class="language-plaintext">docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]
+</code></pre>
+<p>This error indicates that Docker is unable to find a suitable GPU driver for running containers with GPU support. To resolve this issue, follow these steps:</p>
+<ol>
+<li><strong>Install NVIDIA Container Toolkit</strong>: Ensure that you have the NVIDIA Container Toolkit installed on your system. This toolkit allows Docker to utilize NVIDIA GPUs. You can follow the installation instructions from the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html">official NVIDIA documentation</a>.</li>
+<li><strong>Configure Docker to use the NVIDIA runtime</strong>: After installing the NVIDIA Container Toolkit, you need to configure Docker to use the NVIDIA runtime by default. You can do this by following the instructions in the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#configuring-docker">Configuring Docker documentation</a>.</li>
+</ol>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -4611,7 +4621,7 @@ make init ETHREX_L2_TDX=true PROOF_COORDINATOR_ADDRESS=0.0.0.0
 <pre><code class="language-sh">// cd crates/l2
 make -C tee/quote-gen run
 </code></pre>
-<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h2 id="troubleshooting-1"><a class="header" href="#troubleshooting-1">Troubleshooting</a></h2>
 <h3 id="unshare-write-failed-procselfuid_map-operation-not-permitted"><a class="header" href="#unshare-write-failed-procselfuid_map-operation-not-permitted"><code>unshare: write failed /proc/self/uid_map: Operation not permitted</code></a></h3>
 <p>If you get this error when building the image, it's probably because your OS has unprivileged userns restricted by default. You can undo this by running the following commands as root, or running the build as root while disabling sandboxing.</p>
 <pre><code class="language-sh">sysctl kernel.unprivileged_userns_apparmor_policy=0
@@ -9579,7 +9589,7 @@ To see more about the proof coordinator, read the <a href="https://docs.ethrex.x
 <p>Logs are being constantly improved to provide better clarity. However, during the execution of the integration tests, you might notice periodic warning logs from the L2 prover indicating that there are no new batches to prove. These warnings are expected behavior in this testing scenario and can be safely ignored.</p>
 <h3 id="the-tests-are-failing-what-should-i-do"><a class="header" href="#the-tests-are-failing-what-should-i-do">The tests are failing, what should I do?</a></h3>
 <p>If the tests are failing, first ensure that both the ethrex L2 node and the ethrex L2 prover are running correctly without any errors. Check their logs for any issues. If everything seems fine, try restarting both services and rerun the tests. Ensure that your configuration files (e.g., <code>.env</code>) are correctly set up and that all required environment variables are defined. If the problem persists, consider reaching out to the ethrex community or support channels for further assistance.</p>
-<h2 id="troubleshooting-1"><a class="header" href="#troubleshooting-1">Troubleshooting</a></h2>
+<h2 id="troubleshooting-2"><a class="header" href="#troubleshooting-2">Troubleshooting</a></h2>
 <div class="mdbook-alerts mdbook-alerts-note">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
@@ -11822,7 +11832,7 @@ xattr -dr com.apple.quarantine ethrex
 <p>Once the release is verified, <strong>merge the branch via PR</strong>.</p>
 <h2 id="dealing-with-hotfixes"><a class="header" href="#dealing-with-hotfixes">Dealing with hotfixes</a></h2>
 <p>If hotfixes are needed before the final release, commit them to <code>release/vX.Y.Z</code>, push, and create a new pre-release tag. The final tag <code>vX.Y.Z</code> should always point to the exact commit you will merge via PR.</p>
-<h2 id="troubleshooting-2"><a class="header" href="#troubleshooting-2">Troubleshooting</a></h2>
+<h2 id="troubleshooting-3"><a class="header" href="#troubleshooting-3">Troubleshooting</a></h2>
 <h3 id="failure-on-latest-release-workflow"><a class="header" href="#failure-on-latest-release-workflow">Failure on "latest release" workflow</a></h3>
 <p>If the CI fails when setting a release as latest (step 4), Docker tags <code>latest</code> and <code>l2</code> may not be updated. To manually push that changes, follow these steps:</p>
 <ul>

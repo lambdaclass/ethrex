@@ -265,6 +265,16 @@
 <p>The flag <code>--proof-coordinators</code> is used to specify one or more proof coordinator URLs. This is so because the prover is capable of proving ethrex L2 batches from multiple sequencers. We are particularly setting it to <code>localhost:3900</code> because the command above command uses the port <code>3900</code> for the proof coordinator by default (to learn more about the proof coordinator, read the ethrex L2 sequencer and ethrex L2 prover sections).
 We choose SP1 as the backend to indicate the prover to generate SP1 proofs.</p>
 </div>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="docker-error-response-from-daemon-could-not-select-device-driver--with-capabilities-gpu"><a class="header" href="#docker-error-response-from-daemon-could-not-select-device-driver--with-capabilities-gpu"><code>docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]</code></a></h3>
+<p>If you encounter the following error when starting the SP1 prover with GPU support:</p>
+<pre><code class="language-plaintext">docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]
+</code></pre>
+<p>This error indicates that Docker is unable to find a suitable GPU driver for running containers with GPU support. To resolve this issue, follow these steps:</p>
+<ol>
+<li><strong>Install NVIDIA Container Toolkit</strong>: Ensure that you have the NVIDIA Container Toolkit installed on your system. This toolkit allows Docker to utilize NVIDIA GPUs. You can follow the installation instructions from the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html">official NVIDIA documentation</a>.</li>
+<li><strong>Configure Docker to use the NVIDIA runtime</strong>: After installing the NVIDIA Container Toolkit, you need to configure Docker to use the NVIDIA runtime by default. You can do this by following the instructions in the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#configuring-docker">Configuring Docker documentation</a>.</li>
+</ol>
 
                     </main>
 
