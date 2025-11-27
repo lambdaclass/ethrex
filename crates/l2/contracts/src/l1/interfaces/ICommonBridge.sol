@@ -118,7 +118,7 @@ interface ICommonBridge {
     ) external;
 
     /// @notice Publishes the L2 messages in the router contract.
-    /// @dev This method is used by the L2 OnChainOperator to publish the L2
+    /// @dev This method is used by the L2 OnChainProposer to publish the L2
     /// messages when an L2 batch is committed.
     /// @param l2MessagesBatchNumber the batch number in L2 where the l2 messages were emitted.
     /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
