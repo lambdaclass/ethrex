@@ -1,7 +1,6 @@
-use std::{
-    io::ErrorKind,
-    process::{Command, Stdio},
-};
+use std::{io::ErrorKind, sync::OnceLock};
+use zisk_common::io::ZiskStdin;
+use zisk_sdk::{Asm, Proof, ProverClient, ZiskProver};
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
@@ -10,28 +9,52 @@ const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
-pub struct ProveOutput(pub Vec<u8>);
+pub static PROVE_CLIENT: OnceLock<ZiskProver<Asm>> = OnceLock::new();
+pub static EXECUTE_CLIENT: OnceLock<ZiskProver<Asm>> = OnceLock::new();
+
+pub fn execute_client() -> &'static ZiskProver<Asm> {
+    if PROVE_CLIENT.get().is_some() {
+        panic!(
+            "ZisK prover was previously initialized for proving, which is not allowed because of MPI requiring to be initialized just once."
+        );
+    }
+    EXECUTE_CLIENT.get_or_init(|| {
+        ProverClient::builder()
+            .asm()
+            .verify_constraints()
+            .elf_path(ELF_PATH.into())
+            .unlock_mapped_memory(true)
+            .build()
+            .unwrap_or_else(|e| panic!("Failed to setup ZisK prover client: {e}"))
+    })
+}
+
+pub fn prove_client() -> &'static ZiskProver<Asm> {
+    if EXECUTE_CLIENT.get().is_some() {
+        panic!(
+            "ZisK prover was previously initialized for execution, which is not allowed because of MPI requiring to be initialized just once."
+        );
+    }
+    PROVE_CLIENT.get_or_init(|| {
+        ProverClient::builder()
+            .asm()
+            .prove()
+            .aggregation(true)
+            .elf_path(ELF_PATH.into())
+            .unlock_mapped_memory(true)
+            .gpu(Default::default())
+            .build()
+            .unwrap_or_else(|e| panic!("Failed to setup ZisK prover client: {e}"))
+    })
+}
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     write_elf_file()?;
+    let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
+    let stdin = ZiskStdin::from_vec(stdin_bytes);
 
-    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
-    std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
-
-    let args = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
-    let output = Command::new("ziskemu")
-        .args(args)
-        .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .output()?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "ZisK execution failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
+    let client = execute_client();
+    client.execute(stdin)?;
 
     Ok(())
 }
@@ -39,49 +62,18 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 pub fn prove(
     input: ProgramInput,
     format: ProofFormat,
-) -> Result<ProveOutput, Box<dyn std::error::Error>> {
-    write_elf_file()?;
-
-    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
-    std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
-
-    let static_args = vec![
-        "prove",
-        "--elf",
-        ELF_PATH,
-        "--input",
-        INPUT_PATH,
-        "--output-dir",
-        OUTPUT_DIR_PATH,
-        "--aggregation",
-        "--unlock-mapped-memory",
-    ];
-    let conditional_groth16_arg = if let ProofFormat::Groth16 = format {
-        vec!["--final-snark"]
-    } else {
-        vec![]
-    };
-
-    let output = Command::new("cargo-zisk")
-        .args(static_args)
-        .args(conditional_groth16_arg)
-        .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .output()?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "ZisK proof generation failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
+) -> Result<Proof, Box<dyn std::error::Error>> {
+    if format != ProofFormat::Compressed {
+        unimplemented!("ZisK only supports the Compressed proof format");
     }
 
-    let proof_bytes = std::fs::read(format!(
-        "{OUTPUT_DIR_PATH}/vadcop_final_proof.compressed.bin"
-    ))?;
-    let output = ProveOutput(proof_bytes);
-    Ok(output)
+    write_elf_file()?;
+    let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
+    let stdin = ZiskStdin::from_vec(stdin_bytes);
+
+    let client = prove_client();
+    let proof = client.prove(stdin)?.proof;
+    Ok(proof)
 }
 
 pub fn verify(_output: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>> {
@@ -89,8 +81,8 @@ pub fn verify(_output: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>>
 }
 
 pub fn to_batch_proof(
-    proof: ProveOutput,
-    format: ProofFormat,
+    proof: Proof,
+    _format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     unimplemented!("to_batch_proof is not implemented for ZisK backend")
 }

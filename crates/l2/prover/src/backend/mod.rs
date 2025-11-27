@@ -15,15 +15,12 @@ pub mod sp1;
 #[cfg(feature = "zisk")]
 pub mod zisk;
 
-#[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum)]
+#[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum, PartialEq)]
 pub enum Backend {
     #[default]
     Exec,
-    #[cfg(feature = "sp1")]
     SP1,
-    #[cfg(feature = "risc0")]
     RISC0,
-    #[cfg(feature = "zisk")]
     ZisK,
 }
 
@@ -34,11 +31,8 @@ impl FromStr for Backend {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "exec" => Ok(Backend::Exec),
-            #[cfg(feature = "sp1")]
             "sp1" => Ok(Backend::SP1),
-            #[cfg(feature = "risc0")]
             "risc0" => Ok(Backend::RISC0),
-            #[cfg(feature = "zisk")]
             "zisk" => Ok(Backend::ZisK),
             _ => Err(Self::Err::from("Invalid backend")),
         }
@@ -52,5 +46,5 @@ pub enum ProveOutput {
     #[cfg(feature = "risc0")]
     RISC0(risc0_zkvm::Receipt),
     #[cfg(feature = "zisk")]
-    ZisK(zisk::ProveOutput),
+    ZisK(zisk_sdk::Proof),
 }
