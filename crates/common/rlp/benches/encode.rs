@@ -117,7 +117,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             .collect::<Vec<u8>>()
     };
     group.bench_function("encode_u8_random_seeded", move |b| {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(256);
         b.iter(|| {
             buf.clear();
             for &value in &u8_values {
@@ -137,7 +137,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             .collect::<Vec<u16>>()
     };
     group.bench_function("encode_u16_random_seeded", move |b| {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(256);
         b.iter(|| {
             buf.clear();
             for &value in &u16_values {
@@ -157,7 +157,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             .collect::<Vec<u32>>()
     };
     group.bench_function("encode_u32_random_seeded", move |b| {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(256);
         b.iter(|| {
             buf.clear();
             for &value in &u32_values {
@@ -177,7 +177,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             .collect::<Vec<u64>>()
     };
     group.bench_function("encode_u64_random_seeded", move |b| {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(256);
         b.iter(|| {
             buf.clear();
             for &value in &u64_values {
@@ -197,7 +197,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             .collect::<Vec<u128>>()
     };
     group.bench_function("encode_u128_random_seeded", move |b| {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(512);
         b.iter(|| {
             buf.clear();
             for &value in &u128_values {
@@ -214,7 +214,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             .collect::<Vec<U256>>()
     };
     group.bench_function("encode_u256_random_seeded", move |b| {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(1024);
         b.iter(|| {
             buf.clear();
             for value in &u256_values {
