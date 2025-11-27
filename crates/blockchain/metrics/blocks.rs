@@ -1,3 +1,5 @@
+use prometheus::Histogram;
+use prometheus::HistogramOpts;
 use prometheus::{Encoder, Gauge, IntGauge, Registry, TextEncoder};
 use std::sync::LazyLock;
 
@@ -11,6 +13,7 @@ pub struct MetricsBlocks {
     /// Keeps track of the block number of the last processed block
     block_number: IntGauge,
     gigagas: Gauge,
+    gigagas_histogram: Histogram,
     gigagas_block_building: Gauge,
     block_building_ms: IntGauge,
     block_building_base_fee: IntGauge,
@@ -45,6 +48,25 @@ impl MetricsBlocks {
             gigagas: Gauge::new(
                 "gigagas",
                 "Keeps track of the block execution throughput through gigagas/s",
+            )
+            .unwrap(),
+            gigagas_histogram: Histogram::with_opts(
+                HistogramOpts::new(
+                    "gigagas_histogram",
+                    "Histogram of the block execution throughput through gigagas/s",
+                )
+                .buckets({
+                    let mut buckets = vec![0.0];
+                    // 0.0 is added separately; next 5 buckets cover 0.03 to 0.15 Ggas (30 Mgas resolution)
+                    buckets.extend(prometheus::linear_buckets(0.03, 0.03, 5).unwrap());
+                    // 0.16 to 1.5 Ggas (10 Mgas resolution) -- 0.15 is covered by the previous bucket range
+                    buckets.extend(prometheus::linear_buckets(0.16, 0.01, 135).unwrap());
+                    // 1.6 to 2.0 Ggas (100 Mgas resolution)
+                    buckets.extend(prometheus::linear_buckets(1.6, 0.1, 5).unwrap());
+                    // High values
+                    buckets.extend(vec![2.5, 3.0, 4.0, 5.0, 10.0, 20.0]);
+                    buckets
+                }),
             )
             .unwrap(),
             gigagas_block_building: Gauge::new(
@@ -117,6 +139,7 @@ impl MetricsBlocks {
 
     pub fn set_latest_gigagas(&self, gigagas: f64) {
         self.gigagas.set(gigagas);
+        self.gigagas_histogram.observe(gigagas);
     }
 
     pub fn set_latest_gigagas_block_building(&self, gigagas: f64) {
@@ -155,6 +178,8 @@ impl MetricsBlocks {
         r.register(Box::new(self.block_number.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.gigagas.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.gigagas_histogram.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.gigagas_block_building.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
