@@ -14,7 +14,7 @@ const MAX_BLOCK_HASH_LOOKUP_DEPTH: u64 = 256;
 pub struct StoreVmDatabase {
     pub store: Store,
     pub block_hash: BlockHash,
-    // The 256 block hashes before the current block will be pre-loaded to optimize block hash lookup (BLOCKHASH opcode)
+    // The [MAX_BLOCK_HASH_LOOKUP_DEPTH] block hashes before the current block will be pre-loaded to optimize block hash lookup (BLOCKHASH opcode)
     // This will also be loaded with the block hashes for the full block batch in the case of batch execution
     pub block_hash_cache: HashMap<BlockNumber, BlockHash>,
     pub state_root: H256,
