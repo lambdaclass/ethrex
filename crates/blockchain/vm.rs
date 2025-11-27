@@ -25,6 +25,7 @@ fn fill_prev_block_hashes(
     block_hash_cache: &mut HashMap<BlockNumber, BlockHash>,
     store: Store,
 ) -> Result<(), StoreError> {
+    block_hash_cache.insert(block_header.number, block_header.hash());
     let current_block = block_header.number;
     let mut current_hash = block_header.hash();
     let oldest_block = current_block.saturating_sub(MAX_BLOCK_HASH_LOOKUP_DEPTH);
@@ -34,7 +35,7 @@ fn fill_prev_block_hashes(
     // If the block is canonical, look up hashes directly
     if is_canonic {
         let hashes = store.get_canonical_block_hashes(oldest_block, block_header.number)?;
-        current_hash = *hashes.last().unwrap_or(&current_hash);
+        current_hash = *hashes.first().unwrap_or(&current_hash);
         block_hash_cache.extend((block_header.number..current_block).zip(hashes));
     }
     // Lookup the rest of the hashes via ancestor lookup
