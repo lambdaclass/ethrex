@@ -71,12 +71,19 @@ impl GasTipEstimator {
             return Err(RpcErr::Internal("Error calculating gas price".to_string()));
         }
         let mut results = vec![];
-        // TODO: Estimating gas price involves querying multiple blocks
-        // and doing some calculations with each of them, let's consider
-        // caching this result, also we can have a specific DB method
-        // that returns a block range to not query them one-by-one.
-        for block_num in block_range {
-            let Some(block_body) = storage.get_block_body(block_num).await? else {
+
+        // Bulk fetch all block bodies and headers for the range
+        let bodies = storage
+            .get_block_bodies(block_range_lower_bound, latest_block_number)
+            .await?;
+        let headers = storage
+            .get_block_headers(block_range_lower_bound, latest_block_number)
+            .await?;
+
+        for (idx, (block_body, header)) in bodies.into_iter().zip(headers.into_iter()).enumerate() {
+            let block_num = block_range_lower_bound + idx as u64;
+
+            let Some(block_body) = block_body else {
                 error!(
                     "Block body for block number {block_num} is missing but is below the latest known block!"
                 );
@@ -85,11 +92,8 @@ impl GasTipEstimator {
                 ));
             };
 
-            let base_fee = storage
-                .get_block_header(block_num)
-                .ok()
-                .flatten()
-                .and_then(|header| header.base_fee_per_gas);
+            // Get the base fee for the block
+            let base_fee = header.and_then(|h| h.base_fee_per_gas);
 
             // Previously we took the gas_price, now we take the effective_gas_tip and add the base_fee in the RPC
             // call if needed.
