@@ -16,9 +16,9 @@ use tracing::instrument;
 pub struct StoreVmDatabase {
     pub store: Store,
     pub block_hash: BlockHash,
-    // Used to store known block hashes
-    // We use this when executing blocks in batches, as we will only add the blocks at the end
-    // And may need to access hashes of blocks previously executed in the batch
+    // Used to store known block hashes during execution as we look them up when executing BLOCKHASH opcode
+    // We will also pre-load this when executing blocks in batches, as we will only add the blocks at the end
+    // and may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: Arc<Mutex<BTreeMap<BlockNumber, BlockHash>>>,
     pub state_root: H256,
 }
