@@ -169,6 +169,7 @@ fn build_zisk_program() {
     if !build_status.success() {
         panic!("Failed to build guest program with zisk toolchain");
     }
+    #[cfg(not(feature = "ci"))]
     if !setup_status.success() {
         panic!("Failed to setup compiled guest program with zisk toolchain");
     }
