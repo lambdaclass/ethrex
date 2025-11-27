@@ -239,8 +239,6 @@ pub async fn fill_transactions(
         if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
             let id = head_tx.nonce();
             privileged_nonces.insert(privileged_tx.chain_id, Some(id));
-
-            privileged_tx_count += 1;
         }
 
         // Update acc_encoded_size
