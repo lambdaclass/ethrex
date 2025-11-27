@@ -74,23 +74,33 @@ pub fn init_tracing(
         .with_ansi(use_color)
         .with_filter(filter);
 
-    let (file_layer, guard) = if let Some(log_file) = &opts.log_file {
-        let file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .write(true)
-            .open(log_file)
-            .expect("Failed to open log file");
-
-        let (non_blocking, guard) = tracing_appender::non_blocking(file);
-        let file_layer = fmt::layer()
-            .with_target(include_target)
-            .with_ansi(false)
-            .with_writer(non_blocking);
-        (Some(file_layer), Some(guard))
+    let log_file = if let Some(log_file) = &opts.log_file {
+        log_file.clone()
     } else {
-        (None, None)
+        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let dir = PathBuf::from("logs");
+        if !dir.exists() {
+            let _ = std::fs::create_dir(&dir);
+        }
+        dir.join(format!("ethrex_{}_{}.log", branch, timestamp))
     };
+
+    let file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .write(true)
+        .open(log_file)
+        .expect("Failed to open log file");
+
+    let (non_blocking, guard) = tracing_appender::non_blocking(file);
+    let file_layer = fmt::layer()
+        .with_target(include_target)
+        .with_ansi(false)
+        .with_writer(non_blocking);
 
     let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
 
@@ -101,7 +111,7 @@ pub fn init_tracing(
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    (filter_handle, guard)
+    (filter_handle, Some(guard))
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
