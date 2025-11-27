@@ -135,6 +135,29 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         require(success, "Failed to burn Ether");
     }
 
+    /// @inheritdoc ICommonBridgeL2
+    function sendERC20ToL2(
+        uint256 chainId,
+        address to,
+        uint256 destGasLimit,
+        address tokenSourceL2,
+        address tokenDestL2,
+        uint256 amount
+    ) external override {
+        _burnGas(destGasLimit);
+        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2(
+            chainId,
+            address(this),
+            tokenDestL2,
+            destGasLimit,
+            transactionIds[chainId],
+            0,
+            abi.encodeCall(IERC20L2.crosschainMint,(to,amount))
+        );
+        transactionIds[chainId] += 1;
+        IERC20L2(tokenSourceL2).crosschainBurn(msg.sender, amount);
+    }
+
     /// Burns at least {amount} gas
     function _burnGas(uint256 amount) private view {
         uint256 startingGas = gasleft();

@@ -90,4 +90,20 @@ interface ICommonBridgeL2 {
     /// @param destGasLimit The gas limit for the destination chain execution.
     /// @param data The calldata to send to the destination contract.
     function sendToL2(uint256 chainId, address to, uint256 destGasLimit, bytes calldata data) external payable;
+
+    /// @notice Sends a ERC20 transfer to the another chain.
+    /// @param chainId The chain ID of the destination chain.
+    /// @param to The address of the recepient on the destination chain.
+    /// @param destGasLimit The gas limit for the destination chain execution.
+    /// @param tokenSourceL2 The address of the token contract on the source L2.
+    /// @param tokenDestL2 The address of the token contract on the destination L2.
+    /// @param amount The amount of tokens to send.
+    function sendERC20ToL2(
+        uint256 chainId,
+        address to,
+        uint256 destGasLimit,
+        address tokenSourceL2,
+        address tokenDestL2,
+        uint256 amount
+    ) external;
 }
