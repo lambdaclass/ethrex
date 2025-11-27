@@ -1,12 +1,17 @@
+use std::str::FromStr;
+
 use crate::l2::batch::RpcBatch;
+use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
+use ethrex_common::types::AuthorizationList;
 use ethrex_l2_common::l1_messages::L1MessageProof;
 use ethrex_rpc::clients::eth::errors::GetL1BlobBaseFeeRequestError;
 use ethrex_rpc::clients::eth::errors::GetL1FeeVaultAddressError;
 use ethrex_rpc::clients::eth::errors::GetOperatorFeeError;
 use ethrex_rpc::clients::eth::errors::GetOperatorFeeVaultAddressError;
+use ethrex_rpc::clients::eth::errors::SendEthrexTransactionError;
 use ethrex_rpc::types::block_identifier::BlockIdentifier;
 use ethrex_rpc::{
     EthClient,
@@ -160,6 +165,34 @@ pub async fn get_l1_blob_base_fee_per_gas(
             .map_err(EthClientError::from),
         RpcResponse::Error(error_response) => {
             Err(GetL1BlobBaseFeeRequestError::RPCError(error_response.error.message).into())
+        }
+    }
+}
+
+pub async fn send_ethrex_transaction(
+    client: &EthClient,
+    to: Address,
+    data: Bytes,
+    authorization_list: Option<AuthorizationList>,
+) -> Result<H256, EthClientError> {
+    let payload = json!({
+        "to": format!("{to:#x}"),
+        "data": format!("0x{}", hex::encode(data)),
+        "authorizationList": authorization_list,
+    });
+    let request = RpcRequest::new("ethrex_sendTransaction", Some(vec![payload]));
+
+    match client.send_request(request).await? {
+        RpcResponse::Success(result) => {
+            let tx_hash_str: String = serde_json::from_value(result.result)
+                .map_err(SendEthrexTransactionError::SerdeJSONError)
+                .map_err(EthClientError::from)?;
+            H256::from_str(&tx_hash_str)
+                .map_err(|e| SendEthrexTransactionError::ParseHashError(e.to_string()))
+                .map_err(EthClientError::from)
+        }
+        RpcResponse::Error(error_response) => {
+            Err(SendEthrexTransactionError::RPCError(error_response.error.message).into())
         }
     }
 }

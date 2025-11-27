@@ -85,6 +85,8 @@ pub enum EthClientError {
     GetL1FeeVaultAddressError(#[from] GetL1FeeVaultAddressError),
     #[error("ethrex_getL1BlobBaseFee request error: {0}")]
     GetL1BlobBaseFeeError(#[from] GetL1BlobBaseFeeRequestError),
+    #[error("ethrex_sendTransaction request error: {0}")]
+    GetL1BlobBaseFeeError(#[from] SendEthrexTransactionError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -385,4 +387,14 @@ pub enum GetL1BlobBaseFeeRequestError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SendEthrexTransactionError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseHashError(String),
 }
