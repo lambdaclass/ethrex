@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use ethereum_types::U256;
 use ethrex_common::{
     Address, Bloom, H32, H160, H256, H264, H512,
@@ -117,6 +117,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             })
             .collect::<Vec<u8>>()
     };
+    group.throughput(Throughput::Elements(u8_values.len() as u64));
     group.bench_function("encode_u8_random_seeded", move |b| {
         let mut buf = Vec::with_capacity(2 * u8_values.len());
         b.iter(|| {
@@ -137,6 +138,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             })
             .collect::<Vec<u16>>()
     };
+    group.throughput(Throughput::Elements(u16_values.len() as u64));
     group.bench_function("encode_u16_random_seeded", move |b| {
         let mut buf = Vec::with_capacity(3 * u16_values.len());
         b.iter(|| {
@@ -157,6 +159,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             })
             .collect::<Vec<u32>>()
     };
+    group.throughput(Throughput::Elements(u32_values.len() as u64));
     group.bench_function("encode_u32_random_seeded", move |b| {
         let mut buf = Vec::with_capacity(5 * u32_values.len());
         b.iter(|| {
@@ -177,6 +180,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             })
             .collect::<Vec<u64>>()
     };
+    group.throughput(Throughput::Elements(u64_values.len() as u64));
     group.bench_function("encode_u64_random_seeded", move |b| {
         let mut buf = Vec::with_capacity(9 * u64_values.len());
         b.iter(|| {
@@ -192,6 +196,7 @@ fn bench_encode_integer(c: &mut Criterion) {
         let mut rng = StdRng::seed_from_u64(5);
         (0..1_000_000).map(|_| rng.r#gen()).collect::<Vec<u128>>()
     };
+    group.throughput(Throughput::Elements(u128_values.len() as u64));
     group.bench_function("encode_u128_random_seeded", move |b| {
         let mut buf = Vec::with_capacity(17 * u128_values.len());
         b.iter(|| {
@@ -209,6 +214,7 @@ fn bench_encode_integer(c: &mut Criterion) {
             .map(|_| random_u256(&mut rng))
             .collect::<Vec<U256>>()
     };
+    group.throughput(Throughput::Elements(u256_values.len() as u64));
     group.bench_function("encode_u256_random_seeded", move |b| {
         let mut buf = Vec::with_capacity(33 * u256_values.len());
         b.iter(|| {
@@ -238,6 +244,7 @@ fn bench_encode_strings(c: &mut Criterion) {
             })
             .collect();
         let values = black_box(values);
+        group.throughput(Throughput::Elements(values.len() as u64));
         group.bench_function(label, move |b| {
             let mut buf = Vec::with_capacity(values[0].length() * values.len());
             b.iter(|| {
@@ -259,6 +266,7 @@ fn bench_encode_int_lists(c: &mut Criterion) {
         let mut rng = StdRng::seed_from_u64(count as u64);
         let values: Vec<u64> = (0..count).map(|_| rng.r#gen()).collect();
         let value = black_box(values);
+        group.throughput(Throughput::Elements(value.len() as u64));
         group.bench_function(label, move |b| {
             let mut buf = Vec::with_capacity(value.length());
             b.iter(|| {
@@ -276,6 +284,7 @@ fn bench_encode_string_lists(c: &mut Criterion) {
     for &count in &[10usize, 100, 1000] {
         let label = format!("encode_string_list_len_{count}");
         let value = black_box(make_string_list(count));
+        group.throughput(Throughput::Elements(value.len() as u64));
         group.bench_function(label, move |b| {
             let mut buf = Vec::with_capacity(value.length());
             b.iter(|| {
@@ -297,6 +306,7 @@ fn bench_encode_account_info(c: &mut Criterion) {
         nonce: 1,
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_account_info", move |b| {
         let mut buf = Vec::with_capacity(account_info.length());
         b.iter(|| {
@@ -319,6 +329,7 @@ fn bench_encode_account_state(c: &mut Criterion) {
         code_hash: HASH,
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_account_state", move |b| {
         let mut buf = Vec::with_capacity(account_state.length());
         b.iter(|| {
@@ -339,6 +350,7 @@ fn bench_encode_tx_kind(c: &mut Criterion) {
         Address::from_str("0x00000000000000000000000000000000000000ff").unwrap(),
     ));
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_create", move |b| {
         let mut buf = Vec::with_capacity(create_kind.length());
         b.iter(|| {
@@ -348,6 +360,7 @@ fn bench_encode_tx_kind(c: &mut Criterion) {
         });
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_call", move |b| {
         let mut buf = Vec::new();
         b.iter(|| {
@@ -376,6 +389,7 @@ fn bench_encode_legacy_transaction(c: &mut Criterion) {
         inner_hash: Default::default(),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_legacy_transaction", move |b| {
         let mut buf = Vec::with_capacity(legacy_tx.length());
         b.iter(|| {
@@ -406,6 +420,7 @@ fn bench_encode_eip2930_transaction(c: &mut Criterion) {
         inner_hash: Default::default(),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_eip2930_transaction", move |b| {
         let mut buf = Vec::with_capacity(eip2930_tx.length());
         b.iter(|| {
@@ -437,6 +452,7 @@ fn bench_encode_eip1559_transaction(c: &mut Criterion) {
         inner_hash: Default::default(),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_eip1559_transaction", move |b| {
         let mut buf = Vec::with_capacity(eip1559_tx.length());
         b.iter(|| {
@@ -470,6 +486,7 @@ fn bench_encode_eip4844_transaction(c: &mut Criterion) {
         inner_hash: Default::default(),
     };
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_eip4844_transaction", move |b| {
         let mut buf = Vec::with_capacity(eip4844_tx.length());
         b.iter(|| {
@@ -516,6 +533,7 @@ fn bench_encode_wrapped_eip4844_transaction(c: &mut Criterion) {
         blobs_bundle,
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_wrapped_eip4844_transaction", move |b| {
         let mut buf = Vec::with_capacity(wrapped.length());
         b.iter(|| {
@@ -548,6 +566,7 @@ fn bench_encode_eip7702_transaction(c: &mut Criterion) {
         inner_hash: Default::default(),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_eip7702_transaction", move |b| {
         let mut buf = Vec::with_capacity(eip7702_tx.length());
         b.iter(|| {
@@ -577,6 +596,7 @@ fn bench_encode_privileged_l2_transaction(c: &mut Criterion) {
         inner_hash: Default::default(),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_privileged_l2_transaction", move |b| {
         let mut buf = Vec::with_capacity(privileged_tx.length());
         b.iter(|| {
@@ -609,6 +629,7 @@ fn bench_encode_fee_token_transaction(c: &mut Criterion) {
         inner_hash: Default::default(),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_fee_token_transaction", move |b| {
         let mut buf = Vec::with_capacity(fee_token_tx.length());
         b.iter(|| {
@@ -653,6 +674,7 @@ fn bench_encode_p2p_transaction(c: &mut Criterion) {
 
     let p2p_tx = P2PTransaction::EIP4844TransactionWithBlobs(wrapped_tx);
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_p2p_transaction", move |b| {
         let mut buf = Vec::with_capacity(p2p_tx.length());
         b.iter(|| {
@@ -688,6 +710,7 @@ fn bench_encode_mempool_transaction(c: &mut Criterion) {
         Address::from_str("0x0000000000000000000000000000000000000cab").unwrap(),
     ));
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_mempool_transaction", move |b| {
         let mut buf = Vec::with_capacity(mempool_tx.length());
         b.iter(|| {
@@ -705,6 +728,7 @@ fn bench_encode_p2p_endpoint(c: &mut Criterion) {
 
     let endpoint = create_endpoint(10, 30303, 30303);
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_endpoint", move |b| {
         let mut buf = Vec::with_capacity(endpoint.length());
         b.iter(|| {
@@ -722,6 +746,7 @@ fn bench_encode_p2p_node(c: &mut Criterion) {
 
     let node = create_node(1);
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_node", move |b| {
         let mut buf = Vec::with_capacity(node.length());
         b.iter(|| {
@@ -739,6 +764,7 @@ fn bench_encode_node_record(c: &mut Criterion) {
 
     let node_record = create_node_record();
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_node_record", move |b| {
         let mut buf = Vec::with_capacity(node_record.length());
         b.iter(|| {
@@ -758,6 +784,7 @@ fn bench_encode_ping_message(c: &mut Criterion) {
     let to = create_endpoint(2, 30302, 30302);
     let ping = PingMessage::new(from, to, 1_700_000_000).with_enr_seq(42);
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_ping_message", move |b| {
         let mut buf = Vec::with_capacity(ping.length());
         b.iter(|| {
@@ -775,6 +802,7 @@ fn bench_encode_find_node_message(c: &mut Criterion) {
 
     let msg = FindNodeMessage::new(H512::repeat_byte(0x77), 1_700_000_000);
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_find_node_message", move |b| {
         let mut buf = Vec::with_capacity(msg.length());
         b.iter(|| {
@@ -792,6 +820,7 @@ fn bench_encode_neighbors_message(c: &mut Criterion) {
 
     let neighbors = NeighborsMessage::new(vec![create_node(3), create_node(4)], 1_700_000_000);
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_neighbors_message", move |b| {
         let mut buf = Vec::with_capacity(neighbors.length());
         b.iter(|| {
@@ -809,6 +838,7 @@ fn bench_encode_enr_request_message(c: &mut Criterion) {
 
     let msg = ENRRequestMessage::new(1_700_000_000);
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_enr_request_message", move |b| {
         let mut buf = Vec::with_capacity(msg.length());
         b.iter(|| {
@@ -826,6 +856,7 @@ fn bench_encode_capability(c: &mut Criterion) {
 
     let capability = Capability::eth(68);
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_capability", move |b| {
         let mut buf = Vec::with_capacity(capability.length());
         b.iter(|| {
@@ -848,6 +879,7 @@ fn bench_encode_account_state_slim(c: &mut Criterion) {
         code_hash: Bytes::from(vec![0xbb; 32]),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_account_state_slim", move |b| {
         let mut buf = Vec::with_capacity(account_state.length());
         b.iter(|| {
@@ -875,6 +907,7 @@ fn bench_encode_account_range_unit(c: &mut Criterion) {
         account: account_state,
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_account_range_unit", move |b| {
         let mut buf = Vec::with_capacity(unit.length());
         b.iter(|| {
@@ -895,6 +928,7 @@ fn bench_encode_storage_slot(c: &mut Criterion) {
         data: U256::from(1234u64),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_storage_slot", move |b| {
         let mut buf = Vec::with_capacity(slot.length());
         b.iter(|| {
@@ -912,6 +946,7 @@ fn bench_encode_nibbles(c: &mut Criterion) {
     for &len in &[65usize, 129, 130, 500] {
         let label = format!("encode_nibbles_len_{len}");
         let nibbles = black_box(create_nibbles(len));
+        group.throughput(Throughput::Elements(1));
         group.bench_function(label, move |b| {
             let mut buf = Vec::with_capacity(nibbles.length());
             b.iter(|| {
@@ -939,6 +974,7 @@ fn bench_encode_node_hash(c: &mut Criterion) {
         ("encode_node_hash_hashed", hashed_hash),
     ] {
         let node_hash = black_box(node_hash);
+        group.throughput(Throughput::Elements(1));
         group.bench_function(label, move |b| {
             let mut buf = Vec::with_capacity(node_hash.length());
             b.iter(|| {
@@ -966,6 +1002,7 @@ fn bench_encode_branch_node(c: &mut Criterion) {
         value: vec![0x55; 32],
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_branch_node", move |b| {
         let mut buf = Vec::with_capacity(branch.length());
         b.iter(|| {
@@ -986,6 +1023,7 @@ fn bench_encode_extension_node(c: &mut Criterion) {
         child: NodeRef::from(NodeHash::from(H256::repeat_byte(0x53))),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_extension_node", move |b| {
         let mut buf = Vec::with_capacity(extension.length());
         b.iter(|| {
@@ -1003,6 +1041,7 @@ fn bench_encode_leaf_node(c: &mut Criterion) {
 
     let leaf = black_box(LeafNode::new(create_nibbles(18), vec![0x44; 40]));
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_leaf_node", move |b| {
         let mut buf = Vec::with_capacity(leaf.length());
         b.iter(|| {
@@ -1023,6 +1062,7 @@ fn bench_encode_fork_id(c: &mut Criterion) {
         fork_next: 17_000_000,
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_fork_id", move |b| {
         let mut buf = Vec::with_capacity(fork_id.length());
         b.iter(|| {
@@ -1044,6 +1084,7 @@ fn bench_encode_log(c: &mut Criterion) {
         data: Bytes::from(vec![0x55; 128]),
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_log", move |b| {
         let mut buf = Vec::with_capacity(log_entry.length());
         b.iter(|| {
@@ -1079,6 +1120,7 @@ fn bench_encode_receipt(c: &mut Criterion) {
         logs: receipt_logs,
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_receipt", move |b| {
         let mut buf = Vec::with_capacity(receipt.length());
         b.iter(|| {
@@ -1114,6 +1156,7 @@ fn bench_encode_receipt_with_bloom(c: &mut Criterion) {
         logs_with_bloom,
     ));
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_receipt_with_bloom", move |b| {
         let mut buf = Vec::with_capacity(receipt.length());
         b.iter(|| {
@@ -1133,6 +1176,7 @@ fn bench_encode_encoded_requests(c: &mut Criterion) {
     request_bytes.insert(0, 0x00);
     let encoded_requests = black_box(EncodedRequests(Bytes::from(request_bytes)));
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_encoded_requests", move |b| {
         let mut buf = Vec::with_capacity(encoded_requests.length());
         b.iter(|| {
@@ -1155,6 +1199,7 @@ fn bench_encode_blobs_bundle(c: &mut Criterion) {
         version: 1,
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_blobs_bundle", move |b| {
         let mut buf = Vec::with_capacity(blobs_bundle.length());
         b.iter(|| {
@@ -1213,6 +1258,7 @@ fn bench_encode_block_header(c: &mut Criterion) {
         ..Default::default()
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_block_header", move |b| {
         let mut buf = Vec::with_capacity(block_header.length());
         b.iter(|| {
@@ -1302,6 +1348,7 @@ fn bench_encode_block(c: &mut Criterion) {
         },
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_block", move |b| {
         let mut buf = Vec::with_capacity(block.length());
         b.iter(|| {
@@ -1324,6 +1371,7 @@ fn bench_encode_withdrawals(c: &mut Criterion) {
         amount: 0x80_u64,
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("encode_withdrawals", move |b| {
         let mut buf = Vec::with_capacity(withdrawal.length());
         b.iter(|| {
