@@ -1087,8 +1087,8 @@ impl L1Committer {
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
         let l1_messages_merkle_root = compute_merkle_root(&batch.l1_message_hashes);
         let l2_messages_merkle_root = compute_merkle_root(&batch.l2_message_hashes);
-        info!("l2 messages merkle root: {l2_messages_merkle_root:#x}");
-        info!("l2 messages hashes len: {}", batch.l2_message_hashes.len());
+        debug!("l2 messages merkle root: {l2_messages_merkle_root:#x}");
+        debug!("l2 messages hashes len: {}", batch.l2_message_hashes.len());
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
         let balance_diffs: Vec<Value> = batch
             .balance_diffs
