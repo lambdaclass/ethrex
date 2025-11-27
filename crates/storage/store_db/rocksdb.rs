@@ -1543,7 +1543,7 @@ impl StoreEngine for Store {
             ))
         })?;
 
-        let mut results = Vec::with_capacity(end.saturating_sub(start) as usize);
+        let mut results = Vec::with_capacity(newest.saturating_sub(oldest) as usize);
         for number in (oldest..newest).rev() {
             match db.get_cf(&cf, number.to_le_bytes())? {
                 Some(res) => results.push(BlockHashRLP::from_bytes(res).to()?),
