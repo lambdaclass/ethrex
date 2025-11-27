@@ -27,13 +27,13 @@ fn fill_prev_block_hashes(
 ) -> Result<(), StoreError> {
     let current_block = block_header.number;
     let mut current_hash = block_header.hash();
-    let oldest_block = current_block + MAX_BLOCK_HASH_LOOKUP_DEPTH;
+    let oldest_block = current_block.saturating_sub(MAX_BLOCK_HASH_LOOKUP_DEPTH);
     let is_canonic = store
         .get_canonical_block_hash_sync(block_header.number)?
         .is_some_and(|hash| hash == block_header.hash());
     // If the block is canonical, look up hashes directly
     if is_canonic {
-        let hashes = store.get_canonical_block_hashes(block_header.number, oldest_block)?;
+        let hashes = store.get_canonical_block_hashes(oldest_block, block_header.number)?;
         current_hash = *hashes.last().unwrap_or(&current_hash);
         block_hash_cache.extend((block_header.number..current_block).zip(hashes));
     }
