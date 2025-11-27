@@ -3,7 +3,8 @@ use ethereum_types::{Address, H256};
 use ethrex_rpc::clients::{EngineClient, EngineClientError};
 use ethrex_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
 use sha2::{Digest, Sha256};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::time::sleep;
 
 pub async fn start_block_producer(
     execution_client_auth_url: String,
@@ -14,6 +15,9 @@ pub async fn start_block_producer(
     coinbase_address: Address,
 ) -> Result<(), EngineClientError> {
     let engine_client = EngineClient::new(&execution_client_auth_url, jwt_secret);
+
+    // Sleep for one slot to avoid timestamp collision with the genesis block.
+    sleep(Duration::from_millis(block_production_interval_ms)).await;
 
     let mut head_block_hash: H256 = head_block_hash;
     let parent_beacon_block_root = H256::zero();
@@ -46,6 +50,7 @@ pub async fn start_block_producer(
                 tracing::error!(
                     "Failed to produce block: error sending engine_forkchoiceUpdatedV3 with PayloadAttributes: {error}"
                 );
+                sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
             }
@@ -53,16 +58,22 @@ pub async fn start_block_producer(
         let payload_id = fork_choice_response
             .payload_id
             .expect("Failed to produce block: payload_id is None in ForkChoiceResponse");
-        let execution_payload_response = match engine_client.engine_get_payload_v4(payload_id).await
+
+        // Wait to retrieve the payload.
+        // Note that this makes getPayload failures result in skipped blocks.
+        sleep(Duration::from_millis(block_production_interval_ms)).await;
+
+        let execution_payload_response = match engine_client.engine_get_payload_v5(payload_id).await
         {
             Ok(response) => {
-                tracing::debug!("engine_getPayloadV4 response: {response:?}");
+                tracing::debug!("engine_getPayloadV5 response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_getPayloadV4: {error}"
+                    "Failed to produce block: error sending engine_getPayloadV5: {error}"
                 );
+                sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
             }
@@ -96,6 +107,7 @@ pub async fn start_block_producer(
                 tracing::error!(
                     "Failed to produce block: error sending engine_newPayloadV4: {error}"
                 );
+                sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
             }
@@ -107,17 +119,13 @@ pub async fn start_block_producer(
             tracing::error!(
                 "Failed to produce block: latest_valid_hash is None in PayloadStatus: {payload_status:?}"
             );
+            sleep(Duration::from_millis(300)).await;
             tries += 1;
             continue;
         };
         tracing::info!("Produced block {produced_block_hash:#x}");
 
         head_block_hash = produced_block_hash;
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(
-            block_production_interval_ms,
-        ))
-        .await;
     }
     Err(EngineClientError::SystemFailed(format!("{max_tries}")))
 }

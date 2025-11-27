@@ -1,6 +1,7 @@
 use bytes::{BufMut, Bytes};
 use ethrex_common::types::ForkId;
 use ethrex_common::{H256, H264, H512};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -9,7 +10,6 @@ use ethrex_rlp::{
 };
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
-use sha3::{Digest, Keccak256};
 use std::net::Ipv6Addr;
 use std::{
     fmt::Display,
@@ -145,6 +145,19 @@ impl Node {
         }
     }
 
+    pub fn client_name(&self) -> &str {
+        self.version
+            .as_deref()
+            .and_then(|version| {
+                let base = version
+                    .split_once('/')
+                    .map(|(name, _)| name.trim())
+                    .unwrap_or_else(|| version.trim());
+                if base.is_empty() { None } else { Some(base) }
+            })
+            .unwrap_or("unknown")
+    }
+
     pub fn from_enode_url(enode: &str) -> Result<Self, NodeError> {
         let public_key = H512::from_str(&enode[8..136])
             .map_err(|_| NodeError::ParseError("Could not parse public_key".into()))?;
@@ -242,8 +255,11 @@ impl Node {
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
-            "{0}({1}:{2})",
-            self.public_key, self.ip, self.tcp_port
+            "{0} #{1}({2}:{3})",
+            self.client_name(),
+            self.node_id(),
+            self.ip,
+            self.tcp_port
         ))
     }
 }
@@ -361,30 +377,7 @@ impl NodeRecord {
         Ok(record)
     }
 
-    pub fn update_seq(&mut self, signer: &SecretKey) -> Result<(), NodeError> {
-        self.seq += 1;
-        self.sign_record(signer)?;
-        Ok(())
-    }
-
-    pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SecretKey) -> Result<(), NodeError> {
-        if let Some((_, value)) = self.pairs.iter().find(|(k, _)| k == "eth") {
-            if *fork_id == ForkId::decode(&value[1..]).expect("No fork Id in NodeRecord pairs") {
-                return Ok(());
-            }
-        }
-
-        // remove previous eth version
-        self.pairs.retain(|(k, _)| k != "eth");
-
-        self.pairs
-            .push(("eth".into(), vec![fork_id.clone()].encode_to_vec().into()));
-
-        self.update_seq(signer)?;
-        Ok(())
-    }
-
-    fn sign_record(&mut self, signer: &SecretKey) -> Result<H512, NodeError> {
+    fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
         let digest = &self.get_signature_digest();
         let msg = secp256k1::Message::from_digest_slice(digest)
             .map_err(|_| NodeError::SignatureError("Invalid message digest".into()))?;
@@ -395,14 +388,13 @@ impl NodeRecord {
         Ok(H512::from_slice(&signature_bytes))
     }
 
-    pub fn get_signature_digest(&self) -> Vec<u8> {
+    pub fn get_signature_digest(&self) -> [u8; 32] {
         let mut rlp = vec![];
         structs::Encoder::new(&mut rlp)
             .encode_field(&self.seq)
             .encode_key_value_list::<Bytes>(&self.pairs)
             .finish();
-        let digest = Keccak256::digest(&rlp);
-        digest.to_vec()
+        keccak_hash(&rlp)
     }
 }
 
@@ -576,7 +568,7 @@ mod tests {
         .unwrap();
         let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
 
-        let storage =
+        let mut storage =
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())

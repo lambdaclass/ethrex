@@ -32,6 +32,7 @@ use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
+use url::Url;
 
 pub struct Simulator {
     cmd_path: PathBuf,
@@ -170,9 +171,10 @@ impl Simulator {
         }
     }
 
-    fn get_http_url(&self, index: usize) -> String {
+    fn get_http_url(&self, index: usize) -> Url {
         let opts = &self.configs[index];
-        format!("http://{}:{}", opts.http_addr, opts.http_port)
+        Url::parse(&format!("http://{}:{}", opts.http_addr, opts.http_port))
+            .expect("Error parsing RPC URL")
     }
 
     fn get_auth_url(&self, index: usize) -> String {
@@ -185,7 +187,7 @@ impl Simulator {
         let engine_client = EngineClient::new(&auth_url, self.jwt_secret.clone());
 
         let http_url = self.get_http_url(index);
-        let rpc_client = EthClient::new(&http_url).unwrap();
+        let rpc_client = EthClient::new(http_url).unwrap();
 
         Node {
             index,
@@ -277,7 +279,7 @@ impl Node {
 
         let payload_response = self
             .engine_client
-            .engine_get_payload_v4(payload_id)
+            .engine_get_payload_v5(payload_id)
             .await
             .unwrap();
 
@@ -523,13 +525,8 @@ fn generate_jwt_secret() -> Bytes {
 }
 
 fn keccak256(data: &[u8]) -> H256 {
-    H256(
-        Sha256::new_with_prefix(data)
-            .finalize()
-            .as_slice()
-            .try_into()
-            .unwrap(),
-    )
+    let digest = Sha256::new_with_prefix(data).finalize();
+    H256::from_slice(digest.as_ref())
 }
 
 async fn wait_until_synced(engine_client: &EngineClient, fork_choice_state: ForkChoiceState) {

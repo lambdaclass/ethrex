@@ -2,6 +2,101 @@
 
 ## Perf
 
+### 2025-11-20
+
+- Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding a alloc-less length method the default trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
+
+### 2025-11-19
+
+- Parallelize merkleization [#5377](https://github.com/lambdaclass/ethrex/pull/5377)
+
+### 2025-11-17
+
+- Avoid temporary allocations when decoding and hashing trie nodes [#5353](https://github.com/lambdaclass/ethrex/pull/5353)
+
+### 2025-11-13
+
+- Use specialized DUP implementation [#5324](https://github.com/lambdaclass/ethrex/pull/5324)
+- Avoid recalculating blob base fee while preparing transactions [#5328](https://github.com/lambdaclass/ethrex/pull/5328)
+- Use BlobDB for account_codes column family [#5300](https://github.com/lambdaclass/ethrex/pull/5300)
+
+### 2025-11-12
+
+- Only mark individual values as dirty instead of the whole trie [#5282](https://github.com/lambdaclass/ethrex/pull/5282)
+- Separate Account and storage Column families in rocksdb [#5055](https://github.com/lambdaclass/ethrex/pull/5055)
+- Avoid copying while reading account code [#5289](https://github.com/lambdaclass/ethrex/pull/5289)
+- Cache `BLOBBASEFEE` opcode value [#5288](https://github.com/lambdaclass/ethrex/pull/5288)
+
+### 2025-11-11
+
+- Insert instead of merge for bloom rebuilds [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
+- Replace sha3 keccak to an assembly version using ffi [#5247](https://github.com/lambdaclass/ethrex/pull/5247)
+- Fix `FlatKeyValue` generation on fullsync mode [#5274](https://github.com/lambdaclass/ethrex/pull/5274)
+
+### 2025-11-10
+
+- Disable RocksDB compression [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
+
+### 2025-11-07
+
+- Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
+
+### 2025-11-05
+
+- Merkelization backpressure and batching [#5200](https://github.com/lambdaclass/ethrex/pull/5200)
+
+### 2025-11-03
+
+- Avoid unnecessary hash validations [#5167](https://github.com/lambdaclass/ethrex/pull/5167)
+- Merge execution with some post-execution validations [#5170](https://github.com/lambdaclass/ethrex/pull/5170)
+
+### 2025-10-31
+
+- Reduce overhead of trie opening [#5145](https://github.com/lambdaclass/ethrex/pull/5145)
+- Improved discovery and peer initialization [#5147](https://github.com/lambdaclass/ethrex/pull/5147)
+
+### 2025-10-30
+
+- Pipeline Merkleization and Execution [#5084](https://github.com/lambdaclass/ethrex/pull/5084)
+- Add bloom filters to snapshot layers [#5112](https://github.com/lambdaclass/ethrex/pull/5112)
+- Make trusted setup warmup non blocking [#5124](https://github.com/lambdaclass/ethrex/pull/5124)
+
+### 2025-10-28
+
+- Batch BlobsBundle::validate [#4993](https://github.com/lambdaclass/ethrex/pull/4993)
+- Remove latest_block_header lock [#5050](https://github.com/lambdaclass/ethrex/pull/5050)
+
+### 2025-10-27
+
+- Run "engine_newPayload" block execution in a dedicated worker thread. [#5051](https://github.com/lambdaclass/ethrex/pull/5051)
+- Reusing FindNode message per lookup loop instead of randomizing the key for each message. [#5047](https://github.com/lambdaclass/ethrex/pull/5047)
+
+### 2025-10-23
+
+- Move trie updates post block execution to a background thread. [#4989](https://github.com/lambdaclass/ethrex/pull/4989).
+
+### 2025-10-21
+
+- Instead of lazy computation of blocklist, do greedy computation of allowlist and store the result, fetch it with the DB. [#4961](https://github.com/lambdaclass/ethrex/pull/4961)
+
+### 2025-10-20
+
+- Remove duplicate subgroup check in ecpairing precompile [#4960](https://github.com/lambdaclass/ethrex/pull/4960)
+
+### 2025-10-17
+
+- Replaces incremental iteration with a one-time precompute method that scans the entire bytecode, building a `BitVec<u8, Msb0>` where bits mark valid `JUMPDEST` positions, skipping `PUSH1..PUSH32` data bytes.
+- Updates `is_blacklisted` to O(1) bit lookup.
+
+### 2025-10-14
+
+- Improve get_closest_nodes p2p performance [#4838](https://github.com/lambdaclass/ethrex/pull/4838)
+
+### 2025-10-13
+
+- Remove explicit cache-related options from RocksDB configuration and reverted optimistic transactions to reduce RAM usage [#4853](https://github.com/lambdaclass/ethrex/pull/4853)
+- Remove unnecesary mul in ecpairing [#4843](https://github.com/lambdaclass/ethrex/pull/4843)
+
 ### 2025-10-06
 
 - Improve block headers vec handling in syncer [#4771](https://github.com/lambdaclass/ethrex/pull/4771)

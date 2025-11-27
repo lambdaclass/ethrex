@@ -248,7 +248,7 @@ impl DataType {
                     .consume_u256()?
                     .try_into()
                     .map_err(|_| CalldataDecodeError::OutOfBounds)?;
-                let size = if n % 32 == 0 {
+                let size = if n.is_multiple_of(32) {
                     n
                 } else {
                     n.next_multiple_of(32)
@@ -685,7 +685,7 @@ fn correct_tuple_parsing() {
 fn empty_calldata() {
     let calldata = encode_calldata("number()", &[]).unwrap();
     assert_eq!(calldata, hex::decode("8381f58a").unwrap());
-    let decoded = decode_calldata("number()", calldata.clone().into()).unwrap();
+    let decoded = decode_calldata("number()", calldata.into()).unwrap();
     assert!(decoded.is_empty());
 }
 
@@ -698,6 +698,6 @@ fn bytes_has_padding() {
     let calldata = encode_calldata(raw_function_signature, &values).unwrap();
 
     assert_eq!(calldata, hex::decode("f570899b0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000b68656c6c6f20776f726c64000000000000000000000000000000000000000000").unwrap());
-    let decoded = decode_calldata(raw_function_signature, calldata.clone().into()).unwrap();
+    let decoded = decode_calldata(raw_function_signature, calldata.into()).unwrap();
     assert_eq!(values, decoded);
 }

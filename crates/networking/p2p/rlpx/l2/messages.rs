@@ -1,5 +1,5 @@
 use crate::rlpx::{
-    error::RLPxError,
+    error::PeerConnectionError,
     message::{Message, RLPxMessage},
     utils::{snappy_compress, snappy_decompress},
 };
@@ -60,13 +60,16 @@ pub struct BatchSealed {
 }
 
 impl BatchSealed {
-    pub fn from_batch_and_key(batch: Batch, secret_key: &SecretKey) -> Result<Self, RLPxError> {
+    pub fn from_batch_and_key(
+        batch: Batch,
+        secret_key: &SecretKey,
+    ) -> Result<Self, PeerConnectionError> {
         let hash = batch_hash(&batch);
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(&SecpMessage::from_digest(hash.into()), secret_key)
             .serialize_compact();
         let recovery_id: u8 = Into::<i32>::into(recovery_id).try_into().map_err(|e| {
-            RLPxError::InternalError(format!(
+            PeerConnectionError::InternalError(format!(
                 "Failed to convert recovery id to u8: {e}. This is a bug."
             ))
         })?;

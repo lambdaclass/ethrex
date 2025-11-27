@@ -1,26 +1,10 @@
-use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    io::ErrorKind,
-    path::{Path, PathBuf},
-    sync::atomic::Ordering,
-    time::{Duration, SystemTime},
-};
-
-use bytes::Bytes;
-use ethrex_common::{
-    BigEndianHash, H256, U256,
-    types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
-};
-use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::Store;
-use ethrex_trie::Nibbles;
-use ethrex_trie::{Node, verify_range};
-
+use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
-    discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableError, PeerTableHandle},
+    discv4::peer_table::{PeerData, PeerTable, PeerTableError},
     metrics::{CurrentStepValue, METRICS},
     rlpx::{
-        connection::server::CastMessage,
+        connection::server::PeerConnection,
+        error::PeerConnectionError,
         eth::{
             blocks::{
                 BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
@@ -36,11 +20,28 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
+    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
     utils::{
-        AccountsWithStorage, SendMessageError, dump_accounts_to_file, dump_storages_to_file,
+        AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
     },
+};
+use bytes::Bytes;
+use ethrex_common::{
+    BigEndianHash, H256, U256,
+    types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
+};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::Store;
+use ethrex_trie::Nibbles;
+use ethrex_trie::{Node, verify_range};
+use spawned_concurrency::tasks::GenServerHandle;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    sync::atomic::Ordering,
+    time::{Duration, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -68,7 +69,8 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
-    pub peer_table: PeerTableHandle,
+    pub peer_table: PeerTable,
+    pub initiator: GenServerHandle<RLPxInitiator>,
 }
 
 pub enum BlockRequestOrder {
@@ -96,7 +98,8 @@ struct StorageTask {
 
 async fn ask_peer_head_number(
     peer_id: H256,
-    peer_channel: &mut PeerChannels,
+    connection: &mut PeerConnection,
+    peer_table: &mut PeerTable,
     sync_head: H256,
     retries: i32,
 ) -> Result<u64, PeerHandlerError> {
@@ -111,21 +114,16 @@ async fn ask_peer_head_number(
         reverse: false,
     });
 
-    peer_channel
-        .connection
-        .cast(CastMessage::BackendMessage(request.clone()))
-        .await
-        .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
-
     debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
 
-    match tokio::time::timeout(Duration::from_millis(500), async move {
-        peer_channel.receiver.lock().await.recv().await
-    })
-    .await
+    match PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
+        .await
     {
-        Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
-            if id == request_id && !block_headers.is_empty() {
+        Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+            id: _,
+            block_headers,
+        })) => {
+            if !block_headers.is_empty() {
                 let sync_head_number = block_headers
                     .last()
                     .ok_or(PeerHandlerError::BlockHeaders)?
@@ -135,25 +133,38 @@ async fn ask_peer_head_number(
                 );
                 Ok(sync_head_number)
             } else {
-                Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
+                Err(PeerHandlerError::EmptyResponseFromPeer(peer_id))
             }
         }
-        Ok(None) => Err(PeerHandlerError::ReceiveMessageFromPeer(peer_id)),
         Ok(_other_msgs) => Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id)),
-        Err(_err) => Err(PeerHandlerError::ReceiveMessageFromPeerTimeout(peer_id)),
+        Err(PeerConnectionError::Timeout) => {
+            Err(PeerHandlerError::ReceiveMessageFromPeerTimeout(peer_id))
+        }
+        Err(_other_err) => Err(PeerHandlerError::ReceiveMessageFromPeer(peer_id)),
     }
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTableHandle) -> PeerHandler {
-        Self { peer_table }
+    pub fn new(peer_table: PeerTable, initiator: GenServerHandle<RLPxInitiator>) -> PeerHandler {
+        Self {
+            peer_table,
+            initiator,
+        }
     }
 
-    /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
-    /// This should only be used in tests as it won't be able to interact with the node's connected peers
-    pub fn dummy() -> PeerHandler {
-        let dummy_peer_table = PeerTable::spawn();
-        PeerHandler::new(dummy_peer_table)
+    async fn make_request(
+        // TODO: We should receive the PeerHandler (or self) instead, but since it is not yet spawnified it cannot be shared
+        // Fix this to avoid passing the PeerTable as a parameter
+        peer_table: &mut PeerTable,
+        peer_id: H256,
+        connection: &mut PeerConnection,
+        message: RLPxMessage,
+        timeout: Duration,
+    ) -> Result<RLPxMessage, PeerConnectionError> {
+        peer_table.inc_requests(peer_id).await?;
+        let result = connection.outgoing_request(message, timeout).await;
+        peer_table.dec_requests(peer_id).await?;
+        result
     }
 
     /// Returns a random node id and the channel ends to an active peer connection that supports the given capability
@@ -161,7 +172,7 @@ impl PeerHandler {
     async fn get_random_peer(
         &mut self,
         capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerChannels)>, PeerHandlerError> {
+    ) -> Result<Option<(H256, PeerConnection)>, PeerHandlerError> {
         return Ok(self.peer_table.get_random_peer(capabilities).await?);
     }
 
@@ -179,8 +190,6 @@ impl PeerHandler {
             .current_step
             .set(CurrentStepValue::DownloadingHeaders);
 
-        let initial_downloaded_headers = METRICS.downloaded_headers.load(Ordering::Relaxed);
-
         let mut ret = Vec::<BlockHeader>::new();
 
         let mut sync_head_number = 0_u64;
@@ -196,13 +205,21 @@ impl PeerHandler {
                 // sync_head might be invalid
                 return Ok(None);
             }
-            let peer_channels = self
+            let peer_connection = self
                 .peer_table
-                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                .get_peer_connections(&SUPPORTED_ETH_CAPABILITIES)
                 .await?;
 
-            for (peer_id, mut peer_channel) in peer_channels {
-                match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
+            for (peer_id, mut connection) in peer_connection {
+                match ask_peer_head_number(
+                    peer_id,
+                    &mut connection,
+                    &mut self.peer_table,
+                    sync_head,
+                    retries,
+                )
+                .await
+                {
                     Ok(number) => {
                         sync_head_number = number;
                         if number != 0 {
@@ -219,6 +236,9 @@ impl PeerHandler {
 
             retries += 1;
         }
+        METRICS
+            .sync_head_block
+            .store(sync_head_number, Ordering::Relaxed);
         sync_head_number = sync_head_number.min(start + MAX_HEADER_CHUNK);
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
@@ -229,12 +249,6 @@ impl PeerHandler {
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
-        METRICS
-            .sync_head_block
-            .store(sync_head_number, Ordering::Relaxed);
-        METRICS
-            .headers_to_download
-            .store(sync_head_number + 1, Ordering::Relaxed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = sync_head_number + 1 - start;
@@ -251,7 +265,7 @@ impl PeerHandler {
         }
 
         // Push the reminder
-        if block_count % chunk_count != 0 {
+        if !block_count.is_multiple_of(chunk_count) {
             tasks_queue_not_started
                 .push_back((chunk_count * chunk_limit + start, block_count % chunk_count));
         }
@@ -260,7 +274,7 @@ impl PeerHandler {
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerChannels, u64, u64)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64)>(1000);
 
         let mut current_show = 0;
 
@@ -271,12 +285,12 @@ impl PeerHandler {
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
         loop {
-            if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
-                    self.peer_table.free_with_failure(&peer_id).await?;
+                    self.peer_table.record_failure(&peer_id).await?;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
@@ -288,9 +302,7 @@ impl PeerHandler {
 
                 downloaded_count += headers.len() as u64;
 
-                METRICS
-                    .downloaded_headers
-                    .fetch_add(headers.len() as u64, Ordering::Relaxed);
+                METRICS.downloaded_headers.inc_by(headers.len() as u64);
 
                 let batch_show = downloaded_count / 10_000;
 
@@ -321,12 +333,11 @@ impl PeerHandler {
                 }
 
                 self.peer_table.record_success(&peer_id).await?;
-                self.peer_table.free_peer(&peer_id).await?;
                 debug!("Downloader {peer_id} freed");
             }
-            let Some((peer_id, mut peer_channel)) = self
+            let Some((peer_id, mut connection)) = self
                 .peer_table
-                .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
                 trace!("We didn't get a peer from the table");
@@ -334,7 +345,6 @@ impl PeerHandler {
             };
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(&peer_id).await?;
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
@@ -348,10 +358,9 @@ impl PeerHandler {
 
                 continue;
             };
-
             let tx = task_sender.clone();
-
             debug!("Downloader {peer_id} is now busy");
+            let mut peer_table = self.peer_table.clone();
 
             // run download_chunk_from_peer in a different Tokio task
             tokio::spawn(async move {
@@ -360,7 +369,8 @@ impl PeerHandler {
                 );
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
-                    &mut peer_channel,
+                    &mut connection,
+                    &mut peer_table,
                     startblock,
                     chunk_limit,
                 )
@@ -368,18 +378,13 @@ impl PeerHandler {
                 .inspect_err(|err| trace!("Sync Log 6: {peer_id} failed to download chunk: {err}"))
                 .unwrap_or_default();
 
-                tx.send((headers, peer_id, peer_channel, startblock, chunk_limit))
+                tx.send((headers, peer_id, connection, startblock, chunk_limit))
                     .await
                     .inspect_err(|err| {
                         error!("Failed to send headers result through channel. Error: {err}")
                     })
             });
         }
-
-        METRICS.downloaded_headers.store(
-            initial_downloaded_headers + downloaded_count,
-            Ordering::Relaxed,
-        );
 
         let elapsed = start_time.elapsed().unwrap_or_default();
 
@@ -439,45 +444,30 @@ impl PeerHandler {
             });
             match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
                 None => return Ok(None),
-                Some((peer_id, mut peer_channel)) => {
-                    let mut receiver = peer_channel.receiver.lock().await;
-                    if let Err(err) = peer_channel
-                        .connection
-                        .cast(CastMessage::BackendMessage(request))
-                        .await
+                Some((peer_id, mut connection)) => {
+                    if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                        id: _,
+                        block_headers,
+                    })) = PeerHandler::make_request(
+                        &mut self.peer_table,
+                        peer_id,
+                        &mut connection,
+                        request,
+                        PEER_REPLY_TIMEOUT,
+                    )
+                    .await
                     {
-                        debug!("Failed to send message to peer: {err:?}");
-                        continue;
-                    }
-                    if let Some(block_headers) =
-                        tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                            loop {
-                                match receiver.recv().await {
-                                    Some(RLPxMessage::BlockHeaders(BlockHeaders {
-                                        id,
-                                        block_headers,
-                                    })) if id == request_id => {
-                                        return Some(block_headers);
-                                    }
-                                    // Ignore replies that don't match the expected id (such as late responses)
-                                    Some(_) => continue,
-                                    None => return None, // Retry request
-                                }
-                            }
-                        })
-                        .await
-                        .ok()
-                        .flatten()
-                        .and_then(|headers| (!headers.is_empty()).then_some(headers))
-                    {
-                        if are_block_headers_chained(&block_headers, &order) {
+                        if !block_headers.is_empty()
+                            && are_block_headers_chained(&block_headers, &order)
+                        {
                             return Ok(Some(block_headers));
                         } else {
                             warn!(
-                                "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
+                                "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
                             );
                         }
                     }
+                    // Timeouted
                     warn!(
                         "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                     );
@@ -492,7 +482,8 @@ impl PeerHandler {
     /// If it fails, returns an error message.
     async fn download_chunk_from_peer(
         peer_id: H256,
-        peer_channel: &mut PeerChannels,
+        connection: &mut PeerConnection,
+        peer_table: &mut PeerTable,
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
@@ -505,38 +496,21 @@ impl PeerHandler {
             skip: 0,
             reverse: false,
         });
-        let mut receiver = peer_channel.receiver.lock().await;
-
-        // FIXME! modify the cast and wait for a `call` version
-        peer_channel
-            .connection
-            .cast(CastMessage::BackendMessage(request))
-            .await
-            .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
-
-        let block_headers = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                match receiver.recv().await {
-                    Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                        if id == request_id =>
-                    {
-                        return Some(block_headers);
-                    }
-                    // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
-                    None => return None, // EOF
-                }
+        if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+            id: _,
+            block_headers,
+        })) =
+            PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
+                .await
+        {
+            if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+                Ok(block_headers)
+            } else {
+                warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
+                Err(PeerHandlerError::InvalidHeaders)
             }
-        })
-        .await
-        .map_err(|_| PeerHandlerError::BlockHeaders)?
-        .ok_or(PeerHandlerError::BlockHeaders)?;
-
-        if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
-            Ok(block_headers)
         } else {
-            warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
-            Err(PeerHandlerError::InvalidHeaders)
+            Err(PeerHandlerError::BlockHeaders)
         }
     }
 
@@ -556,45 +530,25 @@ impl PeerHandler {
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
-            Some((peer_id, mut peer_channel)) => {
-                let mut receiver = peer_channel.receiver.lock().await;
-                if let Err(err) = peer_channel
-                    .connection
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
+            Some((peer_id, mut connection)) => {
+                if let Ok(RLPxMessage::BlockBodies(BlockBodies {
+                    id: _,
+                    block_bodies,
+                })) = PeerHandler::make_request(
+                    &mut self.peer_table,
+                    peer_id,
+                    &mut connection,
+                    request,
+                    PEER_REPLY_TIMEOUT,
+                )
+                .await
                 {
-                    self.peer_table.record_failure(&peer_id).await?;
-                    debug!("Failed to send message to peer: {err:?}");
-                    return Ok(None);
+                    // Check that the response is not empty and does not contain more bodies than the ones requested
+                    if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
+                        self.peer_table.record_success(&peer_id).await?;
+                        return Ok(Some((block_bodies, peer_id)));
+                    }
                 }
-                if let Some(block_bodies) =
-                    tokio::time::timeout(Duration::from_secs(2), async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::BlockBodies(BlockBodies {
-                                    id,
-                                    block_bodies,
-                                })) if id == request_id => {
-                                    return Some(block_bodies);
-                                }
-                                // Ignore replies that don't match the expected id (such as late responses)
-                                Some(_) => continue,
-                                None => return None,
-                            }
-                        }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|bodies| {
-                        // Check that the response is not empty and does not contain more bodies than the ones requested
-                        (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
-                    })
-                {
-                    self.peer_table.record_success(&peer_id).await?;
-                    return Ok(Some((block_bodies, peer_id)));
-                }
-
                 warn!(
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                 );
@@ -675,40 +629,17 @@ impl PeerHandler {
             });
             match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
                 None => return Ok(None),
-                Some((_, mut peer_channel)) => {
-                    let mut receiver = peer_channel.receiver.lock().await;
-                    if let Err(err) = peer_channel
-                        .connection
-                        .cast(CastMessage::BackendMessage(request))
-                        .await
-                    {
-                        debug!("Failed to send message to peer: {err:?}");
-                        continue;
-                    }
-                    if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::Receipts68(res)) => {
-                                    if res.get_id() == request_id {
-                                        return Some(res.get_receipts());
-                                    }
-                                    return None;
-                                }
-                                Some(RLPxMessage::Receipts69(res)) => {
-                                    if res.get_id() == request_id {
-                                        return Some(res.receipts.clone());
-                                    }
-                                    return None;
-                                }
-                                // Ignore replies that don't match the expected id (such as late responses)
-                                Some(_) => continue,
-                                None => return None,
+                Some((peer_id, mut connection)) => {
+                    if let Some(receipts) =
+                        match PeerHandler::make_request(&mut self.peer_table, peer_id, &mut connection, request, PEER_REPLY_TIMEOUT).await {
+                            Ok(RLPxMessage::Receipts68(res)) => {
+                                Some(res.get_receipts())
                             }
+                            Ok(RLPxMessage::Receipts69(res)) => {
+                                Some(res.receipts.clone())
+                            }
+                            _ => None
                         }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
                     .and_then(|receipts|
                         // Check that the response is not empty and does not contain more bodies than the ones requested
                         (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
@@ -737,7 +668,7 @@ impl PeerHandler {
         limit: H256,
         account_state_snapshots_dir: &Path,
         pivot_header: &mut BlockHeader,
-        block_sync_state: &mut BlockSyncState,
+        block_sync_state: &mut SnapBlockSyncState,
     ) -> Result<(), PeerHandlerError> {
         METRICS
             .current_step
@@ -826,8 +757,6 @@ impl PeerHandler {
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-                self.peer_table.free_peer(&peer_id).await?;
-
                 if let Some((chunk_start, chunk_end)) = chunk_start_end {
                     if chunk_start <= chunk_end {
                         tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -859,9 +788,9 @@ impl PeerHandler {
                 );
             }
 
-            let Some((peer_id, peer_channel)) = self
+            let Some((peer_id, connection)) = self
                 .peer_table
-                .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await
                 .inspect_err(|err| error!(err= ?err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
@@ -871,7 +800,6 @@ impl PeerHandler {
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(&peer_id).await?;
                 if completed_tasks >= chunk_count {
                     info!("All account ranges downloaded successfully");
                     break;
@@ -893,12 +821,15 @@ impl PeerHandler {
                 .expect("Should be able to update pivot")
             }
 
+            let peer_table = self.peer_table.clone();
+
             tokio::spawn(PeerHandler::request_account_range_worker(
                 peer_id,
+                connection,
+                peer_table,
                 chunk_start,
                 chunk_end,
                 pivot_header.state_root,
-                peer_channel,
                 tx,
             ));
         }
@@ -948,15 +879,16 @@ impl PeerHandler {
 
     #[allow(clippy::type_complexity)]
     async fn request_account_range_worker(
-        free_peer_id: H256,
+        peer_id: H256,
+        mut connection: PeerConnection,
+        mut peer_table: PeerTable,
         chunk_start: H256,
         chunk_end: H256,
         state_root: H256,
-        mut free_downloader_channels_clone: PeerChannels,
         tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
     ) -> Result<(), PeerHandlerError> {
         debug!(
-            "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
+            "Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
         );
         let request_id = rand::random();
         let request = RLPxMessage::GetAccountRange(GetAccountRange {
@@ -966,37 +898,21 @@ impl PeerHandler {
             limit_hash: chunk_end,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-        if let Err(err) = (free_downloader_channels_clone.connection)
-            .cast(CastMessage::BackendMessage(request))
-            .await
-        {
-            error!("Failed to send message to peer: {err:?}");
-            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
-                .await
-                .ok();
-            return Ok(());
-        }
-        if let Some((accounts, proof)) = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                if let RLPxMessage::AccountRange(AccountRange {
-                    id,
-                    accounts,
-                    proof,
-                }) = receiver.recv().await?
-                {
-                    if id == request_id {
-                        return Some((accounts, proof));
-                    }
-                }
-            }
-        })
+        if let Ok(RLPxMessage::AccountRange(AccountRange {
+            id: _,
+            accounts,
+            proof,
+        })) = PeerHandler::make_request(
+            &mut peer_table,
+            peer_id,
+            &mut connection,
+            request,
+            PEER_REPLY_TIMEOUT,
+        )
         .await
-        .ok()
-        .flatten()
         {
             if accounts.is_empty() {
-                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                     .await
                     .ok();
                 return Ok(());
@@ -1020,7 +936,7 @@ impl PeerHandler {
                 &encoded_accounts,
                 &proof,
             ) else {
-                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                     .await
                     .ok();
                 tracing::error!("Received invalid account range");
@@ -1032,7 +948,7 @@ impl PeerHandler {
                 let last_hash = match account_hashes.last() {
                     Some(last_hash) => last_hash,
                     None => {
-                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                        tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                             .await
                             .ok();
                         error!("Account hashes last failed, this shouldn't happen");
@@ -1050,14 +966,14 @@ impl PeerHandler {
                     .into_iter()
                     .filter(|unit| unit.hash <= chunk_end)
                     .collect(),
-                free_peer_id,
+                peer_id,
                 chunk_left,
             ))
             .await
             .ok();
         } else {
             tracing::debug!("Failed to get account range");
-            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+            tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                 .await
                 .ok();
         }
@@ -1126,7 +1042,6 @@ impl PeerHandler {
                     remaining_start,
                     remaining_end,
                 } = result;
-                self.peer_table.free_peer(&peer_id).await?;
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1151,16 +1066,15 @@ impl PeerHandler {
                 }
             }
 
-            let Some((peer_id, mut peer_channel)) = self
+            let Some((peer_id, mut connection)) = self
                 .peer_table
-                .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
                 continue;
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(&peer_id).await?;
                 if completed_tasks >= chunk_count {
                     info!("All bytecodes downloaded successfully");
                     break;
@@ -1176,6 +1090,8 @@ impl PeerHandler {
                 .take((chunk_end - chunk_start).min(MAX_BYTECODES_REQUEST_SIZE))
                 .copied()
                 .collect();
+
+            let mut peer_table = self.peer_table.clone();
 
             tokio::spawn(async move {
                 let empty_task_result = TaskResult {
@@ -1194,31 +1110,15 @@ impl PeerHandler {
                     hashes: hashes_to_request.clone(),
                     bytes: MAX_RESPONSE_BYTES,
                 });
-                let mut receiver = peer_channel.receiver.lock().await;
-                if let Err(err) = (peer_channel.connection)
-                    .cast(CastMessage::BackendMessage(request))
+                if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) =
+                    PeerHandler::make_request(
+                        &mut peer_table,
+                        peer_id,
+                        &mut connection,
+                        request,
+                        PEER_REPLY_TIMEOUT,
+                    )
                     .await
-                {
-                    error!("Failed to send message to peer: {err:?}");
-                    tx.send(empty_task_result).await.ok();
-                    return;
-                }
-                if let Some(codes) = tokio::time::timeout(Duration::from_secs(2), async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
-                                if id == request_id =>
-                            {
-                                return Some(codes);
-                            }
-                            Some(_) => continue,
-                            None => return None,
-                        }
-                    }
-                })
-                .await
-                .ok()
-                .flatten()
                 {
                     if codes.is_empty() {
                         tx.send(empty_task_result).await.ok();
@@ -1393,12 +1293,17 @@ impl PeerHandler {
                 } = result;
                 completed_tasks += 1;
 
-                self.peer_table.free_peer(&peer_id).await?;
-
                 for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                     for account in accounts {
                         if !accounts_done.contains_key(account) {
-                            accounts_done.insert(*account, vec![]);
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(account)
+                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+
+                            if old_intervals.is_empty() {
+                                accounts_done.insert(*account, vec![]);
+                            }
                         }
                     }
                 }
@@ -1493,6 +1398,11 @@ impl PeerHandler {
                         // Task found a big storage account, so we split the chunk into multiple chunks
                         let start_hash_u256 = U256::from_big_endian(&hash_start.0);
                         let missing_storage_range = U256::MAX - start_hash_u256;
+
+                        // Big accounts need to be marked for storage healing unconditionally
+                        for account in accounts_by_root_hash[remaining_start].1.iter() {
+                            account_storage_roots.healed_accounts.insert(*account);
+                        }
 
                         let slot_count = account_storages
                             .last()
@@ -1620,9 +1530,18 @@ impl PeerHandler {
                     .map(|storage| storage.len())
                     .sum::<usize>();
 
+                // These take into account we downloaded the same thing for different accounts
+                let effective_slots: usize = account_storages
+                    .iter()
+                    .enumerate()
+                    .map(|(i, storages)| {
+                        accounts_by_root_hash[start_index + i].1.len() * storages.len()
+                    })
+                    .sum();
+
                 METRICS
-                    .downloaded_storage_slots
-                    .fetch_add(n_slots as u64, Ordering::Relaxed);
+                    .storage_leaves_downloaded
+                    .inc_by(effective_slots as u64);
 
                 debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(
@@ -1661,16 +1580,15 @@ impl PeerHandler {
                 break;
             }
 
-            let Some((peer_id, peer_channel)) = self
+            let Some((peer_id, connection)) = self
                 .peer_table
-                .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
                 continue;
             };
 
             let Some(task) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(&peer_id).await?;
                 if completed_tasks >= task_count {
                     break;
                 }
@@ -1693,12 +1611,14 @@ impl PeerHandler {
                     chunk_storage_roots.first().unwrap_or(&H256::zero()),
                 );
             }
+            let peer_table = self.peer_table.clone();
 
             tokio::spawn(PeerHandler::request_storage_ranges_worker(
                 task,
                 peer_id,
+                connection,
+                peer_table,
                 pivot_header.state_root,
-                peer_channel,
                 chunk_account_hashes,
                 chunk_storage_roots,
                 tx,
@@ -1741,18 +1661,16 @@ impl PeerHandler {
         // Dropping the task sender so that the recv returns None
         drop(task_sender);
 
-        while let Some(result) = task_receiver.recv().await {
-            self.peer_table.free_peer(&result.peer_id).await?;
-        }
-
         Ok(chunk_index + 1)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn request_storage_ranges_worker(
         task: StorageTask,
-        free_peer_id: H256,
+        peer_id: H256,
+        mut connection: PeerConnection,
+        mut peer_table: PeerTable,
         state_root: H256,
-        mut free_downloader_channels_clone: PeerChannels,
         chunk_account_hashes: Vec<H256>,
         chunk_storage_roots: Vec<H256>,
         tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
@@ -1764,7 +1682,7 @@ impl PeerHandler {
         let empty_task_result = StorageTaskResult {
             start_index: task.start_index,
             account_storages: Vec::new(),
-            peer_id: free_peer_id,
+            peer_id,
             remaining_start: task.start_index,
             remaining_end: task.end_index,
             remaining_hash_range: (start_hash, task.end_hash),
@@ -1778,32 +1696,19 @@ impl PeerHandler {
             limit_hash: task.end_hash.unwrap_or(HASH_MAX),
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-        if let Err(err) = (free_downloader_channels_clone.connection)
-            .cast(CastMessage::BackendMessage(request))
-            .await
-        {
-            error!("Failed to send message to peer: {err:?}");
-            tx.send(empty_task_result).await.ok();
-            return Ok(());
-        }
-        let request_result = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                match receiver.recv().await {
-                    Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
-                        if id == request_id =>
-                    {
-                        return Some((slots, proof));
-                    }
-                    Some(_) => continue,
-                    None => return None,
-                }
-            }
-        })
+        let Ok(RLPxMessage::StorageRanges(StorageRanges {
+            id: _,
+            slots,
+            proof,
+        })) = PeerHandler::make_request(
+            &mut peer_table,
+            peer_id,
+            &mut connection,
+            request,
+            PEER_REPLY_TIMEOUT,
+        )
         .await
-        .ok()
-        .flatten();
-        let Some((slots, proof)) = request_result else {
+        else {
             tracing::debug!("Failed to get storage range");
             tx.send(empty_task_result).await.ok();
             return Ok(());
@@ -1907,7 +1812,7 @@ impl PeerHandler {
         let task_result = StorageTaskResult {
             start_index: start,
             account_storages,
-            peer_id: free_peer_id,
+            peer_id,
             remaining_start,
             remaining_end,
             remaining_hash_range: (remaining_start_hash, task.end_hash),
@@ -1917,7 +1822,9 @@ impl PeerHandler {
     }
 
     pub async fn request_state_trienodes(
-        peer_channel: &mut PeerChannels,
+        peer_id: H256,
+        mut connection: PeerConnection,
+        mut peer_table: PeerTable,
         state_root: H256,
         paths: Vec<RequestMetadata>,
     ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
@@ -1936,10 +1843,31 @@ impl PeerHandler {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        let nodes =
-            super::utils::send_message_and_wait_for_response(peer_channel, request, request_id)
-                .await
-                .map_err(RequestStateTrieNodesError::SendMessageError)?;
+        let nodes = match PeerHandler::make_request(
+            &mut peer_table,
+            peer_id,
+            &mut connection,
+            request,
+            PEER_REPLY_TIMEOUT,
+        )
+        .await
+        {
+            Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
+                .nodes
+                .iter()
+                .map(|node| Node::decode(node))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| {
+                    RequestStateTrieNodesError::RequestError(PeerConnectionError::RLPDecodeError(e))
+                }),
+            Ok(other_msg) => Err(RequestStateTrieNodesError::RequestError(
+                PeerConnectionError::UnexpectedResponse(
+                    "TrieNodes".to_string(),
+                    other_msg.to_string(),
+                ),
+            )),
+            Err(other_err) => Err(RequestStateTrieNodesError::RequestError(other_err)),
+        }?;
 
         if nodes.is_empty() || nodes.len() > expected_nodes {
             return Err(RequestStateTrieNodesError::InvalidData);
@@ -1964,16 +1892,34 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_trienodes(
-        peer_channel: &mut PeerChannels,
+        peer_id: H256,
+        mut connection: PeerConnection,
+        mut peer_table: PeerTable,
         get_trie_nodes: GetTrieNodes,
     ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
         let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
-        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request, id)
-            .await
-            .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
+        match PeerHandler::make_request(
+            &mut peer_table,
+            peer_id,
+            &mut connection,
+            request,
+            PEER_REPLY_TIMEOUT,
+        )
+        .await
+        {
+            Ok(RLPxMessage::TrieNodes(trie_nodes)) => Ok(trie_nodes),
+            Ok(other_msg) => Err(RequestStorageTrieNodes::RequestError(
+                id,
+                PeerConnectionError::UnexpectedResponse(
+                    "TrieNodes".to_string(),
+                    other_msg.to_string(),
+                ),
+            )),
+            Err(e) => Err(RequestStorageTrieNodes::RequestError(id, e)),
+        }
     }
 
     /// Returns the PeerData for each connected Peer
@@ -1990,8 +1936,9 @@ impl PeerHandler {
     }
 
     pub async fn get_block_header(
-        &self,
-        peer_channel: &mut PeerChannels,
+        &mut self,
+        peer_id: H256,
+        connection: &mut PeerConnection,
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
         let request_id = rand::random();
@@ -2003,32 +1950,20 @@ impl PeerHandler {
             reverse: false,
         });
         info!("get_block_header: requesting header with number {block_number}");
-
-        let mut receiver = peer_channel.receiver.lock().await;
-        debug!("locked the receiver for the peer_channel");
-        peer_channel
-            .connection
-            .cast(CastMessage::BackendMessage(request.clone()))
-            .await
-            .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
-
-        let response =
-            tokio::time::timeout(Duration::from_secs(5), async move { receiver.recv().await })
-                .await;
-
-        // TODO: we need to check, this seems a scenario where the peer channel does teardown
-        // after we sent the backend message
-        let Some(Ok(response)) = response
-            .inspect_err(|_err| info!("Timeout while waiting for sync head from peer"))
-            .transpose()
-        else {
-            warn!("The RLPxConnection closed the backend channel");
-            return Ok(None);
-        };
-
-        match response {
-            RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) => {
-                if id == request_id && !block_headers.is_empty() {
+        match PeerHandler::make_request(
+            &mut self.peer_table,
+            peer_id,
+            connection,
+            request,
+            PEER_REPLY_TIMEOUT,
+        )
+        .await
+        {
+            Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                id: _,
+                block_headers,
+            })) => {
+                if !block_headers.is_empty() {
                     return Ok(Some(
                         block_headers
                             .last()
@@ -2037,8 +1972,16 @@ impl PeerHandler {
                     ));
                 }
             }
-            _other_msgs => {
+            Ok(_other_msgs) => {
                 info!("Received unexpected message from peer");
+            }
+            Err(PeerConnectionError::Timeout) => {
+                info!("Timeout while waiting for sync head from peer");
+            }
+            // TODO: we need to check, this seems a scenario where the peer channel does teardown
+            // after we sent the backend message
+            Err(_) => {
+                warn!("The RLPxConnection closed the backend channel");
             }
         }
 
@@ -2100,12 +2043,12 @@ pub enum PeerHandlerError {
     WriteStorageSnapshotsDir(u64),
     #[error("Received unexpected response from peer {0}")]
     UnexpectedResponseFromPeer(H256),
+    #[error("Received an empty response from peer {0}")]
+    EmptyResponseFromPeer(H256),
     #[error("Failed to receive message from peer {0}")]
     ReceiveMessageFromPeer(H256),
     #[error("Timeout while waiting for message from peer {0}")]
     ReceiveMessageFromPeerTimeout(H256),
-    #[error("No peers available")]
-    NoPeers,
     #[error("Received invalid headers")]
     InvalidHeaders,
     #[error("Storage Full")]
@@ -2128,7 +2071,7 @@ pub enum PeerHandlerError {
     PeerTableError(#[from] PeerTableError),
 }
 
-#[derive(Debug, Clone, std::hash::Hash)]
+#[derive(Debug, Clone)]
 pub struct RequestMetadata {
     pub hash: H256,
     pub path: Nibbles,
@@ -2138,8 +2081,8 @@ pub struct RequestMetadata {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RequestStateTrieNodesError {
-    #[error("Send message error")]
-    SendMessageError(SendMessageError),
+    #[error("Send request error")]
+    RequestError(PeerConnectionError),
     #[error("Invalid data")]
     InvalidData,
     #[error("Invalid Hash")]
@@ -2148,6 +2091,6 @@ pub enum RequestStateTrieNodesError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RequestStorageTrieNodes {
-    #[error("Send message error")]
-    SendMessageError(u64, SendMessageError),
+    #[error("Send request error")]
+    RequestError(u64, PeerConnectionError),
 }

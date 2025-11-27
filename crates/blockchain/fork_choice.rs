@@ -2,6 +2,7 @@ use ethrex_common::{
     H256,
     types::{BlockHash, BlockHeader, BlockNumber},
 };
+use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
 
 use crate::{
@@ -72,30 +73,28 @@ pub async fn apply_fork_choice(
     };
 
     // Check that finalized and safe blocks are part of the new canonical chain.
-    if let Some(ref finalized) = finalized_res {
-        if !((is_canonical(store, finalized.number, finalized_hash).await?
+    if let Some(ref finalized) = finalized_res
+        && !((is_canonical(store, finalized.number, finalized_hash).await?
             && finalized.number <= link_block_number)
             || (finalized.number == head.number && finalized_hash == head_hash)
             || new_canonical_blocks.contains(&(finalized.number, finalized_hash)))
-        {
-            return Err(InvalidForkChoice::Disconnected(
-                error::ForkChoiceElement::Head,
-                error::ForkChoiceElement::Finalized,
-            ));
-        };
+    {
+        return Err(InvalidForkChoice::Disconnected(
+            error::ForkChoiceElement::Head,
+            error::ForkChoiceElement::Finalized,
+        ));
     }
 
-    if let Some(ref safe) = safe_res {
-        if !((is_canonical(store, safe.number, safe_hash).await?
+    if let Some(ref safe) = safe_res
+        && !((is_canonical(store, safe.number, safe_hash).await?
             && safe.number <= link_block_number)
             || (safe.number == head.number && safe_hash == head_hash)
             || new_canonical_blocks.contains(&(safe.number, safe_hash)))
-        {
-            return Err(InvalidForkChoice::Disconnected(
-                error::ForkChoiceElement::Head,
-                error::ForkChoiceElement::Safe,
-            ));
-        };
+    {
+        return Err(InvalidForkChoice::Disconnected(
+            error::ForkChoiceElement::Head,
+            error::ForkChoiceElement::Safe,
+        ));
     }
 
     // Finished all validations.
@@ -109,6 +108,12 @@ pub async fn apply_fork_choice(
             finalized_res.map(|h| h.number),
         )
         .await?;
+
+    metrics!(
+        use ethrex_metrics::blocks::METRICS_BLOCKS;
+
+        METRICS_BLOCKS.set_head_height(head.number);
+    );
 
     Ok(head)
 }

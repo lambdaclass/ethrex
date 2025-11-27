@@ -15,6 +15,7 @@ pub fn compile_contract(
     output_dir: &Path,
     contract_path: &Path,
     runtime_bin: bool,
+    abi_json: bool,
     remappings: Option<&[(&str, PathBuf)]>,
     allow_paths: &[&Path],
 ) -> Result<(), ContractCompilationError> {
@@ -26,6 +27,10 @@ pub fn compile_contract(
 
     let mut cmd = Command::new("solc");
     cmd.arg(bin_flag);
+
+    if abi_json {
+        cmd.arg("--abi");
+    }
 
     apply_remappings(&mut cmd, remappings)?;
 
@@ -42,7 +47,8 @@ pub fn compile_contract(
             .to_str()
             .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
     )
-    .arg("--overwrite");
+    .arg("--overwrite")
+    .arg("--no-cbor-metadata");
 
     if !allow_paths.is_empty() {
         apply_allow_paths(&mut cmd, allow_paths)?;
@@ -60,9 +66,9 @@ pub fn compile_contract(
         .success();
 
     if !cmd_succeeded {
-        return Err(ContractCompilationError::CompilationError(
-            format!("Failed to compile {contract_path:?}").to_owned(),
-        ));
+        return Err(ContractCompilationError::CompilationError(format!(
+            "Failed to compile {contract_path:?}"
+        )));
     }
 
     Ok(())

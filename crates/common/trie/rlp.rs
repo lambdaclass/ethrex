@@ -1,113 +1,81 @@
+use std::array;
+
 // Contains RLP encoding and decoding implementations for Trie Nodes
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
 use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
+    constants::RLP_NULL,
+    decode::{RLPDecode, decode_bytes},
+    encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
 
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
-use crate::{NodeHash, node::NodeRef};
-
-enum NodeType {
-    Branch = 0,
-    Extension = 1,
-    Leaf = 2,
-}
-
-impl NodeType {
-    const fn from_u8(val: u8) -> Option<Self> {
-        match val {
-            0 => Some(Self::Branch),
-            1 => Some(Self::Extension),
-            2 => Some(Self::Leaf),
-            _ => None,
-        }
-    }
-}
+use crate::{Nibbles, NodeHash};
 
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        // TODO: choices encoded as vec due to conflicting trait impls for [T;N] & [u8;N], check if we can fix this later
-        Encoder::new(buf)
-            .encode_field(
-                &self
-                    .choices
-                    .iter()
-                    .map(|x| x.compute_hash())
-                    .collect::<Vec<_>>(),
-            )
-            .encode_field(&self.value)
-            .finish()
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let payload_len = self.choices.iter().fold(value_len, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())
+        });
+
+        encode_length(payload_len, buf);
+        for child in self.choices.iter() {
+            match child.compute_hash_ref() {
+                NodeHash::Hashed(hash) => hash.0.encode(buf),
+                NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
+            }
+        }
+        <[u8] as RLPEncode>::encode(&self.value, buf);
+    }
+
+    // Duplicated to prealloc the buffer and avoid calculating the payload length twice
+    fn encode_to_vec(&self) -> Vec<u8> {
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let choices_len = self.choices.iter().fold(0, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())
+        });
+        let payload_len = choices_len + value_len;
+
+        let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
+
+        encode_length(payload_len, &mut buf);
+        for child in self.choices.iter() {
+            match child.compute_hash_ref() {
+                NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+                NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => {
+                    buf.extend_from_slice(&encoded[..*len as usize])
+                }
+            }
+        }
+        <[u8] as RLPEncode>::encode(&self.value, &mut buf);
+
+        buf
     }
 }
 
 impl RLPEncode for ExtensionNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.prefix)
-            .encode_field(&self.child.compute_hash())
-            .finish()
+        let mut encoder = Encoder::new(buf).encode_bytes(&self.prefix.encode_compact());
+        encoder = self.child.compute_hash().encode(encoder);
+        encoder.finish();
     }
 }
 
 impl RLPEncode for LeafNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
-            .encode_field(&self.partial)
-            .encode_field(&self.value)
+            .encode_bytes(&self.partial.encode_compact())
+            .encode_bytes(&self.value)
             .finish()
-    }
-}
-
-impl RLPDecode for BranchNode {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        const CHOICES_LEN_ERROR_MSG: &str =
-            "Error decoding field 'choices' of type [H256;16]: Invalid Length";
-        let decoder = Decoder::new(rlp)?;
-        let (choices, decoder) = decoder.decode_field::<Vec<NodeHash>>("choices")?;
-        let choices = choices.into_iter().map(NodeRef::Hash).collect::<Vec<_>>();
-        let choices = choices
-            .try_into()
-            .map_err(|_| RLPDecodeError::Custom(CHOICES_LEN_ERROR_MSG.to_string()))?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        Ok((Self { choices, value }, decoder.finish()?))
-    }
-}
-
-impl RLPDecode for ExtensionNode {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (prefix, decoder) = decoder.decode_field("prefix")?;
-        let (child, decoder) = decoder.decode_field("child")?;
-        Ok((
-            Self {
-                prefix,
-                child: NodeRef::Hash(child),
-            },
-            decoder.finish()?,
-        ))
-    }
-}
-
-impl RLPDecode for LeafNode {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (partial, decoder) = decoder.decode_field("partial")?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        Ok((Self { partial, value }, decoder.finish()?))
     }
 }
 
 impl RLPEncode for Node {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let node_type = match self {
-            Node::Branch(_) => NodeType::Branch,
-            Node::Extension(_) => NodeType::Extension,
-            Node::Leaf(_) => NodeType::Leaf,
-        };
-        buf.put_u8(node_type as u8);
         match self {
             Node::Branch(n) => n.encode(buf),
             Node::Extension(n) => n.encode(buf),
@@ -118,19 +86,75 @@ impl RLPEncode for Node {
 
 impl RLPDecode for Node {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let node_type = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
-        let node_type = NodeType::from_u8(*node_type).ok_or(RLPDecodeError::MalformedData)?;
-        let rlp = &rlp[1..];
-        match node_type {
-            NodeType::Branch => {
-                BranchNode::decode_unfinished(rlp).map(|(node, rem)| (node.into(), rem))
-            }
-            NodeType::Extension => {
-                ExtensionNode::decode_unfinished(rlp).map(|(node, rem)| (node.into(), rem))
-            }
-            NodeType::Leaf => {
-                LeafNode::decode_unfinished(rlp).map(|(node, rem)| (node.into(), rem))
-            }
+        let mut rlp_items_len = 0;
+        let mut rlp_items: [Option<&[u8]>; 17] = Default::default();
+        let mut decoder = Decoder::new(rlp)?;
+        let mut item;
+        // Get encoded fields
+
+        // Check if we reached the end or if we decoded more items than the ones we need
+        while !decoder.is_done() && rlp_items_len < 17 {
+            (item, decoder) = decoder.get_encoded_item_ref()?;
+            rlp_items[rlp_items_len] = Some(item);
+            rlp_items_len += 1;
         }
+        if !decoder.is_done() {
+            return Err(RLPDecodeError::Custom(
+                "Invalid arg count for Node, expected 2 or 17, got more than 17".to_string(),
+            ));
+        }
+        // Deserialize into node depending on the available fields
+        let node = match rlp_items_len {
+            // Leaf or Extension Node
+            2 => {
+                let (path, _) = decode_bytes(rlp_items[0].expect("we already checked the length"))?;
+                let path = Nibbles::decode_compact(path);
+                if path.is_leaf() {
+                    // Decode as Leaf
+                    let (value, _) =
+                        decode_bytes(rlp_items[1].expect("we already checked the length"))?;
+                    LeafNode {
+                        partial: path,
+                        value: value.to_vec(),
+                    }
+                    .into()
+                } else {
+                    // Decode as Extension
+                    ExtensionNode {
+                        prefix: path,
+                        child: decode_child(rlp_items[1].expect("we already checked the length"))
+                            .into(),
+                    }
+                    .into()
+                }
+            }
+            // Branch Node
+            17 => {
+                let choices = array::from_fn(|i| {
+                    decode_child(rlp_items[i].expect("we already checked the length")).into()
+                });
+                let (value, _) =
+                    decode_bytes(rlp_items[16].expect("we already checked the length"))?;
+                BranchNode {
+                    choices,
+                    value: value.to_vec(),
+                }
+                .into()
+            }
+            n => {
+                return Err(RLPDecodeError::Custom(format!(
+                    "Invalid arg count for Node, expected 2 or 17, got {n}"
+                )));
+            }
+        };
+        Ok((node, decoder.finish()?))
+    }
+}
+
+fn decode_child(rlp: &[u8]) -> NodeHash {
+    match decode_bytes(rlp) {
+        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
+        Ok((&[], &[])) => NodeHash::default(),
+        _ => NodeHash::from_slice(rlp),
     }
 }

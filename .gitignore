@@ -17,6 +17,8 @@ tooling/ef_tests/state/runner_v2/success_report.txt
 
 tooling/reorgs/data
 
+tooling/sync/logs/
+
 # Repos checked out by make target
 /hive/
 ethereum-package/
@@ -36,7 +38,7 @@ jwt.hex
 # Used by the make test target
 /tmp
 
-tests*.tar.gz
+*tests*.tar.gz
 
 .env
 
@@ -72,3 +74,6 @@ GEMINI.md
 
 # RKYV
 *.bin
+
+# Documentation Graphs
+!docs/internal/l1/healing/*.svg

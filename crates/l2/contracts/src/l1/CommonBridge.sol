@@ -14,6 +14,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
+import "../l2/interfaces/IFeeTokenRegistry.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -59,6 +60,10 @@ contract CommonBridge is
     /// @dev It's used to validate withdrawals
     address public constant L2_BRIDGE_ADDRESS = address(0xffff);
 
+    /// @notice Address of the fee token registry on the L2
+    /// @dev It's used to allow new tokens to pay fees
+    address public constant L2_FEE_TOKEN_REGISTRY = address(0xfffc);
+
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
@@ -70,7 +75,8 @@ contract CommonBridge is
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /// @notice Owner of the L2 system contract proxies
-    address public constant L2_PROXY_ADMIN =  0x000000000000000000000000000000000000f000;
+    address public constant L2_PROXY_ADMIN =
+        0x000000000000000000000000000000000000f000;
 
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping for the message id
@@ -86,6 +92,15 @@ contract CommonBridge is
     /// @notice Deadline for the sequencer to include the transaction.
     mapping(bytes32 => uint256) public privilegedTxDeadline;
 
+    /// @dev Deprecated variable.
+    /// @notice The L1 token address that is treated as the one to be bridged to the L2.
+    /// @dev If set to address(0), ETH is considered the native token.
+    /// Otherwise, this address is used for native token deposits and withdrawals.
+    address public NATIVE_TOKEN_L1;
+
+    /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
+    uint256 private pendingPrivilegedTxIndex;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -99,6 +114,7 @@ contract CommonBridge is
     /// @dev It sets the OnChainProposer address.
     /// @param owner the address of the owner who can perform upgrades.
     /// @param onChainProposer the address of the OnChainProposer contract.
+    /// @param inclusionMaxWait the maximum time the sequencer is allowed to take without processing a privileged transaction.
     function initialize(
         address owner,
         address onChainProposer,
@@ -112,6 +128,7 @@ contract CommonBridge is
 
         lastFetchedL1Block = block.number;
         transactionId = 0;
+        pendingPrivilegedTxIndex = 0;
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
@@ -125,7 +142,12 @@ contract CommonBridge is
         view
         returns (bytes32[] memory)
     {
-        return pendingTxHashes;
+        bytes32[] memory buffer = new bytes32[](pendingTxHashesLength());
+        for (uint256 i = 0; i < pendingTxHashesLength(); i++) {
+            buffer[i] = pendingTxHashes[i + pendingPrivilegedTxIndex];
+        }
+
+        return buffer;
     }
 
     /// Burns at least {amount} gas
@@ -134,7 +156,6 @@ contract CommonBridge is
         while (startingGas - gasleft() < amount) {}
     }
 
-
     /// EIP-7702 delegated accounts have code beginning with this.
     bytes3 internal constant EIP7702_PREFIX = 0xef0100;
     /// Code size in bytes of an EIP-7702 delegated account
@@ -142,7 +163,8 @@ contract CommonBridge is
     uint256 internal constant EIP7702_CODE_LENGTH = 23;
 
     /// This is intentionally different from the constant Optimism uses, but arbitrary.
-    uint256 internal constant ADDRESS_ALIASING = uint256(uint160(0xEe110000000000000000000000000000000011Ff));
+    uint256 internal constant ADDRESS_ALIASING =
+        uint256(uint160(0xEe110000000000000000000000000000000011Ff));
 
     /// @notice This implements address aliasing, inspired by [Optimism](https://docs.optimism.io/stack/differences#address-aliasing)
     /// @dev The purpose of this is to prevent L2 contracts from being impersonated by malicious L1 contracts at the same address
@@ -159,7 +181,8 @@ contract CommonBridge is
                 return msg.sender;
             }
         }
-        return address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
+        return
+            address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
@@ -194,16 +217,16 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function sendToL2(SendValues calldata sendValues) public override whenNotPaused {
+    function sendToL2(
+        SendValues calldata sendValues
+    ) public override whenNotPaused {
         _sendToL2(_getSenderAlias(), sendValues);
     }
 
     /// @inheritdoc ICommonBridge
-    function deposit(address l2Recipient) public payable override whenNotPaused {
-        _deposit(l2Recipient);
-    }
-
-    function _deposit(address l2Recipient) private {
+    function deposit(
+        address l2Recipient
+    ) public payable override whenNotPaused {
         deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintETH,
@@ -219,7 +242,7 @@ contract CommonBridge is
     }
 
     receive() external payable whenNotPaused {
-        _deposit(msg.sender);
+        deposit(msg.sender);
     }
 
     function depositERC20(
@@ -251,13 +274,16 @@ contract CommonBridge is
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= pendingTxHashes.length,
+            uint256(number) <= pendingTxHashesLength(),
             "CommonBridge: number is greater than the length of pendingTxHashes (get)"
         );
 
         bytes memory hashes;
         for (uint i = 0; i < number; i++) {
-            hashes = bytes.concat(hashes, pendingTxHashes[i]);
+            hashes = bytes.concat(
+                hashes,
+                pendingTxHashes[i + pendingPrivilegedTxIndex]
+            );
         }
 
         return
@@ -270,25 +296,21 @@ contract CommonBridge is
         uint16 number
     ) public onlyOnChainProposer {
         require(
-            number <= pendingTxHashes.length,
+            number <= pendingTxHashesLength(),
             "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
         );
 
-        for (uint i = 0; i < pendingTxHashes.length - number; i++) {
-            pendingTxHashes[i] = pendingTxHashes[i + number];
-        }
-
-        for (uint _i = 0; _i < number; _i++) {
-            pendingTxHashes.pop();
-        }
+        pendingPrivilegedTxIndex += number;
     }
 
     /// @inheritdoc ICommonBridge
     function hasExpiredPrivilegedTransactions() public view returns (bool) {
-        if (pendingTxHashes.length == 0) {
+        if (pendingTxHashesLength() == 0) {
             return false;
         }
-        return block.timestamp > privilegedTxDeadline[pendingTxHashes[0]];
+        return
+            block.timestamp >
+            privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]];
     }
 
     /// @inheritdoc ICommonBridge
@@ -344,7 +366,7 @@ contract CommonBridge is
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public nonReentrant override whenNotPaused {
+    ) public override nonReentrant whenNotPaused {
         _claimWithdrawal(
             tokenL1,
             tokenL2,
@@ -409,11 +431,7 @@ contract CommonBridge is
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
         bytes32 withdrawalLeaf = keccak256(
-            abi.encodePacked(
-                L2_BRIDGE_ADDRESS,
-                msgHash,
-                withdrawalMessageId
-            )
+            abi.encodePacked(L2_BRIDGE_ADDRESS, msgHash, withdrawalMessageId)
         );
         return
             MerkleProof.verify(
@@ -423,8 +441,20 @@ contract CommonBridge is
             );
     }
 
-    function upgradeL2Contract(address l2Contract, address newImplementation, uint256 gasLimit, bytes calldata data) public onlyOwner {
-        bytes memory callData = abi.encodeCall(ITransparentUpgradeableProxy.upgradeToAndCall, (newImplementation, data));
+    function pendingTxHashesLength() private view returns (uint256) {
+        return pendingTxHashes.length - pendingPrivilegedTxIndex;
+    }
+
+    function upgradeL2Contract(
+        address l2Contract,
+        address newImplementation,
+        uint256 gasLimit,
+        bytes calldata data
+    ) public onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            ITransparentUpgradeableProxy.upgradeToAndCall,
+            (newImplementation, data)
+        );
         SendValues memory sendValues = SendValues({
             to: l2Contract,
             gasLimit: gasLimit,
@@ -432,6 +462,40 @@ contract CommonBridge is
             data: callData
         });
         _sendToL2(L2_PROXY_ADMIN, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function registerNewFeeToken(
+        address newFeeToken
+    ) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenRegistry.registerFeeToken,
+            (newFeeToken)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_REGISTRY,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function unregisterFeeToken(
+        address existingFeeToken
+    ) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenRegistry.unregisterFeeToken,
+            (existingFeeToken)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_REGISTRY,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
     /// @notice Allow owner to upgrade the contract.

@@ -1,7 +1,7 @@
 use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 
-use crate::rlpx::{error::RLPxError, p2p::Capability};
+use crate::rlpx::{error::PeerConnectionError, p2p::Capability};
 
 use super::status::StatusMessage;
 
@@ -9,18 +9,21 @@ pub async fn validate_status<ST: StatusMessage>(
     msg_data: ST,
     storage: &Store,
     eth_capability: &Capability,
-) -> Result<(), RLPxError> {
-    let chain_config = storage.get_chain_config()?;
+) -> Result<(), PeerConnectionError> {
+    let chain_config = storage.get_chain_config();
 
     // These blocks must always be available
     let genesis_header = storage
         .get_block_header(0)?
-        .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
+        .ok_or(PeerConnectionError::NotFound("Genesis Block".to_string()))?;
     let genesis_hash = genesis_header.hash();
     let latest_block_number = storage.get_latest_block_number().await?;
-    let latest_block_header = storage
-        .get_block_header(latest_block_number)?
-        .ok_or(RLPxError::NotFound(format!("Block {latest_block_number}")))?;
+    let latest_block_header =
+        storage
+            .get_block_header(latest_block_number)?
+            .ok_or(PeerConnectionError::NotFound(format!(
+                "Block {latest_block_number}"
+            )))?;
     let fork_id = ForkId::new(
         chain_config,
         genesis_header.clone(),
@@ -30,19 +33,19 @@ pub async fn validate_status<ST: StatusMessage>(
 
     //Check networkID
     if msg_data.get_network_id() != chain_config.chain_id {
-        return Err(RLPxError::HandshakeError(
+        return Err(PeerConnectionError::HandshakeError(
             "Network Id does not match".to_string(),
         ));
     }
     //Check Protocol Version
     if msg_data.get_eth_version() != eth_capability.version {
-        return Err(RLPxError::HandshakeError(
+        return Err(PeerConnectionError::HandshakeError(
             "Eth protocol version does not match".to_string(),
         ));
     }
     //Check Genesis
     if msg_data.get_genesis() != genesis_hash {
-        return Err(RLPxError::HandshakeError(
+        return Err(PeerConnectionError::HandshakeError(
             "Genesis does not match".to_string(),
         ));
     }
@@ -54,7 +57,9 @@ pub async fn validate_status<ST: StatusMessage>(
         chain_config,
         genesis_header,
     ) {
-        return Err(RLPxError::HandshakeError("Invalid Fork Id".to_string()));
+        return Err(PeerConnectionError::HandshakeError(
+            "Invalid Fork Id".to_string(),
+        ));
     }
 
     Ok(())
@@ -78,7 +83,7 @@ mod tests {
     async fn test_validate_status() {
         // Setup
         // TODO we should have this setup exported to some test_utils module and use from there
-        let storage =
+        let mut storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let file = File::open("../../../fixtures/genesis/execution-api.json")
             .expect("Failed to open genesis file");

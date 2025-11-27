@@ -316,11 +316,11 @@ impl RpcHandler for GetBlobBaseFee {
             Err(error) => return Err(RpcErr::Internal(error.to_string())),
         };
 
-        let config = context.storage.get_chain_config()?;
+        let config = context.storage.get_chain_config();
         let blob_base_fee = calculate_base_fee_per_blob_gas(
             parent_header.excess_blob_gas.unwrap_or_default(),
             config
-                .get_fork_blob_schedule(header.timestamp)
+                .get_blob_schedule_for_time(header.timestamp)
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
@@ -343,11 +343,11 @@ pub async fn get_all_block_rpc_receipts(
     }
     // TODO: Here we are calculating the base_fee_per_blob_gas with the current header.
     // Check if we should be passing the parent header instead
-    let config = storage.get_chain_config()?;
+    let config = storage.get_chain_config();
     let blob_base_fee = calculate_base_fee_per_blob_gas(
         header.excess_blob_gas.unwrap_or_default(),
         config
-            .get_fork_blob_schedule(header.timestamp)
+            .get_blob_schedule_for_time(header.timestamp)
             .map(|schedule| schedule.base_fee_update_fraction)
             .unwrap_or_default(),
     );

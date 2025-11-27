@@ -6,7 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
@@ -22,7 +22,7 @@ use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     BlockProducerConfig, SequencerConfig,
@@ -33,7 +33,7 @@ use super::errors::BlockProducerError;
 
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
+use ethrex_metrics::{blocks::METRICS_BLOCKS, transactions::METRICS_TX};
 
 #[derive(Clone)]
 pub enum CallMessage {
@@ -43,6 +43,7 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Produce,
+    Abort,
 }
 
 #[derive(Clone)]
@@ -83,9 +84,26 @@ impl BlockProducer {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            base_fee_vault_address,
+            operator_fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
         } = config;
+
+        if base_fee_vault_address.is_some_and(|base_fee_vault| base_fee_vault == *coinbase_address)
+        {
+            warn!(
+                "The coinbase address and base fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
+        }
+        if operator_fee_vault_address
+            .is_some_and(|operator_fee_vault| operator_fee_vault == *coinbase_address)
+        {
+            warn!(
+                "The coinbase address and operator fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
+        }
+
         Self {
             store,
             blockchain,
@@ -169,7 +187,7 @@ impl BlockProducer {
 
         // Blockchain stores block
         let block = payload_build_result.payload;
-        let chain_config = self.store.get_chain_config()?;
+        let chain_config = self.store.get_chain_config();
         validate_block(
             &block,
             &head_header,
@@ -186,17 +204,19 @@ impl BlockProducer {
 
         let account_updates_list = self
             .store
-            .apply_account_updates_batch(block.header.parent_hash, &account_updates)
-            .await?
+            .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let transactions_count = block.body.transactions.len();
         let block_number = block.header.number;
         let block_hash = block.hash();
+        self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
-            .store_block(block, account_updates_list, execution_result)
-            .await?;
-        info!("Stored new block {:x}", block_hash);
+            .store_block(block, account_updates_list, execution_result)?;
+        info!(
+            "Stored new block {:x}, transaction_count {}",
+            block_hash, transactions_count
+        );
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         self.rollup_store
@@ -207,16 +227,28 @@ impl BlockProducer {
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
-            let _ = METRICS_BLOCKS
-            .set_block_number(block_number)
-            .inspect_err(|e| {
-                tracing::error!("Failed to set metric: block_number {}", e.to_string())
-            });
+            METRICS_BLOCKS.set_block_number(block_number);
             #[allow(clippy::as_conversions)]
             let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
         );
 
+        Ok(())
+    }
+    async fn store_fee_config_by_block(&self, block_number: u64) -> Result<(), BlockProducerError> {
+        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
+            error!("Invalid blockchain type. Expected L2.");
+            return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
+        };
+
+        let fee_config = *l2_config
+            .fee_config
+            .read()
+            .map_err(|_| BlockProducerError::Custom("Fee config lock was poisoned".to_string()))?;
+
+        self.rollup_store
+            .store_fee_config_by_block(block_number, fee_config)
+            .await?;
         Ok(())
     }
 }
@@ -229,22 +261,30 @@ impl GenServer for BlockProducer {
 
     async fn handle_cast(
         &mut self,
-        _message: Self::CastMsg,
+        message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        // Right now we only have the Produce message, so we ignore the message
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self
-                .produce_block()
-                .await
-                .inspect_err(|e| error!("Block Producer Error: {e}"));
+        match message {
+            InMessage::Produce => {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                    let _ = self
+                        .produce_block()
+                        .await
+                        .inspect_err(|e| error!("Block Producer Error: {e}"));
+                }
+                send_after(
+                    Duration::from_millis(self.block_time_ms),
+                    handle.clone(),
+                    Self::CastMsg::Produce,
+                );
+                CastResponse::NoReply
+            }
+            InMessage::Abort => {
+                // start_blocking keeps this GenServer alive even if the JoinSet aborts the task.
+                // Returning CastResponse::Stop is how the blocking runner actually shuts down.
+                CastResponse::Stop
+            }
         }
-        send_after(
-            Duration::from_millis(self.block_time_ms),
-            handle.clone(),
-            Self::CastMsg::Produce,
-        );
-        CastResponse::NoReply
     }
 
     async fn handle_call(

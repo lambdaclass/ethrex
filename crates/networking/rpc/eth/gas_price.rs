@@ -1,5 +1,6 @@
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
+use ethrex_blockchain::BlockchainType;
 use serde_json::Value;
 
 // TODO: This does not need a struct,
@@ -35,7 +36,18 @@ impl RpcHandler for GasPrice {
             .estimate_gas_tip(&context.storage)
             .await?;
         // To complete the gas price, we need to add the base fee to the estimated gas tip.
-        let gas_price = base_fee + estimated_gas_tip;
+        let mut gas_price = base_fee + estimated_gas_tip;
+
+        // Add the operator fee to the gas price if configured
+        if let BlockchainType::L2(l2_config) = &context.blockchain.options.r#type {
+            let fee_config = *l2_config
+                .fee_config
+                .read()
+                .map_err(|_| RpcErr::Internal("Fee config lock was poisoned".to_string()))?;
+            if let Some(operator_fee_config) = &fee_config.operator_fee_config {
+                gas_price += operator_fee_config.operator_fee_per_gas;
+            }
+        }
 
         let gas_as_hex = format!("0x{gas_price:x}");
         Ok(serde_json::Value::String(gas_as_hex))
@@ -45,12 +57,12 @@ impl RpcHandler for GasPrice {
 #[cfg(test)]
 mod tests {
     use super::GasPrice;
-    use crate::eth::test_utils::{
+    use crate::test_utils::{
         BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks,
         setup_store,
     };
 
-    use crate::utils::test_utils::default_context_with_storage;
+    use crate::test_utils::default_context_with_storage;
     use crate::{
         rpc::{RpcHandler, map_http_requests},
         utils::{RpcRequest, parse_json_hex},

@@ -161,8 +161,8 @@ impl From<MempoolError> for RpcErr {
     }
 }
 
-impl From<secp256k1::Error> for RpcErr {
-    fn from(err: secp256k1::Error) -> Self {
+impl From<ethrex_common::EcdsaError> for RpcErr {
+    fn from(err: ethrex_common::EcdsaError) -> Self {
         Self::Internal(format!("Cryptography error: {err}"))
     }
 }
@@ -321,106 +321,5 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
         maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
     } else {
         Err(format!("Could not parse given hex {hex}"))
-    }
-}
-
-#[cfg(test)]
-pub mod test_utils {
-    use std::{net::SocketAddr, str::FromStr, sync::Arc};
-
-    use bytes::Bytes;
-    use ethrex_blockchain::Blockchain;
-    use ethrex_common::{H512, types::DEFAULT_BUILDER_GAS_CEIL};
-    use ethrex_p2p::{
-        peer_handler::PeerHandler,
-        sync_manager::SyncManager,
-        types::{Node, NodeRecord},
-    };
-    use ethrex_storage::{EngineType, Store};
-    use secp256k1::SecretKey;
-    use tokio::sync::Mutex as TokioMutex;
-
-    use crate::{
-        eth::gas_tip_estimator::GasTipEstimator,
-        rpc::{NodeData, RpcApiContext, start_api},
-    };
-
-    pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
-    pub fn example_p2p_node() -> Node {
-        let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1)
-    }
-
-    pub fn example_local_node_record() -> NodeRecord {
-        let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-
-        NodeRecord::from_node(&node, 1, &signer).unwrap()
-    }
-
-    // Util to start an api for testing on ports 8500 and 8501,
-    // mostly for when hive is missing some endpoints to test
-    // like eth_uninstallFilter.
-    // Here's how you would use it:
-    // ```
-    // let server_handle = tokio::spawn(async move { start_stest_api().await })
-    // ...
-    // assert!(something_that_needs_the_server)
-    // ...
-    // server_handle.abort()
-    // ```
-    pub async fn start_test_api() {
-        let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
-        let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
-        let storage =
-            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
-        storage
-            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
-            .await
-            .expect("Failed to build test genesis");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let jwt_secret = Default::default();
-        let local_p2p_node = example_p2p_node();
-        let local_node_record = example_local_node_record();
-        start_api(
-            http_addr,
-            authrpc_addr,
-            storage,
-            blockchain,
-            jwt_secret,
-            local_p2p_node,
-            local_node_record,
-            SyncManager::dummy(),
-            PeerHandler::dummy(),
-            "ethrex/test".to_string(),
-            None,
-            None,
-            String::new(),
-        )
-        .await
-        .unwrap();
-    }
-
-    pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let local_node_record = example_local_node_record();
-        RpcApiContext {
-            storage,
-            blockchain,
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            peer_handler: PeerHandler::dummy(),
-            node_data: NodeData {
-                jwt_secret: Default::default(),
-                local_p2p_node: example_p2p_node(),
-                local_node_record,
-                client_version: "ethrex/test".to_string(),
-                extra_data: Bytes::new(),
-            },
-            gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
-            log_filter_handler: None,
-            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
-        }
     }
 }

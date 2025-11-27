@@ -1,0 +1,72 @@
+name: Daily Snapsync Check
+
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - ".github/workflows/daily_snapsync.yaml"
+  schedule:
+    # Every day at UTC 03:00
+    - cron: "0 3 * * 1,2,3,4,5"
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Network name (hoodi or sepolia)"
+        required: false
+        default: "hoodi"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ethrex-sync-server
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - id: targets
+        run: |
+          event_name="${GITHUB_EVENT_NAME}"
+          if [[ "$event_name" == "schedule" ]]; then
+            json='[{"network":"hoodi","timeout":"30m"},{"network":"sepolia","timeout":"10h"}]'
+          elif [[ "$event_name" == "pull_request" ]]; then
+            json='[{"network":"hoodi","timeout":"30m"}]'
+          else
+            network=$(jq -r '.inputs.network // empty' "$GITHUB_EVENT_PATH")
+
+            case "$network" in
+              hoodi)
+                json='[{"network":"hoodi","timeout":"30m"}]'
+                ;;
+              sepolia)
+                json='[{"network":"sepolia","timeout":"10h"}]'
+                ;;
+              *)
+                echo "::error::Unsupported network value '$network'. Allowed values: hoodi, sepolia."
+                exit 1
+                ;;
+            esac
+          fi
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+
+  sync:
+    needs: prepare
+    name: Sync ${{ matrix.network }}
+    runs-on: ethrex-sync
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Run Snapsync Test
+        uses: ./.github/actions/snapsync-run
+        with:
+          network: ${{ matrix.network }}
+          timeout: ${{ matrix.timeout }}

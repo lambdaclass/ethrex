@@ -5,8 +5,9 @@ Build ethrex yourself for maximum flexibility and experimental features.
 ## Prerequisites
 
 - [Rust toolchain](https://www.rust-lang.org/tools/install) (use `rustup` for easiest setup)
+- [libclang](https://clang.llvm.org/docs/index.html) (for RocksDB)
 - [Git](https://git-scm.com/downloads)
-- [solc](https://docs.soliditylang.org/en/v0.8.30/installing-solidity.html) (for L2 development)
+- [solc (v0.8.29)](https://docs.soliditylang.org/en/v0.8.29/installing-solidity.html) (for L2 development)
 
 ### L2 contracts
 

@@ -23,21 +23,27 @@ pub struct RunnerOptions {
 }
 
 //TODO: Use this constant, improve it.
-const IGNORED_TESTS: [&str; 14] = [
-    "static_Call50000_sha256.json", // Skip because it takes longer to run than some tests, but not a huge deal.
-    "CALLBlake2f_MaxRounds.json",   // Skip because it takes extremely long to run, but passes.
-    "ValueOverflow.json",           // Skip because it tries to deserialize number > U256::MAX
-    "ValueOverflowParis.json",      // Skip because it tries to deserialize number > U256::MAX
-    "loopMul.json",                 // Skip because it takes too long to run
+const IGNORED_TESTS: &[&str] = &[
+    // These tests contain accounts without nonce or code but have storage, which is a virtually impossible scenario. That's why we fail, but that's okay.
+    // When creating an account we don't check the storage root but just if it has nonce or code, and that's the right check for real case scenarios.
     "dynamicAccountOverwriteEmpty_Paris.json",
     "RevertInCreateInInitCreate2Paris.json",
     "RevertInCreateInInit_Paris.json",
     "create2collisionStorageParis.json",
     "InitCollisionParis.json",
     "InitCollision.json",
-    "contract_create.json", // Skip for now as it requires special transaction type handling
-    "HighGasPrice.json", // Skip until we fix gas price unit (u64 -> U256) https://github.com/lambdaclass/ethrex/issues/3629
-    "HighGasPriceParis.json", // Skip until we fix gas price unit (u64 -> U256) https://github.com/lambdaclass/ethrex/issues/3629
+    // Gas price higher than u64::MAX; impractical scenario. We don't use 256 bits for gas price for performance reasons, however, it's debatable. See https://github.com/lambdaclass/ethrex/issues/3629
+    "HighGasPrice.json",
+    "HighGasPriceParis.json",
+    // Skip because they take too long to run, but they pass
+    "static_Call50000_sha256.json",
+    "CALLBlake2f_MaxRounds.json",
+    "loopMul.json",
+    // Skip because it tries to deserialize number > U256::MAX
+    "ValueOverflow.json",
+    "ValueOverflowParis.json",
+    // Skip for now as it requires special transaction type handling in test runner, we should improve that.
+    "contract_create.json",
 ];
 
 /// Parse a `.json` file of tests into a Vec<Test>.

@@ -4,7 +4,7 @@ use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::{PrivilegedL2Transaction, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
@@ -12,17 +12,20 @@ use ethrex_l2_sdk::{
     build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
 };
 use ethrex_rpc::clients::EthClientError;
+use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
+use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
 };
 use std::collections::BTreeMap;
+use std::time::Duration;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
@@ -33,7 +36,8 @@ pub enum CallMessage {
 
 #[derive(Clone)]
 pub enum InMessage {
-    Watch,
+    WatchLogs,
+    UpdateL1BlobBaseFee,
 }
 
 #[derive(Clone)]
@@ -54,6 +58,7 @@ pub struct L1Watcher {
     pub check_interval: u64,
     pub l1_block_delay: u64,
     pub sequencer_state: SequencerState,
+    pub l1_blob_base_fee_update_interval: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -77,7 +82,11 @@ impl L1Watcher {
         sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
-        let l2_client = EthClient::new("http://localhost:1729")?;
+        // TODO: De-hardcode the rollup client URL
+        #[allow(clippy::expect_used)]
+        let l2_client = EthClient::new(
+            Url::parse("http://localhost:1729").expect("Unreachable error. URL is hardcoded"),
+        )?;
         let last_block_fetched = U256::zero();
         Ok(Self {
             store,
@@ -90,6 +99,7 @@ impl L1Watcher {
             check_interval: watcher_config.check_interval_ms,
             l1_block_delay: watcher_config.watcher_block_delay,
             sequencer_state,
+            l1_blob_base_fee_update_interval: watcher_config.l1_blob_base_fee_update_interval,
         })
     }
 
@@ -210,11 +220,7 @@ impl L1Watcher {
                 .try_into()
                 .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
 
-            let chain_id = self
-                .store
-                .get_chain_config()
-                .map_err(|e| L1WatcherError::FailedToRetrieveChainConfig(e.to_string()))?
-                .chain_id;
+            let chain_id = self.store.get_chain_config().chain_id;
 
             let mint_transaction = privileged_transaction_data
                 .into_tx(&self.eth_client, chain_id, gas_price)
@@ -307,9 +313,16 @@ impl GenServer for L1Watcher {
         // Perform the check and suscribe a periodic Watch.
         handle
             .clone()
-            .cast(Self::CastMsg::Watch)
+            .cast(Self::CastMsg::WatchLogs)
             .await
             .map_err(Self::Error::InternalError)?;
+
+        // Perform the first L1 blob base fee update and schedule periodic updates.
+        handle
+            .clone()
+            .cast(InMessage::UpdateL1BlobBaseFee)
+            .await
+            .map_err(L1WatcherError::InternalError)?;
         Ok(Success(self))
     }
 
@@ -319,12 +332,53 @@ impl GenServer for L1Watcher {
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            Self::CastMsg::Watch => {
+            Self::CastMsg::WatchLogs => {
                 if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
                     self.watch().await;
                 }
                 let check_interval = random_duration(self.check_interval);
-                send_after(check_interval, handle.clone(), Self::CastMsg::Watch);
+                send_after(check_interval, handle.clone(), Self::CastMsg::WatchLogs);
+                CastResponse::NoReply
+            }
+            Self::CastMsg::UpdateL1BlobBaseFee => {
+                info!("Updating L1 blob base fee");
+                let Ok(blob_base_fee) = self
+                    .eth_client
+                    .get_blob_base_fee(BlockIdentifier::Tag(BlockTag::Latest))
+                    .await
+                    .inspect_err(|e| {
+                        error!("Failed to fetch L1 blob base fee: {e}");
+                    })
+                else {
+                    return CastResponse::NoReply;
+                };
+
+                info!("Fetched L1 blob base fee: {blob_base_fee}");
+
+                let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
+                    error!("Invalid blockchain type. Expected L2.");
+                    return CastResponse::NoReply;
+                };
+
+                let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
+                    error!("Fee config lock was poisoned when updating L1 blob base fee");
+                    return CastResponse::NoReply;
+                };
+
+                let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_mut() else {
+                    warn!("L1 fee config is not set. Skipping L1 blob base fee update.");
+                    return CastResponse::NoReply;
+                };
+
+                info!(
+                    "Updating L1 blob base fee from {} to {}",
+                    l1_fee_config.l1_fee_per_blob_gas, blob_base_fee
+                );
+
+                l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
+
+                let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
+                send_after(interval, handle.clone(), Self::CastMsg::UpdateL1BlobBaseFee);
                 CastResponse::NoReply
             }
         }

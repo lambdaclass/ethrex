@@ -1,19 +1,10 @@
+use crate::peer_handler::DumpError;
+use ethrex_common::{H256, H512, U256, types::AccountState, utils::keccak};
+use ethrex_rlp::encode::RLPEncode;
+use secp256k1::{PublicKey, SecretKey};
 use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
-use ethrex_common::utils::keccak;
-use ethrex_common::{H256, H512, U256, types::AccountState};
-use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
-use ethrex_trie::Node;
-use secp256k1::{PublicKey, SecretKey};
-use spawned_concurrency::error::GenServerError;
-
-use crate::peer_handler::DumpError;
-use crate::{
-    discv4::peer_table::PeerChannels,
-    rlpx::{Message, connection::server::CastMessage, snap::TrieNodes},
 };
 use tracing::error;
 
@@ -46,6 +37,20 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
     let public_key = PublicKey::from_secret_key(secp256k1::SECP256K1, signer);
     let encoded = public_key.serialize_uncompressed();
     H512::from_slice(&encoded[1..])
+}
+
+/// Deletes the snap folders needed for downloading the leaves during the initial
+/// step of snap sync.
+pub fn delete_leaves_folder(datadir: &Path) {
+    // We ignore the errors because this can happen when the folders don't exist
+    let _ = std::fs::remove_dir_all(get_account_state_snapshots_dir(datadir));
+    let _ = std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir));
+    let _ = std::fs::remove_dir_all(get_code_hashes_snapshots_dir(datadir));
+    #[cfg(feature = "rocksdb")]
+    {
+        let _ = std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir));
+        let _ = std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir));
+    };
 }
 
 pub fn get_account_storages_snapshots_dir(datadir: &Path) -> PathBuf {
@@ -92,9 +97,9 @@ pub fn dump_accounts_to_rocks_db(
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     writer.open(std::path::Path::new(&path))?;
-    for (key, acccount) in contents {
+    for (key, account) in contents {
         buffer.clear();
-        acccount.encode(&mut buffer);
+        account.encode(&mut buffer);
         writer.put(key.0.as_ref(), buffer.as_slice())?;
     }
     writer.finish()
@@ -142,7 +147,7 @@ pub fn get_code_hashes_snapshot_file(directory: &Path, chunk_index: u64) -> Path
 
 pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
     std::fs::write(path, &contents)
-        .inspect_err(|err| tracing::error!(%err, ?path, "Failed to dump snapshot to file"))
+        .inspect_err(|err| error!(%err, ?path, "Failed to dump snapshot to file"))
         .map_err(|err| DumpError {
             path: path.to_path_buf(),
             contents,
@@ -215,88 +220,4 @@ pub fn dump_storages_to_file(
             .collect::<Vec<_>>()
             .encode_to_vec(),
     )
-}
-
-/// TODO: make it more generic
-pub async fn send_message_and_wait_for_response(
-    peer_channel: &mut PeerChannels,
-    message: Message,
-    request_id: u64,
-) -> Result<Vec<Node>, SendMessageError> {
-    let receiver = peer_channel
-        .receiver
-        .try_lock()
-        .map_err(|_| SendMessageError::PeerBusy)?;
-    peer_channel
-        .connection
-        .cast(CastMessage::BackendMessage(message))
-        .await
-        .map_err(SendMessageError::GenServerError)?;
-    let nodes = tokio::time::timeout(
-        Duration::from_secs(7),
-        receive_trienodes(receiver, request_id),
-    )
-    .await
-    .map_err(|_| SendMessageError::PeerTimeout)?
-    .ok_or(SendMessageError::PeerDisconnected)?;
-
-    nodes
-        .nodes
-        .iter()
-        .map(|node| Node::decode_raw(node))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(SendMessageError::RLPDecodeError)
-}
-
-/// TODO: make it more generic
-pub async fn send_trie_nodes_messages_and_wait_for_reply(
-    peer_channel: &mut PeerChannels,
-    message: Message,
-    request_id: u64,
-) -> Result<TrieNodes, SendMessageError> {
-    let receiver = peer_channel
-        .receiver
-        .try_lock()
-        .map_err(|_| SendMessageError::PeerBusy)?;
-    peer_channel
-        .connection
-        .cast(CastMessage::BackendMessage(message))
-        .await
-        .map_err(SendMessageError::GenServerError)?;
-    tokio::time::timeout(
-        Duration::from_secs(7),
-        receive_trienodes(receiver, request_id),
-    )
-    .await
-    .map_err(|_| SendMessageError::PeerTimeout)?
-    .ok_or(SendMessageError::PeerDisconnected)
-}
-
-async fn receive_trienodes(
-    mut receiver: tokio::sync::MutexGuard<'_, spawned_rt::tasks::mpsc::Receiver<Message>>,
-    request_id: u64,
-) -> Option<TrieNodes> {
-    loop {
-        let resp = receiver.recv().await?;
-        if let Message::TrieNodes(trie_nodes) = resp {
-            if trie_nodes.id == request_id {
-                return Some(trie_nodes);
-            }
-        }
-    }
-}
-
-// TODO: find a better name for this type
-#[derive(thiserror::Error, Debug)]
-pub enum SendMessageError {
-    #[error("Peer timed out")]
-    PeerTimeout,
-    #[error("GenServerError")]
-    GenServerError(GenServerError),
-    #[error("Peer disconnected")]
-    PeerDisconnected,
-    #[error("Peer Busy")]
-    PeerBusy,
-    #[error("RLP decode error")]
-    RLPDecodeError(RLPDecodeError),
 }

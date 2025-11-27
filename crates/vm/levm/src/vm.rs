@@ -20,7 +20,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Fork, Log, Transaction},
+    types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
 use std::{
     cell::RefCell,
@@ -35,7 +35,7 @@ pub type Storage = HashMap<U256, H256>;
 pub enum VMType {
     #[default]
     L1,
-    L2,
+    L2(FeeConfig),
 }
 
 /// Information that changes during transaction execution.
@@ -124,13 +124,13 @@ impl Substate {
 
             fn next(&mut self) -> Option<Self::Item> {
                 let next_item = self.iter.next();
-                if next_item.is_none() {
-                    if let Some(parent) = self.parent {
-                        self.parent = parent.parent.as_deref();
-                        self.iter = parent.selfdestruct_set.iter();
+                if next_item.is_none()
+                    && let Some(parent) = self.parent
+                {
+                    self.parent = parent.parent.as_deref();
+                    self.iter = parent.selfdestruct_set.iter();
 
-                        return self.next();
-                    }
+                    return self.next();
                 }
 
                 next_item
@@ -323,6 +323,7 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
@@ -360,7 +361,7 @@ impl<'a> VM<'a> {
                 env.origin,
                 callee,
                 Address::default(), // Will be assigned at the end of prepare_execution
-                Bytes::new(),       // Will be assigned at the end of prepare_execution
+                Code::default(),    // Will be assigned at the end of prepare_execution
                 tx.value(),
                 tx.data().clone(),
                 false,
