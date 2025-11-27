@@ -246,6 +246,7 @@ impl RLPEncode for [u8] {
         }
     }
 
+    #[inline]
     fn length(&self) -> usize {
         if self.is_empty() {
             return 1;
@@ -255,10 +256,12 @@ impl RLPEncode for [u8] {
 }
 
 impl<const N: usize> RLPEncode for [u8; N] {
+    #[inline]
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_ref().encode(buf)
     }
 
+    #[inline]
     fn length(&self) -> usize {
         if N == 1 && self[0] <= 0x7f {
             return 1;
@@ -280,6 +283,7 @@ impl<const N: usize> RLPEncode for [u8; N] {
 }
 
 impl RLPEncode for str {
+    #[inline]
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
@@ -291,6 +295,7 @@ impl RLPEncode for str {
 }
 
 impl RLPEncode for &str {
+    #[inline]
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
@@ -302,6 +307,7 @@ impl RLPEncode for &str {
 }
 
 impl RLPEncode for String {
+    #[inline]
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
@@ -325,6 +331,7 @@ impl RLPEncode for U256 {
 }
 
 impl<T: RLPEncode> RLPEncode for Vec<T> {
+    #[inline(always)]
     fn encode(&self, buf: &mut dyn BufMut) {
         if self.is_empty() {
             buf.put_u8(0xc0);
@@ -355,6 +362,7 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
     }
 }
 
+#[inline]
 pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
     if total_len < 56 {
         buf.put_u8(0xc0 + total_len as u8);
