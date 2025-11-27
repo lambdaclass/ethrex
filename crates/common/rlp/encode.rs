@@ -329,12 +329,13 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
         if self.is_empty() {
             buf.put_u8(0xc0);
         } else {
-            let mut tmp_buf = vec![];
+            let payload_len: usize = self.iter().map(|item| item.length()).sum();
+
+            encode_length(payload_len, buf);
+
             for item in self {
-                item.encode(&mut tmp_buf);
+                item.encode(buf);
             }
-            encode_length(tmp_buf.len(), buf);
-            buf.put_slice(&tmp_buf);
         }
     }
 
