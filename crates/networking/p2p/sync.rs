@@ -558,23 +558,29 @@ impl Syncer {
 
 /// Fetches all block bodies for the given block hashes via p2p and stores them
 async fn store_block_bodies(
-    mut block_hashes: Vec<BlockHash>,
+    mut block_headers: Vec<BlockHeader>,
     mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(&block_hashes).await? {
+        if let Some(block_bodies) = peers
+            .request_and_validate_block_bodies(&block_headers)
+            .await?
+        {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
-            let current_block_hashes = block_hashes.drain(..block_bodies.len());
+            let current_block_headers = block_headers.drain(..block_bodies.len());
             // Add bodies to storage
-            for (hash, body) in current_block_hashes.zip(block_bodies.into_iter()) {
+            for (hash, body) in current_block_headers
+                .map(|h| h.hash())
+                .zip(block_bodies.into_iter())
+            {
                 store.add_block_body(hash, body).await?;
             }
 
             // Check if we need to ask for another batch
-            if block_hashes.is_empty() {
+            if block_headers.is_empty() {
                 break;
             }
         }
@@ -967,7 +973,12 @@ impl Syncer {
 
         debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
 
-        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
+        store_block_bodies(
+            vec![pivot_header.clone()],
+            self.peers.clone(),
+            store.clone(),
+        )
+        .await?;
 
         let block = store
             .get_block_by_hash(pivot_header.hash())
