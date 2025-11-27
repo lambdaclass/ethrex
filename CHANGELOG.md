@@ -6,6 +6,10 @@
 
 - Use unchecked swap for stack [#5439](https://github.com/lambdaclass/ethrex/pull/5439)
 
+### 2025-11-20
+
+- Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding a alloc-less length method the default trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
+
 ### 2025-11-19
 
 - Parallelize merkleization [#5377](https://github.com/lambdaclass/ethrex/pull/5377)
