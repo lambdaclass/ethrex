@@ -188,6 +188,7 @@ fn build_zisk_program() {
 
 #[cfg(all(not(clippy), feature = "pico"))]
 fn build_pico_program() {
+    let _ = std::fs::create_dir("./src/pico/out");
     let mut build_command = std::process::Command::new("cargo");
     build_command
         .args([
@@ -206,10 +207,10 @@ fn build_pico_program() {
 
     let build_status = build_command
         .status()
-        .expect("Failed to execute zisk build command");
+        .expect("Failed to execute pico build command");
 
     if !build_status.success() {
-        panic!("Failed to build guest program with zisk toolchain");
+        panic!("Failed to build guest program with pico toolchain");
     }
 }
 
