@@ -34,7 +34,7 @@ interface ICommonBridge {
         bytes32 indexed withdrawalsLogsMerkleRoot
     );
 
-     /// @notice L2 messages have been published on L1.
+    /// @notice L2 messages have been published on L1.
     /// @dev Event emitted when the L2 messages are published on L1.
     /// @param l2MessagesBatchNumber the batch number where the l2 messages were emitted.
     /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
