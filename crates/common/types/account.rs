@@ -24,7 +24,7 @@ use crate::{
 pub struct Code {
     // hash is only used for bytecodes stored in the DB, either for reading it from the DB
     // or with the CODEHASH opcode, which needs an account address as argument and
-    // thus only accessed persisted bytedcodes.
+    // thus only accessed persisted bytecodes.
     // We use a bogus H256::zero() value for initcodes as there is no way for the VM or
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
