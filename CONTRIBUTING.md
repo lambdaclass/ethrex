@@ -25,6 +25,8 @@ All PR titles must follow the enforced semantic format:
 - `fix(l1,levm): handle edge case in snap sync`
 - `docs(l2): update documentation for L2`
 
+An exclamation mark may be added before the colon to indicate breaking changes, for example `perf(l1)!: change database schema`
+
 PRs not following this convention will fail automated checks.
 
 ## Commit Signature Verification
