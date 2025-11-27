@@ -1252,7 +1252,8 @@ impl Blockchain {
             self.storage.clone(),
             parent_header,
             block_hash_cache,
-        ).map_err(|e| (e.into(), None))?;
+        )
+        .map_err(|e| (e.into(), None))?;
         let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();

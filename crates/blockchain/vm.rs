@@ -59,7 +59,8 @@ impl StoreVmDatabase {
         mut block_hash_cache: HashMap<BlockNumber, BlockHash>,
     ) -> Result<Self, EvmError> {
         // Fill up block hash cache with prev 256 block hashes
-        fill_prev_block_hashes(&block_header, &mut block_hash_cache, store.clone()).map_err(|err| EvmError::DB(err.to_string()))?;
+        fill_prev_block_hashes(&block_header, &mut block_hash_cache, store.clone())
+            .map_err(|err| EvmError::DB(err.to_string()))?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
@@ -101,43 +102,14 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
-        // Check if we have it cached
+        // We should have already preloaded all available hashes when initializing the DB
         if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
-            return Ok(*block_hash);
-        }
-        // First check if our block is canonical, if it is then it's ancestor will also be canonical and we can look it up directly
-        if self
-            .store
-            .is_canonical_sync(self.block_hash)
-            .map_err(|err| EvmError::DB(err.to_string()))?
-        {
-            if let Some(hash) = self
-                .store
-                .get_canonical_block_hash_sync(block_number)
-                .map_err(|err| EvmError::DB(err.to_string()))?
-            {
-                return Ok(hash);
-            }
-        // If our block is not canonical then we must look for the target in our block's ancestors
+            Ok(*block_hash);
         } else {
-            for ancestor_res in self.store.ancestors(self.block_hash) {
-                let (hash, ancestor) = ancestor_res.map_err(|e| EvmError::DB(e.to_string()))?;
-                match ancestor.number.cmp(&block_number) {
-                    Ordering::Greater => continue,
-                    Ordering::Equal => return Ok(hash),
-                    Ordering::Less => {
-                        return Err(EvmError::DB(format!(
-                            "Block number requested {block_number} is higher than the current block number {}",
-                            ancestor.number
-                        )));
-                    }
-                }
-            }
+            Err(EvmError::DB(format!(
+                "Block hash not found for block number {block_number}"
+            )))
         }
-        // Block not found
-        Err(EvmError::DB(format!(
-            "Block hash not found for block number {block_number}"
-        )))
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
