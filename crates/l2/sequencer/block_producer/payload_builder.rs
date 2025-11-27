@@ -234,8 +234,6 @@ pub async fn fill_transactions(
             continue;
         }
 
-        // Check we don't have an excessive number of privileged transactions
-
         if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
             let id = head_tx.nonce();
             privileged_nonces.insert(privileged_tx.chain_id, Some(id));
