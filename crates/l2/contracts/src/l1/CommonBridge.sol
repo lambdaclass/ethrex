@@ -495,7 +495,6 @@ contract CommonBridge is
                 withdrawalLeaf
             );
     }
-    
     function pendingTxHashesLength() private view returns (uint256) {
         return pendingTxHashes.length - pendingPrivilegedTxIndex;
     }
