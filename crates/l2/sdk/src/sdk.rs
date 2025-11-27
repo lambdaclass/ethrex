@@ -507,11 +507,16 @@ async fn deploy_proxy(
     implementation_address: Address,
     salt: &[u8],
 ) -> Result<(H256, Address), DeployError> {
-    let init_code = build_proxy_init_code(implementation_address)?;
-
-    create2_deploy(salt, &init_code, deployer, eth_client)
-        .await
-        .map_err(DeployError::from)
+    let (tx_hash, address) = deploy_proxy_no_wait(
+        deployer,
+        eth_client,
+        implementation_address,
+        salt,
+        Overrides::default(),
+    )
+    .await?;
+    wait_for_transaction_receipt(tx_hash, eth_client, 10).await?;
+    Ok((tx_hash, address))
 }
 
 /// Same as `deploy_proxy`, but does not wait for the transaction receipt.
@@ -678,20 +683,6 @@ async fn build_create2_deploy_tx(
         },
     )
     .await
-}
-
-async fn create2_deploy(
-    salt: &[u8],
-    init_code: &[u8],
-    deployer: &Signer,
-    eth_client: &EthClient,
-) -> Result<(H256, Address), EthClientError> {
-    let (deploy_tx_hash, deployed_address) =
-        create2_deploy_no_wait(salt, init_code, deployer, eth_client, Overrides::default()).await?;
-
-    wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
-
-    Ok((deploy_tx_hash, deployed_address))
 }
 
 async fn create2_deploy_no_wait(
