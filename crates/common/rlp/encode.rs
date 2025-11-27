@@ -12,10 +12,11 @@ pub fn encode<T: RLPEncode>(value: T) -> Vec<u8> {
     buf
 }
 
-/// Calculates the encoded length of the given integer bit with and lsb
+/// Calculates the encoded length of the given integer bit width (ilog2 value) and lsb
 #[inline(always)]
 const fn impl_length_integers(bits: u32, lsb: u8) -> usize {
-    let sig_len = (bits + 7) >> 3;
+    // bits is the ilog2 0 based result, +8 accounts for the first byte boundary
+    let sig_len = (bits + 8) >> 3;
     let is_multibyte_mask = ((sig_len > 1) as usize) | ((lsb > 0x7f) as usize);
     1 + sig_len as usize * is_multibyte_mask
 }
@@ -326,7 +327,8 @@ impl RLPEncode for U256 {
     }
 
     fn length(&self) -> usize {
-        impl_length_integers(self.bits() as u32, (self.low_u32() & 0xff) as u8)
+        let ilog = self.bits().saturating_sub(1);
+        impl_length_integers(ilog as u32, (self.low_u32() & 0xff) as u8)
     }
 }
 
@@ -679,6 +681,21 @@ mod tests {
         0x90u16.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x90]);
         assert_eq!(encoded.len(), 0x90u16.length());
+    }
+
+    #[test]
+    fn u16_length_matches() {
+        let mut encoded = Vec::new();
+        0x0100u16.encode(&mut encoded);
+        assert_eq!(encoded.len(), 0x0100u16.length(),);
+    }
+
+    #[test]
+    fn u256_length_matches() {
+        let value = U256::from(0x0100u64);
+        let mut encoded = Vec::new();
+        value.encode(&mut encoded);
+        assert_eq!(encoded.len(), value.length(),);
     }
 
     #[test]
