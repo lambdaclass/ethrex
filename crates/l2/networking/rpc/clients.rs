@@ -5,7 +5,7 @@ use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
-use ethrex_common::types::AuthorizationList;
+use ethrex_common::types::{AuthorizationList, AuthorizationTupleEntry};
 use ethrex_l2_common::l1_messages::L1MessageProof;
 use ethrex_rpc::clients::eth::errors::GetL1BlobBaseFeeRequestError;
 use ethrex_rpc::clients::eth::errors::GetL1FeeVaultAddressError;
@@ -27,6 +27,7 @@ use ethrex_rpc::{
     },
     utils::RpcRequest,
 };
+use hex;
 use serde_json::json;
 
 pub async fn get_message_proof(
@@ -175,6 +176,12 @@ pub async fn send_ethrex_transaction(
     data: Bytes,
     authorization_list: Option<AuthorizationList>,
 ) -> Result<H256, EthClientError> {
+    let authorization_list = authorization_list.map(|list| {
+        list.iter()
+            .map(AuthorizationTupleEntry::from)
+            .collect::<Vec<_>>()
+    });
+
     let payload = json!({
         "to": format!("{to:#x}"),
         "data": format!("0x{}", hex::encode(data)),
