@@ -16,8 +16,22 @@ snap.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+criterion = { version = "0.7.0", features = ["html_reports"] }
+ethrex-common.workspace = true
+ethrex-p2p.workspace = true
+ethrex-trie.workspace = true
+rand.workspace = true
+
 [lib]
 path = "./rlp.rs"
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "decode"
+harness = false
+
+[[bench]]
+name = "encode"
+harness = false
