@@ -182,10 +182,6 @@ pub async fn fill_transactions(
                 txs.pop();
                 continue;
             }
-
-            if privileged_tx.chain_id == this_chain_id {
-                privileged_tx_count += 1;
-            }
         }
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
@@ -237,6 +233,10 @@ pub async fn fill_transactions(
         if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
             let id = head_tx.nonce();
             privileged_nonces.insert(privileged_tx.chain_id, Some(id));
+
+            if privileged_tx.chain_id == store.chain_config.chain_id {
+                privileged_tx_count += 1;
+            }
         }
 
         // Update acc_encoded_size
