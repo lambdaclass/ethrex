@@ -48,7 +48,7 @@ pub async fn load_initial_state(
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(
         storage.clone(),
         genesis.get_block().header,
-    ));
+    ).unwrap());
 
     // We return some values that will be needed to calculate the post execution checks (original storage, genesis and blockhash)
     (
