@@ -23,7 +23,7 @@ fn fill_prev_block_hashes(
     block_hash_cache: &mut HashMap<BlockNumber, BlockHash>,
     store: Store,
 ) -> Result<(), StoreError> {
-    let mut current_block = block_header.number;
+    let current_block = block_header.number;
     let mut current_hash = block_header.hash();
     let oldest_block = current_block + 256;
     let is_canonic = store
@@ -31,8 +31,7 @@ fn fill_prev_block_hashes(
         .is_some_and(|hash| hash == block_header.hash());
     // If the block is canonical, look up hashes directly
     if is_canonic {
-        let hashes = store.get_canonical_block_hashes(current_block, oldest_block)?;
-        current_block = current_block + hashes.len() as u64;
+        let hashes = store.get_canonical_block_hashes(block_header.number, oldest_block)?;
         current_hash = *hashes.last().unwrap_or(&current_hash);
         block_hash_cache.extend((block_header.number..current_block).zip(hashes));
     }
@@ -104,7 +103,7 @@ impl VmDatabase for StoreVmDatabase {
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         // We should have already preloaded all available hashes when initializing the DB
         if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
-            Ok(*block_hash);
+            Ok(*block_hash)
         } else {
             Err(EvmError::DB(format!(
                 "Block hash not found for block number {block_number}"

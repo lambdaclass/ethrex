@@ -1545,7 +1545,7 @@ impl StoreEngine for Store {
 
         let mut results = Vec::with_capacity(end.saturating_sub(start) as usize);
         for number in start..end {
-            match db.get_cf(&cf, number.to_le_bytes().to_vec())? {
+            match db.get_cf(&cf, number.to_le_bytes())? {
                 Some(res) => results.push(BlockHashRLP::from_bytes(res).to()?),
                 None => break,
             }
