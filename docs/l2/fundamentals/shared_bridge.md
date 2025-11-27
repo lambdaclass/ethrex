@@ -47,6 +47,17 @@ Cross-chain messages are planned to be forcibly included in recipient chains (th
 
 Batch proving encompasses several tasks, including recomputing the Merkle root of cross-chain messages within the batch and the associated balance diffs. These values are returned as part of the guest program execution output and serve as public inputs for on-chain proof verification.
 
+### Source L2 not available
+
+In situations where the destination L2 is unable to retrieve the relevant messages directly, because the source l2 is not available, we need a mechanism to still be able to retrieve them.
+What should be done is
+- The destination L2 should periodically scan the L1 and store the blobs sent on the commitBatch call of the source L2.
+- Run the state reconstruct command
+- Initialize a sequencer with the reconstructed state
+- Use that sequencer as the source for getting the messages
+
+Have in mind that since you are not the owner of that source L2, the chain will not advance, but you will still be able to get all pending messages to execute, as long as they were previously verified.
+
 ## Downsides
 
 Below we list some of the known issues for the current implementation.
@@ -59,17 +70,12 @@ Currently, no mechanism exists to force the receiving L2 to execute a transactio
 
 It is necessary to introduce a rollback mechanism for cross-chain transactions in scenarios where the destination L2 either cannot or elects not to execute the transaction. Such a mechanism would ensure that assets can be safely reverted in the absence of successful execution.
 
-### Retrieval of Messages from L1
-
-In situations where the destination L2 is unable to retrieve the relevant messages directly, it becomes necessary to obtain them by scanning L1. Although the messages are already made available on L1, a system for reliably identifying and retrieving them has yet to be implemented.
-
 ## Future Work
 
 The following are things we will tackle in the future
 
 - Execution Enforcement
 - Rollbacks
-- L1 message retrieval
 
 ## Recommendations
 
