@@ -226,7 +226,7 @@ fn bench_encode_integer(c: &mut Criterion) {
 fn bench_encode_strings(c: &mut Criterion) {
     let mut group = c.benchmark_group("basic_types");
     for &len in &[5usize, 60, 500] {
-        let label = format!("encode_len_{len}");
+        let label = format!("encode_string_len_{len}");
         let mut rng = StdRng::seed_from_u64(len as u64);
         let values: Vec<String> = (0..10_000)
             .map(|_| {
