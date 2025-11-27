@@ -30,7 +30,7 @@ pub enum PrivilegedTransactionError {
     LengthTooLarge(#[from] std::num::TryFromIntError),
 }
 
-pub fn get_block_privileged_transactions(
+pub fn get_block_l1_privileged_transactions(
     txs: &[Transaction],
     chain_id: u64,
 ) -> Vec<PrivilegedL2Transaction> {

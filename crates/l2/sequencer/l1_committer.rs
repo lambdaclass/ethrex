@@ -30,7 +30,7 @@ use ethrex_l2_common::{
     },
     privileged_transactions::{
         PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash,
-        get_block_privileged_transactions,
+        get_block_l1_privileged_transactions,
     },
     prover::ProverInputData,
 };
@@ -729,7 +729,7 @@ impl L1Committer {
             let l2_messages = get_block_l2_messages(&receipts);
             info!("Got l2 messages: {}", l2_messages.len());
             let privileged_transactions =
-                get_block_privileged_transactions(&txs, self.store.chain_config.chain_id);
+                get_block_l1_privileged_transactions(&txs, self.store.chain_config.chain_id);
 
             // Get block account updates.
             let account_updates = if let Some(account_updates) = self

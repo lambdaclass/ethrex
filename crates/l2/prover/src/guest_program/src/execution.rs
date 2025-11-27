@@ -15,7 +15,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Block};
-use ethrex_l2_common::privileged_transactions::get_block_privileged_transactions;
+use ethrex_l2_common::privileged_transactions::get_block_l1_privileged_transactions;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
@@ -451,7 +451,7 @@ fn execute_stateless(
         }
 
         non_privileged_count += block.body.transactions.len()
-            - get_block_privileged_transactions(&block.body.transactions, chain_config.chain_id)
+            - get_block_l1_privileged_transactions(&block.body.transactions, chain_config.chain_id)
                 .len();
 
         validate_gas_used(&receipts, &block.header)
@@ -505,7 +505,7 @@ fn get_batch_messages_and_privileged_transactions(
 
     for (block, receipts) in blocks.iter().zip(receipts) {
         let txs = &block.body.transactions;
-        privileged_transactions.extend(get_block_privileged_transactions(txs, chain_id));
+        privileged_transactions.extend(get_block_l1_privileged_transactions(txs, chain_id));
         l1messages.extend(get_block_l1_messages(receipts));
         l2messages.extend(get_block_l2_messages(receipts));
     }
