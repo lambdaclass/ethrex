@@ -699,6 +699,19 @@ mod tests {
     }
 
     #[test]
+    fn u64_lengths_match() {
+        for n in 0u64..=10_000 {
+            let mut encoded = Vec::new();
+            n.encode(&mut encoded);
+            assert_eq!(
+                encoded.len(),
+                n.length(),
+                "u64 length mismatch at value {n}"
+            );
+        }
+    }
+
+    #[test]
     fn can_encode_u8() {
         let mut encoded = Vec::new();
         0u8.encode(&mut encoded);
