@@ -330,6 +330,10 @@ impl RLPDecode for Log {
 mod test {
     use super::*;
 
+    fn h256_from_hex(s: &str) -> H256 {
+        H256::from_slice(&hex::decode(s).unwrap())
+    }
+
     #[test]
     fn test_encode_decode_receipt_legacy() {
         let receipt = Receipt {
@@ -399,5 +403,49 @@ mod test {
             receipt,
             ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap()
         )
+    }
+
+    #[test]
+    fn test_encode_receipt_with_bloom() {
+        let receipt = Receipt {
+            tx_type: TxType::EIP1559,
+            succeeded: true,
+            cumulative_gas_used: 1500,
+            logs: vec![Log {
+                address: Address::random(),
+                topics: vec![
+                    h256_from_hex(
+                        "e70c0d1060ffbafc84e0e18d028245de3deeb0f41ecbade6562fa657d85ae945",
+                    ),
+                    h256_from_hex(
+                        "e7e9cd61c8c6cb313324d785aa130fe50a7b9885e4d1d7700a327c5e9ae4e183",
+                    ),
+                    h256_from_hex(
+                        "666d827b9db958c08f7186f127e3d9ea6a97288bcc4b527951ce493f6e2b76c4",
+                    ),
+                    h256_from_hex(
+                        "28b4366544dccafad7b61138e9ada51706e85bb217a20cfa1c86e2648f8f369a",
+                    ),
+                    h256_from_hex(
+                        "85cf9717f65c70d71cc6175f653512c13ce7b6a9bc5d9c2b9c49b2d2d6cb9536",
+                    ),
+                ],
+                data: Bytes::from_static(b"bar"),
+            }],
+        };
+        let encoded_receipt = receipt.encode_inner_with_bloom();
+
+        let correct_bloom = {
+            let mut bloom = Bloom::zero();
+            for log in receipt.logs {
+                bloom.accrue(BloomInput::Raw(log.address.as_ref()));
+                for topic in log.topics.iter() {
+                    bloom.accrue(BloomInput::Raw(topic.as_ref()));
+                }
+            }
+            bloom
+        };
+        let receipt_with_bloom = ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap();
+        assert_eq!(receipt_with_bloom.bloom, correct_bloom);
     }
 }
