@@ -1510,6 +1510,7 @@ mod tests {
         run_test(test_genesis_block, engine_type).await;
         run_test(test_iter_accounts, engine_type).await;
         run_test(test_iter_storage, engine_type).await;
+        run_test(test_get_block_headers_and_bodies_bulk, engine_type).await;
     }
 
     async fn test_iter_accounts(store: Store) {
@@ -1632,6 +1633,68 @@ mod tests {
         let _ = block_header.hash();
         assert_eq!(stored_header, block_header);
         assert_eq!(stored_body, block_body);
+    }
+
+    async fn test_get_block_headers_and_bodies_bulk(store: Store) {
+        // Create and store multiple blocks
+        let mut headers = Vec::new();
+        let mut bodies = Vec::new();
+
+        for i in 0..5u64 {
+            let (mut header, body) = create_block_for_testing();
+            header.number = i;
+            // Make them unique by modifying the timestamp
+            header.timestamp = 1000 + i;
+            let hash = header.hash();
+
+            store.add_block_header(hash, header.clone()).await.unwrap();
+            store.add_block_body(hash, body.clone()).await.unwrap();
+            store
+                .forkchoice_update(None, i, hash, None, None)
+                .await
+                .unwrap();
+
+            headers.push(header);
+            bodies.push(body);
+        }
+
+        // Test bulk fetch of headers
+        let fetched_headers = store.get_block_headers(0, 4).await.unwrap();
+        assert_eq!(fetched_headers.len(), 5);
+        for (i, fetched) in fetched_headers.into_iter().enumerate() {
+            let fetched = fetched.expect("header should exist");
+            // Ensure hashes are computed for comparison
+            let _ = fetched.hash();
+            let _ = headers[i].hash();
+            assert_eq!(fetched, headers[i]);
+        }
+
+        // Test bulk fetch of bodies
+        let fetched_bodies = store.get_block_bodies(0, 4).await.unwrap();
+        assert_eq!(fetched_bodies.len(), 5);
+        for (i, fetched) in fetched_bodies.into_iter().enumerate() {
+            let fetched = fetched.expect("body should exist");
+            assert_eq!(fetched, bodies[i]);
+        }
+
+        // Test partial range
+        let partial_headers = store.get_block_headers(2, 4).await.unwrap();
+        assert_eq!(partial_headers.len(), 3);
+        for (i, fetched) in partial_headers.into_iter().enumerate() {
+            let fetched = fetched.expect("header should exist");
+            let _ = fetched.hash();
+            let _ = headers[i + 2].hash();
+            assert_eq!(fetched, headers[i + 2]);
+        }
+
+        // Test range with missing blocks (beyond stored range)
+        let extended_headers = store.get_block_headers(3, 7).await.unwrap();
+        assert_eq!(extended_headers.len(), 5);
+        assert!(extended_headers[0].is_some());
+        assert!(extended_headers[1].is_some());
+        assert!(extended_headers[2].is_none());
+        assert!(extended_headers[3].is_none());
+        assert!(extended_headers[4].is_none());
     }
 
     fn create_block_for_testing() -> (BlockHeader, BlockBody) {
