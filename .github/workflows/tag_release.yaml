@@ -302,6 +302,11 @@ jobs:
 
   build-docker:
     name: "Build and publish ethrex docker image"
+    strategy:
+      matrix:
+        platform:
+          - ubuntu-latest
+          - ubuntu-22.04-arm
     runs-on: ubuntu-latest
 
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
