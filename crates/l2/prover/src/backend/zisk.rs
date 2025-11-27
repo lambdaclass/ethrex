@@ -1,11 +1,6 @@
-use std::{
-    io::ErrorKind,
-    process::{Command, Stdio},
-    sync::OnceLock,
-    time::{Duration, Instant},
-};
+use std::{io::ErrorKind, sync::OnceLock};
 use zisk_common::io::ZiskStdin;
-use zisk_sdk::{Asm, Proof, ProverClient, ZiskProveResult, ZiskProver};
+use zisk_sdk::{Asm, Proof, ProverClient, ZiskProver};
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
@@ -13,8 +8,6 @@ use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramO
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
-
-pub struct ProveOutput(pub Vec<u8>);
 
 pub static PROVE_CLIENT: OnceLock<ZiskProver<Asm>> = OnceLock::new();
 pub static EXECUTE_CLIENT: OnceLock<ZiskProver<Asm>> = OnceLock::new();
@@ -80,6 +73,10 @@ pub fn prove(
     input: ProgramInput,
     format: ProofFormat,
 ) -> Result<Proof, Box<dyn std::error::Error>> {
+    if format != ProofFormat::Compressed {
+        unimplemented!("ZisK only supports the Compressed proof format");
+    }
+
     write_elf_file()?;
     let stdin_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?.to_vec();
     let stdin = ZiskStdin::from_vec(stdin_bytes);
@@ -111,7 +108,7 @@ pub fn verify(_output: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>>
 
 pub fn to_batch_proof(
     proof: Proof,
-    format: ProofFormat,
+    _format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     unimplemented!("to_batch_proof is not implemented for ZisK backend")
 }

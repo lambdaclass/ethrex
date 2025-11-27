@@ -149,7 +149,7 @@ pub struct ProofCalldata {
 }
 
 /// Indicates the prover which proof *format* to generate
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum ProofFormat {
     #[default]
     /// A compressed proof wrapped over groth16. EVM friendly.
