@@ -62,7 +62,7 @@ impl TrieLayerCache {
         }
         let lo = u64::from_be_bytes(lo);
         let hi = u64::from_be_bytes(hi);
-        ((hi << 4) | lo).to_be()
+        ((hi << 4) ^ lo).to_be()
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
