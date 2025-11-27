@@ -8,6 +8,8 @@ use ethrex_vm::{EvmError, VmDatabase};
 use std::{cmp::Ordering, collections::HashMap};
 use tracing::instrument;
 
+const MAX_BLOCK_HASH_LOOKUP_DEPTH: u64 = 256;
+
 #[derive(Clone)]
 pub struct StoreVmDatabase {
     pub store: Store,
@@ -25,7 +27,7 @@ fn fill_prev_block_hashes(
 ) -> Result<(), StoreError> {
     let current_block = block_header.number;
     let mut current_hash = block_header.hash();
-    let oldest_block = current_block + 256;
+    let oldest_block = current_block + MAX_BLOCK_HASH_LOOKUP_DEPTH;
     let is_canonic = store
         .get_canonical_block_hash_sync(block_header.number)?
         .is_some_and(|hash| hash == block_header.hash());
@@ -57,7 +59,7 @@ impl StoreVmDatabase {
         block_header: BlockHeader,
         mut block_hash_cache: HashMap<BlockNumber, BlockHash>,
     ) -> Result<Self, EvmError> {
-        // Fill up block hash cache with prev 256 block hashes
+        // Fill up block hash cache with prev [MAX_BLOCK_HASH_LOOKUP_DEPTH] block hashes
         fill_prev_block_hashes(&block_header, &mut block_hash_cache, store.clone())
             .map_err(|err| EvmError::DB(err.to_string()))?;
         Ok(StoreVmDatabase {
