@@ -44,7 +44,7 @@ impl Receipt {
     }
 
     pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
-        // Bloom is already 512 bytes, so we preallocate at least that much plus some,
+        // Bloom is already 256 bytes, so we preallocate at least that much plus some,
         // to avoid multiple small allocations.
         let mut encode_buf = Vec::with_capacity(512);
         if self.tx_type != TxType::Legacy {
