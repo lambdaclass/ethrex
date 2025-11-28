@@ -1,6 +1,9 @@
 use std::{cmp::min, fmt::Display};
 
-use crate::{errors::EcdsaError, utils::keccak};
+use crate::{
+    errors::EcdsaError,
+    utils::{HashBuffer, keccak},
+};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 use ethrex_crypto::keccak::keccak_hash;
@@ -1362,7 +1365,9 @@ impl Transaction {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
-        crate::utils::keccak(self.encode_canonical_to_vec())
+        let mut hasher = HashBuffer::new();
+        self.encode_canonical(&mut hasher);
+        H256::from_slice(&hasher.finalize())
     }
 
     pub fn hash(&self) -> H256 {

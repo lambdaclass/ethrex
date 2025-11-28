@@ -1,6 +1,7 @@
 use crate::H256;
+use bytes::{Buf, BufMut};
 use ethereum_types::U256;
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::keccak::{Keccak256, keccak_hash};
 use hex::FromHexError;
 
 pub const ZERO_U256: U256 = U256([0, 0, 0, 0]);
@@ -77,6 +78,84 @@ pub fn truncate_array<const N: usize, const M: usize>(data: [u8; N]) -> [u8; M] 
     let mut res = [0u8; M];
     res.copy_from_slice(&data[..M]);
     res
+}
+
+/// A buffer to hash the data passed by the trait BufMut, to avoid creating a temporary (Vec) buffer when hashing for example RLP encoded transactions.
+pub struct HashBuffer {
+    hasher: Keccak256,
+}
+
+impl Default for HashBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HashBuffer {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            hasher: Keccak256::new(),
+        }
+    }
+
+    #[inline]
+    pub fn finalize(self) -> [u8; 32] {
+        self.hasher.finalize()
+    }
+}
+
+unsafe impl BufMut for HashBuffer {
+    #[inline]
+    fn remaining_mut(&self) -> usize {
+        usize::MAX
+    }
+
+    unsafe fn advance_mut(&mut self, _cnt: usize) {
+        unreachable!("advance_mut should not be called on HashBuffer")
+    }
+
+    fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+        unreachable!("chunk_mut should not be called on HashBuffer")
+    }
+
+    #[inline]
+    fn put_u8(&mut self, n: u8) {
+        self.hasher.update([n]);
+    }
+
+    #[inline]
+    fn put_slice(&mut self, src: &[u8]) {
+        self.hasher.update(src);
+    }
+
+    #[inline]
+    fn put_bytes(&mut self, val: u8, mut cnt: usize) {
+        const CHUNK: [u8; 64] = [0u8; 64];
+        while cnt > 0 {
+            let take = cnt.min(CHUNK.len());
+            if val == 0 {
+                self.hasher.update(&CHUNK[..take]);
+            } else {
+                let mut tmp = CHUNK;
+                tmp[..take].fill(val);
+                self.hasher.update(&tmp[..take]);
+            }
+            cnt -= take;
+        }
+    }
+
+    #[inline]
+    fn put<T: Buf>(&mut self, mut src: T)
+    where
+        Self: Sized,
+    {
+        while src.has_remaining() {
+            let chunk = src.chunk();
+            self.hasher.update(chunk);
+            src.advance(chunk.len());
+        }
+    }
 }
 
 #[cfg(test)]
