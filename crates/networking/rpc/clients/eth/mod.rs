@@ -714,4 +714,3 @@ impl EthClient {
         map
     }
 }
-
