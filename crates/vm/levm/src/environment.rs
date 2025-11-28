@@ -65,10 +65,10 @@ impl EVMConfig {
     }
 
     pub fn new_from_chain_config(chain_config: &ChainConfig, block_header: &BlockHeader) -> Self {
-        let fork = chain_config.get_fork(block_header.timestamp);
+        let fork = chain_config.fork(block_header.timestamp);
 
         let blob_schedule = chain_config
-            .get_blob_schedule_for_time(block_header.timestamp)
+            .get_fork_blob_schedule(block_header.timestamp)
             .unwrap_or_else(|| EVMConfig::canonical_values(fork));
 
         EVMConfig::new(fork, blob_schedule)
