@@ -34,7 +34,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::node::ExtensionNode;
+use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -444,49 +444,12 @@ impl Blockchain {
 
             match children {
                 0 => None,
-                1 => {
-                    // Collapse the branch into an extension or leaf
-                    let (choice, only_child) = real_root
-                        .choices
-                        .into_iter()
-                        .enumerate()
-                        .find(|(_, c)| c.is_valid())
-                        .expect("we already checked");
-                    let path = Nibbles::from_hex(vec![choice as u8]);
-                    let child_bytes = match state_updates_map.get(&path) {
-                        Some(v) => Some(v.clone()),
-                        None => self
-                            .storage
-                            .state_trie(parent_header.hash())?
-                            .ok_or(StoreError::MissingStore)?
-                            .db()
-                            .get(path)?,
-                    };
-                    let mut child = child_bytes.map(|b| Node::decode(&b)).transpose()?;
-                    if let Some(child) = child.as_mut() {
-                        // Same match as in [`BranchNode::remove`]
-                        *child = match child {
-                            // Replace root with an extension node leading to the child
-                            Node::Branch(_) => ExtensionNode::new(
-                                Nibbles::from_hex(vec![choice as u8]),
-                                only_child,
-                            )
-                            .into(),
-                            // Replace root with the child extension node, updating its path in the process
-                            Node::Extension(extension_node) => {
-                                let mut extension_node = extension_node.take();
-                                extension_node.prefix.prepend(choice as u8);
-                                extension_node.into()
-                            }
-                            Node::Leaf(leaf) => {
-                                let mut leaf = leaf.take();
-                                leaf.partial.prepend(choice as u8);
-                                leaf.into()
-                            }
-                        };
-                    }
-                    child
-                }
+                1 => collapse_root_node(
+                    real_root,
+                    &mut state_updates_map,
+                    &self.storage,
+                    parent_header,
+                )?,
                 // Keep as branch
                 _ => Some(Node::Branch(real_root)),
             }
@@ -1922,6 +1885,53 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
 /// Calculates the blob gas required by a transaction
 pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
+}
+
+#[cold]
+fn collapse_root_node(
+    real_root: Box<BranchNode>,
+    state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
+    storage: &Store,
+    parent_header: &BlockHeader,
+) -> Result<Option<Node>, StoreError> {
+    // Collapse the branch into an extension or leaf
+    let (choice, only_child) = real_root
+        .choices
+        .into_iter()
+        .enumerate()
+        .find(|(_, c)| c.is_valid())
+        .expect("we already checked");
+    let path = Nibbles::from_hex(vec![choice as u8]);
+    let child_bytes = match state_updates_map.get(&path) {
+        Some(v) => Some(v.clone()),
+        None => storage
+            .state_trie(parent_header.hash())?
+            .ok_or(StoreError::MissingStore)?
+            .db()
+            .get(path)?,
+    };
+    let mut child = child_bytes.map(|b| Node::decode(&b)).transpose()?;
+    if let Some(child) = child.as_mut() {
+        // Same match as in [`BranchNode::remove`]
+        *child = match child {
+            // Replace root with an extension node leading to the child
+            Node::Branch(_) => {
+                ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child).into()
+            }
+            // Replace root with the child extension node, updating its path in the process
+            Node::Extension(extension_node) => {
+                let mut extension_node = extension_node.take();
+                extension_node.prefix.prepend(choice as u8);
+                extension_node.into()
+            }
+            Node::Leaf(leaf) => {
+                let mut leaf = leaf.take();
+                leaf.partial.prepend(choice as u8);
+                leaf.into()
+            }
+        };
+    }
+    Ok(child)
 }
 
 #[cfg(test)]
