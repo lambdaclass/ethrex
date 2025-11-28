@@ -602,12 +602,15 @@ impl Blockchain {
                 let (storage_trie, storage_updates_map) = storage_updates_map
                     .entry(hashed_address_h256)
                     .or_insert_with(|| {
-                        (
-                            storage.open_storage_trie(
+                        let db = storage
+                            .open_storage_trie(
                                 hashed_address_h256,
-                                account_state.storage_root,
-                                parent_header.state_root,
-                            ),
+                                *EMPTY_TRIE_HASH,
+                                parent_header.state_root
+                            )
+                            .map(|v| v.db);
+                        (
+                            db.and_then(|db| Trie::open_noroot(db).map_err(StoreError::Trie)),
                             Default::default(),
                         )
                     });
