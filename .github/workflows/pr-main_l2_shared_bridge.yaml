@@ -182,7 +182,7 @@ jobs:
 
       - name: Deploy contracts L2B
         run: |
-          jq '.config.chainId = 1730' fixtures/genesis/l2.json > tmp && mv tmp fixtures/genesis/l2b.json
+          jq '.config.chainId = 1730' fixtures/genesis/l2.json > fixtures/genesis/l2b.json
           #
           # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
           # in the contract_deployer service in crates/l2/docker-compose.yaml
@@ -235,10 +235,6 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          ETHREX_HTTP_PORT=1730 \
-          ETHREX_METRICS_PORT=3703 \
-          ETHREX_DATADIR=dev_ethrex_l2_2 \
-          ETHREX_PROOF_COORDINATOR_LISTEN_PORT=3901 \
           ETHREX_WATCHER_L2_RPCS=http://localhost:1729 \
           ETHREX_WATCHER_L2_CHAIN_IDS=65536999 \
           docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
