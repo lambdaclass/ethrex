@@ -168,7 +168,7 @@ fn flush_nodes_to_write(
 }
 
 /// trie_from_sorted_accounts computes and stores into a db a trie from a sorted
-/// iterator of H256 paths and values. Thie functions takes a Theadpool Arc to send
+/// iterator of H256 paths and values. This function takes a ThreadPool Arc to send
 /// the writing task to be done concurrently.
 /// To limit the amount of memory this function can use, we use a crossbeam multiproducer
 /// multiconsumer queue, which gives the function a buffer to write nodes into before
