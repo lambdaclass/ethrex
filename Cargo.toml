@@ -60,6 +60,7 @@ ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-crypto = { path = "./crates/common/crypto" }
+ethrex-metrics = { path = "./crates/blockchain/metrics" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
@@ -122,9 +123,6 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
   "lz4",
 ] }
-
-[patch.crates-io]
-secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }
 
 [workspace.lints.clippy]
 redundant_clone = "warn"

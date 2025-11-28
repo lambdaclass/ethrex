@@ -39,7 +39,7 @@ use ethrex_trie::{Node, NodeRLP};
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         mpsc::{SyncSender, TryRecvError, sync_channel},
@@ -68,6 +68,7 @@ enum FKVGeneratorControlMessage {
 
 #[derive(Debug, Clone)]
 pub struct Store {
+    db_path: PathBuf,
     pub backend: Arc<dyn StorageBackend>,
     pub chain_config: ChainConfig,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
@@ -1308,21 +1309,23 @@ impl Store {
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
         // Ignore unused variable warning when compiling without DB features
-        let _path = &path;
+        let db_path = path.as_ref().to_path_buf();
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                Self::from_backend(Arc::new(RocksDBBackend::open(path)?), DB_COMMIT_THRESHOLD)
+                let backend = Arc::new(RocksDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
-            EngineType::InMemory => Self::from_backend(
-                Arc::new(InMemoryBackend::open()?),
-                IN_MEMORY_COMMIT_THRESHOLD,
-            ),
+            EngineType::InMemory => {
+                let backend = Arc::new(InMemoryBackend::open()?);
+                Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+            }
         }
     }
 
     fn from_backend(
         backend: Arc<dyn StorageBackend>,
+        db_path: PathBuf,
         commit_threshold: usize,
     ) -> Result<Self, StoreError> {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
@@ -1341,6 +1344,7 @@ impl Store {
             }
         };
         let store = Self {
+            db_path,
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
@@ -2327,6 +2331,10 @@ impl Store {
 
     pub fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
         self.backend.create_checkpoint(path.as_ref())
+    }
+
+    pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
+        Ok(self.db_path.clone())
     }
 
     /// Loads the latest block number stored in the database, bypassing the latest block number cache
