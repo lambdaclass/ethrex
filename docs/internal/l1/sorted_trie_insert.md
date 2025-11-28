@@ -9,7 +9,7 @@ To know how that trie works, it's recommended to [read this primer first.](https
 ## Concept
 
 Naive algorithm: we insert keys in arbitrary (unsorted) order. 
-This version requires O(n\*log(n)) reads-write to disk. 
+This version requires O(n\*log(n)) reads and writes to disk. 
 This is because each insertion creates a new leaf, which modifies 
 the hash of its parent branch recursively. We could avoid reads
 to disk by having the trie in memory, but this is unviable
