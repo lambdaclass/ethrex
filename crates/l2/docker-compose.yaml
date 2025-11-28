@@ -59,7 +59,7 @@ services:
       - ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM:-false}
       - COMPILE_CONTRACTS=true
       - ETHREX_USE_COMPILED_GENESIS=true
-      - ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=${ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER:-false}
+      - ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER
     depends_on:
       - ethrex_l1
     entrypoint:

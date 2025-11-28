@@ -6,8 +6,15 @@ services:
       --router.address ${ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS}
       --randomize-contract-deployment
 
-services:
   ethrex_l2:
+
+  ethrex_l2_b:
+    extends: ethrex_l2
+    build:
+      context: ../../
+      args:
+        - BUILD_FLAGS=--features l2,l2-sql
+    container_name: ethrex_l2_b
     volumes:
       - ../../fixtures/genesis/l2b.json:/genesis/l2.json
     command: >
