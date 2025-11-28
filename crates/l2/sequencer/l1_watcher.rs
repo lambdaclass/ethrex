@@ -482,7 +482,7 @@ pub async fn filter_verified_messages(
     let mut verified_logs = Vec::new();
     info!("Filtering L2 messages");
 
-    for rpc_log in logs {
+    for (index, rpc_log) in logs.iter().enumerate() {
         info!(
             "Verifying L2 Message with tx hash {:#}",
             rpc_log.transaction_hash
@@ -495,11 +495,8 @@ pub async fn filter_verified_messages(
             break;
         };
         info!("Got message proofs {}", message_proof.len());
-        info!("log_index index {}", rpc_log.log_index);
+        info!("log_index index {}", index);
 
-        let index: usize = usize::try_from(rpc_log.log_index).map_err(|_| {
-            L1WatcherError::Custom("L2 Message proof index out of bounds".to_owned())
-        })?;
         let proof = message_proof.get(index).ok_or(L1WatcherError::Custom(
             "L2 Message proof is empty".to_owned(),
         ))?;
