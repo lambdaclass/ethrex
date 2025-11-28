@@ -271,6 +271,7 @@ pub struct NodeRecord {
     pub seq: u64,
     // holds optional values in (key, value) format
     // value represents the rlp encoded bytes
+    // The key/value pairs must be sorted by key and must be unique
     pub pairs: Vec<(Bytes, Bytes)>,
 }
 
@@ -347,26 +348,11 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(
-        node: &Node,
-        seq: u64,
-        signer: &SecretKey,
-        fork_id: Option<ForkId>,
-    ) -> Result<Self, NodeError> {
+    pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Result<Self, NodeError> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
         };
-        if let Some(fork_id) = fork_id {
-            // Without the Vec wrapper, RLP encoding fork_id directly would produce:
-            // [forkHash, forkNext]
-            // But the spec requires nested lists:
-            // [[forkHash, forkNext]]
-            let eth = vec![fork_id];
-            record
-                .pairs
-                .push(("eth".into(), eth.encode_to_vec().into()));
-        }
         record
             .pairs
             .push(("id".into(), "v4".encode_to_vec().into()));
@@ -390,6 +376,20 @@ impl NodeRecord {
         record.signature = record.sign_record(signer)?;
 
         Ok(record)
+    }
+
+    pub fn set_fork_id(&mut self, fork_id: ForkId) {
+        // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+        // [forkHash, forkNext]
+        // But the spec requires nested lists:
+        // [[forkHash, forkNext]]
+        let eth = vec![fork_id];
+        self.pairs.push(("eth".into(), eth.encode_to_vec().into()));
+
+        //Pairs need to be sorted by their key.
+        //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
+        //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
+        self.pairs.sort_by(|a, b| a.0.cmp(&b.0));
     }
 
     fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
@@ -602,7 +602,7 @@ mod tests {
             addr.port(),
             public_key_from_signing_key(&signer),
         );
-        let mut record = NodeRecord::from_node(&node, 1, &signer, None).unwrap();
+        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
         // Drop fork ID since the test doesn't use it
         record.pairs.retain(|(k, _)| k != "eth");
         record.sign_record(&signer).unwrap();
@@ -636,7 +636,9 @@ mod tests {
         );
         let fork_id = storage.get_fork_id().await.unwrap();
 
-        let record = NodeRecord::from_node(&node, 1, &signer, Some(fork_id.clone())).unwrap();
+        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        record.set_fork_id(fork_id.clone());
+
         record.sign_record(&signer).unwrap();
 
         let enr_url = record.enr_url().unwrap();
