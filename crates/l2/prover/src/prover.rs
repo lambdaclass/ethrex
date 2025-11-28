@@ -123,23 +123,14 @@ impl Prover {
         Ok(Some(ProverData {
             batch_number,
             input: ProgramInput {
-                #[cfg(not(feature = "l2"))]
-                block: input
-                    .blocks
-                    .first()
-                    .cloned()
-                    .ok_or("Input blocks is empty")?,
-                #[cfg(feature = "l2")]
                 blocks: input.blocks,
                 execution_witness: input.execution_witness,
-                #[cfg(feature = "l2")]
                 elasticity_multiplier: input.elasticity_multiplier,
                 #[cfg(feature = "l2")]
                 blob_commitment: input.blob_commitment,
                 #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
-                #[cfg(feature = "l2")]
-                fee_configs: input.fee_configs,
+                fee_configs: Some(input.fee_configs),
             },
             format,
         }))
