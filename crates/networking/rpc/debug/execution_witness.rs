@@ -1,7 +1,17 @@
-use bytes::Bytes;
-use ethrex_common::{serde_utils, types::block_execution_witness::ExecutionWitness};
+use std::collections::BTreeMap;
 
-use ethrex_trie::TrieError;
+use bytes::Bytes;
+use ethrex_common::{
+    Address, H256, serde_utils,
+    types::{
+        AccountState, ChainConfig,
+        block_execution_witness::{ExecutionWitness, GuestProgramStateError},
+    },
+    utils::keccak,
+};
+use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
+use ethrex_storage::hash_address;
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -53,6 +63,86 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
                 .collect(),
         })
     }
+}
+
+// TODO: Ideally this would be a try_from but crate dependencies complicate this matter
+// This function is used by ethrex-replay
+pub fn execution_witness_from_rpc_chain_config(
+    rpc_witness: RpcExecutionWitness,
+    chain_config: ChainConfig,
+    first_block_number: u64,
+    initial_state_root: H256,
+) -> Result<ExecutionWitness, GuestProgramStateError> {
+    let nodes: BTreeMap<H256, Node> = rpc_witness
+        .state
+        .into_iter()
+        .filter_map(|b| {
+            if b == Bytes::from_static(&[0x80]) {
+                // other implementations of debug_executionWitness allow for a `Null` node,
+                // which would fail to decode in ours
+                return None;
+            }
+            let hash = keccak(&b);
+            Some(Node::decode(&b).map(|node| (hash, node)))
+        })
+        .collect::<Result<_, RLPDecodeError>>()?;
+
+    // get state trie root and embed the rest of the trie into it
+    let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+        Trie::get_embedded_root(&nodes, initial_state_root)?
+    {
+        Some((*state_trie_root).clone())
+    } else {
+        None
+    };
+
+    // get all storage trie roots and embed the rest of the trie into it
+    let state_trie = if let Some(state_trie_root) = &state_trie_root {
+        Trie::new_temp_with_root(state_trie_root.clone().into())
+    } else {
+        Trie::new_temp()
+    };
+    let mut storage_trie_roots = BTreeMap::new();
+    for key in &rpc_witness.keys {
+        if key.len() != 20 {
+            continue; // not an address
+        }
+        let address = Address::from_slice(key);
+        let hashed_address = hash_address(&address);
+        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+            continue; // empty account, doesn't have a storage trie
+        };
+        let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
+        if storage_root_hash == *EMPTY_TRIE_HASH {
+            continue; // empty storage trie
+        }
+        if !nodes.contains_key(&storage_root_hash) {
+            continue; // storage trie isn't relevant to this execution
+        }
+        let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+        let NodeRef::Node(node, _) = node else {
+            return Err(GuestProgramStateError::Custom(
+                "execution witness does not contain non-empty storage trie".to_string(),
+            ));
+        };
+        storage_trie_roots.insert(address, (*node).clone());
+    }
+
+    let witness = ExecutionWitness {
+        codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
+        chain_config,
+        first_block_number,
+        block_headers_bytes: rpc_witness
+            .headers
+            .into_iter()
+            .map(|b| b.to_vec())
+            .collect(),
+        state_trie_root,
+        storage_trie_roots,
+        keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
+    };
+
+    Ok(witness)
 }
 
 pub struct ExecutionWitnessRequest {
@@ -141,3 +231,4 @@ impl RpcHandler for ExecutionWitnessRequest {
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
+
