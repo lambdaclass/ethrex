@@ -104,6 +104,7 @@ impl Mempool {
     pub fn add_transaction(
         &self,
         hash: H256,
+        sender: Address,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
@@ -120,7 +121,7 @@ impl Mempool {
         inner.txs_order.push_back(hash);
         inner
             .txs_by_sender_nonce
-            .insert((transaction.sender(), transaction.nonce()), hash);
+            .insert((sender, transaction.nonce()), hash);
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
 
@@ -822,9 +823,11 @@ mod tests {
         let filter =
             |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
         mempool
-            .add_transaction(blob_tx_hash, blob_tx.clone())
+            .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone())
             .unwrap();
-        mempool.add_transaction(plain_tx_hash, plain_tx).unwrap();
+        mempool
+            .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx)
+            .unwrap();
         let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
         assert_eq!(txs, HashMap::from([(blob_tx.sender(), vec![blob_tx])]));
     }
