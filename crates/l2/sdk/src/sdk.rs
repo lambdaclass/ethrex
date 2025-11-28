@@ -956,8 +956,12 @@ pub async fn build_generic_tx(
     overrides: Overrides,
 ) -> Result<GenericTransaction, EthClientError> {
     match r#type {
-        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged | TxType::FeeToken => {}
-        TxType::EIP2930 | TxType::EIP7702 | TxType::Legacy => {
+        TxType::EIP1559
+        | TxType::EIP4844
+        | TxType::EIP7702
+        | TxType::Privileged
+        | TxType::FeeToken => {}
+        TxType::EIP2930 | TxType::Legacy => {
             return Err(EthClientError::Custom(
                 "Unsupported tx type in build_generic_tx".to_owned(),
             ));
@@ -996,6 +1000,7 @@ pub async fn build_generic_tx(
         fee_token: overrides.fee_token,
         from,
         wrapper_version: overrides.wrapper_version,
+        authorization_list: overrides.authorization_list,
         ..Default::default()
     };
     tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
