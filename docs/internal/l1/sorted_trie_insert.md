@@ -50,7 +50,7 @@ In our example, all node paths start with 0x1 and then diverge.
 In this scenario, we can compute the leaf for the current value, write it,
 update the parent to include a pointer to that leaf, and then continue.
 
-![Image showing the insertion of 1 elements with a current parent branch 0x1, the current element 0x12E6 and next element 0x172E. 0x12E6 is inserted with a single write](sorted_trie_insert/Sorted%20Insertion%20Scenario%201.png)
+![Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x12E6 and next element 0x172E. 0x12E6 is inserted with a single write](sorted_trie_insert/Sorted%20Insertion%20Scenario%201.png)
 
 Scenario 2: Current and next values are siblings of a new current parent.
 This happens when the parent shares less nibbles from their paths than what the siblings share.
