@@ -131,18 +131,12 @@ unsafe impl BufMut for HashBuffer {
 
     #[inline]
     fn put_bytes(&mut self, val: u8, mut cnt: usize) {
-        const CHUNK: [u8; 64] = [0u8; 64];
-        while cnt > 0 {
-            let take = cnt.min(CHUNK.len());
-            if val == 0 {
-                self.hasher.update(&CHUNK[..take]);
-            } else {
-                let mut tmp = CHUNK;
-                tmp[..take].fill(val);
-                self.hasher.update(&tmp[..take]);
-            }
-            cnt -= take;
+        let chunk = [val, 64];
+        while cnt >= 64 {
+            self.hasher.update(&chunk);
+            cnt -= 64;
         }
+        self.hasher.update(&chunk[..cnt]);
     }
 
     #[inline]
