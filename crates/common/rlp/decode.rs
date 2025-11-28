@@ -17,6 +17,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 pub trait RLPDecode: Sized {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError>;
 
+    #[inline]
     fn decode(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
         let (decoded, remaining) = Self::decode_unfinished(rlp)?;
         if !remaining.is_empty() {
@@ -74,7 +75,7 @@ impl RLPDecode for u8 {
 impl RLPDecode for u16 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let value = decode_be_integer_u64(bytes, 2)? as u16;
+        let value = decode_be_integer_u64::<2>(bytes)? as u16;
         Ok((value, rest))
     }
 }
@@ -82,7 +83,7 @@ impl RLPDecode for u16 {
 impl RLPDecode for u32 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let value = decode_be_integer_u64(bytes, 4)? as u32;
+        let value = decode_be_integer_u64::<4>(bytes)? as u32;
         Ok((value, rest))
     }
 }
@@ -90,7 +91,7 @@ impl RLPDecode for u32 {
 impl RLPDecode for u64 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let value = decode_be_integer_u64(bytes, 8)?;
+        let value = decode_be_integer_u64::<8>(bytes)?;
         Ok((value, rest))
     }
 }
@@ -98,7 +99,7 @@ impl RLPDecode for u64 {
 impl RLPDecode for usize {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let value = decode_be_integer_u64(bytes, std::mem::size_of::<usize>())? as usize;
+        let value = decode_be_integer_u64::<{ std::mem::size_of::<usize>() }>(bytes)? as usize;
         Ok((value, rest))
     }
 }
@@ -492,14 +493,14 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
     }
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_encoded_as_bytes(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
     let prefix = rlp.first().ok_or(RLPDecodeError::MalformedData)?;
     Ok((0xb8..=0xbf).contains(prefix))
 }
 
 /// Receives an RLP bytes item (prefix between 0xb8 and 0xbf) and returns its payload
-#[inline]
+#[inline(always)]
 pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
     let prefix = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
     let offset: usize = (prefix - 0xb8 + 1).into();
@@ -510,7 +511,7 @@ pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
 /// It returns a 2-element tuple with the following elements:
 /// - The payload of the item.
 /// - The remaining bytes after the item.
-#[inline]
+#[inline(always)]
 pub fn decode_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
     let (is_list, payload, rest) = decode_rlp_item(data)?;
     if is_list {
@@ -519,12 +520,14 @@ pub fn decode_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
     Ok((payload, rest))
 }
 
-/// Decodes a RLP integer limited by max_len into a u64.
-#[inline]
-fn decode_be_integer_u64(bytes: &[u8], max_len: usize) -> Result<u64, RLPDecodeError> {
-    debug_assert!(max_len <= 8);
+/// Decodes a RLP integer limited by a compile-time max length into a u64.
+#[inline(always)]
+fn decode_be_integer_u64<const MAX_LEN: usize>(bytes: &[u8]) -> Result<u64, RLPDecodeError> {
+    const {
+        assert!(MAX_LEN <= 8);
+    }
 
-    if bytes.len() > max_len {
+    if bytes.len() > MAX_LEN {
         return Err(RLPDecodeError::InvalidLength);
     }
     if bytes.is_empty() {
