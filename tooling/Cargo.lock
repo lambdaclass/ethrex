@@ -3230,7 +3230,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "rustc-hash 2.1.1",
- "secp256k1 0.30.0",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -3275,6 +3274,7 @@ dependencies = [
  "ethrex-rlp 7.0.0",
  "ethrex-trie 7.0.0",
  "hex",
+ "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "kzg-rs",
  "lazy_static",
  "libc",
@@ -3286,6 +3286,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sha3",
  "thiserror 2.0.17",
  "tinyvec",
  "tracing",
@@ -3402,11 +3403,13 @@ dependencies = [
  "ethrex-trie 7.0.0",
  "ethrex-vm",
  "hex",
+ "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "lambdaworks-crypto 0.13.0",
  "rkyv",
  "secp256k1 0.30.0",
  "serde",
  "serde_with",
+ "sha3",
  "thiserror 2.0.17",
 ]
 
@@ -3465,6 +3468,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sha3",
  "strum 0.27.2",
  "thiserror 2.0.17",
  "walkdir",
@@ -3695,6 +3699,7 @@ dependencies = [
  "ethrex-rlp 7.0.0",
  "ethrex-trie 7.0.0",
  "hex",
+ "lru 0.16.2",
  "qfilter",
  "rayon",
  "rocksdb",
@@ -4439,6 +4444,8 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
  "serde",
 ]
@@ -5619,6 +5626,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 dependencies = [
  "hashbrown 0.15.5",
+]
+
+[[package]]
+name = "lru"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96051b46fc183dc9cd4a223960ef37b9af631b55191852a8274bfef064cda20f"
+dependencies = [
+ "hashbrown 0.16.0",
 ]
 
 [[package]]
@@ -7347,7 +7363,7 @@ dependencies = [
  "indoc",
  "instability",
  "itertools 0.13.0",
- "lru",
+ "lru 0.12.5",
  "paste",
  "strum 0.26.3",
  "unicode-segmentation",
@@ -9038,7 +9054,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "hex",
  "itertools 0.13.0",
- "lru",
+ "lru 0.12.5",
  "num-bigint 0.4.6",
  "p3-baby-bear",
  "p3-bn254-fr",

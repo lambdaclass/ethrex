@@ -12,10 +12,11 @@ pub fn encode<T: RLPEncode>(value: T) -> Vec<u8> {
     buf
 }
 
-/// Calculates the encoded length of the given integer bit with and lsb
+/// Calculates the encoded length of the given integer bit width (ilog2 value) and lsb
 #[inline(always)]
 const fn impl_length_integers(bits: u32, lsb: u8) -> usize {
-    let sig_len = (bits + 7) >> 3;
+    // bits is the ilog2 0 based result, +8 accounts for the first byte boundary
+    let sig_len = (bits + 8) >> 3;
     let is_multibyte_mask = ((sig_len > 1) as usize) | ((lsb > 0x7f) as usize);
     1 + sig_len as usize * is_multibyte_mask
 }
@@ -246,6 +247,7 @@ impl RLPEncode for [u8] {
         }
     }
 
+    #[inline]
     fn length(&self) -> usize {
         if self.is_empty() {
             return 1;
@@ -255,10 +257,12 @@ impl RLPEncode for [u8] {
 }
 
 impl<const N: usize> RLPEncode for [u8; N] {
+    #[inline]
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_ref().encode(buf)
     }
 
+    #[inline]
     fn length(&self) -> usize {
         if N == 1 && self[0] <= 0x7f {
             return 1;
@@ -280,6 +284,7 @@ impl<const N: usize> RLPEncode for [u8; N] {
 }
 
 impl RLPEncode for str {
+    #[inline]
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
@@ -291,6 +296,7 @@ impl RLPEncode for str {
 }
 
 impl RLPEncode for &str {
+    #[inline]
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
@@ -302,6 +308,7 @@ impl RLPEncode for &str {
 }
 
 impl RLPEncode for String {
+    #[inline]
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
@@ -320,21 +327,24 @@ impl RLPEncode for U256 {
     }
 
     fn length(&self) -> usize {
-        impl_length_integers(self.bits() as u32, (self.low_u32() & 0xff) as u8)
+        let ilog = self.bits().saturating_sub(1);
+        impl_length_integers(ilog as u32, (self.low_u32() & 0xff) as u8)
     }
 }
 
 impl<T: RLPEncode> RLPEncode for Vec<T> {
+    #[inline(always)]
     fn encode(&self, buf: &mut dyn BufMut) {
         if self.is_empty() {
             buf.put_u8(0xc0);
         } else {
-            let mut tmp_buf = vec![];
+            let payload_len: usize = self.iter().map(|item| item.length()).sum();
+
+            encode_length(payload_len, buf);
+
             for item in self {
-                item.encode(&mut tmp_buf);
+                item.encode(buf);
             }
-            encode_length(tmp_buf.len(), buf);
-            buf.put_slice(&tmp_buf);
         }
     }
 
@@ -354,6 +364,7 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
     }
 }
 
+#[inline]
 pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
     if total_len < 56 {
         buf.put_u8(0xc0 + total_len as u8);
@@ -670,6 +681,34 @@ mod tests {
         0x90u16.encode(&mut encoded);
         assert_eq!(encoded, vec![RLP_NULL + 1, 0x90]);
         assert_eq!(encoded.len(), 0x90u16.length());
+    }
+
+    #[test]
+    fn u16_length_matches() {
+        let mut encoded = Vec::new();
+        0x0100u16.encode(&mut encoded);
+        assert_eq!(encoded.len(), 0x0100u16.length(),);
+    }
+
+    #[test]
+    fn u256_length_matches() {
+        let value = U256::from(0x0100u64);
+        let mut encoded = Vec::new();
+        value.encode(&mut encoded);
+        assert_eq!(encoded.len(), value.length(),);
+    }
+
+    #[test]
+    fn u64_lengths_match() {
+        for n in 0u64..=10_000 {
+            let mut encoded = Vec::new();
+            n.encode(&mut encoded);
+            assert_eq!(
+                encoded.len(),
+                n.length(),
+                "u64 length mismatch at value {n}"
+            );
+        }
     }
 
     #[test]
