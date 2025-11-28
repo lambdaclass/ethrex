@@ -11,7 +11,9 @@ use ethrex_common::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
+        ChainConfig,
+        Fork::*,
+        MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
@@ -128,10 +130,10 @@ pub fn create_payload(
         .get_block_header_by_hash(args.parent)?
         .ok_or_else(|| ChainError::ParentNotFound)?;
     let chain_config = storage.get_chain_config();
-    let fork = chain_config.fork(args.timestamp);
+    let fork = chain_config.get_fork(args.timestamp);
     let gas_limit = calc_gas_limit(parent_block.gas_limit, args.gas_ceil);
     let excess_blob_gas = chain_config
-        .get_fork_blob_schedule(args.timestamp)
+        .get_blob_schedule_for_time(args.timestamp)
         .map(|schedule| calc_excess_blob_gas(&parent_block, schedule, fork));
 
     let header = BlockHeader {
@@ -158,17 +160,17 @@ pub fn create_payload(
             args.elasticity_multiplier,
         ),
         withdrawals_root: chain_config
-            .is_shanghai_activated(args.timestamp)
+            .is_fork_activated(Shanghai, args.timestamp)
             .then_some(compute_withdrawals_root(
                 args.withdrawals.as_ref().unwrap_or(&Vec::new()),
             )),
         blob_gas_used: chain_config
-            .is_cancun_activated(args.timestamp)
+            .is_fork_activated(Cancun, args.timestamp)
             .then_some(0),
         excess_blob_gas,
         parent_beacon_block_root: args.beacon_root,
         requests_hash: chain_config
-            .is_prague_activated(args.timestamp)
+            .is_fork_activated(Prague, args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
         ..Default::default()
     };
@@ -229,7 +231,7 @@ impl PayloadBuildContext {
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
-                .get_fork_blob_schedule(payload.header.timestamp)
+                .get_blob_schedule_for_time(payload.header.timestamp)
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
@@ -241,12 +243,12 @@ impl PayloadBuildContext {
         let vm_db = StoreVmDatabase::new(storage.clone(), parent_header);
         let vm = new_evm(blockchain_type, vm_db)?;
 
-        let payload_size = payload.encode_to_vec().len() as u64;
+        let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
             requests: config
-                .is_prague_activated(payload.header.timestamp)
+                .is_fork_activated(Prague, payload.header.timestamp)
                 .then_some(Vec::new()),
             block_value: U256::zero(),
             base_fee_per_blob_gas,
@@ -493,7 +495,7 @@ impl Blockchain {
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
         let max_blob_number_per_block = chain_config
-            .get_fork_blob_schedule(context.payload.header.timestamp)
+            .get_blob_schedule_for_time(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
             .unwrap_or_default() as usize;
 
@@ -542,7 +544,7 @@ impl Blockchain {
                 context.payload_size + head_tx.encode_canonical_to_vec().len() as u64;
             if context
                 .chain_config()
-                .is_osaka_activated(context.payload.header.timestamp)
+                .is_fork_activated(Osaka, context.payload.header.timestamp)
                 && potential_rlp_block_size > MAX_RLP_BLOCK_SIZE
             {
                 break;
@@ -551,16 +553,6 @@ impl Blockchain {
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
             let tx_hash = head_tx.tx.hash();
-
-            // Check whether the tx is replay-protected
-            if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
-                // Ignore replay protected tx & all txs from the sender
-                // Pull transaction from the mempool
-                debug!("Ignoring replay-protected transaction: {}", tx_hash);
-                txs.pop();
-                self.remove_transaction_from_pool(&tx_hash)?;
-                continue;
-            }
 
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
@@ -609,7 +601,7 @@ impl Blockchain {
         let tx_hash = head.tx.hash();
         let chain_config = context.chain_config();
         let max_blob_number_per_block = chain_config
-            .get_fork_blob_schedule(context.payload.header.timestamp)
+            .get_blob_schedule_for_time(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
             .unwrap_or_default() as usize;
         let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
@@ -635,7 +627,7 @@ impl Blockchain {
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         if !context
             .chain_config()
-            .is_prague_activated(context.payload.header.timestamp)
+            .is_fork_activated(Prague, context.payload.header.timestamp)
         {
             return Ok(());
         };
