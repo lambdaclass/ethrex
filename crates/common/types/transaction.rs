@@ -1,6 +1,9 @@
 use std::{cmp::min, fmt::Display};
 
-use crate::{errors::EcdsaError, utils::keccak};
+use crate::{
+    errors::EcdsaError,
+    utils::{HashBuffer, keccak},
+};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 use ethrex_crypto::keccak::keccak_hash;
@@ -76,7 +79,21 @@ impl RLPEncode for P2PTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         match self {
             P2PTransaction::LegacyTransaction(t) => t.encode(buf),
-            tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
+            P2PTransaction::EIP2930Transaction(t) => {
+                Transaction::encode_tx_payload(TxType::EIP2930, t, buf)
+            }
+            P2PTransaction::EIP1559Transaction(t) => {
+                Transaction::encode_tx_payload(TxType::EIP1559, t, buf)
+            }
+            P2PTransaction::EIP4844TransactionWithBlobs(t) => {
+                Transaction::encode_tx_payload(TxType::EIP4844, t, buf)
+            }
+            P2PTransaction::EIP7702Transaction(t) => {
+                Transaction::encode_tx_payload(TxType::EIP7702, t, buf)
+            }
+            P2PTransaction::FeeTokenTransaction(t) => {
+                Transaction::encode_tx_payload(TxType::FeeToken, t, buf)
+            }
         };
     }
 }
@@ -430,7 +447,16 @@ impl RLPEncode for Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         match self {
             Transaction::LegacyTransaction(t) => t.encode(buf),
-            tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
+            Transaction::EIP2930Transaction(t) => Self::encode_tx_payload(TxType::EIP2930, t, buf),
+            Transaction::EIP1559Transaction(t) => Self::encode_tx_payload(TxType::EIP1559, t, buf),
+            Transaction::EIP4844Transaction(t) => Self::encode_tx_payload(TxType::EIP4844, t, buf),
+            Transaction::EIP7702Transaction(t) => Self::encode_tx_payload(TxType::EIP7702, t, buf),
+            Transaction::FeeTokenTransaction(t) => {
+                Self::encode_tx_payload(TxType::FeeToken, t, buf)
+            }
+            Transaction::PrivilegedL2Transaction(t) => {
+                Self::encode_tx_payload(TxType::Privileged, t, buf)
+            }
         };
     }
 }
@@ -1362,7 +1388,9 @@ impl Transaction {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
-        crate::utils::keccak(self.encode_canonical_to_vec())
+        let mut hasher = HashBuffer::new();
+        self.encode_canonical(&mut hasher);
+        H256::from_slice(&hasher.finalize())
     }
 
     pub fn hash(&self) -> H256 {
@@ -1575,6 +1603,28 @@ mod canonic_encoding {
     use super::*;
 
     impl Transaction {
+        #[inline(always)]
+        pub fn encode_tx_payload(
+            tx_type: TxType,
+            payload: &impl RLPEncode,
+            buf: &mut dyn bytes::BufMut,
+        ) {
+            let payload_len = 1 + payload.length();
+
+            if payload_len < 56 {
+                buf.put_u8(0x80 + payload_len as u8);
+            } else {
+                let bytes = payload_len.to_be_bytes();
+                let len = ((usize::BITS - payload_len.leading_zeros()) as usize).div_ceil(8);
+                let start = bytes.len() - len;
+                buf.put_u8(0xb7 + len as u8);
+                buf.put_slice(&bytes[start..]);
+            }
+
+            buf.put_u8(tx_type as u8);
+            payload.encode(buf);
+        }
+
         /// Decodes a single transaction in canonical format
         /// Based on [EIP-2718]
         /// Transactions can be encoded in the following formats:
@@ -1642,13 +1692,26 @@ mod canonic_encoding {
             };
         }
 
+        #[inline(always)]
+        pub(super) fn canonical_length(&self) -> usize {
+            match self {
+                Transaction::LegacyTransaction(t) => t.length(),
+                Transaction::EIP2930Transaction(t) => 1 + t.length(),
+                Transaction::EIP1559Transaction(t) => 1 + t.length(),
+                Transaction::EIP4844Transaction(t) => 1 + t.length(),
+                Transaction::EIP7702Transaction(t) => 1 + t.length(),
+                Transaction::FeeTokenTransaction(t) => 1 + t.length(),
+                Transaction::PrivilegedL2Transaction(t) => 1 + t.length(),
+            }
+        }
+
         /// Encodes a transaction in canonical format into a newly created buffer
         /// Based on [EIP-2718]
         /// Transactions can be encoded in the following formats:
         /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
         /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
         pub fn encode_canonical_to_vec(&self) -> Vec<u8> {
-            let mut buf = Vec::new();
+            let mut buf = Vec::with_capacity(self.canonical_length());
             self.encode_canonical(&mut buf);
             buf
         }
