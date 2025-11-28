@@ -33,3 +33,20 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ./provisioning/promtail/promtail.yaml:/etc/promtail/config.yaml
+      - ../logs:/var/log/ethrex
+    command: -config.file=/etc/promtail/config.yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
