@@ -23,7 +23,7 @@ use ethrex_common::types::Code;
 use ethrex_common::{
     H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{AccountState, Block, BlockHash, BlockHeader},
+    types::{AccountState, Block, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
