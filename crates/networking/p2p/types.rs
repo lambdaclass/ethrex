@@ -358,8 +358,11 @@ impl NodeRecord {
             ..Default::default()
         };
         if let Some(fork_id) = fork_id {
-            // entry-value = [[ forkHash, forkNext ], ...]
-            let eth: (ForkId, ()) = (fork_id, ());
+            // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+            // [forkHash, forkNext]
+            // But the spec requires nested lists:
+            // [[forkHash, forkNext]]
+            let eth = vec![fork_id];
             record
                 .pairs
                 .push(("eth".into(), eth.encode_to_vec().into()));
@@ -383,12 +386,6 @@ impl NodeRecord {
         record
             .pairs
             .push(("udp".into(), node.udp_port.encode_to_vec().into()));
-
-        //TODO: Maybe we should sort the pairs based on key values?
-        //e.g. record.pairs.sort_by(|a, b| a.0.cmp(&b.0));
-        //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
-        //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
-        //Otherwise we get `record key/value pairs are not sorted by key` in hive tests.
 
         record.signature = record.sign_record(signer)?;
 
@@ -420,6 +417,11 @@ impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
     fn from(value: NodeRecordPairs) -> Self {
         let mut pairs = vec![];
         if let Some(eth) = value.eth {
+            // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+            // [forkHash, forkNext]
+            // But the spec requires nested lists:
+            // [[forkHash, forkNext]]
+            let eth = vec![eth];
             pairs.push(("eth".into(), eth.encode_to_vec().into()));
         }
         if let Some(id) = value.id {
