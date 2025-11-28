@@ -48,7 +48,7 @@ impl RLPDecode for u8 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
 
-        // Single byte payload
+        // single byte payload
         if let [single] = bytes {
             if *single <= 0x7f {
                 return Ok((*single, rest));
@@ -636,6 +636,54 @@ mod tests {
         let rlp = vec![0x83, 0x01, 0x00, 0x00];
         let decoded = u32::decode(&rlp).unwrap();
         assert_eq!(decoded, 65536);
+    }
+
+    #[test]
+    fn test_decode_integers_invalid_encodings() {
+        // leading zero in multi-byte integer.
+        let rlp = vec![RLP_NULL + 2, 0x00, 0x01];
+        assert!(matches!(
+            u16::decode(&rlp),
+            Err(RLPDecodeError::MalformedData)
+        ));
+
+        let rlp = vec![RLP_NULL + 2, 0x00, 0x01];
+        assert!(matches!(
+            u64::decode(&rlp),
+            Err(RLPDecodeError::MalformedData)
+        ));
+
+        // Payload longer than target
+        let rlp = vec![RLP_NULL + 3, 0x01, 0x02, 0x03];
+        assert!(matches!(
+            u16::decode(&rlp),
+            Err(RLPDecodeError::InvalidLength)
+        ));
+
+        // u64 with 9-byte payload
+        let rlp = vec![
+            RLP_NULL + 9,
+            0x01,
+            0x02,
+            0x03,
+            0x04,
+            0x05,
+            0x06,
+            0x07,
+            0x08,
+            0x09,
+        ];
+        assert!(matches!(
+            u64::decode(&rlp),
+            Err(RLPDecodeError::InvalidLength)
+        ));
+
+        // usize payload too large
+        let rlp = vec![RLP_NULL + (std::mem::size_of::<usize>() as u8 + 1)];
+        assert!(matches!(
+            usize::decode(&rlp),
+            Err(RLPDecodeError::InvalidLength)
+        ));
     }
 
     #[test]
