@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        backend: ["sp1", "risc0", "zisk", "openvm"]
+        backend: ["sp1", "risc0", "zisk", "openvm", "pico"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -49,6 +49,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SETUP_KEY: none
+          ZISK_VERSION: 0.14.0
         run: |
           sudo apt-get update
           sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
@@ -64,13 +65,22 @@ jobs:
           rustup component add rust-src --toolchain nightly-2025-02-14
           cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.1 cargo-openvm
 
+      - name: Pico toolchain install
+        if: matrix.backend == 'pico'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rustup install nightly-2025-08-04
+          rustup component add rust-src --toolchain nightly-2025-08-04
+          cargo +nightly-2025-08-04 install --git https://github.com/brevis-network/pico --tag v1.1.9 pico-cli
+
       - name: Check ${{ matrix.backend }} backend
         run: |
-          cargo check -r -p ethrex-prover -F "${{ matrix.backend }},ci"
+          cargo ${{ matrix.backend == 'pico' && '+nightly' || '' }} check -r -p ethrex-prover -F "${{ matrix.backend }},ci"
 
       - name: Clippy ${{ matrix.backend }} backend
         run: |
-          cargo clippy -r -p ethrex-prover --all-targets -F "${{ matrix.backend }},ci"
+          cargo ${{ matrix.backend == 'pico' && '+nightly' || '' }} clippy -r -p ethrex-prover --all-targets -F "${{ matrix.backend }},ci"
 
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |

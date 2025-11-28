@@ -1677,6 +1677,7 @@ dependencies = [
 name = "guest_program"
 version = "7.0.0"
 dependencies = [
+ "bincode",
  "bytes",
  "ethrex-blockchain",
  "ethrex-common",
