@@ -301,7 +301,7 @@ jobs:
           path: ethrex-contracts.tar.gz
 
   build-docker:
-    name: "Build and publish ethrex docker image"
+    name: "Build ethrex docker images"
     strategy:
       matrix:
         platform:
@@ -365,7 +365,7 @@ jobs:
           platforms: linux/${{ matrix.arch }}
 
   publish-docker:
-    name: "Create and push multi-arch Docker manifest"
+    name: "Create and push multi-arch Docker manifests"
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'workflow_dispatch'}}
     needs: build-docker
