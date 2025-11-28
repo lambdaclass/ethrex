@@ -315,7 +315,7 @@ impl Store {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         // TODO: Implement read bulk
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
@@ -329,21 +329,16 @@ impl Store {
                     .map(|bytes| H256::decode(bytes.as_slice()))
                     .transpose()?
                 else {
-                    return Err(StoreError::Custom(format!(
-                        "Block hash not found for number: {number}"
-                    )));
+                    block_bodies.push(None);
+                    continue;
                 };
-                let Some(block_body) = txn
+                let block_body_opt = txn
                     .get(BODIES, hash.as_bytes())?
                     .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
                     .transpose()
-                    .map_err(StoreError::from)?
-                else {
-                    return Err(StoreError::Custom(format!(
-                        "Block body not found for hash: {hash}"
-                    )));
-                };
-                block_bodies.push(block_body);
+                    .map_err(StoreError::from)?;
+
+                block_bodies.push(block_body_opt);
             }
 
             Ok(block_bodies)
@@ -1249,15 +1244,16 @@ impl Store {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError> {
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
         let mut res = vec![];
         let read_tx = self.backend.begin_read()?;
         // TODO: use read_bulk here
         for key in start..start + limit {
-            let Some(header) = read_tx.get(FULLSYNC_HEADERS, &key.to_le_bytes())? else {
-                return Err(StoreError::Custom("Key not found in bulk read".to_string()));
-            };
-            res.push(BlockHeader::decode(&header)?);
+            let header_opt = read_tx
+                .get(FULLSYNC_HEADERS, &key.to_le_bytes())?
+                .map(|header| BlockHeader::decode(&header))
+                .transpose()?;
+            res.push(header_opt);
         }
         Ok(res)
     }
