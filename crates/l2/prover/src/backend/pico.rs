@@ -1,6 +1,4 @@
-use ethrex_l2_common::{
-    prover::{BatchProof, ProofCalldata, ProofFormat},
-};
+use ethrex_l2_common::prover::{BatchProof, ProofCalldata, ProofFormat};
 use guest_program::{ZKVM_PICO_PROGRAM_ELF, input::ProgramInput};
 use pico_sdk::client::DefaultProverClient;
 use pico_vm::{
