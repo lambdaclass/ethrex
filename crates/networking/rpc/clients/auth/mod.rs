@@ -1,5 +1,6 @@
 use crate::{
     engine::{
+        ExchangeCapabilitiesRequest,
         fork_choice::ForkChoiceUpdatedV3,
         payload::{GetPayloadV5Request, NewPayloadV4Request},
     },
@@ -10,7 +11,10 @@ use crate::{
     utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
 use bytes::Bytes;
-use errors::{EngineClientError, ForkChoiceUpdatedError, GetPayloadError, NewPayloadError};
+use errors::{
+    EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdatedError, GetPayloadError,
+    NewPayloadError,
+};
 use ethrex_common::H256;
 use reqwest::Client;
 use serde::Deserialize;
@@ -55,6 +59,24 @@ impl EngineClient {
             .json::<RpcResponse>()
             .await
             .map_err(EngineClientError::from)
+    }
+
+    pub async fn engine_exchange_capabilities(&self) -> Result<Vec<String>, EngineClientError> {
+        let request = ExchangeCapabilitiesRequest::from(Self::capabilities()).into();
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(ExchangeCapabilitiesError::SerdeJSONError)
+                .map_err(EngineClientError::from),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(ExchangeCapabilitiesError::RPCError(error_message).into())
+            }
+        }
     }
 
     pub async fn engine_forkchoice_updated_v3(
@@ -141,5 +163,15 @@ impl EngineClient {
         let encoding_key = jsonwebtoken::EncodingKey::from_secret(&self.secret);
         // JWT Token
         jsonwebtoken::encode(&header, &claims, &encoding_key).map_err(EngineClientError::from)
+    }
+
+    fn capabilities() -> Vec<String> {
+        vec![
+            "engine_exchangeCapabilities".to_owned(),
+            "engine_forkchoiceUpdatedV3".to_owned(),
+            "engine_getPayloadV4".to_owned(),
+            "engine_getPayloadV5".to_owned(),
+            "engine_newPayloadV4".to_owned(),
+        ]
     }
 }
