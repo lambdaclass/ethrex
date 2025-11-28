@@ -45,6 +45,7 @@ sp1-prover = { version = "=5.0.8", optional = true }
 sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
 
 pico-sdk = { git = "https://github.com/brevis-network/pico", optional = true }
+pico-vm = { git = "https://github.com/brevis-network/pico", optional = true }
 
 [dev-dependencies]
 ethrex-storage.workspace = true
@@ -65,7 +66,7 @@ risc0 = [
 ]
 sp1 = ["guest_program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
 zisk = ["guest_program/zisk"]
-pico = ["guest_program/pico", "dep:pico-sdk"]
+pico = ["guest_program/pico", "dep:pico-sdk", "dep:pico-vm"]
 profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]

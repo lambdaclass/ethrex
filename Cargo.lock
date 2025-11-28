@@ -3728,6 +3728,7 @@ dependencies = [
  "hex",
  "kzg-rs",
  "pico-sdk",
+ "pico-vm",
  "risc0-zkp",
  "risc0-zkvm",
  "rkyv",

@@ -1,66 +1,42 @@
 use std::{env::temp_dir, path::PathBuf};
 
 use ethrex_common::U256;
-use rkyv::rancor::Error;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
+use guest_program::{ZKVM_PICO_PROGRAM_ELF, input::ProgramInput};
 use pico_sdk::client::DefaultProverClient;
+use pico_vm::{
+    instances::configs::embed_kb_bn254_poseidon2::KoalaBearBn254Poseidon2,
+    machine::proof::MetaProof,
+};
+use rkyv::rancor::Error;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{info, warn};
-use guest_program::{ZKVM_PICO_PROGRAM_ELF, input::ProgramInput};
 
-#[derive(Debug, Error)]
-pub enum PicoBackendError {
-    #[error("proof byte count ({0}) isn't the expected (256)")]
-    ProofLen(usize),
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ProveOutput {
-    pub public_values: Vec<u8>,
-    pub proof: Vec<u8>,
-}
-
-impl ProveOutput {
-    pub fn new(output_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-        let public_values = std::fs::read(output_dir.join("pv_file"))?;
-        let proof = std::fs::read(output_dir.join("proof.data"))?;
-
-        // uint256[8]
-        if proof.len() != 256 {
-            return Err(Box::new(PicoBackendError::ProofLen(proof.len())));
-        }
-
-        Ok(ProveOutput {
-            public_values,
-            proof,
-        })
-    }
-}
+pub type ProveOutput = MetaProof<KoalaBearBn254Poseidon2>;
 
 pub fn prove(
     input: ProgramInput,
     _format: ProofFormat,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
-    // TODO: Determine which field is better for our use case: KoalaBear or BabyBear
+    if cfg!(feature = "gpu") {
+        warn!("The Pico backend doesn't support GPU proving, falling back to CPU.");
+    }
+
     let client = DefaultProverClient::new(ZKVM_PICO_PROGRAM_ELF);
 
     let mut stdin = client.new_stdin_builder();
     let input_bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(&input_bytes);
 
-    let output_dir = temp_dir();
-
-    client.prove(stdin)?;
-
-    ProveOutput::new(output_dir)
+    let (_, compressed_proof) = client.prove(stdin)?;
+    Ok(compressed_proof)
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    // TODO: Determine which field is better for our use case: KoalaBear or BabyBear
     let client = DefaultProverClient::new(ZKVM_PICO_PROGRAM_ELF);
 
     let mut stdin = client.new_stdin_builder();
@@ -72,7 +48,9 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn verify(_output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
-    warn!("Pico backend's verify() does nothing, this is because Pico doesn't expose a verification function but will verify each phase during proving as a sanity check");
+    warn!(
+        "Pico backend's verify() does nothing, this is because Pico doesn't expose a verification function but will verify each phase during proving as a sanity check"
+    );
     Ok(())
 }
 

@@ -191,12 +191,7 @@ fn build_pico_program() {
     let _ = std::fs::create_dir("./src/pico/out");
     let mut build_command = std::process::Command::new("cargo");
     build_command
-        .args([
-            "pico",
-            "build",
-            "--output-directory",
-            "out",
-        ])
+        .args(["pico", "build", "--output-directory", "out"])
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .current_dir("./src/pico");
