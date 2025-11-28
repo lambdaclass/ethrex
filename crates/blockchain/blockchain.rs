@@ -440,17 +440,18 @@ impl Blockchain {
                 .choices
                 .iter()
                 .filter(|child| child.is_valid())
+                // No need to check all of them
+                .take(2)
                 .count();
 
             match children {
-                0 => None,
-                1 => collapse_root_node(
+                0 | 1 => collapse_root_node(
                     real_root,
                     &mut state_updates_map,
                     &self.storage,
                     parent_header,
                 )?,
-                // Keep as branch
+                // More than one child. Keep as branch
                 _ => Some(Node::Branch(real_root)),
             }
         };
@@ -1887,6 +1888,11 @@ pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
 }
 
+/// Collapses a root branch node into an extension or leaf node if it has only one valid child.
+/// Returns None if there are no valid children.
+///
+/// NOTE: this assumes the branch has 0 or 1 children. If there are more than 1,
+/// it will discard all but the first valid child found.
 #[cold]
 fn collapse_root_node(
     real_root: Box<BranchNode>,
@@ -1895,12 +1901,14 @@ fn collapse_root_node(
     parent_header: &BlockHeader,
 ) -> Result<Option<Node>, StoreError> {
     // Collapse the branch into an extension or leaf
-    let (choice, only_child) = real_root
+    let Some((choice, only_child)) = real_root
         .choices
         .into_iter()
         .enumerate()
         .find(|(_, c)| c.is_valid())
-        .expect("we already checked");
+    else {
+        return Ok(None);
+    };
     let path = Nibbles::from_hex(vec![choice as u8]);
     let child_bytes = match state_updates_map.get(&path) {
         Some(v) => Some(v.clone()),
