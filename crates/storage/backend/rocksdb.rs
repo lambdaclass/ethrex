@@ -1,5 +1,6 @@
 use crate::api::tables::{
-    ACCOUNT_CODES, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, HEADERS, RECEIPTS, TRIE_NODES,
+    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
+    CANONICAL_BLOCK_HASHES, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
 };
 use crate::api::{
     PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, tables::TABLES,
@@ -101,7 +102,19 @@ impl RocksDBBackend {
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                TRIE_NODES => {
+                ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
+                    cf_opts.set_max_write_buffer_number(6);
+                    cf_opts.set_min_write_buffer_number_to_merge(2);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);

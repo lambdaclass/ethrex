@@ -50,10 +50,15 @@ pub const CHAIN_DATA: &str = "chain_data";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
 pub const SNAP_STATE: &str = "snap_state";
 
-/// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// Account State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
 /// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-pub const TRIE_NODES: &str = "trie_nodes";
+pub const ACCOUNT_TRIE_NODES: &str = "account_trie_nodes";
+
+/// Storage trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+pub const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -70,11 +75,19 @@ pub const INVALID_CHAINS: &str = "invalid_ancestors";
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
 pub const FULLSYNC_HEADERS: &str = "fullsync_headers";
 
-pub const FLATKEY_VALUES: &str = "flatkeyvalue";
+/// Account sate flat key-value store: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+pub const ACCOUNT_FLATKEYVALUE: &str = "account_flatkeyvalue";
+
+/// Storage slots key-value store: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";
 
-pub const TABLES: [&str; 15] = [
+pub const TABLES: [&str; 17] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     BODIES,
@@ -86,8 +99,10 @@ pub const TABLES: [&str; 15] = [
     RECEIPTS,
     SNAP_STATE,
     INVALID_CHAINS,
-    TRIE_NODES,
+    ACCOUNT_TRIE_NODES,
+    STORAGE_TRIE_NODES,
     FULLSYNC_HEADERS,
-    FLATKEY_VALUES,
+    ACCOUNT_FLATKEYVALUE,
+    STORAGE_FLATKEYVALUE,
     MISC_VALUES,
 ];

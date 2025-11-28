@@ -4,9 +4,10 @@ use crate::{
     api::{
         StorageBackend,
         tables::{
-            ACCOUNT_CODES, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
-            FLATKEY_VALUES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS,
-            RECEIPTS, SNAP_STATE, TRANSACTION_LOCATIONS, TRIE_NODES,
+            ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
+            CANONICAL_BLOCK_HASHES, CHAIN_DATA, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
+            MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -1032,9 +1033,9 @@ impl Store {
                 for (node_path, node_data) in nodes {
                     let key = apply_prefix(Some(address_hash), node_path);
                     if node_data.is_empty() {
-                        txn.delete(TRIE_NODES, key.as_ref())?;
+                        txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
                     } else {
-                        txn.put(TRIE_NODES, key.as_ref(), &node_data)?;
+                        txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node_data)?;
                     }
                 }
             }
@@ -1714,14 +1715,15 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
-        let mut nodes = HashMap::new();
         let mut genesis_state_trie = self.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
+
             // Store account code (as this won't be stored in the trie)
             let code = Code::from_bytecode(account.code);
             let code_hash = code.hash;
             self.add_account_code(code).await?;
+
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie =
                 self.open_direct_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
@@ -1731,35 +1733,21 @@ impl Store {
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
-            let (storage_root, new_nodes) = storage_trie.collect_changes_since_last_hash();
-            nodes.insert(H256::from_slice(&hashed_address), new_nodes);
+
+            // TODO(#5195): committing each storage trie individually is inefficient.
+            // We would benefit form a mass storage node insertion method.
+
             // Add account to trie
             let account_state = AccountState {
                 nonce: account.nonce,
                 balance: account.balance,
-                storage_root,
+                storage_root: storage_trie.hash()?,
                 code_hash,
             };
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_root, state_nodes) = genesis_state_trie.collect_changes_since_last_hash();
 
-        let batch = nodes
-            .into_iter()
-            .flat_map(|(account_hash, nodes)| {
-                nodes
-                    .into_iter()
-                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-            })
-            .chain(state_nodes)
-            .map(|(k, v)| (k.into_vec(), v))
-            .collect();
-
-        let mut write_txn = self.backend.begin_write()?;
-        write_txn.put_batch(TRIE_NODES, batch)?;
-        write_txn.commit()?;
-
-        Ok(state_root)
+        Ok(genesis_state_trie.hash()?)
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
@@ -2479,16 +2467,32 @@ fn apply_trie_updates(
     let last_written = write_tx
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
+
+    // Before encoding, accounts have only the account address as their path, while storage keys have
+    // the account address (32 bytes) + storage path (up to 32 bytes).
+
     // Commit removes the bottom layer and returns it, this is the mutation step.
     let nodes = trie_mut.commit(root).unwrap_or_default();
     let mut result = Ok(());
     for (key, value) in nodes {
         let is_leaf = key.len() == 65 || key.len() == 131;
+        let is_account = key.len() <= 65;
 
         if is_leaf && key > last_written {
             continue;
         }
-        let table = if is_leaf { FLATKEY_VALUES } else { TRIE_NODES };
+        // TODO: make a match
+        let table = if is_leaf {
+            if is_account {
+                &ACCOUNT_FLATKEYVALUE
+            } else {
+                &STORAGE_FLATKEYVALUE
+            }
+        } else if is_account {
+            &ACCOUNT_TRIE_NODES
+        } else {
+            &STORAGE_TRIE_NODES
+        };
         if value.is_empty() {
             result = write_tx.delete(table, &key);
         } else {
@@ -2526,7 +2530,7 @@ fn flatkeyvalue_generator(
 
     loop {
         let root = read_tx
-            .get(TRIE_NODES, &[])?
+            .get(ACCOUNT_TRIE_NODES, &[])?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
         let root: Node = ethrex_trie::Node::decode(&root)?;
         let state_root = root.compute_hash().finalize();
@@ -2562,7 +2566,7 @@ fn flatkeyvalue_generator(
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
             write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-            write_txn.put(FLATKEY_VALUES, path.as_ref(), &node.value)?;
+            write_txn.put(ACCOUNT_TRIE_NODES, path.as_ref(), &node.value)?;
             ctr += 1;
             if ctr > 10_000 {
                 write_txn.commit()?;
@@ -2592,7 +2596,7 @@ fn flatkeyvalue_generator(
                 };
                 let key = apply_prefix(Some(account_hash), path);
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(FLATKEY_VALUES, key.as_ref(), &node.value)?;
+                write_txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;
