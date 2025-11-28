@@ -1,6 +1,6 @@
 use ethrex_common::H256;
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::{hint::assert_unchecked, sync::Arc};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -48,12 +48,34 @@ impl TrieLayerCache {
     }
 
     fn fingerprint(key: &[u8]) -> u64 {
-        let mut h = 5381u32;
-        h = ((h << 5) | h) ^ (key.len() as u32);
-        for b in key {
-            h = ((h << 5) | h) ^ (*b as u32);
+        let mut parts = [0u128; 8];
+        let parts_ptr = parts.as_mut_ptr().cast::<u8>();
+        let key_ptr = key.as_ptr();
+        unsafe {
+            std::ptr::copy_nonoverlapping(key_ptr, parts_ptr, key.len().min(64));
+            if key.len() > 66 {
+                std::ptr::copy_nonoverlapping(
+                    key_ptr.add(66),
+                    parts_ptr.add(66),
+                    64.min(key.len() - 66),
+                );
+            }
         }
-        h as u64
+        let big = parts.into_iter().fold(0, |a, x| a ^ x);
+        let big_bytes = big.to_be_bytes();
+        let bytes = [
+            (big_bytes[0] << 4) | big_bytes[1],
+            (big_bytes[2] << 4) | big_bytes[3],
+            (big_bytes[4] << 4) | big_bytes[5],
+            (big_bytes[6] << 4) | big_bytes[7],
+            (big_bytes[8] << 4) | big_bytes[9],
+            (big_bytes[10] << 4) | big_bytes[11],
+            (big_bytes[12] << 4) | big_bytes[13],
+            (big_bytes[14] << 4) | big_bytes[15],
+        ];
+        let mut h = (5381 * 17) ^ u64::from_be_bytes(bytes);
+        h = ((h << 5) | h) ^ key.len() as u64;
+        h
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
