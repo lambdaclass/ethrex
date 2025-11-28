@@ -1,5 +1,5 @@
 use ethrex_common::H256;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{hash::BuildHasher, hint::assert_unchecked, sync::Arc};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
@@ -49,7 +49,8 @@ impl TrieLayerCache {
     }
 
     fn fingerprint(key: &[u8]) -> u64 {
-        rustc_hash::FxBuildHasher {}.hash_one(key)
+        const HASHER: FxBuildHasher = FxBuildHasher {};
+        HASHER.hash_one(key)
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
