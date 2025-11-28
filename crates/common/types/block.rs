@@ -900,7 +900,9 @@ mod test {
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
+        assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
+        assert_eq!(block.encode_to_vec().len(), block.length());
     }
 
     #[test]
