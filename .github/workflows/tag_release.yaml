@@ -225,7 +225,7 @@ jobs:
             echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
           elif [ "${{ matrix.zkvm }}" = "openvm" ]; then
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-openvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name}}
-            echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
+            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
           fi
 
       - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
@@ -276,6 +276,12 @@ jobs:
         with:
           name: ethrex-riscv64ima-zisk-elf-${{ github.ref_name }}
           path: ethrex_guests/zisk/
+
+      - name: Download OpenVM elf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-riscv32im-openvm-elf-${{ github.ref_name }}
+          path: ethrex_guests/openvm/
 
       - name: Archive ethrex guests
         run: |
