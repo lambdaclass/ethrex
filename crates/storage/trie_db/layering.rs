@@ -113,17 +113,11 @@ impl TrieLayerCache {
             return;
         }
 
-        let mut fingerprints: Vec<_> = key_values
-            .iter()
-            .map(|(k, _)| Self::fingerprint(k.as_ref()))
-            .collect();
-        fingerprints.sort_unstable();
-        fingerprints.dedup();
-        fingerprints.shrink_to_fit();
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
+        let fingerprints = nodes.keys().map(|path| Self::fingerprint(path)).collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
