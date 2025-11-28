@@ -59,6 +59,7 @@ services:
       - ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM:-false}
       - COMPILE_CONTRACTS=true
       - ETHREX_USE_COMPILED_GENESIS=true
+      - ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=${ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER:-false}
     depends_on:
       - ethrex_l1
     entrypoint:
@@ -118,6 +119,10 @@ services:
     depends_on:
       contract_deployer:
         condition: service_completed_successfully
+
+  ethrex_l2_b:
+    extends: ethrex_l2
+    container_name: ethrex_l2_b
 
   ethrex_prover:
     container_name: ethrex_prover

@@ -177,7 +177,7 @@ jobs:
 
       - name: Copy env to host
         run: |
-          docker cp contract_deployer:/env/.env cmd/.env
+          docker cp contract_deployer:/env/.env cmd/.env_l2a
           cat cmd/.env_l2a
 
       - name: Deploy contracts L2B
@@ -223,9 +223,9 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           ETHREX_WATCHER_L2_RPCS=http://localhost:1730 \
           ETHREX_WATCHER_L2_CHAIN_IDS=1730 \
-          docker compose -f docker_compose.yaml up --detach --no-deps ethrex_l2
+          docker compose -f docker-compose.yaml up --detach --no-deps ethrex_l2
 
-      - name: Start Sequencer L2B #todo add real params
+      - name: Start Sequencer L2B
         run: |
           export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
           export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
@@ -244,7 +244,7 @@ jobs:
           ETHREX_PROOF_COORDINATOR_LISTEN_PORT=3901 \
           ETHREX_WATCHER_L2_RPCS=http://localhost:1729 \
           ETHREX_WATCHER_L2_CHAIN_IDS=65536999 \
-          docker compose -f docker_compose.yaml up --detach --no-deps ethrex_l2
+          docker compose -f docker-compose.yaml up --detach --no-deps ethrex_l2_b
 
       - name: Init prover
         run: | 
