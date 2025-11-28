@@ -373,7 +373,12 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+#[cfg(all(
+    not(feature = "sp1"),
+    not(feature = "risc0"),
+    not(feature = "zisk"),
+    feature = "secp256k1"
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     use crate::gas_cost::ECRECOVER_COST;
 
@@ -439,7 +444,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-#[cfg(any(feature = "sp1", feature = "risc0"))]
+#[cfg(any(
+    feature = "sp1",
+    feature = "risc0",
+    feature = "zisk",
+    not(feature = "secp256k1"),
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     use ethrex_common::utils::keccak;
     use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
@@ -948,7 +958,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     Ok(Bytes::from_owner(result))
 }
 
-#[cfg(any(feature = "sp1", feature = "risc0"))]
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
@@ -1004,7 +1014,7 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     Ok(result == substrate_bn::Gt::one())
 }
 
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+#[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use lambdaworks_math::errors::PairingError;
