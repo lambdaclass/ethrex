@@ -1,9 +1,5 @@
-use std::{env::temp_dir, path::PathBuf};
-
-use ethrex_common::U256;
 use ethrex_l2_common::{
-    calldata::Value,
-    prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
+    prover::{BatchProof, ProofCalldata, ProofFormat},
 };
 use guest_program::{ZKVM_PICO_PROGRAM_ELF, input::ProgramInput};
 use pico_sdk::client::DefaultProverClient;
@@ -12,9 +8,7 @@ use pico_vm::{
     machine::proof::MetaProof,
 };
 use rkyv::rancor::Error;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-use tracing::{info, warn};
+use tracing::warn;
 
 pub type ProveOutput = MetaProof<KoalaBearBn254Poseidon2>;
 
