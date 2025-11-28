@@ -3440,10 +3440,12 @@ mod tests {
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
         println!("encoded length: {}", encoded.len());
+        assert_eq!(encoded.len(), privileged_l2.length());
 
         let deserialized_tx = PrivilegedL2Transaction::decode(&encoded)?;
 
         assert_eq!(deserialized_tx, privileged_l2);
+
         Ok(())
     }
 

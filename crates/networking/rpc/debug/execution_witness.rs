@@ -4,7 +4,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, serde_utils,
     types::{
-        AccountState, ChainConfig,
+        AccountState, BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitness, GuestProgramStateError},
     },
     utils::keccak,
@@ -71,8 +71,24 @@ pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
     first_block_number: u64,
-    initial_state_root: H256,
 ) -> Result<ExecutionWitness, GuestProgramStateError> {
+    let mut initial_state_root = None;
+
+    for h in &rpc_witness.headers {
+        let header = BlockHeader::decode(h)?;
+        if header.number == first_block_number - 1 {
+            initial_state_root = Some(header.state_root);
+            break;
+        }
+    }
+
+    let initial_state_root = initial_state_root.ok_or_else(|| {
+        GuestProgramStateError::Custom(format!(
+            "header for block {} not found",
+            first_block_number - 1
+        ))
+    })?;
+
     let nodes: BTreeMap<H256, Node> = rpc_witness
         .state
         .into_iter()
