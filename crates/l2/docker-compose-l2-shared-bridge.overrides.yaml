@@ -1,0 +1,22 @@
+services:
+  contract_deployer:
+    volumes:
+      - ../../fixtures/genesis/l2b.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
+    command: >
+      --router.address ${ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS}
+      --randomize-contract-deployment
+
+services:
+  ethrex_l2:
+    volumes:
+      - ../../fixtures/genesis/l2b.json:/genesis/l2.json
+    command: >
+      --network /genesis/l2.json
+      --http.addr 0.0.0.0
+      --http.port 1730
+      --authrpc.port 8552
+      --proof-coordinator.addr 0.0.0.0
+      --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
+      --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+      --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+      --no-monitor

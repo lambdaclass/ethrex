@@ -98,6 +98,8 @@ services:
       - ETHREX_COMMITTER_COMMIT_TIME=${ETHREX_COMMITTER_COMMIT_TIME:-60000}
       - ETHREX_WATCHER_WATCH_INTERVAL=${ETHREX_WATCHER_WATCH_INTERVAL:-12000}
       - ETHREX_OSAKA_ACTIVATION_TIME=${ETHREX_OSAKA_ACTIVATION_TIME:-1761677592}
+      - ETHREX_WATCHER_L2_RPCS=${ETHREX_WATCHER_L2_RPCS}
+      - ETHREX_WATCHER_L2_CHAIN_IDS=${ETHREX_WATCHER_L2_CHAIN_IDS}
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - env:/env/
@@ -119,10 +121,6 @@ services:
     depends_on:
       contract_deployer:
         condition: service_completed_successfully
-
-  ethrex_l2_b:
-    extends: ethrex_l2
-    container_name: ethrex_l2_b
 
   ethrex_prover:
     container_name: ethrex_prover
