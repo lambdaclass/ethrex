@@ -2456,7 +2456,7 @@ mod serde_impl {
         BlobBundleError(#[from] BlobsBundleError),
         #[error("Missing fee token address")]
         MissingFeeToken,
-        #[error("Missing to destination")]
+        #[error("Missing To field")]
         MissingToField,
     }
 
