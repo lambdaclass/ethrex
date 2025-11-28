@@ -27,6 +27,7 @@ rustc-hash.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 qfilter = "0.2.5"
 rayon.workspace = true
+lru = "0.16.2"
 
 [features]
 default = []
