@@ -22,7 +22,7 @@ use ethrex_rlp::{
     decode::{RLPDecode, decode_rlp_item},
     encode::{PayloadRLPEncode, RLPEncode},
     error::RLPDecodeError,
-    structs::{Decoder, Encoder},
+    structs::{Decoder, encode_list_optional},
 };
 
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
@@ -145,14 +145,18 @@ pub struct WrappedEIP4844Transaction {
 
 impl RLPEncode for WrappedEIP4844Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let encoder = Encoder::new(buf);
-        encoder
-            .encode_field(&self.tx)
-            .encode_optional_field(&self.wrapper_version)
-            .encode_field(&self.blobs_bundle.blobs)
-            .encode_field(&self.blobs_bundle.commitments)
-            .encode_field(&self.blobs_bundle.proofs)
-            .finish();
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.tx as &dyn RLPEncode),
+                self.wrapper_version
+                    .as_ref()
+                    .map(|wrapper| wrapper as &dyn RLPEncode),
+                Some(&self.blobs_bundle.blobs as &dyn RLPEncode),
+                Some(&self.blobs_bundle.commitments as &dyn RLPEncode),
+                Some(&self.blobs_bundle.proofs as &dyn RLPEncode),
+            ],
+        );
     }
 }
 
@@ -535,75 +539,87 @@ impl RLPDecode for TxKind {
 
 impl RLPEncode for LegacyTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.nonce)
-            .encode_field(&self.gas_price)
-            .encode_field(&self.gas)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.v)
-            .encode_field(&self.r)
-            .encode_field(&self.s)
-            .finish();
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.gas_price as &dyn RLPEncode),
+                Some(&self.gas as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.v as &dyn RLPEncode),
+                Some(&self.r as &dyn RLPEncode),
+                Some(&self.s as &dyn RLPEncode),
+            ],
+        );
     }
 }
 
 impl RLPEncode for EIP2930Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.gas_price)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.gas_price as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.signature_y_parity as &dyn RLPEncode),
+                Some(&self.signature_r as &dyn RLPEncode),
+                Some(&self.signature_s as &dyn RLPEncode),
+            ],
+        )
     }
 }
 
 impl RLPEncode for EIP1559Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.signature_y_parity as &dyn RLPEncode),
+                Some(&self.signature_r as &dyn RLPEncode),
+                Some(&self.signature_s as &dyn RLPEncode),
+            ],
+        )
     }
 }
 
 impl RLPEncode for EIP4844Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.max_fee_per_blob_gas)
-            .encode_field(&self.blob_versioned_hashes)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.max_fee_per_blob_gas as &dyn RLPEncode),
+                Some(&self.blob_versioned_hashes as &dyn RLPEncode),
+                Some(&self.signature_y_parity as &dyn RLPEncode),
+                Some(&self.signature_r as &dyn RLPEncode),
+                Some(&self.signature_s as &dyn RLPEncode),
+            ],
+        )
     }
 }
 
@@ -615,13 +631,14 @@ impl EIP4844Transaction {
     ) {
         buf.put_bytes(TxType::EIP4844.into(), 1);
         self.encode(buf);
-        let mut encoded_blobs = Vec::new();
-        Encoder::new(&mut encoded_blobs)
-            .encode_field(&tx_blobs_bundle.blobs)
-            .encode_field(&tx_blobs_bundle.commitments)
-            .encode_field(&tx_blobs_bundle.proofs)
-            .finish();
-        buf.put_slice(&encoded_blobs);
+        encode_list_optional(
+            buf,
+            [
+                Some(&tx_blobs_bundle.blobs as &dyn RLPEncode),
+                Some(&tx_blobs_bundle.commitments as &dyn RLPEncode),
+                Some(&tx_blobs_bundle.proofs as &dyn RLPEncode),
+            ],
+        );
     }
 
     pub fn rlp_length_as_pooled_tx(&self, blobs_bundle: &BlobsBundle) -> usize {
@@ -638,58 +655,67 @@ impl EIP4844Transaction {
 
 impl RLPEncode for EIP7702Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.authorization_list)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.authorization_list as &dyn RLPEncode),
+                Some(&self.signature_y_parity as &dyn RLPEncode),
+                Some(&self.signature_r as &dyn RLPEncode),
+                Some(&self.signature_s as &dyn RLPEncode),
+            ],
+        )
     }
 }
 
 impl RLPEncode for PrivilegedL2Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.from)
-            .finish()
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.from as &dyn RLPEncode),
+            ],
+        )
     }
 }
 
 impl RLPEncode for FeeTokenTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.fee_token)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
-            .finish()
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.fee_token as &dyn RLPEncode),
+                Some(&self.signature_y_parity as &dyn RLPEncode),
+                Some(&self.signature_r as &dyn RLPEncode),
+                Some(&self.signature_s as &dyn RLPEncode),
+            ],
+        )
     }
 }
 
@@ -709,114 +735,135 @@ impl PayloadRLPEncode for Transaction {
 
 impl PayloadRLPEncode for LegacyTransaction {
     fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.nonce)
-            .encode_field(&self.gas_price)
-            .encode_field(&self.gas)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .finish();
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.gas_price as &dyn RLPEncode),
+                Some(&self.gas as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+            ],
+        );
     }
 }
 
 impl PayloadRLPEncode for EIP1559Transaction {
     fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .finish();
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+            ],
+        );
     }
 }
 
 impl PayloadRLPEncode for EIP2930Transaction {
     fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.gas_price)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .finish();
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.gas_price as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+            ],
+        );
     }
 }
 
 impl PayloadRLPEncode for EIP4844Transaction {
     fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.max_fee_per_blob_gas)
-            .encode_field(&self.blob_versioned_hashes)
-            .finish();
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.max_fee_per_blob_gas as &dyn RLPEncode),
+                Some(&self.blob_versioned_hashes as &dyn RLPEncode),
+            ],
+        );
     }
 }
 
 impl PayloadRLPEncode for EIP7702Transaction {
     fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.authorization_list)
-            .finish();
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.authorization_list as &dyn RLPEncode),
+            ],
+        );
     }
 }
 
 impl PayloadRLPEncode for PrivilegedL2Transaction {
     fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.from)
-            .finish();
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.from as &dyn RLPEncode),
+            ],
+        );
     }
 }
 
 impl PayloadRLPEncode for FeeTokenTransaction {
     fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.gas_limit)
-            .encode_field(&self.to)
-            .encode_field(&self.value)
-            .encode_field(&self.data)
-            .encode_field(&self.access_list)
-            .encode_field(&self.fee_token)
-            .finish();
+        encode_list_optional(
+            buf,
+            [
+                Some(&self.chain_id as &dyn RLPEncode),
+                Some(&self.nonce as &dyn RLPEncode),
+                Some(&self.max_priority_fee_per_gas as &dyn RLPEncode),
+                Some(&self.max_fee_per_gas as &dyn RLPEncode),
+                Some(&self.gas_limit as &dyn RLPEncode),
+                Some(&self.to as &dyn RLPEncode),
+                Some(&self.value as &dyn RLPEncode),
+                Some(&self.data as &dyn RLPEncode),
+                Some(&self.access_list as &dyn RLPEncode),
+                Some(&self.fee_token as &dyn RLPEncode),
+            ],
+        );
     }
 }
 
@@ -1083,26 +1130,32 @@ impl Transaction {
                 };
                 let mut buf = vec![];
                 match self.chain_id() {
-                    None => Encoder::new(&mut buf)
-                        .encode_field(&tx.nonce)
-                        .encode_field(&tx.gas_price)
-                        .encode_field(&tx.gas)
-                        .encode_field(&tx.to)
-                        .encode_field(&tx.value)
-                        .encode_field(&tx.data)
-                        .finish(),
-                    Some(chain_id) => Encoder::new(&mut buf)
-                        .encode_field(&tx.nonce)
-                        .encode_field(&tx.gas_price)
-                        .encode_field(&tx.gas)
-                        .encode_field(&tx.to)
-                        .encode_field(&tx.value)
-                        .encode_field(&tx.data)
-                        .encode_field(&chain_id)
-                        .encode_field(&0u8)
-                        .encode_field(&0u8)
-                        .finish(),
-                }
+                    None => encode_list_optional(
+                        &mut buf,
+                        [
+                            Some(&tx.nonce as &dyn RLPEncode),
+                            Some(&tx.gas_price as &dyn RLPEncode),
+                            Some(&tx.gas as &dyn RLPEncode),
+                            Some(&tx.to as &dyn RLPEncode),
+                            Some(&tx.value as &dyn RLPEncode),
+                            Some(&tx.data as &dyn RLPEncode),
+                        ],
+                    ),
+                    Some(chain_id) => encode_list_optional(
+                        &mut buf,
+                        [
+                            Some(&tx.nonce as &dyn RLPEncode),
+                            Some(&tx.gas_price as &dyn RLPEncode),
+                            Some(&tx.gas as &dyn RLPEncode),
+                            Some(&tx.to as &dyn RLPEncode),
+                            Some(&tx.value as &dyn RLPEncode),
+                            Some(&tx.data as &dyn RLPEncode),
+                            Some(&chain_id as &dyn RLPEncode),
+                            Some(&0u8 as &dyn RLPEncode),
+                            Some(&0u8 as &dyn RLPEncode),
+                        ],
+                    ),
+                };
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.s.to_big_endian());
@@ -1111,16 +1164,19 @@ impl Transaction {
             }
             Transaction::EIP2930Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.gas_price)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .finish();
+                encode_list_optional(
+                    &mut buf,
+                    [
+                        Some(&tx.chain_id as &dyn RLPEncode),
+                        Some(&tx.nonce as &dyn RLPEncode),
+                        Some(&tx.gas_price as &dyn RLPEncode),
+                        Some(&tx.gas_limit as &dyn RLPEncode),
+                        Some(&tx.to as &dyn RLPEncode),
+                        Some(&tx.value as &dyn RLPEncode),
+                        Some(&tx.data as &dyn RLPEncode),
+                        Some(&tx.access_list as &dyn RLPEncode),
+                    ],
+                );
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -1129,17 +1185,20 @@ impl Transaction {
             }
             Transaction::EIP1559Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .finish();
+                encode_list_optional(
+                    &mut buf,
+                    [
+                        Some(&tx.chain_id as &dyn RLPEncode),
+                        Some(&tx.nonce as &dyn RLPEncode),
+                        Some(&tx.max_priority_fee_per_gas as &dyn RLPEncode),
+                        Some(&tx.max_fee_per_gas as &dyn RLPEncode),
+                        Some(&tx.gas_limit as &dyn RLPEncode),
+                        Some(&tx.to as &dyn RLPEncode),
+                        Some(&tx.value as &dyn RLPEncode),
+                        Some(&tx.data as &dyn RLPEncode),
+                        Some(&tx.access_list as &dyn RLPEncode),
+                    ],
+                );
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -1148,19 +1207,22 @@ impl Transaction {
             }
             Transaction::EIP4844Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .encode_field(&tx.max_fee_per_blob_gas)
-                    .encode_field(&tx.blob_versioned_hashes)
-                    .finish();
+                encode_list_optional(
+                    &mut buf,
+                    [
+                        Some(&tx.chain_id as &dyn RLPEncode),
+                        Some(&tx.nonce as &dyn RLPEncode),
+                        Some(&tx.max_priority_fee_per_gas as &dyn RLPEncode),
+                        Some(&tx.max_fee_per_gas as &dyn RLPEncode),
+                        Some(&tx.gas as &dyn RLPEncode),
+                        Some(&tx.to as &dyn RLPEncode),
+                        Some(&tx.value as &dyn RLPEncode),
+                        Some(&tx.data as &dyn RLPEncode),
+                        Some(&tx.access_list as &dyn RLPEncode),
+                        Some(&tx.max_fee_per_blob_gas as &dyn RLPEncode),
+                        Some(&tx.blob_versioned_hashes as &dyn RLPEncode),
+                    ],
+                );
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -1169,18 +1231,21 @@ impl Transaction {
             }
             Transaction::EIP7702Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .encode_field(&tx.authorization_list)
-                    .finish();
+                encode_list_optional(
+                    &mut buf,
+                    [
+                        Some(&tx.chain_id as &dyn RLPEncode),
+                        Some(&tx.nonce as &dyn RLPEncode),
+                        Some(&tx.max_priority_fee_per_gas as &dyn RLPEncode),
+                        Some(&tx.max_fee_per_gas as &dyn RLPEncode),
+                        Some(&tx.gas_limit as &dyn RLPEncode),
+                        Some(&tx.to as &dyn RLPEncode),
+                        Some(&tx.value as &dyn RLPEncode),
+                        Some(&tx.data as &dyn RLPEncode),
+                        Some(&tx.access_list as &dyn RLPEncode),
+                        Some(&tx.authorization_list as &dyn RLPEncode),
+                    ],
+                );
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -1190,18 +1255,21 @@ impl Transaction {
             Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .encode_field(&tx.fee_token)
-                    .finish();
+                encode_list_optional(
+                    &mut buf,
+                    [
+                        Some(&tx.chain_id as &dyn RLPEncode),
+                        Some(&tx.nonce as &dyn RLPEncode),
+                        Some(&tx.max_priority_fee_per_gas as &dyn RLPEncode),
+                        Some(&tx.max_fee_per_gas as &dyn RLPEncode),
+                        Some(&tx.gas_limit as &dyn RLPEncode),
+                        Some(&tx.to as &dyn RLPEncode),
+                        Some(&tx.value as &dyn RLPEncode),
+                        Some(&tx.data as &dyn RLPEncode),
+                        Some(&tx.access_list as &dyn RLPEncode),
+                        Some(&tx.fee_token as &dyn RLPEncode),
+                    ],
+                );
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
@@ -3002,10 +3070,14 @@ mod mempool {
 
     impl RLPEncode for MempoolTransaction {
         fn encode(&self, buf: &mut dyn bytes::BufMut) {
-            Encoder::new(buf)
-                .encode_field(&self.timestamp)
-                .encode_field(&*self.inner)
-                .finish();
+            encode_list_optional(
+                buf,
+                [
+                    Some(&self.timestamp as &dyn RLPEncode),
+                    Some(&self.sender as &dyn RLPEncode),
+                    Some(&*self.inner as &dyn RLPEncode),
+                ],
+            );
         }
     }
 

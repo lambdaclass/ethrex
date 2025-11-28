@@ -231,12 +231,33 @@ impl<'a> Encoder<'a> {
     }
 }
 
+/// Encode a list directly into the target buffer without using an intermediate `temp_buf`.
+///
+/// The function takes all fields at once so it can:
+/// 1) compute the payload length (skipping `None`), then
+/// 2) write the list prefix, and finally
+/// 3) encode each present field into the caller-provided buffer.
+pub fn encode_list_optional<'a, I>(buf: &mut dyn BufMut, fields: I)
+where
+    I: IntoIterator<Item = Option<&'a dyn RLPEncode>>,
+{
+    let fields: Vec<_> = fields.into_iter().collect();
+    let payload_len: usize = fields.iter().flatten().map(|f| f.length()).sum();
+
+    encode_length(payload_len, buf);
+    for field in fields.into_iter().flatten() {
+        field.encode(buf);
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use bytes::BufMut;
+
     use crate::{
         decode::RLPDecode,
         encode::RLPEncode,
-        structs::{Decoder, Encoder},
+        structs::{Decoder, Encoder, encode_list_optional},
     };
 
     #[derive(Debug, PartialEq, Eq)]
@@ -281,5 +302,36 @@ mod tests {
         let mut tuple_encoded = Vec::new();
         (input.a, input.b).encode(&mut tuple_encoded);
         assert_eq!(buf, tuple_encoded);
+    }
+
+    #[test]
+    fn test_encode_list_optional() {
+        #[derive(Debug, PartialEq, Eq)]
+        struct Maybe {
+            a: u8,
+            b: Option<u8>,
+        }
+
+        impl RLPEncode for Maybe {
+            fn encode(&self, buf: &mut dyn BufMut) {
+                encode_list_optional(
+                    buf,
+                    [
+                        Some(&self.a as &dyn RLPEncode),
+                        self.b.as_ref().map(|b| b as &dyn RLPEncode),
+                    ],
+                );
+            }
+        }
+
+        let with_b = Maybe { a: 5, b: Some(6) };
+        let mut buf = Vec::new();
+        with_b.encode(&mut buf);
+        assert_eq!(buf, vec![0xc2, 0x05, 0x06]); // list payload len=2
+
+        let without_b = Maybe { a: 5, b: None };
+        let mut buf = Vec::new();
+        without_b.encode(&mut buf);
+        assert_eq!(buf, vec![0xc1, 0x05]); // only one element present
     }
 }
