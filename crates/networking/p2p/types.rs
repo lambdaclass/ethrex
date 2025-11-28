@@ -378,7 +378,7 @@ impl NodeRecord {
         Ok(record)
     }
 
-    pub fn set_fork_id(&mut self, fork_id: ForkId) {
+    pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SecretKey) -> Result<(), NodeError> {
         // Without the Vec wrapper, RLP encoding fork_id directly would produce:
         // [forkHash, forkNext]
         // But the spec requires nested lists:
@@ -390,6 +390,9 @@ impl NodeRecord {
         //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
         //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
         self.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+        self.signature = self.sign_record(signer)?;
+        Ok(())
     }
 
     fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
@@ -637,7 +640,7 @@ mod tests {
         let fork_id = storage.get_fork_id().await.unwrap();
 
         let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
-        record.set_fork_id(fork_id.clone());
+        record.set_fork_id(fork_id.clone(), &signer).unwrap();
 
         record.sign_record(&signer).unwrap();
 
