@@ -113,7 +113,7 @@ impl BlocksTable {
                     block.header.coinbase,
                     block.header.gas_used,
                     block.header.blob_gas_used,
-                    block.encode_to_vec().len(),
+                    block.length(),
                 )
             })
             .collect::<Vec<_>>();
