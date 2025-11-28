@@ -198,8 +198,13 @@ impl RLPDecode for Signature {
 impl RLPDecode for U256 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes: [u8; 32] = static_left_pad(bytes)?;
-        Ok((U256::from_big_endian(&padded_bytes), rest))
+        if bytes.len() > 32 {
+            return Err(RLPDecodeError::InvalidLength);
+        }
+        if bytes.first() == Some(&0) {
+            return Err(RLPDecodeError::MalformedData);
+        }
+        Ok((U256::from_big_endian(bytes), rest))
     }
 }
 
@@ -512,34 +517,6 @@ pub fn decode_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
         return Err(RLPDecodeError::UnexpectedList);
     }
     Ok((payload, rest))
-}
-
-/// Pads a slice of bytes with zeros on the left to make it a fixed size slice.
-/// The size of the data must be less than or equal to the size of the output array.
-#[inline]
-pub fn static_left_pad<const N: usize>(data: &[u8]) -> Result<[u8; N], RLPDecodeError> {
-    if data.is_empty() {
-        return Ok([0; N]);
-    }
-    if data[0] == 0 {
-        return Err(RLPDecodeError::MalformedData);
-    }
-    if data.len() > N {
-        return Err(RLPDecodeError::InvalidLength);
-    }
-    if data.len() == N {
-        let mut result = [0; N];
-        result.copy_from_slice(data);
-        return Ok(result);
-    }
-
-    let mut result = [0; N];
-    let data_start_index = N.saturating_sub(data.len());
-    result
-        .get_mut(data_start_index..)
-        .ok_or(RLPDecodeError::InvalidLength)?
-        .copy_from_slice(data);
-    Ok(result)
 }
 
 /// Decodes a RLP integer limited by max_len into a u64.
