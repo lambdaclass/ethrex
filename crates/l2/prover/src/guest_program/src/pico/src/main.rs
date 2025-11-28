@@ -6,14 +6,14 @@ use rkyv::rancor::Error;
 pico_sdk::entrypoint!(main);
 
 pub fn main() {
-    println!("reading input");
+    dbg!("reading input");
     let input = pico_sdk::io::read_vec();
-    println!("deserializing input");
+    dbg!("deserializing input");
     let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
 
-    println!("executing");
+    dbg!("executing");
     let output = execution_program(input).unwrap();
 
-    println!("committing output");
+    dbg!("committing output");
     pico_sdk::io::commit_bytes(&output.encode());
 }
