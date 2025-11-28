@@ -106,6 +106,7 @@ setup-hive: ## 🐝 Set up Hive testing framework
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
+# https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
 ifeq ( $(SIMULATION) , ethereum/rpc-compat )
 SIM_BUILDARG_FLAG = --sim.buildarg "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
 endif
