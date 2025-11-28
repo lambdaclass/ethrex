@@ -572,18 +572,19 @@ fn parse_be_length(bytes: &[u8]) -> Result<usize, RLPDecodeError> {
     if bytes.is_empty() {
         return Err(RLPDecodeError::InvalidLength);
     }
-
     if bytes[0] == 0 {
         return Err(RLPDecodeError::MalformedData);
     }
 
+    if bytes.len() > std::mem::size_of::<usize>() {
+        return Err(RLPDecodeError::InvalidLength);
+    }
+
     let mut value: usize = 0;
     for byte in bytes {
-        value = value
-            .checked_mul(256)
-            .and_then(|v| v.checked_add(*byte as usize))
-            .ok_or(RLPDecodeError::InvalidLength)?;
+        value = (value << 8) | (*byte as usize);
     }
+
     Ok(value)
 }
 
