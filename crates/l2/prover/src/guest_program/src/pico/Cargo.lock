@@ -498,7 +498,7 @@ dependencies = [
  "ff 0.13.1",
  "group 0.13.0",
  "pairing 0.23.0",
- "pico-patch-libs",
+ "pico-patch-libs 1.1.8 (git+https://github.com/brevis-network/pico)",
  "rand_core",
  "subtle",
 ]
@@ -3012,11 +3012,20 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pico-derive"
 version = "1.1.8"
-source = "git+https://github.com/brevis-network/pico#f84173e7d7200201a582cf38ad9b7c4bff63fdf4"
+source = "git+https://github.com/brevis-network/pico?tag=v1.1.9#13db3861fe48026c0f35999f49dc523f08e96e86"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "pico-patch-libs"
+version = "1.1.8"
+source = "git+https://github.com/brevis-network/pico?tag=v1.1.9#13db3861fe48026c0f35999f49dc523f08e96e86"
+dependencies = [
+ "bincode",
+ "serde",
 ]
 
 [[package]]
@@ -3031,7 +3040,7 @@ dependencies = [
 [[package]]
 name = "pico-sdk"
 version = "1.1.8"
-source = "git+https://github.com/brevis-network/pico#f84173e7d7200201a582cf38ad9b7c4bff63fdf4"
+source = "git+https://github.com/brevis-network/pico?tag=v1.1.9#13db3861fe48026c0f35999f49dc523f08e96e86"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3046,7 +3055,7 @@ dependencies = [
  "p3-field",
  "p3-koala-bear",
  "p3-mersenne-31",
- "pico-patch-libs",
+ "pico-patch-libs 1.1.8 (git+https://github.com/brevis-network/pico?tag=v1.1.9)",
  "pico-vm",
  "rand",
  "serde",
@@ -3057,7 +3066,7 @@ dependencies = [
 [[package]]
 name = "pico-vm"
 version = "1.1.8"
-source = "git+https://github.com/brevis-network/pico#f84173e7d7200201a582cf38ad9b7c4bff63fdf4"
+source = "git+https://github.com/brevis-network/pico?tag=v1.1.9#13db3861fe48026c0f35999f49dc523f08e96e86"
 dependencies = [
  "anyhow",
  "arrayref",
@@ -4743,7 +4752,7 @@ dependencies = [
 
 [[package]]
 name = "zkvm-pico-program"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
