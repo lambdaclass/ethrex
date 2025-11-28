@@ -44,7 +44,7 @@ impl Default for TrieLayerCache {
 impl TrieLayerCache {
     // TODO: tune this
     fn create_filter() -> Result<qfilter::Filter, qfilter::Error> {
-        qfilter::Filter::new_resizeable(100_000_000, 100_000_000, 0.02)
+        qfilter::Filter::new_resizeable(1_000_000, 100_000_000, 0.02)
             .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
     }
 
