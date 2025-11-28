@@ -48,7 +48,8 @@ pub fn prove(
     let client = DefaultProverClient::new(ZKVM_PICO_PROGRAM_ELF);
 
     let mut stdin = client.new_stdin_builder();
-    stdin.write(&input);
+    let input_bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(&input_bytes);
 
     let output_dir = temp_dir();
 
@@ -62,7 +63,8 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let client = DefaultProverClient::new(ZKVM_PICO_PROGRAM_ELF);
 
     let mut stdin = client.new_stdin_builder();
-    stdin.write(&input);
+    let input_bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(&input_bytes);
 
     client.emulate(stdin);
     Ok(())
