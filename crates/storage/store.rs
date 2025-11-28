@@ -599,7 +599,7 @@ impl Store {
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         // check cache first
         if let Some(code) = self.account_code_cache.get(&code_hash)? {
-            return Ok(Some(code.clone()));
+            return Ok(Some(code));
         }
 
         let Some(bytes) = self
