@@ -13,6 +13,7 @@ ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-trie.workspace = true
 
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 async-trait.workspace = true
 ethereum-types.workspace = true
 anyhow = "1.0.86"

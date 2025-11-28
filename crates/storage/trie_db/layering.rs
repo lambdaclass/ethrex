@@ -49,8 +49,7 @@ impl TrieLayerCache {
     }
 
     fn fingerprint(key: &[u8]) -> u64 {
-        const HASHER: FxBuildHasher = FxBuildHasher {};
-        HASHER.hash_one(key)
+        xxhash_rust::xxh3::xxh3_64(key)
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
@@ -113,10 +112,13 @@ impl TrieLayerCache {
             return;
         }
 
-        let fingerprints = key_values
+        let mut fingerprints: Vec<_> = key_values
             .iter()
             .map(|(k, _)| Self::fingerprint(k.as_ref()))
             .collect();
+        fingerprints.sort_unstable();
+        fingerprints.dedup();
+        fingerprints.shrink_to_fit();
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
