@@ -1788,9 +1788,11 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
+        let mut storage_trie_nodes = vec![];
         let mut genesis_state_trie = self.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
+            let h256_hashed_address = H256::from_slice(&hashed_address);
 
             // Store account code (as this won't be stored in the trie)
             let code = Code::from_bytecode(account.code);
@@ -1799,7 +1801,7 @@ impl Store {
 
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie =
-                self.open_direct_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
+                self.open_direct_storage_trie(h256_hashed_address, *EMPTY_TRIE_HASH)?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
@@ -1807,20 +1809,36 @@ impl Store {
                 }
             }
 
-            // TODO(#5195): committing each storage trie individually is inefficient.
-            // We would benefit form a mass storage node insertion method.
+            let (storage_root, storage_nodes) = storage_trie.collect_changes_since_last_hash();
+
+            storage_trie_nodes.extend(
+                storage_nodes
+                    .into_iter()
+                    .map(|(path, n)| (apply_prefix(Some(h256_hashed_address), path).to_bytes(), n)),
+            );
 
             // Add account to trie
             let account_state = AccountState {
                 nonce: account.nonce,
                 balance: account.balance,
-                storage_root: storage_trie.hash()?,
+                storage_root,
                 code_hash,
             };
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        Ok(genesis_state_trie.hash()?)
+        let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
+        let account_trie_nodes = account_trie_nodes
+            .into_iter()
+            .map(|(path, n)| (apply_prefix(None, path).to_bytes(), n))
+            .collect::<Vec<_>>();
+
+        let mut tx = self.backend.begin_write()?;
+        tx.put_batch(ACCOUNT_TRIE_NODES, account_trie_nodes)?;
+        tx.put_batch(STORAGE_TRIE_NODES, storage_trie_nodes)?;
+        tx.commit()?;
+
+        Ok(state_root)
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
