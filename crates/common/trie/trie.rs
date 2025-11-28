@@ -14,7 +14,8 @@ use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use std::collections::{BTreeMap, HashSet};
+use rustc_hash::FxHashSet;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -52,8 +53,8 @@ pub type TrieNode = (Nibbles, NodeRLP);
 pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
-    pending_removal: HashSet<Nibbles>,
-    dirty: bool,
+    pending_removal: FxHashSet<Nibbles>,
+    dirty: FxHashSet<Nibbles>,
 }
 
 impl Default for Trie {
@@ -68,8 +69,8 @@ impl Trie {
         Self {
             db,
             root: NodeRef::default(),
-            pending_removal: HashSet::new(),
-            dirty: false,
+            pending_removal: Default::default(),
+            dirty: Default::default(),
         }
     }
 
@@ -82,8 +83,8 @@ impl Trie {
             } else {
                 Default::default()
             },
-            pending_removal: HashSet::new(),
-            dirty: false,
+            pending_removal: Default::default(),
+            dirty: Default::default(),
         }
     }
 
@@ -99,7 +100,7 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32 && !self.dirty && self.db().flatkeyvalue_computed(path.clone()) {
+        if !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(path.clone()) {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
@@ -128,7 +129,7 @@ impl Trie {
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
         self.pending_removal.remove(&path);
-        self.dirty = true;
+        self.dirty.insert(path.clone());
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -150,13 +151,11 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+        self.dirty.insert(Nibbles::from_bytes(path));
         if !self.root.is_valid() {
             return Ok(None);
         }
-        if path.len() == 32 {
-            self.pending_removal.insert(Nibbles::from_bytes(path));
-        }
-        self.dirty = true;
+        self.pending_removal.insert(Nibbles::from_bytes(path));
 
         // If the trie is not empty, call the root node's removal logic.
         let (is_trie_empty, value) = self
@@ -284,7 +283,7 @@ impl Trie {
         if self.root.is_valid() {
             let encoded_root = self.get_root_node(Nibbles::default())?.encode_to_vec();
 
-            let mut node_path = HashSet::new();
+            let mut node_path: FxHashSet<_> = Default::default();
             for path in paths {
                 let mut nodes = self.get_proof(path)?;
                 nodes.swap_remove(0);
