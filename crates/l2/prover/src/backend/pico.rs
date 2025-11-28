@@ -1,6 +1,7 @@
 use std::{env::temp_dir, path::PathBuf};
 
 use ethrex_common::U256;
+use rkyv::rancor::Error;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
