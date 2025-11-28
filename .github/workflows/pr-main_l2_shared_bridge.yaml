@@ -235,14 +235,13 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          ETHREX_NETWORK= ../../fixtures/genesis/l2b.json \
           ETHREX_HTTP_PORT=1730 \
-          ETHREX_METRICS_PORT= 3703 \
-          ETHREX_DATADIR= dev_ethrex_l2_2 \
+          ETHREX_METRICS_PORT=3703 \
+          ETHREX_DATADIR=dev_ethrex_l2_2 \
           ETHREX_PROOF_COORDINATOR_LISTEN_PORT=3901 \
           ETHREX_WATCHER_L2_RPCS=http://localhost:1729 \
           ETHREX_WATCHER_L2_CHAIN_IDS=65536999 \
-          docker compose -f -f docker-compose-l2-shared-bridge.yaml up --detach --no-deps ethrex_l2_b
+          docker compose -f docker-compose-l2-shared-bridge.yaml up --detach --no-deps ethrex_l2_b
 
       - name: Init prover
         run: | 
