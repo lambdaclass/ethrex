@@ -1137,4 +1137,3 @@ pub async fn register_fee_token(
     wait_for_transaction_receipt(tx_hash, client, 100).await?;
     Ok(())
 }
-

@@ -203,4 +203,3 @@ pub async fn send_ethrex_transaction(
         }
     }
 }
-

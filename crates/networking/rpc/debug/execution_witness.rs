@@ -231,4 +231,3 @@ impl RpcHandler for ExecutionWitnessRequest {
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
-
