@@ -1,12 +1,12 @@
 [package]
 name = "zkvm-pico-program"
-verison = "0.1.0"
+version = "0.1.0"
 edition = "2024"
 
 [workspace]
 
 [dependencies]
-pico-sdk = { git = "https://github.com/brevis-network/pico" }
+pico-sdk = { git = "https://github.com/brevis-network/pico", tag = "v1.1.9" }
 
 ethrex-common = { path = "../../../../../../common", default-features = false }
 ethrex-storage = { path = "../../../../../../storage", default-features = false }
