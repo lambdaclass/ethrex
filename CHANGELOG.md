@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-11-28
+
+- Improve RLP decoding for primitives [#5402](https://github.com/lambdaclass/ethrex/pull/5402)
+
 ### 2025-11-20
 
 - Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding a alloc-less length method the default trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
