@@ -2454,10 +2454,8 @@ mod serde_impl {
         InvalidTxType(TxType),
         #[error("Blob bundle error: {0}")]
         BlobBundleError(#[from] BlobsBundleError),
-        #[error("Missing fee token address")]
-        MissingFeeToken,
-        #[error("Missing To field")]
-        MissingToField,
+        #[error("Missing field: {0}")]
+        MissingField(String),
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -2720,7 +2718,7 @@ mod serde_impl {
                 return Err(GenericTransactionError::InvalidTxType(value.r#type));
             }
             let TxKind::Call(to) = value.to else {
-                return Err(GenericTransactionError::MissingToField);
+                return Err(GenericTransactionError::MissingField("to".to_owned()));
             };
             Ok(Self {
                 chain_id: value.chain_id.unwrap_or_default(),
@@ -2855,7 +2853,9 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
                 fee_token: value
                     .fee_token
-                    .ok_or(GenericTransactionError::MissingFeeToken)?,
+                    .ok_or(GenericTransactionError::MissingField(
+                        "fee token".to_owned(),
+                    ))?,
                 chain_id: value.chain_id.unwrap_or_default(),
                 ..Default::default()
             })
