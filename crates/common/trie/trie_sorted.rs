@@ -197,7 +197,7 @@ where
     // The root is a parent of all nodes
     let mut current_parent = StackElement::default();
 
-    // The current node that is being used as computing. We compare it with the current
+    // The current node that is being used for computing. We compare it with the current
     // parent and the next value to see where it should be written
     let mut current_node: CenterSide = CenterSide::from_value(initial_value);
     let mut next_value_opt: Option<(H256, Vec<u8>)> = data_iter.next();
