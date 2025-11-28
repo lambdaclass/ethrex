@@ -75,6 +75,10 @@ This method alone provides up to a 4-5 times boost in performance, as computing 
 
 ## Implementation
 
+Generalized Flowchart of snapsync
+
+![Flow - Snap Sync](snap_sync/Flow%20-%20Snap%20Sync.png)
+
 ### Flags
 
 When testing snap sync there are flags to take into account:
@@ -146,12 +150,16 @@ The first step is downloading all the headers, through the `request_block_header
 
 ### Downloading Account Values
 
+#### API
+
 When downloading the account values, we use the snap function [`GetAccountRange`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getaccountrange-0x00). This requests receives:
 
 - rootHash: state_root of the block we're trying to download
 - startingHash: Account hash[^4] of the first to retrieve
 - limitHash: Account hash after which to stop serving data
 - responseBytes: Soft limit at which to stop returning data
+
+[^4]: All accounts and storages are sent and found throught the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with adress 0x0001 whose hash would be 0x49d0...49d5
 
 This method returns the following
 
@@ -160,6 +168,71 @@ This method returns the following
     - accBody: Account body in slim format
 - proof: List of trie nodes proving the account range
 
-[^4]: All accouns and storages are sent and found throught the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with adress 0x0001 whose hash would be 0x49d0...49d5
+The proof is a merkle proof of the accounts provided, and the root of that merkle must equal to the rootHash.
+In ethrex this is checked by the `verify_range` function.
+
+```rust
+/// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
+/// Also returns true if there is more state to be fetched (aka if there are more keys to the right of the given range)
+pub fn verify_range(
+    root: H256,
+    left_bound: &H256,
+    keys: &[H256],
+    values: &[ValueRLP],
+    proof: &[Vec<u8>],
+) -> Result<bool, TrieError>
+```
+
+#### Dump to file
+
+To avoid having all of the accounts in memory, when their size in memory exceeds 64MiB we dump them to a new file. 
+These files are a subfolder of the datadir folder called `"account_state_snapshots"`.
+For an optimization for faster insertion, these are stored ordered in the RocksDB sst file format.
+
+#### Flowchart
 
 ![request_account_range flowchart](snap_sync/Flow%20-%20Download%20Accounts.png)
+
+
+### Insertion of Accounts
+
+The sst files in the `"account_state_snapshots"` subfolder are ingested into a RocksDB database. This provides an ordered array that is used for insertion.
+
+For a more detailed documentation in sorted wait until PR #4792 is merged.
+
+### Downloading Storage Slots
+
+The download of the storage slots is conceptually similar to the download of accounts, but very different in implementation. The method uses the snap function [`GetStorageRanges`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getstorageranges-0x02). This requests has the following parameters:
+
+- rootHash: state_root of the block we're trying to download
+- accountHashes: List of all the account address hashes of the storage tries to serve
+- startingHash: Storage slot hash of the first to retrieve
+- limitHash: Storage slot hash after which to stop serving
+- responseBytes: Soft limit at which to stop returning data
+
+The return is similar to the one from `GetAccountRange`, but with multiple results, one for each account provided, with the following parameters:
+
+- slots: List of list of consecutive slots from the trie (one list per account)
+    - slotHash: Hash of the storage slot key (trie path)
+    - slotData: Data content of the slot
+- proof: List of trie nodes proving the slot range
+
+From these parameters, there is a couple of difficulties that pop up.
+
+- We need to know which accounts have storage that needs to be downloaded
+- We need to know what storage root each account has to be able to verify it
+
+To solve these issues we take two action:
+- Before we download the storage slots we ensure that the state trie is in a consistent complete state. This is accomplished by doing the insertion of accounts step first and then healing the trie. If during the storage slot download the pivot becomes stale, we heal the trie again with the new pivot, to keep the trie up to date.
+- When inserting the accounts, we grab a list of all the accounts with their storage root. If the account is healed, we marked the storage root as none, to indicate we should check in the DB what is the state of the storage root.
+
+#### The time traveling problem
+
+During the development of snap sync we found a recurring problem, the time traveling problem. In hash based, when a node returned to a previous state, those accounts wouldn't be redownloaded, as it would just return to the previous hash which was present in the database.
+ **Any algorithm that depended on updating accounts during healing would fail**.
+The alternative is to always go to disk if there is to mark healed accounts as unreliable and go to disk to get the datum.
+This may not be a problem in path based again, but should be studied.
+
+#### Big Accounts
+
+#### Repeated Storage Roots
