@@ -134,7 +134,7 @@ unsafe impl BufMut for HashBuffer {
         let chunk = [val; 64];
 
         while cnt >= 64 {
-            self.hasher.update(&chunk);
+            self.hasher.update(chunk);
             cnt -= 64;
         }
 
