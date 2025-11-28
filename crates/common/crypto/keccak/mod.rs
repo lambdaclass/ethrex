@@ -1,5 +1,7 @@
-#[cfg(target_arch = "aarch64")]
-std::arch::global_asm!(include_str!("keccak1600-armv8.s"), options(raw));
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+std::arch::global_asm!(include_str!("keccak1600-armv8-elf.s"), options(raw));
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+std::arch::global_asm!(include_str!("keccak1600-armv8-macho.s"), options(raw));
 #[cfg(target_arch = "x86_64")]
 std::arch::global_asm!(include_str!("keccak1600-x86_64.s"), options(att_syntax));
 

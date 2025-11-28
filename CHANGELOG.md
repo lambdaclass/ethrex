@@ -2,8 +2,13 @@
 
 ## Perf
 
+### 2025-11-12
+
+- Cache `BLOBBASEFEE` opcode value [#5288](https://github.com/lambdaclass/ethrex/pull/5288)
+
 ### 2025-11-11
 
+- Insert instead of merge for bloom rebuilds [#5223](https://github.com/lambdaclass/ethrex/pull/5223)
 - Replace sha3 keccak to an assembly version using ffi [#5247](https://github.com/lambdaclass/ethrex/pull/5247)
 - Fix `FlatKeyValue` generation on fullsync mode [#5274](https://github.com/lambdaclass/ethrex/pull/5274)
 
@@ -16,6 +21,7 @@
 - Reuse stack pool in LEVM [#5179](https://github.com/lambdaclass/ethrex/pull/5179)
 
 ### 2025-11-05
+
 - Merkelization backpressure and batching [#5200](https://github.com/lambdaclass/ethrex/pull/5200)
 
 ### 2025-11-03
