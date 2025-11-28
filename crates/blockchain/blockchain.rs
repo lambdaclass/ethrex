@@ -1743,6 +1743,9 @@ pub fn find_parent_header(
 /// Performs pre-execution validation of the block's header values in reference to the parent_header
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
 /// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas
+///
+/// Note that this doesn't validate that the transactions or withdrawals root of the header matches the body
+/// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
 pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
