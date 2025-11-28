@@ -540,10 +540,12 @@ impl Store {
             return Ok(None);
         };
         let bytes = Bytes::from_owner(bytes);
-        let (bytecode, targets) = decode_bytes(&bytes)?;
+        let (bytecode_slice, targets) = decode_bytes(&bytes)?;
+        let bytecode = bytes.slice_ref(bytecode_slice);
+
         let code = Code {
             hash: code_hash,
-            bytecode: Bytes::copy_from_slice(bytecode),
+            bytecode,
             jump_targets: <Vec<_>>::decode(targets)?,
         };
         Ok(Some(code))
