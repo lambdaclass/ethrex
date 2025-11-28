@@ -210,9 +210,8 @@ impl RLPDecode for Bloom {
 impl RLPDecode for String {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (str_bytes, rest) = decode_bytes(rlp)?;
-        let value =
-            String::from_utf8(str_bytes.to_vec()).map_err(|_| RLPDecodeError::MalformedData)?;
-        Ok((value, rest))
+        let value = std::str::from_utf8(str_bytes).map_err(|_| RLPDecodeError::MalformedData)?;
+        Ok((value.to_owned(), rest))
     }
 }
 
