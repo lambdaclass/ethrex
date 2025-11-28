@@ -7,7 +7,9 @@ use ethrex_crypto::keccak::keccak_hash;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
-pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
+pub use serde_impl::{
+    AccessListEntry, AuthorizationTupleEntry, GenericTransaction, GenericTransactionError,
+};
 
 /// The serialized length of a default eip1559 transaction
 pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
@@ -3443,10 +3445,12 @@ mod tests {
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
         println!("encoded length: {}", encoded.len());
+        assert_eq!(encoded.len(), privileged_l2.length());
 
         let deserialized_tx = PrivilegedL2Transaction::decode(&encoded)?;
 
         assert_eq!(deserialized_tx, privileged_l2);
+
         Ok(())
     }
 
