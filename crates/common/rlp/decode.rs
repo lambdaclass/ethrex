@@ -187,6 +187,9 @@ impl RLPDecode for Signature {
 impl RLPDecode for U256 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
+        if bytes.is_empty() {
+            return Ok((U256::zero(), rest));
+        }
         if bytes.len() > 32 {
             return Err(RLPDecodeError::InvalidLength);
         }
@@ -669,6 +672,11 @@ mod tests {
         let rlp = vec![RLP_NULL + 1, 0x01];
         let decoded = U256::decode(&rlp).unwrap();
         let expected = U256::from(1);
+        assert_eq!(decoded, expected);
+
+        let rlp = vec![RLP_NULL];
+        let decoded = U256::decode(&rlp).unwrap();
+        let expected = U256::zero();
         assert_eq!(decoded, expected);
 
         let mut rlp = vec![RLP_NULL + 32];
