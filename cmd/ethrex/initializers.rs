@@ -82,7 +82,7 @@ pub fn init_tracing(
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let dir = PathBuf::from("logs");
+        let dir = PathBuf::from("/var/log/ethrex");
         if !dir.exists() {
             let _ = std::fs::create_dir(&dir);
         }

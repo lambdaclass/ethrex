@@ -77,6 +77,3 @@ GEMINI.md
 
 # Documentation Graphs
 !docs/internal/l1/healing/*.svg
-
-# default logs folder
-./logs
