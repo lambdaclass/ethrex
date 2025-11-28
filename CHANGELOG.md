@@ -4,6 +4,7 @@
 
 ### 2025-11-28
 
+- Improve transaction encoding and compute hash [#5455](https://github.com/lambdaclass/ethrex/pull/5455)
 - Change some calls from `encode_to_vec().len()` to `.length()` when wanting to get the rlp encoded length [#5374](https://github.com/lambdaclass/ethrex/pull/5374)
 
 ### 2025-11-20
