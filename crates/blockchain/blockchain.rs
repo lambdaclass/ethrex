@@ -1452,7 +1452,7 @@ impl Blockchain {
 
         // Add transaction and blobs bundle to storage
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         Ok(hash)
     }
@@ -1478,7 +1478,7 @@ impl Blockchain {
 
         // Add transaction to storage
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
 
         Ok(hash)
     }
@@ -1795,6 +1795,9 @@ pub fn find_parent_header(
 /// Performs pre-execution validation of the block's header values in reference to the parent_header
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
 /// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas
+///
+/// Note that this doesn't validate that the transactions or withdrawals root of the header matches the body
+/// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
 pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
@@ -1806,7 +1809,7 @@ pub fn validate_block(
         .map_err(InvalidBlockError::from)?;
 
     if chain_config.is_fork_activated(Osaka, block.header.timestamp) {
-        let block_rlp_size = block.encode_to_vec().len();
+        let block_rlp_size = block.length();
         if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(error::ChainError::InvalidBlock(
                 InvalidBlockError::MaximumRlpSizeExceeded(
