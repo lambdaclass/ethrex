@@ -2084,7 +2084,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "rustc-hash",
- "secp256k1",
  "thiserror 2.0.16",
  "tokio",
  "tokio-util",
@@ -2102,6 +2101,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "k256",
  "kzg-rs",
  "lazy_static",
  "libc",
@@ -2113,6 +2113,7 @@ dependencies = [
  "serde 1.0.228",
  "serde_json",
  "sha2",
+ "sha3",
  "thiserror 2.0.16",
  "tinyvec",
  "tracing",
@@ -2229,11 +2230,13 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "k256",
  "lambdaworks-crypto 0.13.0",
  "rkyv",
  "secp256k1",
  "serde 1.0.228",
  "serde_with",
+ "sha3",
  "thiserror 2.0.16",
 ]
 
@@ -2292,6 +2295,7 @@ dependencies = [
  "serde 1.0.228",
  "serde_json",
  "sha2",
+ "sha3",
  "strum 0.27.2",
  "thiserror 2.0.16",
  "walkdir",
@@ -2896,6 +2900,7 @@ dependencies = [
 name = "guest_program"
 version = "7.0.0"
 dependencies = [
+ "bincode",
  "bytes",
  "ethrex-blockchain",
  "ethrex-common",
