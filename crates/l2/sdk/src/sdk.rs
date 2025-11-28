@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::types::EIP7702Transaction;
 use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
@@ -810,6 +811,14 @@ pub async fn send_generic_transaction(
 
             tx.encode(&mut encoded_tx);
         }
+        TxType::EIP7702 => {
+            let tx: EIP7702Transaction = generic_tx.try_into()?;
+            let signed_tx = tx
+                .sign(signer)
+                .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+            signed_tx.encode(&mut encoded_tx);
+        }
         TxType::FeeToken => {
             let tx: FeeTokenTransaction = generic_tx.try_into()?;
             let signed_tx = tx
@@ -820,9 +829,10 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         _ => {
-            return Err(EthClientError::Custom(
-                "Unsupported transaction type".to_string(),
-            ));
+            return Err(EthClientError::Custom(format!(
+                "Unsupported transaction type: {:?}",
+                generic_tx.r#type
+            )));
         }
     };
 

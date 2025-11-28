@@ -2456,6 +2456,8 @@ mod serde_impl {
         BlobBundleError(#[from] BlobsBundleError),
         #[error("Missing fee token address")]
         MissingFeeToken,
+        #[error("Missing to destination")]
+        MissingToField,
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -2707,6 +2709,41 @@ mod serde_impl {
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
+        }
+    }
+
+    impl TryFrom<GenericTransaction> for EIP7702Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP7702 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            let TxKind::Call(to) = value.to else {
+                return Err(GenericTransactionError::MissingToField);
+            };
+            Ok(Self {
+                chain_id: value.chain_id.unwrap_or_default(),
+                nonce: value.nonce.unwrap_or_default(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                gas_limit: value.gas.unwrap_or_default(),
+                to,
+                value: value.value,
+                data: value.input,
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                authorization_list: value
+                    .authorization_list
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(AuthorizationTuple::from)
+                    .collect(),
+                ..Default::default()
+            })
         }
     }
 
