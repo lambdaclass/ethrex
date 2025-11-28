@@ -166,8 +166,6 @@ pub enum InternalError {
     AccountNotFound,
     #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
     InvalidPrecompileAddress,
-    #[error("Invalid Fork")]
-    InvalidFork,
     #[error("Account should had been delegated")]
     AccountNotDelegated,
     #[error("No recipient found for privileged transaction")]
