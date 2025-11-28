@@ -72,6 +72,7 @@ jobs:
         run: |
           rustup install nightly-2025-08-04
           rustup component add rust-src --toolchain nightly-2025-08-04
+          rustup component add clippy --toolchain nightly-2025-08-04
           cargo +nightly-2025-08-04 install --git https://github.com/brevis-network/pico --tag v1.1.9 pico-cli
 
       - name: Check ${{ matrix.backend }} backend
