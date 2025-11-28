@@ -13,6 +13,7 @@ ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-trie.workspace = true
 
+twox-hash = { version = "2.1", features = ["std", "xxhash3_64"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 async-trait.workspace = true
 ethereum-types.workspace = true

@@ -49,7 +49,8 @@ impl TrieLayerCache {
     }
 
     fn fingerprint(key: &[u8]) -> u64 {
-        xxhash_rust::xxh3::xxh3_64(key)
+        // xxhash_rust::xxh3::xxh3_64(key)
+        twox_hash::XxHash3_64::oneshot(key)
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
