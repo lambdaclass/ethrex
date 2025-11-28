@@ -1,6 +1,6 @@
 use ethrex_common::H256;
 use rustc_hash::FxHashMap;
-use std::{hint::assert_unchecked, sync::Arc};
+use std::{hash::BuildHasher, hint::assert_unchecked, sync::Arc};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -9,6 +9,7 @@ struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
+    fingerprints: Vec<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -48,34 +49,7 @@ impl TrieLayerCache {
     }
 
     fn fingerprint(key: &[u8]) -> u64 {
-        let mut parts = [0u128; 8];
-        let parts_ptr = parts.as_mut_ptr().cast::<u8>();
-        let key_ptr = key.as_ptr();
-        unsafe {
-            std::ptr::copy_nonoverlapping(key_ptr, parts_ptr, key.len().min(64));
-            if key.len() > 66 {
-                std::ptr::copy_nonoverlapping(
-                    key_ptr.add(66),
-                    parts_ptr.add(64),
-                    64.min(key.len() - 66),
-                );
-            }
-        }
-        let big = parts.into_iter().fold(0, |a, x| a ^ x);
-        let big_bytes = big.to_be_bytes();
-        let bytes = [
-            (big_bytes[0] << 4) | big_bytes[1],
-            (big_bytes[2] << 4) | big_bytes[3],
-            (big_bytes[4] << 4) | big_bytes[5],
-            (big_bytes[6] << 4) | big_bytes[7],
-            (big_bytes[8] << 4) | big_bytes[9],
-            (big_bytes[10] << 4) | big_bytes[11],
-            (big_bytes[12] << 4) | big_bytes[13],
-            (big_bytes[14] << 4) | big_bytes[15],
-        ];
-        let mut h = (5381 * 17) ^ u64::from_be_bytes(bytes);
-        h = ((h << 5) | h) ^ key.len() as u64;
-        h
+        rustc_hash::FxBuildHasher {}.hash_one(key)
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
@@ -138,19 +112,10 @@ impl TrieLayerCache {
             return;
         }
 
-        // add this new bloom to the global one.
-        if let Some(filter) = &mut self.bloom {
-            for (p, _) in &key_values {
-                let fp = Self::fingerprint(p.as_ref());
-                if let Err(qfilter::Error::CapacityExceeded) = filter.insert_fingerprint(false, fp)
-                {
-                    tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
-                    self.bloom = None;
-                    break;
-                }
-            }
-        }
-
+        let fingerprints = key_values
+            .iter()
+            .map(|(k, _)| Self::fingerprint(k.as_ref()))
+            .collect();
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
@@ -161,7 +126,21 @@ impl TrieLayerCache {
             nodes,
             parent,
             id: self.last_id,
+            fingerprints,
         };
+
+        // add this new bloom to the global one.
+        if let Some(filter) = &mut self.bloom {
+            for fp in &entry.fingerprints {
+                if let Err(qfilter::Error::CapacityExceeded) = filter.insert_fingerprint(false, *fp)
+                {
+                    tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
+                    self.bloom = None;
+                    break;
+                }
+            }
+        }
+
         self.layers.insert(state_root, Arc::new(entry));
     }
 
@@ -176,10 +155,9 @@ impl TrieLayerCache {
         };
 
         for layer in self.layers.values() {
-            for path in layer.nodes.keys() {
-                let fp = Self::fingerprint(path);
+            for fp in &layer.fingerprints {
                 if let Err(qfilter::Error::CapacityExceeded) =
-                    new_global_filter.insert_fingerprint(false, fp)
+                    new_global_filter.insert_fingerprint(false, *fp)
                 {
                     tracing::warn!(
                         "TrieLayerCache: rebuild_bloom capacity exceeded. Poisoning bloom."
