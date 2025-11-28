@@ -56,7 +56,7 @@ impl TrieLayerCache {
             if key.len() > 66 {
                 std::ptr::copy_nonoverlapping(
                     key_ptr.add(66),
-                    parts_ptr.add(66),
+                    parts_ptr.add(64),
                     64.min(key.len() - 66),
                 );
             }
