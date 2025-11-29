@@ -150,9 +150,7 @@ pub fn restore_cache_state(
             .get_mut(&address)
             .ok_or(InternalError::AccountNotFound)?;
 
-        for (key, value) in storage {
-            account.storage.insert(key, value);
-        }
+        account.storage.extend(storage);
     }
 
     Ok(())
