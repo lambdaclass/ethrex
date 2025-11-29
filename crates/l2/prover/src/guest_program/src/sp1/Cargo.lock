@@ -1016,6 +1016,7 @@ dependencies = [
  "bitvec",
  "bls12_381",
  "bytes",
+ "crypto-bigint",
  "datatest-stable",
  "derive_more",
  "ethrex-common",
