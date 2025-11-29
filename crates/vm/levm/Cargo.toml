@@ -16,6 +16,7 @@ bytes.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
+crypto-bigint = { version = "0.5.5", default-features = false }
 
 datatest-stable = "0.2.9"
 walkdir = "2.5.0"

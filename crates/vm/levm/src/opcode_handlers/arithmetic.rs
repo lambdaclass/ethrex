@@ -1,7 +1,15 @@
+#![allow(unexpected_cfgs)]
+
 use crate::{
     errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
+};
+#[cfg(all(target_vendor = "succinct", target_arch = "riscv32"))]
+use crypto_bigint::succinct;
+use crypto_bigint::{
+    U256 as CryptoU256, Word,
+    modular::runtime_mod::{DynResidue, DynResidueParams},
 };
 use ethrex_common::{U256, U512};
 
@@ -187,21 +195,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let multiplicand: U512 = multiplicand.into();
-        let multiplier: U512 = multiplier.into();
-
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "both values come from a u256, so the product can fit in a U512"
-        )]
-        let product = multiplicand * multiplier;
-        #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
-        let product_mod = product % modulus;
-
-        #[allow(clippy::expect_used, reason = "can't overflow")]
-        let product_mod: U256 = product_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
+        let product_mod = mulmod_u256(multiplicand, multiplier, modulus);
 
         current_call_frame.stack.push(product_mod)?;
 
@@ -292,4 +286,89 @@ fn abs(value: U256) -> U256 {
     } else {
         value
     }
+}
+
+#[inline]
+fn to_crypto(value: U256) -> CryptoU256 {
+    let mut words = [Word::default(); CryptoU256::LIMBS];
+
+    match CryptoU256::LIMBS {
+        // 64-bit host words: one U256 limb maps 1:1
+        4 => {
+            words
+                .iter_mut()
+                .zip(value.0)
+                .for_each(|(out, limb)| *out = limb as Word);
+        }
+        // 32-bit host words (SP1): split each 64-bit limb into two 32-bit limbs (little-endian)
+        8 => {
+            for (i, limb) in value.0.iter().copied().enumerate() {
+                let lo = limb as Word;
+                let hi = (limb >> 32) as Word;
+                let idx = i * 2;
+                words[idx] = lo;
+                words[idx + 1] = hi;
+            }
+        }
+        _ => unreachable!("unsupported CryptoU256 limb width"),
+    }
+
+    CryptoU256::from_words(words)
+}
+
+#[inline]
+fn from_crypto(value: CryptoU256) -> U256 {
+    let words = value.to_words();
+    let mut limbs = [0u64; 4];
+
+    match CryptoU256::LIMBS {
+        4 => limbs
+            .iter_mut()
+            .zip(words)
+            .for_each(|(out, limb)| *out = limb as u64),
+        8 => {
+            for i in 0..4 {
+                let lo = words[i * 2] as u64;
+                let hi = (words[i * 2 + 1] as u64) << 32;
+                limbs[i] = lo | hi;
+            }
+        }
+        _ => unreachable!("unsupported CryptoU256 limb width"),
+    }
+
+    U256(limbs)
+}
+
+fn mulmod_u256(multiplicand: U256, multiplier: U256, modulus: U256) -> U256 {
+    if modulus.is_zero() {
+        return U256::zero();
+    }
+
+    let modulus_crypto = to_crypto(modulus);
+
+    // SP1 path: use the zkVM bigint intrinsic, which is significantly faster than the generic path.
+    #[cfg(all(target_vendor = "succinct", target_arch = "riscv32"))]
+    {
+        let a = to_crypto(multiplicand);
+        let b = to_crypto(multiplier);
+        let product_mod = succinct::modmul_u256(&a, &b, &modulus_crypto);
+        return from_crypto(product_mod);
+    }
+
+    if modulus.0[0] & 1 == 0 {
+        let product = to_crypto(multiplicand).mul_wide(&to_crypto(multiplier));
+        let (remainder, _) = CryptoU256::const_rem_wide(product, &modulus_crypto);
+
+        return from_crypto(remainder);
+    }
+
+    let params: DynResidueParams<{ CryptoU256::LIMBS }> = DynResidueParams::new(&modulus_crypto);
+    let multiplicand_residue =
+        DynResidue::<{ CryptoU256::LIMBS }>::new(&to_crypto(multiplicand), params);
+    let multiplier_residue =
+        DynResidue::<{ CryptoU256::LIMBS }>::new(&to_crypto(multiplier), params);
+
+    let product = (&multiplicand_residue * &multiplier_residue).retrieve();
+
+    from_crypto(product)
 }
