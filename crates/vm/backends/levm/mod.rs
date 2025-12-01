@@ -197,7 +197,7 @@ impl LEVM {
         tx: &Transaction,
         tx_sender: Address,
         block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
+        db: &GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
