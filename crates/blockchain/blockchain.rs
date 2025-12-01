@@ -231,7 +231,7 @@ impl Blockchain {
             let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
             let execution_handle = std::thread::Builder::new()
-                .name("block_executor_execution".to_string())
+                .name("block_executor".to_string())
                 .spawn_scoped(s, move || -> Result<_, ChainError> {
                     let execution_result =
                         vm.execute_block_pipeline(block, tx, queue_length_ref)?;
@@ -251,7 +251,7 @@ impl Blockchain {
                 .expect("Failed to spawn block_executor exec thread");
             let parent_header_ref = &parent_header; // Avoid moving to thread
             let merkleize_handle = std::thread::Builder::new()
-                .name("block_executor_merkleizer".to_string())
+                .name("merkleizer".to_string())
                 .spawn_scoped(s, move || -> Result<_, StoreError> {
                     let account_updates_list = self.handle_merkleization(
                         s,
@@ -379,7 +379,7 @@ impl Blockchain {
         for i in 0..16 {
             let (tx, rx) = channel();
             let handle = std::thread::Builder::new()
-                .name(format!("block_executor_merkleization_shard_worker_{i}"))
+                .name(format!("merkle_worker_{i}"))
                 .spawn_scoped(scope, move || {
                     self.handle_merkleization_subtrie(rx, parent_header)
                 })
