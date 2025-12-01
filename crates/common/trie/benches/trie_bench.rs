@@ -18,60 +18,6 @@ use ethrex_trie::InMemoryTrieDB as EthrexMemDB;
 use ethrex_trie::Trie as EthrexTrie;
 
 #[allow(clippy::unit_arg)]
-fn insert_shared_prefix_worst_case_benchmark(c: &mut Criterion) {
-    // Keys share the first 28 bytes to have extension nodes
-    let (keys, values) = black_box(shared_prefix_data(5000, 28));
-
-    let mut group = c.benchmark_group("Trie shared-prefix worst-case");
-    group.measurement_time(Duration::from_secs(15));
-
-    group.bench_function("ethrex-trie insert 5k shared prefix", |b| {
-        b.iter_batched_ref(
-            || EthrexTrie::new(Box::new(EthrexMemDB::new_empty())),
-            |trie| {
-                for i in 0..keys.len() {
-                    trie.insert(keys[i].clone(), values[i].clone()).unwrap();
-                }
-                black_box(trie.commit().unwrap());
-            },
-            criterion::BatchSize::LargeInput,
-        );
-    });
-
-    group.bench_function("cita-trie insert 5k shared prefix", |b| {
-        b.iter_batched_ref(
-            || {
-                PatriciaTrie::new(
-                    Arc::new(MemoryDB::new(false)),
-                    Arc::new(HasherKeccak::new()),
-                )
-            },
-            |trie| {
-                for i in 0..keys.len() {
-                    trie.insert(keys[i].clone(), values[i].clone()).unwrap();
-                }
-                black_box(trie.root().unwrap());
-            },
-            criterion::BatchSize::LargeInput,
-        );
-    });
-
-    group.bench_function("ethrex-trie compute_hash 5k shared prefix", |b| {
-        b.iter_batched_ref(
-            || {
-                let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
-                for i in 0..keys.len() {
-                    trie.insert(keys[i].clone(), values[i].clone()).unwrap();
-                }
-                black_box(trie)
-            },
-            |trie| black_box(trie.hash_no_commit()),
-            criterion::BatchSize::LargeInput,
-        );
-    });
-}
-
-#[allow(clippy::unit_arg)]
 fn insert_worse_case_benchmark(c: &mut Criterion) {
     let (keys_1k, values_1k) = black_box(random_data(1000));
     let (keys_10k, values_10k) = black_box(random_data(10000));
@@ -184,6 +130,24 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
             criterion::BatchSize::LargeInput,
         );
     });
+
+    group.measurement_time(Duration::from_secs(60));
+    group.sample_size(10);
+    let (keys_1m, values_1m) = black_box(random_data(1_000_000));
+    group.bench_function("ethrex-trie compute_hash 1M", |b| {
+        b.iter_batched_ref(
+            || {
+                let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
+                for i in 0..keys_1m.len() {
+                    trie.insert(keys_1m[i].clone(), values_1m[i].clone())
+                        .unwrap();
+                }
+                black_box(trie)
+            },
+            |trie| black_box(trie.hash_no_commit()),
+            criterion::BatchSize::LargeInput,
+        );
+    });
 }
 
 fn random_data(n: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
@@ -202,30 +166,6 @@ fn random_data(n: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     (keys, values)
 }
 
-fn shared_prefix_data(n: usize, shared_prefix_bytes: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
-    assert!(shared_prefix_bytes + 4 <= 32);
-
-    let mut rng = StdRng::seed_from_u64(0xdeadbeef);
-    let mut keys = Vec::with_capacity(n);
-    let mut values = Vec::with_capacity(n);
-
-    let mut base = [0u8; 32];
-    rng.fill_bytes(&mut base);
-
-    for i in 0..n {
-        let mut k = base;
-        let suffix = (i as u32).to_be_bytes();
-        k[shared_prefix_bytes..shared_prefix_bytes + 4].copy_from_slice(&suffix);
-        keys.push(k.into());
-
-        let mut v = vec![0u8; 32];
-        rng.fill_bytes(&mut v);
-        values.push(v);
-    }
-
-    (keys, values)
-}
-
 fn criterion_config() -> Criterion {
     Criterion::default()
         .sample_size(150)
@@ -236,6 +176,6 @@ fn criterion_config() -> Criterion {
 criterion_group!(
     name = benches;
     config = criterion_config();
-    targets =  insert_worse_case_benchmark, insert_shared_prefix_worst_case_benchmark
+    targets =  insert_worse_case_benchmark
 );
 criterion_main!(benches);
