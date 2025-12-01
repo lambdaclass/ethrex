@@ -110,7 +110,7 @@ async fn test_shared_bridge() {
     );
 
     println!("Deploying counter contract on L2A...");
-    let counter = compile_and_deploy_counter(l2a_client.clone(), private_key.clone())
+    let counter = compile_and_deploy_counter(l2a_client.clone(), private_key)
         .await
         .expect("Error deploying counter contract");
 
@@ -123,7 +123,7 @@ async fn test_shared_bridge() {
     let counter_value = l2a_client
         .call(
             counter,
-            encode_calldata("get()", &vec![]).unwrap().into(),
+            encode_calldata("get()", &[]).unwrap().into(),
             Overrides::default(),
         )
         .await
@@ -169,7 +169,7 @@ async fn test_shared_bridge() {
     let counter_value_after = l2a_client
         .call(
             counter,
-            encode_calldata("get()", &vec![]).unwrap().into(),
+            encode_calldata("get()", &[]).unwrap().into(),
             Overrides::default(),
         )
         .await
