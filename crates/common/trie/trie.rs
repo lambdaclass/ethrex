@@ -91,7 +91,9 @@ impl Trie {
 
     pub fn open_noroot(db: Box<dyn TrieDB>) -> Result<Self, TrieError> {
         let mut trie = Trie::open(db, *EMPTY_TRIE_HASH);
-        if let Some(root) = trie.root.get_node(trie.db.as_ref(), Nibbles::default())? {
+        if let Some(root) = NodeRef::from(NodeHash::from(*EMPTY_TRIE_HASH))
+            .get_node(trie.db.as_ref(), Nibbles::default())?
+        {
             trie.root = root.into();
         }
         Ok(trie)
