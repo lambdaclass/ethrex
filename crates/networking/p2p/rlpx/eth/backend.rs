@@ -25,7 +25,7 @@ pub async fn validate_status<ST: StatusMessage>(
                 "Block {latest_block_number}"
             )))?;
     let fork_id = ForkId::new(
-        chain_config,
+        chain_config.clone(),
         genesis_header.clone(),
         latest_block_header.timestamp,
         latest_block_number,
