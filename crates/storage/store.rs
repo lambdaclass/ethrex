@@ -123,8 +123,8 @@ impl CodeCache {
 #[derive(Debug, Clone)]
 pub struct Store {
     db_path: PathBuf,
-    pub backend: Arc<dyn StorageBackend>,
-    pub chain_config: ChainConfig,
+    backend: Arc<dyn StorageBackend>,
+    chain_config: ChainConfig,
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
