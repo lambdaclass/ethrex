@@ -123,7 +123,7 @@ impl RpcHandler for FeeHistoryRequest {
                 )))?;
 
             let max_blob_gas_per_block = config
-                .get_blob_schedule_for_time(header.timestamp)
+                .get_fork_blob_schedule(header.timestamp)
                 .map(|schedule| schedule.max * GAS_PER_BLOB);
             let blob_gas_used_r = match (header.blob_gas_used, max_blob_gas_per_block) {
                 (Some(blob_gas_used), Some(max_blob_gas)) => {
@@ -133,7 +133,7 @@ impl RpcHandler for FeeHistoryRequest {
             };
 
             let blob_schedule = config
-                .get_blob_schedule_for_time(header.timestamp)
+                .get_fork_blob_schedule(header.timestamp)
                 .unwrap_or_default();
 
             let fork = config.get_fork(header.timestamp);
