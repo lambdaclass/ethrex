@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
-/// @title Interface for the L2 side of the CommonBridge contract.
 /// @author LambdaClass
-/// @notice The L1Messenger contract is a contract that allows L2->L1 communication and L2->L2 communication.
+/// @notice The Messenger contract is a contract that allows L2->L1 communication and L2->L2 communication.
 /// It handles message sending to L1, which is used to handle withdrawals.
 /// It also handles message sending to other L2 chains.
 interface IMessenger {
