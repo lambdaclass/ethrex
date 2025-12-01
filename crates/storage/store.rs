@@ -2576,7 +2576,6 @@ fn apply_trie_updates(
         if is_leaf && key > last_written {
             continue;
         }
-        // TODO: make a match
         let table = if is_leaf {
             if is_account {
                 &ACCOUNT_FLATKEYVALUE
