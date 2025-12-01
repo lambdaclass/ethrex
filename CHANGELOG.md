@@ -2,9 +2,18 @@
 
 ## Perf
 
-### 2025-11-27
+### 2025-12-01
 
 - When decoding a `Vec<T>`, count the number of elements to pre allocate [#5400](https://github.com/lambdaclass/ethrex/pull/5400)
+
+### 2025-11-28
+
+- Change some calls from `encode_to_vec().len()` to `.length()` when wanting to get the rlp encoded length [#5374](https://github.com/lambdaclass/ethrex/pull/5374)
+- Use our keccak implementation for receipts bloom filter calculation [#5454](https://github.com/lambdaclass/ethrex/pull/5454)
+
+### 2025-11-27
+
+- Use unchecked swap for stack [#5439](https://github.com/lambdaclass/ethrex/pull/5439)
 
 ### 2025-11-20
 
