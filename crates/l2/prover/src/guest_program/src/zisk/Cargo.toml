@@ -26,9 +26,9 @@ sha2 = { git = "https://github.com/0xPolygonHermez/zisk-patch-hashes.git", tag =
 sha3 = { git = "https://github.com/0xPolygonHermez/zisk-patch-hashes.git", tag = "patch-sha3-0.10.8-zisk-0.14.0" }
 k256 = { git = "https://github.com/0xPolygonHermez/zisk-patch-elliptic-curves.git", tag = "patch-k256-0.13.4-zisk-0.14.0" }
 substrate-bn = { git = "https://github.com/0xPolygonHermez/zisk-patch-bn.git", tag = "patch-0.6.0-zisk-0.14.0" }
-sp1_bls12_381 = { git = "https://github.com/han0110/bls12_381.git", branch = "zisk-patch/v0.8.0-upgrade-sp1-lib" }
+sp1_bls12_381 = { git = "https://github.com/0xPolygonHermez/zisk-patch-bls12-381", tag = "patch-0.8.0-zisk-0.14.0" }
 tiny-keccak = { git = "https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak/", branch = "zisk" }
-kzg-rs = { git = "https://github.com/0xPolygonHermez/zisk-patch-kzg/", branch = "zisk-patch/v0.2.7" }
+kzg-rs = { git = "https://github.com/0xPolygonHermez/zisk-patch-kzg/", tag = "patch-0.2.7-zisk-0.14.0" }
 
 [features]
 l2 = ["guest_program/l2"]
