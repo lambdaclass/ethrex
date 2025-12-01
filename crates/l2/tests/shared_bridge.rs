@@ -1,3 +1,8 @@
+#![allow(clippy::panic)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::too_many_arguments)]
+
 use anyhow::{Context, Result};
 use ethrex_common::{Address, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
