@@ -753,12 +753,12 @@ impl Store {
     }
 
     pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        self.chain_config = Arc::new(*chain_config);
+        self.chain_config = Arc::new(chain_config.clone());
         self.engine.set_chain_config(chain_config).await
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
-        *self.chain_config
+        self.chain_config.as_ref().clone()
     }
 
     pub async fn update_earliest_block_number(
