@@ -88,14 +88,14 @@ impl LeafNode {
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 let child: Node = self.take().into();
                 choices[self_choice_idx] = child.into();
-                BranchNode::new_with_value(
-                    choices,
-                    match value {
-                        ValueOrHash::Value(value) => value,
-                        // Value in branches don't happen in our use-case.
-                        ValueOrHash::Hash(_) => todo!("handle override case (error?)"),
-                    },
-                )
+                match value {
+                    ValueOrHash::Value(value) => BranchNode::new_with_value(choices, value),
+                    ValueOrHash::Hash(_) => {
+                        return Err(TrieError::Verify(
+                            "attempt to set value in branch node with external hash".to_string(),
+                        ));
+                    }
+                }
             } else {
                 // Create a new leaf node and store the path and value in it
                 // Create a new branch node with the leaf and self as children
