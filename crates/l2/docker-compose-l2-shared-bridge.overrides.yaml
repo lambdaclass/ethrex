@@ -1,7 +1,15 @@
+volumes:
+  envb:
+
 services:
   contract_deployer:
     volumes:
       - ../../fixtures/genesis/l2b.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
+      - envb:/env/
+    entrypoint:
+      - /bin/bash
+      - -c
+      - touch /envb/.env; ./ethrex l2 deploy "$0" "$@"
     command: >
       --router.address ${ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS}
       --randomize-contract-deployment
@@ -42,7 +50,7 @@ services:
       - ETHREX_WATCHER_ROUTER_ADDRESS
     volumes:
       - ../../fixtures/genesis/l2b.json:/genesis/l2.json
-      - env:/env/
+      - envb:/env/
     entrypoint:
       - /bin/bash
       - -c
