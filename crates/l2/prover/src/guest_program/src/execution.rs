@@ -15,23 +15,22 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Block};
-#[cfg(feature = "l2")]
-use ethrex_l2_common::l1_messages::L1Message;
+use ethrex_l2_common::privileged_transactions::get_block_privileged_transactions;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 
+#[cfg(not(feature = "l2"))]
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
     kzg_commitment_to_versioned_hash,
 };
+#[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    l1_messages::get_block_l1_messages,
-    privileged_transactions::{
-        PrivilegedTransactionError, compute_privileged_transactions_hash,
-        get_block_privileged_transactions,
-    },
+    l1_messages::{L1Message, get_block_l1_messages},
+    privileged_transactions::{PrivilegedTransactionError, compute_privileged_transactions_hash},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -180,7 +179,6 @@ pub fn stateless_validation_l1(
     // Execute blocks
     let mut parent_block_header = &parent_block_header;
     let mut acc_account_updates: BTreeMap<Address, AccountUpdate> = BTreeMap::new();
-    let mut acc_receipts = Vec::new();
     let mut non_privileged_count = 0;
 
     for block in blocks.iter() {
@@ -243,7 +241,6 @@ pub fn stateless_validation_l1(
         })?;
 
         non_privileged_count += block.body.transactions.len();
-        acc_receipts.push(result.receipts);
         parent_block_header = &block.header;
     }
 
@@ -332,6 +329,7 @@ pub fn stateless_validation_l2(
     })
 }
 
+#[cfg_attr(not(feature = "l2"), expect(dead_code))]
 struct StatelessResult {
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,

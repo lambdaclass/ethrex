@@ -383,7 +383,12 @@ impl Syncer {
             let final_batch = end_block_number == start + batch_size as u64;
             // Retrieve batch from DB
             if !single_batch {
-                headers = store.read_fullsync_batch(start, batch_size as u64).await?;
+                headers = store
+                    .read_fullsync_batch(start, batch_size as u64)
+                    .await?
+                    .into_iter()
+                    .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
+                    .collect::<Result<Vec<_>, SyncError>>()?;
             }
             let mut blocks = Vec::new();
             // Request block bodies
@@ -392,7 +397,7 @@ impl Syncer {
                 let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
                 let bodies = self
                     .peers
-                    .request_and_validate_block_bodies(header_batch)
+                    .request_block_bodies(header_batch)
                     .await?
                     .ok_or(SyncError::BodiesNotFound)?;
                 debug!("Obtained: {} block bodies", bodies.len());
@@ -526,46 +531,53 @@ impl Syncer {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
-            let mut last_valid_hash = H256::default();
-            for block in blocks {
-                let block_hash = block.hash();
-                blockchain.add_block_pipeline(block).map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
-                last_valid_hash = block_hash;
-            }
-            Ok(())
+            tokio::task::spawn_blocking(move || {
+                let mut last_valid_hash = H256::default();
+                for block in blocks {
+                    let block_hash = block.hash();
+                    blockchain.add_block_pipeline(block).map_err(|e| {
+                        (
+                            e,
+                            Some(BatchBlockProcessingFailure {
+                                last_valid_hash,
+                                failed_block_hash: block_hash,
+                            }),
+                        )
+                    })?;
+                    last_valid_hash = block_hash;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| (ChainError::Custom(e.to_string()), None))?
         } else {
             blockchain.add_blocks_in_batch(blocks, cancel_token).await
         }
     }
 }
 
-/// Fetches all block bodies for the given block hashes via p2p and stores them
+/// Fetches all block bodies for the given block headers via p2p and stores them
 async fn store_block_bodies(
-    mut block_hashes: Vec<BlockHash>,
+    mut block_headers: Vec<BlockHeader>,
     mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(&block_hashes).await? {
+        if let Some(block_bodies) = peers.request_block_bodies(&block_headers).await? {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
-            let current_block_hashes = block_hashes.drain(..block_bodies.len());
+            let current_block_headers = block_headers.drain(..block_bodies.len());
             // Add bodies to storage
-            for (hash, body) in current_block_hashes.zip(block_bodies.into_iter()) {
+            for (hash, body) in current_block_headers
+                .map(|h| h.hash())
+                .zip(block_bodies.into_iter())
+            {
                 store.add_block_body(hash, body).await?;
             }
 
             // Check if we need to ask for another batch
-            if block_hashes.is_empty() {
+            if block_headers.is_empty() {
                 break;
             }
         }
@@ -958,7 +970,12 @@ impl Syncer {
 
         debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
 
-        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
+        store_block_bodies(
+            vec![pivot_header.clone()],
+            self.peers.clone(),
+            store.clone(),
+        )
+        .await?;
 
         let block = store
             .get_block_by_hash(pivot_header.hash())
@@ -1162,6 +1179,8 @@ pub enum SyncError {
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
+    #[error("Missing fullsync batch")]
+    MissingFullsyncBatch,
 }
 
 impl SyncError {
@@ -1185,7 +1204,8 @@ impl SyncError {
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
-            | SyncError::PeerTableError(_) => false,
+            | SyncError::PeerTableError(_)
+            | SyncError::MissingFullsyncBatch => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
