@@ -58,10 +58,7 @@ contract Router is
     }
 
     /// @inheritdoc IRouter
-    function sendMessage(
-        uint256 chainId,
-        TokenValue[] calldata tokenValues
-    ) public payable override {
+    function sendMessage(uint256 chainId) public payable override {
         if (bridges[chainId] == address(0)) {
             emit TransferToChainNotRegistered(chainId);
         } else {
@@ -84,7 +81,7 @@ contract Router is
                 other_chain_token_l2,
                 amount
             );
-            IERC20(token_l1).safeTransfer(bridges[chainId], amount);
+            IERC20(token_l1).transfer(bridges[chainId], amount);
         }
     }
 

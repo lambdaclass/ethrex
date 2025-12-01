@@ -567,12 +567,26 @@ contract OnChainProposer is
             uint256 offset = 288 + i * 64;
             uint256 chainId = uint256(bytes32(publicData[offset:offset + 32]));
             uint256 value = uint256(bytes32(publicData[offset + 32:offset + 64]));
-            if (
-                batchCommitments[batchNumber].balanceDiffs[i].chainId != chainId ||
-                batchCommitments[batchNumber].balanceDiffs[i].value != value
-            ) {
+
+            if (batchCommitments[batchNumber].balanceDiffs[i].chainId != chainId) {
                 return
                     "00x"; // balance diffs public inputs don't match with committed balance diffs
+            }
+
+            // Sum the value_per_token entries to compare against the provided value.
+            uint256 accumulated = 0;
+            for (
+                uint256 j = 0;
+                j < batchCommitments[batchNumber].balanceDiffs[i].value_per_token.length;
+                j++
+            ) {
+                accumulated += batchCommitments[batchNumber]
+                    .balanceDiffs[i]
+                    .value_per_token[j]
+                    .value;
+            }
+            if (accumulated != value) {
+                return "00x"; // balance diffs public inputs don't match with committed balance diffs
             }
         }
         return "";
