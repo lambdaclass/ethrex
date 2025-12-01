@@ -44,7 +44,12 @@ jobs:
         run: make bench-rlp
 
       - name: Save comparison
-        run: printf '## RLP Bench Results\n\n' > result.md && critcmp --list >> result.md
+        run: |
+          {
+            printf '## RLP Bench Results\n\n<details>\n<summary>Bench output</summary>\n\n```\n'
+            critcmp --list
+            printf '\n```\n\n</details>\n'
+          } > result.md
 
       - name: Find comment
         continue-on-error: true
