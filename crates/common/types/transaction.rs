@@ -2454,8 +2454,8 @@ mod serde_impl {
         InvalidTxType(TxType),
         #[error("Blob bundle error: {0}")]
         BlobBundleError(#[from] BlobsBundleError),
-        #[error("Missing fee token address")]
-        MissingFeeToken,
+        #[error("Missing field: {0}")]
+        MissingField(String),
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -2710,6 +2710,41 @@ mod serde_impl {
         }
     }
 
+    impl TryFrom<GenericTransaction> for EIP7702Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP7702 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            let TxKind::Call(to) = value.to else {
+                return Err(GenericTransactionError::MissingField("to".to_owned()));
+            };
+            Ok(Self {
+                chain_id: value.chain_id.unwrap_or_default(),
+                nonce: value.nonce.unwrap_or_default(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                gas_limit: value.gas.unwrap_or_default(),
+                to,
+                value: value.value,
+                data: value.input,
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                authorization_list: value
+                    .authorization_list
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(AuthorizationTuple::from)
+                    .collect(),
+                ..Default::default()
+            })
+        }
+    }
+
     impl From<PrivilegedL2Transaction> for GenericTransaction {
         fn from(value: PrivilegedL2Transaction) -> Self {
             Self {
@@ -2818,7 +2853,9 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
                 fee_token: value
                     .fee_token
-                    .ok_or(GenericTransactionError::MissingFeeToken)?,
+                    .ok_or(GenericTransactionError::MissingField(
+                        "fee token".to_owned(),
+                    ))?,
                 chain_id: value.chain_id.unwrap_or_default(),
                 ..Default::default()
             })
