@@ -251,7 +251,7 @@ where
         // If the "distance" between the current and next value is larger than that to
         // the parent node, that means that there is a closer parent for both of them
         // Ex: parent=[05] current=[0567] next=[0569]
-        // This means that there is a branch in [056] and current is a children
+        // This means that there is a branch in [056] and current is a child
         // of that parent
         // So we create a parent, mark it as current, write the current node to that parent.
         // The old parent goes into the stack
