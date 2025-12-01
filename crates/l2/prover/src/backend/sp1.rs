@@ -2,7 +2,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
-use guest_program::input::ProgramInput;
+use guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput};
 use rkyv::rancor::Error;
 use sp1_prover::components::CpuProverComponents;
 #[cfg(not(feature = "gpu"))]
@@ -16,15 +16,6 @@ use sp1_sdk::{
 use std::{fmt::Debug, sync::OnceLock, time::Instant};
 use tracing::info;
 use url::Url;
-
-#[cfg(not(clippy))]
-static PROGRAM_ELF: &[u8] =
-    include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
-
-// If we're running clippy, the file isn't generated.
-// To avoid compilation errors, we override it with an empty slice.
-#[cfg(clippy)]
-static PROGRAM_ELF: &[u8] = &[];
 
 pub struct ProverSetup {
     client: Box<dyn Prover<CpuProverComponents>>,
@@ -53,7 +44,7 @@ pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
     };
     #[cfg(not(feature = "gpu"))]
     let client = { CpuProver::new() };
-    let (pk, vk) = client.setup(PROGRAM_ELF);
+    let (pk, vk) = client.setup(ZKVM_SP1_PROGRAM_ELF);
 
     ProverSetup {
         client: Box::new(client),
@@ -94,10 +85,11 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
 
     let now = Instant::now();
-    setup.client.execute(PROGRAM_ELF, &stdin)?;
+    setup.client.execute(ZKVM_SP1_PROGRAM_ELF, &stdin)?;
     let elapsed = now.elapsed();
 
-    info!("Successfully executed SP1 program in {:.2?}", elapsed);
+    info!("Successfully executed SP1 program in {elapsed:.2?}");
+
     Ok(())
 }
 
@@ -116,9 +108,13 @@ pub fn prove(
         ProofFormat::Compressed => SP1ProofMode::Compressed,
         ProofFormat::Groth16 => SP1ProofMode::Groth16,
     };
-    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
 
-    info!("Successfully generated SP1Proof.");
+    let now = Instant::now();
+    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
+    let elapsed = now.elapsed();
+
+    info!("Successfully proved SP1 program in {elapsed:.2?}");
+
     Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
 

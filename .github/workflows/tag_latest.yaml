@@ -71,3 +71,14 @@ jobs:
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2
+  
+  publish-apt:
+    needs: [retag_docker_images]
+    uses: lambdaclass/ethrex-apt/.github/workflows/publish-apt.yml@main
+    permissions:
+      contents: write
+      actions: write
+    secrets:
+      APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+      APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+      APT_SSH_COMMIT_KEY: ${{ secrets.APT_SSH_COMMIT_KEY }}

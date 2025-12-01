@@ -51,6 +51,6 @@ test-sp1: $(VECTORS_TARGETS)
 test-stateless: $(VECTORS_TARGETS)
 	cargo test --profile release-with-debug --features stateless
 
-test: ## 🧪 Run blockchain tests with both VMs, and also stateless with LEVM
+test: ## 🧪 Run blockchain tests with LEVM both with state and stateless 
 	$(MAKE) test-levm
 	$(MAKE) test-stateless

@@ -74,3 +74,10 @@ GEMINI.md
 
 # RKYV
 *.bin
+
+# Documentation Graphs
+!docs/internal/l1/healing/*.svg
+
+# Default database directories for Ethrex in Dev mode
+dev_ethrex_l1/
+dev_ethrex_l2/

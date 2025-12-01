@@ -1,10 +1,11 @@
+use self::Fork::*;
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{BufReader, Error},
@@ -13,8 +14,8 @@ use std::{
 use tracing::warn;
 
 use super::{
-    AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+    AccountState, Block, BlockBody, BlockHeader, INITIAL_BASE_FEE, compute_receipts_root,
+    compute_transactions_root, compute_withdrawals_root,
 };
 use crate::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
@@ -283,11 +284,11 @@ lazy_static::lazy_static! {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Default, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum Fork {
     Frontier = 0,
-    FrontierThawing = 1,
-    Homestead = 2,
-    DaoFork = 3,
-    Tangerine = 4,
-    SpuriousDragon = 5,
+    Homestead = 1,
+    DaoFork = 2,
+    EIP150 = 3,
+    EIP155 = 4,
+    EIP158 = 5,
     Byzantium = 6,
     Constantinople = 7,
     Petersburg = 8,
@@ -310,15 +311,43 @@ pub enum Fork {
     BPO5 = 24,
 }
 
+pub const FORKS: [Fork; 25] = [
+    Frontier,
+    Homestead,
+    DaoFork,
+    EIP150,
+    EIP155,
+    EIP158,
+    Byzantium,
+    Constantinople,
+    Petersburg,
+    Istanbul,
+    MuirGlacier,
+    Berlin,
+    London,
+    ArrowGlacier,
+    GrayGlacier,
+    Paris,
+    Shanghai,
+    Cancun,
+    Prague,
+    Osaka,
+    BPO1,
+    BPO2,
+    BPO3,
+    BPO4,
+    BPO5,
+];
+
 impl From<Fork> for &str {
     fn from(fork: Fork) -> Self {
         match fork {
             Fork::Frontier => "Frontier",
-            Fork::FrontierThawing => "FrontierThawing",
             Fork::Homestead => "Homestead",
             Fork::DaoFork => "DaoFork",
-            Fork::Tangerine => "Tangerine",
-            Fork::SpuriousDragon => "SpuriousDragon",
+            Fork::EIP150 => "EIP150",
+            Fork::EIP155 => "EIP155",
+            Fork::EIP158 => "EIP158",
             Fork::Byzantium => "Byzantium",
             Fork::Constantinople => "Constantinople",
             Fork::Petersburg => "Petersburg",
@@ -343,53 +372,53 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
-    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
+    pub fn fork_activation_time_or_block(&self, fork: Fork) -> Option<u64> {
+        match fork {
+            Fork::Frontier => Some(0),
+            Fork::Homestead => self.homestead_block,
+            Fork::DaoFork => self.dao_fork_block,
+            Fork::EIP150 => self.eip150_block,
+            Fork::EIP155 => self.eip155_block,
+            Fork::EIP158 => self.eip158_block,
+            Fork::Byzantium => self.byzantium_block,
+            Fork::Constantinople => self.constantinople_block,
+            Fork::Petersburg => self.petersburg_block,
+            Fork::Istanbul => self.istanbul_block,
+            Fork::MuirGlacier => self.muir_glacier_block,
+            Fork::Berlin => self.berlin_block,
+            Fork::London => self.london_block,
+            Fork::ArrowGlacier => self.arrow_glacier_block,
+            Fork::GrayGlacier => self.gray_glacier_block,
+            Fork::Paris => self.merge_netsplit_block,
+            Fork::Shanghai => self.shanghai_time,
+            Fork::Cancun => self.cancun_time,
+            Fork::Prague => self.prague_time,
+            Fork::Osaka => self.osaka_time,
+            Fork::BPO1 => self.bpo1_time,
+            Fork::BPO2 => self.bpo2_time,
+            Fork::BPO3 => self.bpo3_time,
+            Fork::BPO4 => self.bpo4_time,
+            Fork::BPO5 => self.bpo5_time,
+        }
     }
 
-    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    pub fn get_blob_schedule_for_fork(&self, fork: Fork) -> Option<ForkBlobSchedule> {
+        match fork {
+            Fork::Cancun => Some(self.blob_schedule.cancun),
+            Fork::Prague => Some(self.blob_schedule.prague),
+            Fork::Osaka => Some(self.blob_schedule.osaka),
+            Fork::BPO1 => Some(self.blob_schedule.bpo1),
+            Fork::BPO2 => Some(self.blob_schedule.bpo2),
+            Fork::BPO3 => self.blob_schedule.bpo3,
+            Fork::BPO4 => self.blob_schedule.bpo4,
+            Fork::BPO5 => self.blob_schedule.bpo5,
+            _ => None,
+        }
     }
 
-    pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo3_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo4_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
-        self.osaka_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_prague_activated(&self, block_timestamp: u64) -> bool {
-        self.prague_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_shanghai_activated(&self, block_timestamp: u64) -> bool {
-        self.shanghai_time
-            .is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_cancun_activated(&self, block_timestamp: u64) -> bool {
-        self.cancun_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_istanbul_activated(&self, block_number: BlockNumber) -> bool {
-        self.istanbul_block.is_some_and(|num| num <= block_number)
-    }
-
-    pub fn is_london_activated(&self, block_number: BlockNumber) -> bool {
-        self.london_block.is_some_and(|num| num <= block_number)
-    }
-
-    pub fn is_eip155_activated(&self, block_number: BlockNumber) -> bool {
-        self.eip155_block.is_some_and(|num| num <= block_number)
+    pub fn is_fork_activated(&self, fork: Fork, timestamp_or_block: u64) -> bool {
+        self.fork_activation_time_or_block(fork)
+            .is_some_and(|time_or_number| time_or_number <= timestamp_or_block)
     }
 
     pub fn display_config(&self) -> String {
@@ -400,7 +429,6 @@ impl ChainConfig {
             ("Shanghai", self.shanghai_time),
             ("Cancun", self.cancun_time),
             ("Prague", self.prague_time),
-            ("Verkle", self.verkle_time),
             ("Osaka", self.osaka_time),
         ];
 
@@ -421,134 +449,39 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_osaka_activated(block_timestamp) {
-            Fork::Osaka
-        } else if self.is_prague_activated(block_timestamp) {
-            Fork::Prague
-        } else if self.is_cancun_activated(block_timestamp) {
-            Fork::Cancun
-        } else if self.is_shanghai_activated(block_timestamp) {
-            Fork::Shanghai
-        } else {
-            Fork::Paris
-        }
+        FORKS
+            .into_iter()
+            .rfind(|fork| self.is_fork_activated(*fork, block_timestamp))
+            .unwrap_or(Paris)
     }
 
-    pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_bpo5_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo5.unwrap_or_default())
-        } else if self.is_bpo4_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo4.unwrap_or_default())
-        } else if self.is_bpo3_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo3.unwrap_or_default())
-        } else if self.is_bpo2_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2)
-        } else if self.is_bpo1_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo1)
-        } else if self.is_osaka_activated(block_timestamp) {
-            Some(self.blob_schedule.osaka)
-        } else if self.is_prague_activated(block_timestamp) {
-            Some(self.blob_schedule.prague)
-        } else if self.is_cancun_activated(block_timestamp) {
-            Some(self.blob_schedule.cancun)
+    pub fn get_blob_schedule_for_time(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
+        if let Some(fork_with_current_blob_schedule) = FORKS.into_iter().rfind(|fork| {
+            self.get_blob_schedule_for_fork(*fork).is_some()
+                && self.is_fork_activated(*fork, block_timestamp)
+        }) {
+            self.get_blob_schedule_for_fork(fork_with_current_blob_schedule)
         } else {
             None
         }
-    }
-
-    pub fn fork(&self, block_timestamp: u64) -> Fork {
-        self.get_fork(block_timestamp)
     }
 
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
-        let next = if self.is_bpo5_activated(block_timestamp) {
-            None
-        } else if self.is_bpo4_activated(block_timestamp) && self.bpo5_time.is_some() {
-            Some(Fork::BPO5)
-        } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
-            Some(Fork::BPO4)
-        } else if self.is_bpo2_activated(block_timestamp) && self.bpo3_time.is_some() {
-            Some(Fork::BPO3)
-        } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
-            Some(Fork::BPO2)
-        } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
-            Some(Fork::BPO1)
-        } else if self.is_prague_activated(block_timestamp) && self.osaka_time.is_some() {
-            Some(Fork::Osaka)
-        } else if self.is_cancun_activated(block_timestamp) && self.prague_time.is_some() {
-            Some(Fork::Prague)
-        } else if self.is_shanghai_activated(block_timestamp) && self.cancun_time.is_some() {
-            Some(Fork::Cancun)
+        let current_fork = self.get_fork(block_timestamp);
+        if (current_fork as usize) < FORKS.len() {
+            FORKS.into_iter().find(|fork| {
+                *fork > current_fork && self.fork_activation_time_or_block(*fork).is_some()
+            })
         } else {
             None
-        };
-        match next {
-            Some(fork) if fork > self.fork(block_timestamp) => next,
-            _ => None,
         }
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
-        if self.bpo5_time.is_some() {
-            Fork::BPO5
-        } else if self.bpo4_time.is_some() {
-            Fork::BPO4
-        } else if self.bpo3_time.is_some() {
-            Fork::BPO3
-        } else if self.bpo2_time.is_some() {
-            Fork::BPO2
-        } else if self.bpo1_time.is_some() {
-            Fork::BPO1
-        } else if self.osaka_time.is_some() {
-            Fork::Osaka
-        } else if self.prague_time.is_some() {
-            Fork::Prague
-        } else if self.cancun_time.is_some() {
-            Fork::Cancun
-        } else {
-            Fork::Paris
-        }
-    }
-
-    pub fn get_activation_timestamp_for_fork(&self, fork: Fork) -> Option<u64> {
-        match fork {
-            Fork::Cancun => self.cancun_time,
-            Fork::Prague => self.prague_time,
-            Fork::Osaka => self.osaka_time,
-            Fork::BPO1 => self.bpo1_time,
-            Fork::BPO2 => self.bpo2_time,
-            Fork::BPO3 => self.bpo3_time,
-            Fork::BPO4 => self.bpo4_time,
-            Fork::BPO5 => self.bpo5_time,
-            Fork::Homestead => self.homestead_block,
-            Fork::DaoFork => self.dao_fork_block,
-            Fork::Byzantium => self.byzantium_block,
-            Fork::Constantinople => self.constantinople_block,
-            Fork::Petersburg => self.petersburg_block,
-            Fork::Istanbul => self.istanbul_block,
-            Fork::MuirGlacier => self.muir_glacier_block,
-            Fork::Berlin => self.berlin_block,
-            Fork::London => self.london_block,
-            Fork::ArrowGlacier => self.arrow_glacier_block,
-            Fork::GrayGlacier => self.gray_glacier_block,
-            Fork::Paris => self.merge_netsplit_block,
-            Fork::Shanghai => self.shanghai_time,
-            _ => None,
-        }
-    }
-
-    pub fn get_blob_schedule_for_fork(&self, fork: Fork) -> Option<ForkBlobSchedule> {
-        match fork {
-            Fork::Cancun => Some(self.blob_schedule.cancun),
-            Fork::Prague => Some(self.blob_schedule.prague),
-            Fork::Osaka => Some(self.blob_schedule.osaka),
-            Fork::BPO1 => Some(self.blob_schedule.bpo1),
-            Fork::BPO2 => Some(self.blob_schedule.bpo2),
-            Fork::BPO3 => self.blob_schedule.bpo3,
-            Fork::BPO4 => self.blob_schedule.bpo4,
-            Fork::BPO5 => self.blob_schedule.bpo5,
-            _ => None,
-        }
+        FORKS
+            .into_iter()
+            .rfind(|fork| self.fork_activation_time_or_block(*fork).is_some())
+            .unwrap_or(Paris)
     }
 
     pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {
@@ -639,23 +572,23 @@ impl Genesis {
         }
         let base_fee_per_gas = self.base_fee_per_gas.or_else(|| {
             self.config
-                .is_london_activated(0)
+                .is_fork_activated(London, 0)
                 .then_some(INITIAL_BASE_FEE)
         });
 
         let withdrawals_root = self
             .config
-            .is_shanghai_activated(self.timestamp)
+            .is_fork_activated(Shanghai, self.timestamp)
             .then_some(compute_withdrawals_root(&[]));
 
         let parent_beacon_block_root = self
             .config
-            .is_cancun_activated(self.timestamp)
+            .is_fork_activated(Cancun, self.timestamp)
             .then_some(H256::zero());
 
         let requests_hash = self
             .config
-            .is_prague_activated(self.timestamp)
+            .is_fork_activated(Prague, self.timestamp)
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
 
         BlockHeader {
@@ -695,7 +628,7 @@ impl Genesis {
     pub fn compute_state_root(&self) -> H256 {
         let iter = self.alloc.iter().map(|(addr, account)| {
             (
-                Keccak256::digest(addr).to_vec(),
+                keccak_hash(addr).to_vec(),
                 AccountState::from(account).encode_to_vec(),
             )
         });

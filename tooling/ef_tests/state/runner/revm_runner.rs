@@ -424,7 +424,7 @@ pub async fn ensure_post_state(
         // We only want to compare account updates when no exception is expected.
         None => {
             let mut db = load_initial_state_levm(test).await;
-            db.current_accounts_state = levm_cache;
+            db.current_accounts_state = levm_cache.into_iter().collect();
             let levm_account_updates = db.get_state_transitions()
                 .map_err(|_| {
                     InternalError::Custom(format!("Error at LEVM::get_state_transitions() thrown in REVM runner line: {} when executing ensure_post_state()",line!()).to_owned())
@@ -676,11 +676,11 @@ pub async fn _ensure_post_state_revm(
 pub fn fork_to_spec_id(fork: Fork) -> SpecId {
     match fork {
         Fork::Frontier => SpecId::FRONTIER,
-        Fork::FrontierThawing => SpecId::FRONTIER_THAWING,
         Fork::Homestead => SpecId::HOMESTEAD,
         Fork::DaoFork => SpecId::DAO_FORK,
-        Fork::Tangerine => SpecId::TANGERINE,
-        Fork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        Fork::EIP150 => SpecId::TANGERINE,
+        Fork::EIP155 => SpecId::SPURIOUS_DRAGON,
+        Fork::EIP158 => SpecId::SPURIOUS_DRAGON,
         Fork::Byzantium => SpecId::BYZANTIUM,
         Fork::Constantinople => SpecId::CONSTANTINOPLE,
         Fork::Petersburg => SpecId::PETERSBURG,

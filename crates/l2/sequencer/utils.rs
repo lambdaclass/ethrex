@@ -1,5 +1,6 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::types::Block;
+use ethrex_common::types::batch::Batch;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, types::TxType};
@@ -143,35 +144,28 @@ where
 }
 
 pub async fn fetch_blocks_with_respective_fee_configs<E>(
-    batch_number: u64,
+    batch: &Batch,
     store: &Store,
     rollup_store: &StoreRollup,
 ) -> Result<(Vec<Block>, Vec<FeeConfig>), E>
 where
     E: From<StoreError> + From<RollupStoreError>,
 {
-    let batch_blocks = rollup_store
-        .get_block_numbers_by_batch(batch_number)
-        .await?
-        .ok_or(RollupStoreError::Custom(
-            "failed to retrieve data from storage".to_string(),
-        ))?;
-
     let mut blocks = Vec::new();
     let mut fee_configs = vec![];
 
-    for block_number in batch_blocks {
+    for block_number in batch.first_block..=batch.last_block {
         let block_header = store
             .get_block_header(block_number)?
             .ok_or(StoreError::Custom(
-                "failed to retrieve data from storage".to_string(),
+                "failed to retrieve block header from storage".to_string(),
             ))?;
 
         let block_body = store
             .get_block_body(block_number)
             .await?
             .ok_or(StoreError::Custom(
-                "failed to retrieve data from storage".to_string(),
+                "failed to retrieve block body from storage".to_string(),
             ))?;
 
         let block = Block::new(block_header, block_body);
@@ -193,4 +187,8 @@ where
 /// Returns the git commit hash of the current build.
 pub fn get_git_commit_hash() -> String {
     env!("VERGEN_GIT_SHA").to_string()
+}
+
+pub fn batch_checkpoint_name(batch_number: u64) -> String {
+    format!("checkpoint_batch_{batch_number}")
 }

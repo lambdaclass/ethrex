@@ -9,7 +9,6 @@ use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
-use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_rpc::signer::SignerError;
 use ethrex_metrics::MetricsError;
 use ethrex_rpc::clients::EngineClientError;
@@ -108,8 +107,6 @@ pub enum ProofCoordinatorError {
     InternalError(String),
     #[error("ProofCoordinator failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("ProofCoordinator encountered a StateDiffError")]
-    StateDiffError(#[from] StateDiffError),
     #[error("ProofCoordinator encountered a ExecutionCacheError")]
     ExecutionCacheError(#[from] ExecutionCacheError),
     #[error("ProofCoordinator encountered a BlobsBundleError: {0}")]
@@ -237,7 +234,7 @@ pub enum CommitterError {
     EthClientError(#[from] EthClientError),
     #[error("Committer failed to  {0}")]
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
-    #[error("Committer failed retrieve block from storage: {0}")]
+    #[error("Committer Store Error: {0}")]
     StoreError(#[from] StoreError),
     #[error("Committer failed retrieve block from rollup storage: {0}")]
     RollupStoreError(#[from] RollupStoreError),
@@ -249,8 +246,6 @@ pub enum CommitterError {
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage: {0}")]
     FailedToGetInformationFromStorage(String),
-    #[error("Committer failed to encode state diff: {0}")]
-    FailedToEncodeStateDiff(#[from] StateDiffError),
     #[error("Committer failed to open Points file: {0}")]
     FailedToOpenPointsFile(#[from] std::io::Error),
     #[error("Committer failed to re-execute block: {0}")]
@@ -287,6 +282,8 @@ pub enum CommitterError {
     Unreachable(String),
     #[error("Failed to generate batch witness: {0}")]
     FailedToGenerateBatchWitness(#[source] ChainError),
+    #[error("Missing blob for batch {0}")]
+    MissingBlob(u64),
     #[error("Failed to create checkpoint: {0}")]
     FailedToCreateCheckpoint(String),
     #[error("Failed to process blobs: {0}")]
