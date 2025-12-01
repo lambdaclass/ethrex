@@ -45,9 +45,9 @@ impl TrieLayerCache {
                     },
                 ));
 
-                true
-            } else {
                 false
+            } else {
+                true
             }
         });
 
