@@ -215,17 +215,15 @@ impl StoreEngine for Store {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         let store = self.inner()?;
         let mut res = Vec::new();
         for block_number in from..=to {
-            if let Some(block) = store
+            let body_opt = store
                 .canonical_hashes
                 .get(&block_number)
-                .and_then(|hash| store.bodies.get(hash))
-            {
-                res.push(block.clone())
-            }
+                .and_then(|hash| store.bodies.get(hash));
+            res.push(body_opt.cloned());
         }
         Ok(res)
     }
@@ -233,13 +231,11 @@ impl StoreEngine for Store {
     async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         let store = self.inner()?;
         let mut res = Vec::new();
         for hash in hashes {
-            if let Some(block) = store.bodies.get(&hash).cloned() {
-                res.push(block);
-            }
+            res.push(store.bodies.get(&hash).cloned());
         }
         Ok(res)
     }
@@ -725,19 +721,12 @@ impl StoreEngine for Store {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError> {
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
         let store = self.inner()?;
-        (start..start + limit)
-            .map(|ref n| {
-                store
-                    .fullsync_headers
-                    .get(n)
-                    .cloned()
-                    .ok_or(StoreError::Custom(format!(
-                        "Missing fullsync header for block {n}"
-                    )))
-            })
-            .collect::<Result<Vec<_>, _>>()
+        let batch = (start..start + limit)
+            .map(|ref n| store.fullsync_headers.get(n).cloned())
+            .collect();
+        Ok(batch)
     }
 
     async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {

@@ -186,7 +186,10 @@ mermaid-init.js mermaid.min.js &:
 		&& exit 1)
 
 docs-deps: ## 📦 Install dependencies for generating the documentation
-	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck mdbook-katex
+	cargo install --version 0.9.4 mdbook-katex
+	cargo install --version 0.7.7 mdbook-linkcheck
+	cargo install --version 0.8.0 mdbook-alerts
+	cargo install --version 0.15.0 mdbook-mermaid
 
 docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 	mdbook build
@@ -198,4 +201,6 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree
 	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml
 	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml
+	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml
+	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml

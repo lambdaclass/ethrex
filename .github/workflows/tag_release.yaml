@@ -159,6 +159,8 @@ jobs:
         zkvm:
           - sp1
           - risc0
+          - zisk
+          - openvm
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -185,24 +187,52 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: ./.github/actions/install-risc0
 
+      - name: Install ZisK
+        if: ${{ matrix.zkvm == 'zisk' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SETUP_KEY: none
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+          curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
+          echo "$HOME/.zisk/bin" >> $GITHUB_PATH
+
+      - name: Install OpenVM
+        if: ${{ matrix.zkvm == 'openvm' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rustup install nightly-2025-02-14
+          rustup component add rust-src --toolchain nightly-2025-02-14
+          cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.1 cargo-openvm
+
       - name: Build ethrex elf - ${{ matrix.zkvm }}
         run: |
-          cargo build --release --package guest_program --features ${{ matrix.zkvm }}
+          cargo build --release --package guest_program --features "${{ matrix.zkvm }},ci"
           mkdir -p ${{ matrix.zkvm }}_verification_keys
           if [ "${{ matrix.zkvm }}" = "sp1" ]; then
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-bn254-${{ github.ref_name }}
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-u32-${{ github.ref_name }}
+            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
           elif [ "${{ matrix.zkvm }}" = "risc0" ]; then
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name}}
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-${{ github.ref_name}}
+            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
+          elif [ "${{ matrix.zkvm }}" = "zisk" ]; then
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv64ima-zisk-elf ethrex-riscv64ima-${{ matrix.zkvm }}-elf-${{ github.ref_name}}
+            echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
+          elif [ "${{ matrix.zkvm }}" = "openvm" ]; then
+            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-openvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name}}
+            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
           fi
 
       - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}
-          path: ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}
+          name: ${{ env.ELF_ARTIFACT }}
+          path: ${{ env.ELF_ARTIFACT }}
 
       - name: Upload ethrex guest verification keys - ${{ matrix.zkvm }}
         uses: actions/upload-artifact@v4
@@ -240,6 +270,18 @@ jobs:
         with:
           name: risc0_verification_keys
           path: ethrex_guests/risc0/
+
+      - name: Download ZisK elf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-riscv64ima-zisk-elf-${{ github.ref_name }}
+          path: ethrex_guests/zisk/
+
+      - name: Download OpenVM elf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-riscv32im-openvm-elf-${{ github.ref_name }}
+          path: ethrex_guests/openvm/
 
       - name: Archive ethrex guests
         run: |

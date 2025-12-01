@@ -692,7 +692,7 @@ fn calculate_l1_fee_gas(
         return Ok(0);
     };
 
-    let tx_size = vm.tx.encode_to_vec().len();
+    let tx_size = vm.tx.length();
 
     let l1_fee = calculate_l1_fee(fee_config, tx_size)?;
     let mut l1_fee_gas = l1_fee

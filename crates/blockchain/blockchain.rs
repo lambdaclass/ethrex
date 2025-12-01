@@ -19,13 +19,14 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    EIP4844Transaction, Fork::*, Receipt, Transaction, WrappedEIP4844Transaction,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_common::utils::keccak;
+use ethrex_common::{Address, H160, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -52,7 +53,7 @@ use tokio_util::sync::CancellationToken;
 use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+use ethrex_metrics::blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
@@ -107,6 +108,12 @@ impl Default for BlockchainOptions {
             r#type: BlockchainType::default(),
         }
     }
+}
+
+struct PartialMerkleizationResults {
+    state_updates: FxHashMap<Nibbles, Vec<u8>>,
+    storage_updates: StoreUpdatesMap,
+    code_updates: FxHashMap<H256, Code>,
 }
 
 #[derive(Debug, Clone)]
@@ -242,12 +249,14 @@ impl Blockchain {
                     Ok((execution_result, exec_end_instant))
                 })
                 .expect("Failed to spawn block_executor exec thread");
+            let parent_header_ref = &parent_header; // Avoid moving to thread
             let merkleize_handle = std::thread::Builder::new()
                 .name("block_executor_merkleizer".to_string())
                 .spawn_scoped(s, move || -> Result<_, StoreError> {
                     let account_updates_list = self.handle_merkleization(
+                        s,
                         rx,
-                        &parent_header,
+                        parent_header_ref,
                         queue_length_ref,
                         max_queue_length_ref,
                     )?;
@@ -285,13 +294,175 @@ impl Blockchain {
         ))
     }
 
+    fn handle_merkleization_subtrie(
+        &self,
+        rx: Receiver<Vec<(H256, AccountUpdate)>>,
+        parent_header: &BlockHeader,
+    ) -> Result<PartialMerkleizationResults, StoreError> {
+        let mut state_trie = self
+            .storage
+            .state_trie(parent_header.hash())?
+            .ok_or(StoreError::MissingStore)?;
+        let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
+        let mut storage_updates_map: StoreUpdatesMap = Default::default();
+        let mut code_updates: FxHashMap<H256, Code> = Default::default();
+        let mut account_states: FxHashMap<H256, AccountState> = Default::default();
+        for updates in rx {
+            Self::process_incoming_update_message(
+                &self.storage,
+                &mut state_trie,
+                updates,
+                &mut storage_updates_map,
+                parent_header,
+                &mut state_updates_map,
+                &mut code_updates,
+                &mut account_states,
+            )?;
+        }
+
+        Ok(PartialMerkleizationResults {
+            state_updates: state_updates_map,
+            storage_updates: storage_updates_map,
+            code_updates,
+        })
+    }
+
     #[instrument(
         level = "trace",
         name = "Trie update",
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn handle_merkleization(
+    fn handle_merkleization<'a, 's, 'b>(
+        &'a self,
+        scope: &'s std::thread::Scope<'s, '_>,
+        rx: Receiver<Vec<AccountUpdate>>,
+        parent_header: &'b BlockHeader,
+        queue_length: &AtomicUsize,
+        max_queue_length: &mut usize,
+    ) -> Result<AccountUpdatesList, StoreError>
+    where
+        'a: 's,
+        'b: 's,
+    {
+        // Fetch the old root from the DB and decode it
+        let old_root_opt = self
+            .storage
+            .state_trie(parent_header.hash())?
+            .ok_or(StoreError::MissingStore)?
+            .db()
+            .get(Nibbles::default())?
+            .map(|v| Node::decode(&v))
+            .transpose()?;
+
+        // If there's no root, or it's not a branch node, we fallback to sequential processing.
+        let Some(Node::Branch(old_root)) = old_root_opt else {
+            return self.handle_merkleization_sequential(
+                rx,
+                parent_header,
+                queue_length,
+                max_queue_length,
+            );
+        };
+        // If there are less than 3 subtries, we fallback to sequential processing.
+        // This simplifies the handling of shard results.
+        if old_root.choices.iter().filter(|c| c.is_valid()).count() < 3 {
+            return self.handle_merkleization_sequential(
+                rx,
+                parent_header,
+                queue_length,
+                max_queue_length,
+            );
+        }
+        let mut workers_tx = Vec::with_capacity(16);
+        let mut workers_handles = Vec::with_capacity(16);
+        for i in 0..16 {
+            let (tx, rx) = channel();
+            let handle = std::thread::Builder::new()
+                .name(format!("block_executor_merkleization_shard_worker_{i}"))
+                .spawn_scoped(scope, move || {
+                    self.handle_merkleization_subtrie(rx, parent_header)
+                })
+                .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}",)))?;
+            workers_handles.push(handle);
+            workers_tx.push(tx);
+        }
+        let mut state_updates_map: FxHashMap<Nibbles, Vec<u8>> = Default::default();
+        let mut storage_updates_map: StoreUpdatesMap = Default::default();
+        let mut code_updates: FxHashMap<H256, Code> = Default::default();
+        let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
+        for updates in rx {
+            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
+            *max_queue_length = current_length.max(*max_queue_length);
+            let mut hashed_updates: Vec<_> = updates
+                .into_iter()
+                .map(|u| {
+                    let hashed_address = hashed_address_cache
+                        .entry(u.address)
+                        .or_insert_with(|| keccak(u.address));
+                    (*hashed_address, u)
+                })
+                .collect();
+            hashed_updates.sort_by_key(|(h, _)| h.0[0]);
+            for sharded_update in hashed_updates.chunk_by(|l, r| l.0.0[0] & 0xf0 == r.0.0[0] & 0xf0)
+            {
+                let shard_message = sharded_update.to_vec();
+                workers_tx[(shard_message[0].0.0[0] >> 4) as usize]
+                    .send(shard_message)
+                    .map_err(|e| StoreError::Custom(format!("send failed: {e}")))?;
+            }
+        }
+        drop(workers_tx);
+        let mut real_root = old_root;
+        for (choice, worker) in workers_handles.into_iter().enumerate() {
+            let worker_result = worker
+                .join()
+                .map_err(|e| StoreError::Custom(format!("join failed: {e:?}",)))??;
+            let Some(root_node) = worker_result.state_updates.get(&Nibbles::default()) else {
+                continue;
+            };
+            let root_node = Node::decode(root_node)?;
+            let Node::Branch(mut subtrie_branch) = root_node else {
+                unreachable!("the result can only remove one of the >2 subtries we had")
+            };
+            real_root.choices[choice] = std::mem::take(&mut subtrie_branch.choices[choice]);
+
+            code_updates.extend(worker_result.code_updates);
+            storage_updates_map.extend(worker_result.storage_updates);
+            state_updates_map.extend(worker_result.state_updates);
+        }
+
+        if real_root.choices.iter().filter(|c| c.is_valid()).count() < 2 {
+            // On most chains, there's no way to go from a branch root node to a leaf or extension.
+            // There are exceptions in networks engineered to trigger this case, but it's
+            // not expected in normal operation.
+            //
+            // Example: network starts with a single account in genesis, transfers to other addresses,
+            // generating more subtries, then deploys a contract which self-destructs in each of those
+            // addresses, reverting back to the base case.
+            //
+            // TODO(#5387): support this case
+            todo!("real root has less than 2 valid subtries after merkleization");
+        }
+        let root_node = real_root.encode_to_vec();
+        let state_trie_hash = keccak(&root_node);
+        state_updates_map.insert(Nibbles::default(), root_node);
+        let state_updates = state_updates_map.into_iter().collect();
+        let storage_updates = storage_updates_map
+            .into_iter()
+            .map(|(a, (_, s))| (a, s.into_iter().collect()))
+            .collect();
+        let code_updates = code_updates.into_iter().collect();
+
+        Ok(AccountUpdatesList {
+            state_trie_hash,
+            state_updates,
+            storage_updates,
+            code_updates,
+        })
+    }
+
+    fn handle_merkleization_sequential(
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
         parent_header: &BlockHeader,
@@ -307,13 +478,25 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         let mut account_states: FxHashMap<H256, AccountState> = Default::default();
+
+        let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
+
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
+            let hashed_updates: Vec<_> = updates
+                .into_iter()
+                .map(|u| {
+                    let hashed_address = hashed_address_cache
+                        .entry(u.address)
+                        .or_insert_with(|| keccak(u.address));
+                    (*hashed_address, u)
+                })
+                .collect();
             state_trie_hash = Self::process_incoming_update_message(
                 &self.storage,
                 &mut state_trie,
-                updates,
+                hashed_updates,
                 &mut storage_updates_map,
                 parent_header,
                 &mut state_updates_map,
@@ -342,7 +525,7 @@ impl Blockchain {
     fn process_incoming_update_message(
         storage: &Store,
         state_trie: &mut Trie,
-        updates: Vec<AccountUpdate>,
+        updates: Vec<(H256, AccountUpdate)>,
         storage_updates_map: &mut StoreUpdatesMap,
         parent_header: &BlockHeader,
         state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
@@ -351,9 +534,8 @@ impl Blockchain {
     ) -> Result<H256, StoreError> {
         trace!("Execute block pipeline: Received {} updates", updates.len());
         // Apply the account updates over the last block's state and compute the new state root
-        for update in updates {
-            let hashed_address = hash_address(&update.address);
-            let hashed_address_h256 = H256::from_slice(&hashed_address);
+        for (hashed_address_h256, update) in updates {
+            let hashed_address = hashed_address_h256.0.to_vec();
             trace!(
                 "Execute block pipeline: Update cycle for {}",
                 hex::encode(&hashed_address)
@@ -1218,7 +1400,7 @@ impl Blockchain {
 
         // Add transaction and blobs bundle to storage
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         Ok(hash)
     }
@@ -1244,7 +1426,7 @@ impl Blockchain {
 
         // Add transaction to storage
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
 
         Ok(hash)
     }
@@ -1315,7 +1497,7 @@ impl Blockchain {
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
-        if config.is_shanghai_activated(header.timestamp)
+        if config.is_fork_activated(Shanghai, header.timestamp)
             && tx.is_contract_creation()
             && tx.data().len() > MAX_INITCODE_SIZE as usize
         {
@@ -1326,7 +1508,8 @@ impl Blockchain {
             return Err(MempoolError::TxMaxDataSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        if config.is_fork_activated(Osaka, header.timestamp)
+            && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
@@ -1460,7 +1643,7 @@ impl Blockchain {
             .storage
             .get_block_header(latest_block_number)?
             .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
-        Ok(chain_config.fork(latest_block.timestamp))
+        Ok(chain_config.get_fork(latest_block.timestamp))
     }
 }
 
@@ -1483,7 +1666,7 @@ pub fn validate_requests_hash(
     chain_config: &ChainConfig,
     requests: &[Requests],
 ) -> Result<(), ChainError> {
-    if !chain_config.is_prague_activated(header.timestamp) {
+    if !chain_config.is_fork_activated(Prague, header.timestamp) {
         return Ok(());
     }
 
@@ -1560,6 +1743,9 @@ pub fn find_parent_header(
 /// Performs pre-execution validation of the block's header values in reference to the parent_header
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
 /// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas
+///
+/// Note that this doesn't validate that the transactions or withdrawals root of the header matches the body
+/// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
 pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
@@ -1570,8 +1756,8 @@ pub fn validate_block(
     validate_block_header(&block.header, parent_header, elasticity_multiplier)
         .map_err(InvalidBlockError::from)?;
 
-    if chain_config.is_osaka_activated(block.header.timestamp) {
-        let block_rlp_size = block.encode_to_vec().len();
+    if chain_config.is_fork_activated(Osaka, block.header.timestamp) {
+        let block_rlp_size = block.length();
         if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(error::ChainError::InvalidBlock(
                 InvalidBlockError::MaximumRlpSizeExceeded(
@@ -1581,14 +1767,14 @@ pub fn validate_block(
             ));
         }
     }
-    if chain_config.is_prague_activated(block.header.timestamp) {
+    if chain_config.is_fork_activated(Prague, block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
-        if chain_config.is_osaka_activated(block.header.timestamp) {
+        if chain_config.is_fork_activated(Osaka, block.header.timestamp) {
             verify_transaction_max_gas_limit(block)?;
         }
-    } else if chain_config.is_cancun_activated(block.header.timestamp) {
+    } else if chain_config.is_fork_activated(Cancun, block.header.timestamp) {
         validate_cancun_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
@@ -1630,7 +1816,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     let mut blob_gas_used = 0_u32;
     let mut blobs_in_block = 0_u32;
     let max_blob_number_per_block = config
-        .get_fork_blob_schedule(block.header.timestamp)
+        .get_blob_schedule_for_time(block.header.timestamp)
         .map(|schedule| schedule.max)
         .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
     let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
