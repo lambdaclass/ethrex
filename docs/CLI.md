@@ -156,7 +156,7 @@ Block building options:
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
-          [default: 30000000]
+          [default: 60000000]
 ```
 
 <!-- END_CLI_HELP -->
@@ -327,7 +327,7 @@ Block building options:
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
-          [default: 30000000]
+          [default: 60000000]
 
 Eth options:
       --eth.rpc-url <RPC_URL>...
