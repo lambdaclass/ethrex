@@ -1911,35 +1911,33 @@ fn collapse_root_node(
     };
     let path = Nibbles::from_hex(vec![choice as u8]);
     let child_bytes = match state_updates_map.get(&path) {
-        Some(v) => Some(v.clone()),
+        Some(v) => v.clone(),
         None => storage
             .state_trie(parent_header.hash())?
             .ok_or(StoreError::MissingStore)?
             .db()
-            .get(path)?,
+            .get(path)?
+            .ok_or_else(|| StoreError::Custom("Missing child node during root collapse".into()))?,
     };
-    let mut child = child_bytes.map(|b| Node::decode(&b)).transpose()?;
-    if let Some(child) = child.as_mut() {
-        // Same match as in [`BranchNode::remove`]
-        *child = match child {
-            // Replace root with an extension node leading to the child
-            Node::Branch(_) => {
-                ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child).into()
-            }
-            // Replace root with the child extension node, updating its path in the process
-            Node::Extension(extension_node) => {
-                let mut extension_node = extension_node.take();
-                extension_node.prefix.prepend(choice as u8);
-                extension_node.into()
-            }
-            Node::Leaf(leaf) => {
-                let mut leaf = leaf.take();
-                leaf.partial.prepend(choice as u8);
-                leaf.into()
-            }
-        };
-    }
-    Ok(child)
+    // Same match as in [`BranchNode::remove`]
+    let child = match Node::decode(&child_bytes)? {
+        // Replace root with an extension node leading to the child
+        Node::Branch(_) => {
+            ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child).into()
+        }
+        // Replace root with the child extension node, updating its path in the process
+        Node::Extension(mut extension_node) => {
+            let mut extension_node = extension_node.take();
+            extension_node.prefix.prepend(choice as u8);
+            extension_node.into()
+        }
+        Node::Leaf(mut leaf) => {
+            let mut leaf = leaf.take();
+            leaf.partial.prepend(choice as u8);
+            leaf.into()
+        }
+    };
+    Ok(Some(child))
 }
 
 #[cfg(test)]
