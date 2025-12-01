@@ -1,0 +1,11 @@
+[Unit]
+Description=Explorer Frontend
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/yarn start
+
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
