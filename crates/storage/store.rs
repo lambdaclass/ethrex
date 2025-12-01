@@ -1425,7 +1425,7 @@ impl Store {
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
         std::thread::spawn(move || {
-            let mut rx = fkv_rx;
+            let rx = fkv_rx;
             loop {
                 match rx.recv() {
                     Ok(FKVGeneratorControlMessage::Continue) => break,
@@ -1437,7 +1437,7 @@ impl Store {
                 }
             }
             info!("Generation of FlatKeyValue started.");
-            match flatkeyvalue_generator(backend_clone.as_ref(), &last_computed_fkv, &mut rx) {
+            match flatkeyvalue_generator(backend_clone.as_ref(), &last_computed_fkv, &rx) {
                 Ok(_) => info!("FlatKeyValue generation finished."),
                 Err(err) => error!("Error while generating FlatKeyValue: {err}"),
             }
@@ -2613,7 +2613,7 @@ fn apply_trie_updates(
 fn flatkeyvalue_generator(
     backend: &dyn StorageBackend,
     last_computed_fkv: &Mutex<Vec<u8>>,
-    control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+    control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     let read_tx = backend.begin_read()?;
     let last_written = read_tx
@@ -2738,7 +2738,7 @@ fn flatkeyvalue_generator(
 }
 
 fn fkv_check_for_stop_msg(
-    control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+    control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     match control_rx.try_recv() {
         Ok(FKVGeneratorControlMessage::Stop) => {
