@@ -606,7 +606,7 @@ impl Blockchain {
                             .open_storage_trie(
                                 hashed_address_h256,
                                 *EMPTY_TRIE_HASH,
-                                parent_header.state_root
+                                parent_header.state_root,
                             )
                             .map(|v| v.db);
                         (
