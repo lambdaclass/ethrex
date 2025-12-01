@@ -491,7 +491,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context).await,
-        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context).await,
+        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context),
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
@@ -616,7 +616,7 @@ pub async fn map_admin_requests(
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         "admin_peers" => admin::peers(&mut context).await,
-        "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
+        "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler),
         "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
@@ -637,14 +637,11 @@ pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result
     }
 }
 
-pub async fn map_mempool_requests(
-    req: &RpcRequest,
-    contex: RpcApiContext,
-) -> Result<Value, RpcErr> {
+pub fn map_mempool_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
-        "txpool_content" => mempool::content(contex).await,
-        "txpool_status" => mempool::status(contex).await,
+        "txpool_content" => mempool::content(contex),
+        "txpool_status" => mempool::status(contex),
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }

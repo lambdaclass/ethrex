@@ -239,7 +239,7 @@ impl DiscoveryServer {
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
                     .await?;
-                METRICS.record_new_discarded_node().await;
+                METRICS.record_new_discarded_node();
             }
 
             self.peer_table
@@ -274,7 +274,7 @@ impl DiscoveryServer {
             Err(err) => {
                 error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?err, "Error sending message");
                 self.peer_table.set_disposable(&node.node_id()).await?;
-                METRICS.record_new_discarded_node().await;
+                METRICS.record_new_discarded_node();
             }
         }
         Ok(())

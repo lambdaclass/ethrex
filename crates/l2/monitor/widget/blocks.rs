@@ -54,7 +54,7 @@ impl BlocksTable {
     ) -> Result<Vec<(String, String, String, String, String, String, String)>, MonitorError> {
         let new_blocks = Self::get_blocks(last_l2_block_known, store).await?;
 
-        let new_blocks_processed = Self::process_blocks(new_blocks).await;
+        let new_blocks_processed = Self::process_blocks(new_blocks);
 
         Ok(new_blocks_processed
             .iter()
@@ -100,7 +100,7 @@ impl BlocksTable {
         Ok(new_blocks)
     }
 
-    async fn process_blocks(
+    fn process_blocks(
         new_blocks: Vec<Block>,
     ) -> Vec<(u64, usize, H256, Address, u64, Option<u64>, usize)> {
         let mut new_blocks_processed = new_blocks

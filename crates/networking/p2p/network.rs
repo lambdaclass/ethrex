@@ -50,7 +50,7 @@ pub struct P2PContext {
 
 impl P2PContext {
     #[allow(clippy::too_many_arguments)]
-    pub async fn new(
+    pub fn new(
         local_node: Node,
         tracker: TaskTracker,
         signer: SecretKey,
@@ -71,7 +71,6 @@ impl P2PContext {
             blockchain.clone(),
             tx_broadcasting_time_interval,
         )
-        .await
         .inspect_err(|e| {
             error!("Failed to start Tx Broadcaster: {e}");
         })?;
@@ -150,7 +149,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             continue;
         }
 
-        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
+        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream);
     }
 }
 

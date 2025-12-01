@@ -892,7 +892,10 @@ impl Syncer {
         store.generate_flatkeyvalue()?;
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_storage_root(
+            store.clone(),
+            pivot_header.state_root
+        ));
 
         info!("Finished healing");
 
@@ -968,7 +971,7 @@ impl Syncer {
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
-        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
         store_block_bodies(
             vec![pivot_header.clone()],
@@ -1251,7 +1254,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     tree_validated
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
+pub fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
     let is_valid = store
         .clone()
@@ -1287,7 +1290,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     is_valid
 }
 
-pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
     let mut is_valid = true;
     for (account_hash, account_state) in store

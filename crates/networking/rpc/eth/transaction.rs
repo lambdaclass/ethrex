@@ -112,8 +112,7 @@ impl RpcHandler for CallRequest {
             &header,
             context.storage,
             context.blockchain,
-        )
-        .await?;
+        )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -476,8 +475,7 @@ impl RpcHandler for EstimateGasRequest {
                     &block_header,
                     storage.clone(),
                     blockchain.clone(),
-                )
-                .await;
+                );
                 if let Ok(ExecutionResult::Success { .. }) = result {
                     return serde_json::to_value(format!("{TRANSACTION_GAS:#x}"))
                         .map_err(|error| RpcErr::Internal(error.to_string()));
@@ -510,8 +508,7 @@ impl RpcHandler for EstimateGasRequest {
             &block_header,
             storage.clone(),
             blockchain.clone(),
-        )
-        .await?;
+        )?;
 
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
@@ -539,8 +536,7 @@ impl RpcHandler for EstimateGasRequest {
                 &block_header,
                 storage.clone(),
                 blockchain.clone(),
-            )
-            .await;
+            );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
             } else {
@@ -570,7 +566,7 @@ async fn recap_with_account_balances(
     Ok(highest_gas_limit.min(account_gas.as_u64()))
 }
 
-async fn simulate_tx(
+fn simulate_tx(
     transaction: &GenericTransaction,
     block_header: &BlockHeader,
     storage: Store,
