@@ -1,3 +1,5 @@
+#[cfg(feature = "l2")]
+use ethrex_common::Address;
 use ethrex_common::{H256, U256};
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +31,7 @@ pub struct ProgramOutput {
     pub l2messages_merkle_root: H256,
     #[cfg(feature = "l2")]
     /// balance diffs for each chain id
-    pub balance_diffs: Vec<(U256, U256)>, // (chain_id, balance_diff)
+    pub balance_diffs: Vec<(U256, Vec<(Address, Address, Address, U256)>)>, // TODO: update comment (chain_id, balance_diff)
 }
 
 impl ProgramOutput {
@@ -53,7 +55,12 @@ impl ProgramOutput {
         #[cfg(feature = "l2")]
         for (chain_id, balance_diff) in &self.balance_diffs {
             encoded.extend_from_slice(&chain_id.to_big_endian());
-            encoded.extend_from_slice(&balance_diff.to_big_endian());
+            for &(token_l1, token_l2, other_chain_token_l2, amount) in balance_diff {
+                encoded.extend_from_slice(&token_l1.to_fixed_bytes());
+                encoded.extend_from_slice(&token_l2.to_fixed_bytes());
+                encoded.extend_from_slice(&other_chain_token_l2.to_fixed_bytes());
+                encoded.extend_from_slice(&amount.to_big_endian());
+            }
         }
         encoded
     }

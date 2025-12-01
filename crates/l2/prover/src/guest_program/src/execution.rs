@@ -317,7 +317,7 @@ pub fn stateless_validation_l2(
 
     let balance_diffs = get_balance_diffs(&l2messages)
         .iter()
-        .map(|diff| (diff.chain_id, diff.value))
+        .map(|diff| (diff.chain_id, diff.value_per_token.clone()))
         .collect();
 
     // TODO: this could be replaced with something like a ProverConfig in the future.

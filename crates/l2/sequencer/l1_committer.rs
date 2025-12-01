@@ -69,8 +69,7 @@ use spawned_concurrency::tasks::{
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
-const COMMIT_FUNCTION_SIGNATURE: &str =
-    "commitBatch(uint256,bytes32, bytes32,bytes32,bytes32,bytes32,(uint256,uint256)[])";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes32,(uint256,(address,address,address,uint256)[])[])";
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
@@ -1093,7 +1092,21 @@ impl L1Committer {
         let balance_diffs: Vec<Value> = batch
             .balance_diffs
             .iter()
-            .map(|d| Value::Tuple(vec![Value::Uint(d.chain_id), Value::Uint(d.value)]))
+            .map(|d| {
+                let per_token: Vec<Value> = d
+                    .value_per_token
+                    .iter()
+                    .map(|(token_l1, token_l2, other_chain_token_l2, value)| {
+                        Value::Tuple(vec![
+                            Value::Address(*token_l1),
+                            Value::Address(*token_l2),
+                            Value::Address(*other_chain_token_l2),
+                            Value::Uint(*value),
+                        ])
+                    })
+                    .collect();
+                Value::Tuple(vec![Value::Uint(d.chain_id), Value::Array(per_token)])
+            })
             .collect();
 
         let mut calldata_values = vec![
