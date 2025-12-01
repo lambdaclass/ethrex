@@ -179,7 +179,6 @@ pub fn stateless_validation_l1(
     // Execute blocks
     let mut parent_block_header = &parent_block_header;
     let mut acc_account_updates: BTreeMap<Address, AccountUpdate> = BTreeMap::new();
-    let mut acc_receipts = Vec::new();
     let mut non_privileged_count = 0;
 
     for block in blocks.iter() {
@@ -242,7 +241,6 @@ pub fn stateless_validation_l1(
         })?;
 
         non_privileged_count += block.body.transactions.len();
-        acc_receipts.push(result.receipts);
         parent_block_header = &block.header;
     }
 
