@@ -1814,7 +1814,7 @@ impl Store {
             storage_trie_nodes.extend(
                 storage_nodes
                     .into_iter()
-                    .map(|(path, n)| (apply_prefix(Some(h256_hashed_address), path).to_bytes(), n)),
+                    .map(|(path, n)| (apply_prefix(Some(h256_hashed_address), path).into_vec(), n)),
             );
 
             // Add account to trie
@@ -1830,7 +1830,7 @@ impl Store {
         let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
         let account_trie_nodes = account_trie_nodes
             .into_iter()
-            .map(|(path, n)| (apply_prefix(None, path).to_bytes(), n))
+            .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
             .collect::<Vec<_>>();
 
         let mut tx = self.backend.begin_write()?;
