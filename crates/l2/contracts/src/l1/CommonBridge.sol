@@ -357,7 +357,7 @@ contract CommonBridge is
         uint256 l2MessagesBatchNumber,
         bytes32 l2MessagesMerkleRoot,
         BalanceDiff[] calldata balanceDiffs
-    ) public onlyOnChainProposer {
+    ) public onlyOnChainProposer nonReentrant {
         require(
             l2MessagesMerkleRoots[l2MessagesBatchNumber] == bytes32(0),
             "CommonBridge: l2 messages already published"
@@ -374,7 +374,7 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveMessage() public override payable {
+    function receiveFromSharedBridge() public override payable {
         require(
             msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"

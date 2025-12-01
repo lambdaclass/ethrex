@@ -200,8 +200,8 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
                 l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
-                l2s_rpc_urls: opts.watcher_opts.l2s_rpc_urls.unwrap_or_default(),
-                l2s_chain_ids: opts.watcher_opts.l2s_chain_ids.unwrap_or_default(),
+                l2_rpc_urls: opts.watcher_opts.l2_rpc_urls.unwrap_or_default(),
+                l2_chain_ids: opts.watcher_opts.l2_chain_ids.unwrap_or_default(),
                 router_address: opts.watcher_opts.router_address.unwrap_or_default(),
             },
             proof_coordinator: ProofCoordinatorConfig {
@@ -434,14 +434,14 @@ pub struct WatcherOptions {
         env = "ETHREX_WATCHER_L2_RPCS",
         help_heading = "L1 Watcher options"
     )]
-    pub l2s_rpc_urls: Option<Vec<Url>>,
+    pub l2_rpc_urls: Option<Vec<Url>>,
     #[arg(
         long = "watcher.l2-chain-ids",
         num_args = 1..,
         env = "ETHREX_WATCHER_L2_CHAIN_IDS",
         help_heading = "L1 Watcher options"
     )]
-    pub l2s_chain_ids: Option<Vec<u64>>,
+    pub l2_chain_ids: Option<Vec<u64>>,
 }
 
 impl Default for WatcherOptions {
@@ -453,8 +453,8 @@ impl Default for WatcherOptions {
             watcher_block_delay: 0,
             l1_fee_update_interval_ms: 60000,
             router_address: None,
-            l2s_rpc_urls: None,
-            l2s_chain_ids: None,
+            l2_rpc_urls: None,
+            l2_chain_ids: None,
         }
     }
 }
@@ -463,11 +463,11 @@ impl WatcherOptions {
     fn populate_with_defaults(&mut self, defaults: &Self) {
         self.bridge_address = self.bridge_address.or(defaults.bridge_address);
         self.router_address = self.router_address.or(defaults.router_address);
-        self.l2s_rpc_urls = self.l2s_rpc_urls.clone().or(defaults.l2s_rpc_urls.clone());
-        self.l2s_chain_ids = self
-            .l2s_chain_ids
+        self.l2_rpc_urls = self.l2_rpc_urls.clone().or(defaults.l2_rpc_urls.clone());
+        self.l2_chain_ids = self
+            .l2_chain_ids
             .clone()
-            .or(defaults.l2s_chain_ids.clone());
+            .or(defaults.l2_chain_ids.clone());
     }
 }
 

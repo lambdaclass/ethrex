@@ -16,7 +16,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
-    mapping(uint256 chainId => uint256 tx_id) public transactionIds;
+    mapping(uint256 chainId => uint256 txId) public transactionIds;
 
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
     modifier onlySelf() {

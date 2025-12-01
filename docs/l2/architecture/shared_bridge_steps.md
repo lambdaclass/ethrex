@@ -181,24 +181,28 @@ contract Counter {
 rex deploy --rpc-url http://localhost:1729 --remappings 0 --contract-path ./Counter.sol 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 ```
 
-Remember the contract address for the next steps
+Save the contract address for the next steps:
+
+```bash
+export COUNTER_ADDRESS=<COUNTER_ADDRESS> 
+```
 
 ### Check counter value
 
 ```bash
-rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
+rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
 ```
 
 ### Increase the counter from the other L2
 
 ```bash
-rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 <COUNTER_ADDRESS> 100000 d09de08a --gas-price 3946771033
+rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 $COUNTER_ADDRESS 100000 d09de08a --gas-price 3946771033
 ```
 
 ### Check counter value
 
 ```bash
-rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
+rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
 ```
 
 ## Contract Call and ETH Transfer
@@ -230,36 +234,40 @@ contract Counter {
 rex deploy --rpc-url http://localhost:1729 --remappings 0 --contract-path ./Counter.sol 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 ```
 
-Remember the contract address for the next steps
+Save the contract address for the next steps:
+
+```bash
+export COUNTER_ADDRESS=<COUNTER_ADDRESS> 
+```
 
 ### Check counter value
 
 ```bash
-rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
+rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
 ```
 
 ### Check counter balance
 
 ```bash
-rex balance <COUNTER_ADDRESS> http://localhost:1729
+rex balance $COUNTER_ADDRESS http://localhost:1729
 ```
 
 ### Increase the counter from the other L2
 
 ```bash
-rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 1000 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 <COUNTER_ADDRESS> 100000 d09de08a --gas-price 3946771033
+rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 1000 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 $COUNTER_ADDRESS 100000 d09de08a --gas-price 3946771033
 ```
 
 ### Check counter value
 
 ```bash
-rex call <COUNTER_ADDRESS> "get()" --rpc-url http://localhost:1729
+rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
 ```
 
 ### Check counter balance
 
 ```bash
-rex balance <COUNTER_ADDRESS> http://localhost:1729
+rex balance $COUNTER_ADDRESS http://localhost:1729
 ```
 
 ## Troubleshooting

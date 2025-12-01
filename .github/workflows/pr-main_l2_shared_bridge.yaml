@@ -215,7 +215,7 @@ jobs:
           export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
           export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
           cd crates/l2
-          export $(cat ../../cmd/.env_l2a | xargs)
+          export $(xargs < ../../cmd/.env_l2a)
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
@@ -233,7 +233,7 @@ jobs:
           export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
           export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
           cd crates/l2
-          export $(cat ../../cmd/.env_l2b | xargs)
+          export $(xargs < ../../cmd/.env_l2b)
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \

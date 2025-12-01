@@ -77,8 +77,8 @@ async fn test_shared_bridge() {
     .await
     .expect("Error sending shared bridge transaction");
 
-    println!("Waiting 2 minutes for message to be processed...");
-    sleep(Duration::from_secs(120)).await; // Wait for the message to be processed
+    println!("Waiting 3 minutes for message to be processed...");
+    sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
 
     println!("Getting final balances...");
     let receiver_balance_after = l2a_client

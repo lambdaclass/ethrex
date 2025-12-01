@@ -55,6 +55,7 @@ interface ICommonBridge {
         bytes data;
     }
 
+    /// @notice Structure representing balance to send to each chain.
     struct BalanceDiff {
         uint256 chainId;
         uint256 value;
@@ -141,10 +142,10 @@ interface ICommonBridge {
         bytes32[] calldata l2MessageProof
     ) external view returns (bool);
 
-    /// @notice Receives a message from another chain via shared bridge router.
+    /// @notice Receives funds from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
-    function receiveMessage() external payable;
+    function receiveFromSharedBridge() external payable;
 
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:
