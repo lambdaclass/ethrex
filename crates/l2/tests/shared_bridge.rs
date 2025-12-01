@@ -3,12 +3,18 @@ use ethrex_common::{Address, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{build_generic_tx, calldata::encode_calldata, send_generic_transaction};
-use ethrex_rpc::{EthClient, clients::Overrides, types::{block_identifier::{BlockIdentifier, BlockTag}, receipt::RpcReceipt}};
+use ethrex_rpc::{
+    EthClient,
+    clients::Overrides,
+    types::{
+        block_identifier::{BlockIdentifier, BlockTag},
+        receipt::RpcReceipt,
+    },
+};
 use reqwest::Url;
 use secp256k1::SecretKey;
-use tokio::time::sleep;
 use std::{str::FromStr, time::Duration};
-
+use tokio::time::sleep;
 
 const L2A_RPC_URL: &str = "http://localhost:1729";
 const L2B_RPC_URL: &str = "http://localhost:1730";
@@ -27,7 +33,7 @@ const DEST_GAS_LIMIT: u64 = 100000u64;
 
 const SIGNATURE: &str = "sendToL2(uint256,address,uint256,bytes)";
 
-const GAS_PRICE : u64 = 3946771033u64;
+const GAS_PRICE: u64 = 3946771033u64;
 
 #[tokio::test]
 async fn test_shared_bridge() {
@@ -39,45 +45,61 @@ async fn test_shared_bridge() {
 
     println!("Getting initial balances...");
     let receiver_balance = l2a_client
-            .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
-            .await
-            .expect("Error getting balance");
+        .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
 
     let sender_balance = l2b_client
-            .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
-            .await
-            .expect("Error getting balance");
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
 
     let private_key = SecretKey::from_str(SENDER_PRIVATE_KEY).unwrap();
     let value = U256::from(VALUE);
     let to = Address::from_str(COMMON_BRIDGE_ADDRESS).unwrap();
     let data = vec![
-        Value::Uint(U256::from(L2_A_CHAIN_ID)), // chainId
-        Value::Address(receiver_address),      // to
-        Value::Uint(U256::from(DEST_GAS_LIMIT)),   // destGasLimit
-        Value::Bytes(vec![].into()),                  // data
+        Value::Uint(U256::from(L2_A_CHAIN_ID)),  // chainId
+        Value::Address(receiver_address),        // to
+        Value::Uint(U256::from(DEST_GAS_LIMIT)), // destGasLimit
+        Value::Bytes(vec![].into()),             // data
     ];
     println!("Sending shared bridge transaction...");
-    test_send(&l2b_client, &private_key, value, GAS_PRICE, to, SIGNATURE, &data, "shared bridge test")
-        .await
-        .expect("Error sending shared bridge transaction");
-    
+    test_send(
+        &l2b_client,
+        &private_key,
+        value,
+        GAS_PRICE,
+        to,
+        SIGNATURE,
+        &data,
+        "shared bridge test",
+    )
+    .await
+    .expect("Error sending shared bridge transaction");
+
     println!("Waiting 2 minutes for message to be processed...");
     sleep(Duration::from_secs(120)).await; // Wait for the message to be processed
 
     println!("Getting final balances...");
     let receiver_balance_after = l2a_client
-            .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
-            .await
-            .expect("Error getting balance");
+        .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
 
     let sender_balance_after = l2b_client
-            .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
-            .await
-            .expect("Error getting balance");
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
 
-    assert_eq!(receiver_balance_after, receiver_balance + value, "Receiver balance did not increase correctly");
-    assert!(sender_balance_after < sender_balance - value, "Sender balance did not decrease correctly");
+    assert_eq!(
+        receiver_balance_after,
+        receiver_balance + value,
+        "Receiver balance did not increase correctly"
+    );
+    assert!(
+        sender_balance_after < sender_balance - value,
+        "Sender balance did not decrease correctly"
+    );
 }
 
 async fn connect(rpc_url: &str) -> EthClient {
