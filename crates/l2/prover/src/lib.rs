@@ -43,6 +43,8 @@ pub fn execute_timed(
         Backend::RISC0 => backend::risc0::execute_timed(input),
         #[cfg(feature = "zisk")]
         Backend::ZisK => backend::zisk::execute_timed(input),
+        #[cfg(feature = "openvm")]
+        Backend::OpenVM => backend::openvm::execute_timed(input),
     }
 }
 
