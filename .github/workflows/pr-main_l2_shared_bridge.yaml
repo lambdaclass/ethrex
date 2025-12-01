@@ -187,9 +187,9 @@ jobs:
           # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
           # in the contract_deployer service in crates/l2/docker-compose.yaml
           #
-          export $(grep -v '^#' cmd/.env_l2a | xargs)
           touch cmd/.env
           cd crates/l2
+          export $(grep -v '^#' ../../cmd/.env_l2a | xargs)
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \

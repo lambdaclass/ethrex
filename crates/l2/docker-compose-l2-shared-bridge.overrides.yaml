@@ -9,8 +9,10 @@ services:
     entrypoint:
       - /bin/bash
       - -c
-      - touch /envb/.env; ./ethrex l2 deploy "$0" "$@"
+      - touch /env/.env; ./ethrex l2 deploy "$0" "$@"
     command: >
+      --use-compiled-genesis false
+      --genesis-l2-path ${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       --router.address ${ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS}
       --randomize-contract-deployment
 
