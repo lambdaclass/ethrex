@@ -13,21 +13,20 @@ For more information on these tests check [the docs](https://eest.ethereum.org/m
 
 ## How to run the tests?
 
-First, make sure you have the EF tests downloaded. This can be achieved by running:
+First, make sure you have the EF tests downloaded under `state_v2/` (they go into `./vectors`). From this directory run:
 ```bash
-cd tooling/ef_tests/state
 make download-evm-ef-tests
 ```
 
 After the `vectors/` directory is set up, run:
 
 ```bash
-make run-new-runner
+make run-new-runner            # wraps cargo run
 ```
 
 This will parse and execute everything in the `./vectors` directory by default.
 
-> You can also run `cargo run --package ef_tests-statev2 --release`
+> You can also run `cargo run --package ef_tests-statev2 --release -- --path ./vectors`
 
 ## Execution options
 In case you do not want to parse and execute everything in the `vectors/` directory there are three flags that can be used to specify files to be run:
@@ -63,10 +62,10 @@ make run-new-runner flags="--skip-files chainId.json,transStorageReset.json"
 ```
 
 ## Reports
-For tests that succeded, a report can be found at:
-`tooling/ef_tests/state_v2/success_report.txt`
+For tests that succeeded, a timestamped report is written to:
+`tooling/ef_tests/state_v2/reports/success_report_<timestamp>.txt`
 
-For tests that failed, a report can be found at:
-`tooling/ef_tests/state_v2/failure_report.txt`
+For tests that failed, a timestamped report is written to:
+`tooling/ef_tests/state_v2/reports/failure_report_<timestamp>.txt`
 
-If none of the tests failed the report will not get generated at all. In case any of the tests did fail, the report will show the differences with the expected post state for each failing test case.
+If none of the tests failed the failure report will not get generated at all. In case any of the tests did fail, the report will show the differences with the expected post state for each failing test case.

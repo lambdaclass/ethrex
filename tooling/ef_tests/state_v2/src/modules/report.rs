@@ -180,6 +180,10 @@ impl fmt::Display for PostCheckResult {
             writeln!(f, "{}", logs_table)?;
         }
 
+        if let Some(custom_error) = &self.custom_error {
+            writeln!(f, "\nERROR: {custom_error}")?;
+        }
+
         // Account mismatches
         if let Some(account_mismatches) = self.accounts_diff.clone() {
             for acc_mismatch in account_mismatches {

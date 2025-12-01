@@ -30,6 +30,7 @@ pub struct PostCheckResult {
     pub accounts_diff: Option<Vec<AccountMismatch>>,
     pub logs_diff: Option<(H256, H256)>,
     pub exception_diff: Option<(Vec<TransactionExpectedException>, Option<VMError>)>,
+    pub custom_error: Option<String>,
 }
 impl Default for PostCheckResult {
     fn default() -> Self {
@@ -41,6 +42,7 @@ impl Default for PostCheckResult {
             accounts_diff: None,
             logs_diff: None,
             exception_diff: None,
+            custom_error: None,
         }
     }
 }

@@ -17,7 +17,7 @@ use ethrex_levm::{
 use crate::modules::{
     error::RunnerError,
     report::{add_test_to_report, ensure_reports_dir},
-    result_check::check_test_case_results,
+    result_check::{PostCheckResult, check_test_case_results},
     types::{Env, Test, TestCase},
     utils::{effective_gas_price, load_initial_state},
 };
@@ -67,7 +67,33 @@ pub async fn run_test(
         let (mut db, initial_block_hash, storage, genesis) =
             load_initial_state(test, &test_case.fork).await;
         let env = get_vm_env_for_test(test.env, test_case)?;
-        let tx = get_tx_from_test_case(test_case).await?;
+        let tx = match get_tx_from_test_case(test_case).await {
+            Ok(tx) => tx,
+            Err(RunnerError::EIP7702ShouldNotBeCreateType) => {
+                // Record unsupported EIP-7702 create-style transactions as failures and continue.
+                println!(
+                    "\nMarking test {:?} vector {:?} on fork {:?} as failed: EIP-7702 create is unsupported.",
+                    test.name, test_case.vector, test_case.fork
+                );
+                failing_test_cases.push(PostCheckResult {
+                    fork: test_case.fork,
+                    vector: test_case.vector,
+                    passed: false,
+                    custom_error: Some("EIP-7702 create is unsupported by the runner".to_owned()),
+                    ..Default::default()
+                });
+                *failing_tests += 1;
+                *total_run += 1;
+                print!(
+                    "\rTotal tests ran: {} - Total passed: {} - Total failed: {}",
+                    format!("{}", total_run).blue(),
+                    format!("{}", passing_tests).green(),
+                    format!("{}", failing_tests).red()
+                );
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         let tracer = LevmCallTracer::disabled();
         let mut vm =
             VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
