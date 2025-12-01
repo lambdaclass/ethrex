@@ -35,14 +35,16 @@ jobs:
         continue-on-error: true
         run: make bench-rlp
       - name: Change to PR
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-         git fetch origin ${{ github.head_ref }}
-         git checkout ${{ github.head_ref }}
+         git fetch origin "$HEAD_REF"
+         git checkout "$HEAD_REF"
       - name: Run bench PR
         run: make bench-rlp
 
       - name: Save comparison
-        run: echo "## RLP Bench Results\n\n" > result.md && critcmp --list >> result.md
+        run: printf '## RLP Bench Results\n\n' > result.md && critcmp --list >> result.md
 
       - name: Find comment
         continue-on-error: true
