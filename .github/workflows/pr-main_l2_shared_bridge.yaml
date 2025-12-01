@@ -219,8 +219,9 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          ETHREX_WATCHER_L2_RPCS=http://localhost:1730 \
+          ETHREX_WATCHER_L2_RPCS=http://ethrex_l2b:1730 \
           ETHREX_WATCHER_L2_CHAIN_IDS=1730 \
+          ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
           docker compose -f docker-compose.yaml up --detach --no-deps ethrex_l2
 
       - name: Start Sequencer L2B
@@ -235,8 +236,9 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          ETHREX_WATCHER_L2_RPCS=http://localhost:1729 \
+          ETHREX_WATCHER_L2_RPCS=http://ethrex_l2:1729 \
           ETHREX_WATCHER_L2_CHAIN_IDS=65536999 \
+          ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
           docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
 
       - name: Init prover
@@ -260,18 +262,18 @@ jobs:
           docker logs --follow ethrex_l2 &
           docker logs --follow ethrex_l1 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          killall ethrex -s SIGINT
 
       - name: Run test L2B
         run: |
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           cp ../../cmd/.env_l2b ../../cmd/.env
-          docker logs --follow ethrex_l2 &
+          docker logs --follow ethrex_l2_b &
           docker logs --follow ethrex_l1 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test l2 --release -- --nocapture --test-threads=1
-          killall ethrex -s SIGINT
         
       - name: Run shared bridge test after integration tests
         run: |
           cargo test shared_bridge --release -- --nocapture --test-threads=1
+          killall ethrex -s SIGINT
+
