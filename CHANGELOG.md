@@ -91,6 +91,7 @@
 ### 2025-10-17
 
 - Replaces incremental iteration with a one-time precompute method that scans the entire bytecode, building a `BitVec<u8, Msb0>` where bits mark valid `JUMPDEST` positions, skipping `PUSH1..PUSH32` data bytes.
+- Updates `is_blacklisted` to O(1) bit lookup.
 
 ### 2025-10-14
 
