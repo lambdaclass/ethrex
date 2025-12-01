@@ -145,7 +145,7 @@ async fn get_config_for_fork(
     context: &RpcApiContext,
 ) -> Result<EthConfigObject, RpcErr> {
     let chain_config = context.storage.get_chain_config();
-    let activation_time = chain_config.fork_activation_time_or_block(fork);
+    let activation_time = chain_config.fork_activation_time(fork);
     let genesis_header = context
         .storage
         .get_block_by_number(0)

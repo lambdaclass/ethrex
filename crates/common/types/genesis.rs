@@ -372,24 +372,8 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
-    pub fn fork_activation_time_or_block(&self, fork: Fork) -> Option<u64> {
+    pub fn fork_activation_time(&self, fork: Fork) -> Option<u64> {
         match fork {
-            Fork::Frontier => Some(0),
-            Fork::Homestead => self.homestead_block,
-            Fork::DaoFork => self.dao_fork_block,
-            Fork::EIP150 => self.eip150_block,
-            Fork::EIP155 => self.eip155_block,
-            Fork::EIP158 => self.eip158_block,
-            Fork::Byzantium => self.byzantium_block,
-            Fork::Constantinople => self.constantinople_block,
-            Fork::Petersburg => self.petersburg_block,
-            Fork::Istanbul => self.istanbul_block,
-            Fork::MuirGlacier => self.muir_glacier_block,
-            Fork::Berlin => self.berlin_block,
-            Fork::London => self.london_block,
-            Fork::ArrowGlacier => self.arrow_glacier_block,
-            Fork::GrayGlacier => self.gray_glacier_block,
-            Fork::Paris => self.merge_netsplit_block,
             Fork::Shanghai => self.shanghai_time,
             Fork::Cancun => self.cancun_time,
             Fork::Prague => self.prague_time,
@@ -399,6 +383,7 @@ impl ChainConfig {
             Fork::BPO3 => self.bpo3_time,
             Fork::BPO4 => self.bpo4_time,
             Fork::BPO5 => self.bpo5_time,
+            _ => None,
         }
     }
 
@@ -416,9 +401,9 @@ impl ChainConfig {
         }
     }
 
-    pub fn is_fork_activated(&self, fork: Fork, timestamp_or_block: u64) -> bool {
-        self.fork_activation_time_or_block(fork)
-            .is_some_and(|time_or_number| time_or_number <= timestamp_or_block)
+    pub fn is_fork_activated(&self, fork: Fork, timestamp: u64) -> bool {
+        self.fork_activation_time(fork)
+            .is_some_and(|time| time <= timestamp)
     }
 
     pub fn display_config(&self) -> String {
@@ -469,9 +454,9 @@ impl ChainConfig {
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
         let current_fork = self.get_fork(block_timestamp);
         if (current_fork as usize) < FORKS.len() {
-            FORKS.into_iter().find(|fork| {
-                *fork > current_fork && self.fork_activation_time_or_block(*fork).is_some()
-            })
+            FORKS
+                .into_iter()
+                .find(|fork| *fork > current_fork && self.fork_activation_time(*fork).is_some())
         } else {
             None
         }
@@ -480,7 +465,7 @@ impl ChainConfig {
     pub fn get_last_scheduled_fork(&self) -> Fork {
         FORKS
             .into_iter()
-            .rfind(|fork| self.fork_activation_time_or_block(*fork).is_some())
+            .rfind(|fork| self.fork_activation_time(*fork).is_some())
             .unwrap_or(Paris)
     }
 
