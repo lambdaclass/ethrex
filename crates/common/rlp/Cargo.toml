@@ -18,3 +18,6 @@ snap.workspace = true
 hex-literal.workspace = true
 [lib]
 path = "./rlp.rs"
+
+[lints]
+workspace = true

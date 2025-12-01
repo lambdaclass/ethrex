@@ -19,7 +19,6 @@ FROM chef AS planner
 
 COPY benches ./benches
 COPY crates ./crates
-COPY tooling ./tooling
 COPY metrics ./metrics
 COPY cmd ./cmd
 COPY Cargo.* .

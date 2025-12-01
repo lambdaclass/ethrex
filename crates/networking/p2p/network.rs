@@ -1,5 +1,8 @@
 #[cfg(feature = "l2")]
 use crate::rlpx::l2::l2_connection::P2PBasedContext;
+#[cfg(not(feature = "l2"))]
+#[derive(Clone, Debug)]
+pub struct P2PBasedContext;
 use crate::{
     discv4::{
         peer_table::{PeerData, PeerTable},
@@ -8,7 +11,6 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
-        initiator::RLPxInitiator,
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
@@ -56,7 +58,7 @@ impl P2PContext {
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
-        #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
+        based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
@@ -73,6 +75,9 @@ impl P2PContext {
         .inspect_err(|e| {
             error!("Failed to start Tx Broadcaster: {e}");
         })?;
+
+        #[cfg(not(feature = "l2"))]
+        let _ = &based_context;
 
         Ok(P2PContext {
             local_node,
@@ -116,8 +121,6 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     .inspect_err(|e| {
         error!("Failed to start discovery server: {e}");
     })?;
-
-    RLPxInitiator::spawn(context.clone()).await;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
@@ -192,8 +195,11 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
             // Headers metrics
-            let headers_to_download = METRICS.headers_to_download.load(Ordering::Relaxed);
-            let headers_downloaded = METRICS.downloaded_headers.load(Ordering::Relaxed);
+            let headers_to_download = METRICS.sync_head_block.load(Ordering::Relaxed);
+            // We may download more than expected headers due to duplicates
+            // We just clamp it to the max to avoid showing the user confusing data
+            let headers_downloaded =
+                u64::min(METRICS.downloaded_headers.get(), headers_to_download);
             let headers_remaining = headers_to_download.saturating_sub(headers_downloaded);
             let headers_download_progress = if headers_to_download == 0 {
                 "0%".to_string()

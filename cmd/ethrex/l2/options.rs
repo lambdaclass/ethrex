@@ -86,7 +86,7 @@ pub struct SequencerOptions {
         value_name = "BOOLEAN",
         env = "ETHREX_L2_VALIDIUM",
         help_heading = "L2 options",
-        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
+        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1."
     )]
     pub validium: bool,
     #[clap(
@@ -189,6 +189,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 maximum_allowed_max_fee_per_blob_gas: opts
                     .eth_opts
                     .maximum_allowed_max_fee_per_blob_gas,
+                osaka_activation_time: opts.eth_opts.osaka_activation_time,
             },
             l1_watcher: L1WatcherConfig {
                 bridge_address: opts
@@ -234,7 +235,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
                 fee_estimate: opts.aligned_opts.fee_estimate,
-                aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -340,6 +340,13 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub max_retry_delay: u64,
+    #[clap(
+        long,
+        value_name = "UINT64",
+        env = "ETHREX_OSAKA_ACTIVATION_TIME",
+        help = "Block timestamp at which the Osaka fork is activated on L1. If not set, it will assume Osaka is already active."
+    )]
+    pub osaka_activation_time: Option<u64>,
 }
 
 impl Default for EthOptions {
@@ -354,6 +361,7 @@ impl Default for EthOptions {
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
             max_retry_delay: MAX_RETRY_DELAY,
+            osaka_activation_time: None,
         }
     }
 }
@@ -819,15 +827,6 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub fee_estimate: String,
-    #[arg(
-        long,
-        value_name = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        required_if_eq("aligned", "true"),
-        env = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        help_heading = "Aligned options",
-        help = "Path to the SP1 elf. This is used for proof verification."
-    )]
-    pub aligned_sp1_elf_path: Option<String>,
 }
 
 impl Default for AlignedOptions {
@@ -838,7 +837,6 @@ impl Default for AlignedOptions {
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
-            aligned_sp1_elf_path: None,
         }
     }
 }
@@ -850,10 +848,6 @@ impl AlignedOptions {
             .aligned_network
             .clone()
             .or(defaults.aligned_network.clone());
-        self.aligned_sp1_elf_path = self
-            .aligned_sp1_elf_path
-            .clone()
-            .or(defaults.aligned_sp1_elf_path.clone());
     }
 }
 
@@ -1029,15 +1023,6 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub log_level: Level,
-    #[arg(
-        long,
-        default_value_t = false,
-        value_name = "BOOLEAN",
-        env = "PROVER_CLIENT_ALIGNED",
-        help = "Activate aligned proving system",
-        help_heading = "Prover client options"
-    )]
-    pub aligned: bool,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
     #[arg(
         long,
@@ -1055,7 +1040,6 @@ impl From<ProverClientOptions> for ProverConfig {
             backend: config.backend,
             proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
-            aligned_mode: config.aligned,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: config.sp1_server,
         }
@@ -1070,7 +1054,6 @@ impl Default for ProverClientOptions {
             ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
-            aligned: false,
             backend: Backend::Exec,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,

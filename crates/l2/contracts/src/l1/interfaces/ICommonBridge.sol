@@ -65,9 +65,8 @@ interface ICommonBridge {
     /// @dev The deposit process starts here by emitting a L1ToL2Message
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
-    /// @param _amount the amount of tokens to be deposited.
     /// @param l2Recipient the address on L2 that will receive the deposit.
-    function deposit(uint256 _amount, address l2Recipient) external payable;
+    function deposit(address l2Recipient) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number`
     /// pending privileged transactions.
@@ -155,4 +154,12 @@ interface ICommonBridge {
 
     /// @notice Allows the owner to unpause the contract
     function unpause() external;
+
+    /// @notice Register a new fee token on the L2.
+    /// @param newFeeToken Address of the token to authorize for fees.
+    function registerNewFeeToken(address newFeeToken) external;
+
+    /// @notice Unregister a fee token on the L2.
+    /// @param existingFeeToken Address of the token to be removed.
+    function unregisterFeeToken(address existingFeeToken) external;
 }

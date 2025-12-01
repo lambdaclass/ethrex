@@ -207,14 +207,14 @@ impl SQLStore {
     async fn store_blob_bundle_by_batch_number_in_tx(
         &self,
         batch_number: u64,
-        state_diff: Vec<Blob>,
+        blobs: Vec<Blob>,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
         let mut queries = vec![(
             "DELETE FROM blob_bundles WHERE batch = ?1",
             vec![batch_number].into_params()?,
         )];
-        for (index, blob) in state_diff.iter().enumerate() {
+        for (index, blob) in blobs.iter().enumerate() {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
@@ -303,6 +303,53 @@ impl SQLStore {
         )];
 
         self.execute_in_tx(queries, db_tx).await
+    }
+
+    async fn seal_batch_in_tx(
+        &self,
+        batch: Batch,
+        transaction: &Transaction,
+    ) -> Result<(), RollupStoreError> {
+        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
+        for block_number in blocks.iter() {
+            self.store_batch_number_by_block_in_tx(*block_number, batch.number, Some(transaction))
+                .await?;
+        }
+        self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(transaction))
+            .await?;
+        self.store_message_hashes_by_batch_in_tx(
+            batch.number,
+            batch.message_hashes,
+            Some(transaction),
+        )
+        .await?;
+        self.store_privileged_transactions_hash_by_batch_number_in_tx(
+            batch.number,
+            batch.privileged_transactions_hash,
+            Some(transaction),
+        )
+        .await?;
+        self.store_blob_bundle_by_batch_number_in_tx(
+            batch.number,
+            batch.blobs_bundle.blobs,
+            Some(transaction),
+        )
+        .await?;
+        self.store_state_root_by_batch_number_in_tx(
+            batch.number,
+            batch.state_root,
+            Some(transaction),
+        )
+        .await?;
+        if let Some(commit_tx) = batch.commit_tx {
+            self.store_commit_tx_by_batch_in_tx(batch.number, commit_tx, Some(transaction))
+                .await?;
+        }
+        if let Some(verify_tx) = batch.verify_tx {
+            self.store_verify_tx_by_batch_in_tx(batch.number, verify_tx, Some(transaction))
+                .await?;
+        }
+        Ok(())
     }
 }
 
@@ -532,22 +579,22 @@ impl StoreEngineRollup for SQLStore {
         Ok(row.next().await?.is_some())
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         let mut rows = self.query("SELECT * from latest_sent", ()).await?;
         if let Some(row) = rows.next().await? {
             return read_from_row_int(&row, 1);
         }
         Err(RollupStoreError::Custom(
-            "missing operation_count row".to_string(),
+            "missing latest_sent row".to_string(),
         ))
     }
 
-    async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
-            .await?;
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.execute(
+            "INSERT OR REPLACE INTO latest_sent (_id, batch) VALUES (0, ?1)",
+            [batch_number],
+        )
+        .await?;
         Ok(())
     }
 
@@ -656,48 +703,33 @@ impl StoreEngineRollup for SQLStore {
     }
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
-        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
         let conn = self.write_conn.lock().await;
         let transaction = conn.transaction().await?;
 
-        for block_number in blocks.iter() {
-            self.store_batch_number_by_block_in_tx(*block_number, batch.number, Some(&transaction))
-                .await?;
-        }
-        self.store_block_numbers_by_batch_in_tx(batch.number, blocks, Some(&transaction))
-            .await?;
-        self.store_message_hashes_by_batch_in_tx(
+        self.seal_batch_in_tx(batch, &transaction).await?;
+
+        transaction.commit().await.map_err(RollupStoreError::from)
+    }
+
+    async fn seal_batch_with_prover_input(
+        &self,
+        batch: Batch,
+        prover_version: &str,
+        prover_input: ProverInputData,
+    ) -> Result<(), RollupStoreError> {
+        let conn = self.write_conn.lock().await;
+        let transaction = conn.transaction().await?;
+
+        self.store_prover_input_by_batch_and_version_in_tx(
             batch.number,
-            batch.message_hashes,
+            prover_version,
+            prover_input,
             Some(&transaction),
         )
         .await?;
-        self.store_privileged_transactions_hash_by_batch_number_in_tx(
-            batch.number,
-            batch.privileged_transactions_hash,
-            Some(&transaction),
-        )
-        .await?;
-        self.store_blob_bundle_by_batch_number_in_tx(
-            batch.number,
-            batch.blobs_bundle.blobs,
-            Some(&transaction),
-        )
-        .await?;
-        self.store_state_root_by_batch_number_in_tx(
-            batch.number,
-            batch.state_root,
-            Some(&transaction),
-        )
-        .await?;
-        if let Some(commit_tx) = batch.commit_tx {
-            self.store_commit_tx_by_batch_in_tx(batch.number, commit_tx, Some(&transaction))
-                .await?;
-        }
-        if let Some(verify_tx) = batch.verify_tx {
-            self.store_verify_tx_by_batch_in_tx(batch.number, verify_tx, Some(&transaction))
-                .await?;
-        }
+
+        self.seal_batch_in_tx(batch, &transaction).await?;
+
         transaction.commit().await.map_err(RollupStoreError::from)
     }
 

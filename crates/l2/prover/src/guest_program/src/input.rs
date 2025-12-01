@@ -40,7 +40,7 @@ impl Default for ProgramInput {
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],
             #[cfg(feature = "l2")]
-            blob_proof: [0; 48],
+            blob_proof: [0u8; 48],
         }
     }
 }

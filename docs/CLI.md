@@ -12,6 +12,7 @@ Usage: ethrex [OPTIONS] [COMMAND]
 Commands:
   removedb            Remove the database
   import              Import blocks to the database
+  import-bench        Import blocks to the database for benchmarking
   export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
   help                Print this message or the help of the given subcommand(s)
@@ -75,11 +76,14 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
+
+      --p2p.addr <ADDRESS>
+          Listening address for the P2P protocol.
 
       --p2p.port <PORT>
-          TCP port for P2P protocol.
+          TCP port for the P2P protocol.
 
           [default: 30303]
 
@@ -147,12 +151,12 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 5.0.0"]
+          [default: "ethrex 7.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
-          [default: 30000000]
+          [default: 60000000]
 ```
 
 <!-- END_CLI_HELP -->
@@ -175,6 +179,11 @@ Commands:
   help          Print this message or the help of the given subcommand(s)
 
 Options:
+      --osaka-activation-time <UINT64>
+          Block timestamp at which the Osaka fork is activated on L1. If not set, it will assume Osaka is already active.
+
+          [env: ETHREX_OSAKA_ACTIVATION_TIME=]
+
   -t, --tick-rate <TICK_RATE>
           time in ms between two ticks
 
@@ -238,11 +247,14 @@ P2P options:
 
           [default: snap]
 
-      --p2p.enabled
+      --p2p.disabled
 
+
+      --p2p.addr <ADDRESS>
+          Listening address for the P2P protocol.
 
       --p2p.port <PORT>
-          TCP port for P2P protocol.
+          TCP port for the P2P protocol.
 
           [default: 30303]
 
@@ -310,12 +322,12 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 5.0.0"]
+          [default: "ethrex 7.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
-          [default: 30000000]
+          [default: 60000000]
 
 Eth options:
       --eth.rpc-url <RPC_URL>...
@@ -368,6 +380,10 @@ L1 Watcher options:
           [default: 10]
 
 Block producer options:
+      --watcher.l1-fee-update-interval-ms <ADDRESS>
+          [env: ETHREX_WATCHER_L1_FEE_UPDATE_INTERVAL_MS=]
+          [default: 60000]
+
       --block-producer.block-time <UINT64>
           How often does the sequencer produce new blocks to the L1 in milliseconds.
 
@@ -383,10 +399,13 @@ Block producer options:
       --block-producer.operator-fee-vault-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=]
 
-      --operator-fee-per-gas <UINT64>
+      --block-producer.operator-fee-per-gas <UINT64>
           Fee that the operator will receive for each unit of gas consumed in a block.
 
           [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=]
+
+      --block-producer.l1-fee-vault-address <ADDRESS>
+          [env: ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=]
 
       --block-producer.block-gas-limit <UINT64>
           Maximum gas limit for the L2 blocks.
@@ -525,11 +544,6 @@ Aligned options:
           [env: ETHREX_ALIGNED_FEE_ESTIMATE=]
           [default: instant]
 
-      --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
-          Path to the SP1 elf. This is used for proof verification.
-
-          [env: ETHREX_ALIGNED_SP1_ELF_PATH=]
-
 Admin server options:
       --admin-server.addr <IP_ADDRESS>
           [env: ETHREX_ADMIN_SERVER_LISTEN_ADDRESS=]
@@ -541,7 +555,7 @@ Admin server options:
 
 L2 options:
       --validium
-          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.
+          If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1.
 
           [env: ETHREX_L2_VALIDIUM=]
 
@@ -557,7 +571,6 @@ L2 options:
 Monitor options:
       --no-monitor
           [env: ETHREX_NO_MONITOR=]
-          
 ```
 
 ## ethrex l2 prover
@@ -592,11 +605,6 @@ Prover client options:
           Possible values: info, debug, trace, warn, error
 
           [default: INFO]
-
-      --aligned
-          Activate aligned proving system
-
-          [env: PROVER_CLIENT_ALIGNED=]
 
       --sp1-server <URL>
           Url to the moongate server to use when using sp1 backend

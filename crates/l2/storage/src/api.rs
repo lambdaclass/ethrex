@@ -60,6 +60,13 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError>;
 
+    async fn seal_batch_with_prover_input(
+        &self,
+        batch: Batch,
+        prover_version: &str,
+        prover_input_data: ProverInputData,
+    ) -> Result<(), RollupStoreError>;
+
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError>;
 
     async fn get_verify_tx_by_batch(
@@ -111,10 +118,9 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
 
-    async fn set_lastest_sent_batch_proof(&self, batch_number: u64)
-    -> Result<(), RollupStoreError>;
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 
     async fn get_account_updates_by_block_number(
         &self,

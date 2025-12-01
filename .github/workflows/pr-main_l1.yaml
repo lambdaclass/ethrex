@@ -5,8 +5,6 @@ on:
   merge_group:
   pull_request:
     branches: ["**"]
-    paths-ignore:
-      - "crates/l2/**" # Behind a feature flag not used in this workflow
 
 permissions:
   contents: read
@@ -17,10 +15,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.finish.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run_tests:
+              - '!crates/l2/**'
+      - name: finish
+        id: finish
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+              echo "run_tests=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Print result
+        run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
+
   lint:
     # "Lint" is a required check, don't change the name
     name: Lint
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -46,9 +69,23 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+      - name: Run tooling cargo check
+        run: cargo check --workspace --all-targets
+        working-directory: tooling
+
+      - name: Run tooling cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: tooling
+
+      - name: Run tooling cargo fmt
+        run: cargo fmt --all -- --check
+        working-directory: tooling
+
   test:
     # "Test" is a required check, don't change the name
     name: Test
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -62,7 +99,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          make test
+          cargo test --workspace --exclude ethrex-l2
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
@@ -72,6 +109,8 @@ jobs:
   docker_build:
     name: Build Docker
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -93,8 +132,8 @@ jobs:
   run-assertoor:
     name: Assertoor - ${{ matrix.name }}
     runs-on: ubuntu-latest
-    needs: [docker_build]
-    if: ${{ github.event_name != 'merge_group' }}
+    needs: [detect-changes, docker_build]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
       fail-fast: true
       matrix:
@@ -135,8 +174,8 @@ jobs:
   run-hive:
     name: Hive - ${{ matrix.name }}
     runs-on: ubuntu-latest
-    needs: [docker_build]
-    if: ${{ github.event_name != 'merge_group' }}
+    needs: [detect-changes, docker_build]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
       fail-fast: false
       matrix:
@@ -148,7 +187,7 @@ jobs:
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|eth|snap/Ping|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate|AccountRange|GetTrieNodes|GetByteCodes|GetStorageRanges|Findnode|BlobViolations
+            limit: discv4|eth|snap
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
@@ -242,9 +281,9 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [run-assertoor, run-hive]
+    needs: [detect-changes, run-assertoor, run-hive]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -261,7 +300,8 @@ jobs:
   reorg-tests:
     name: Reorg Tests
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'merge_group' }}
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4

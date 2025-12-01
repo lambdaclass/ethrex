@@ -36,9 +36,9 @@ use crate::{
     types::Node,
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::MempoolTransaction;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
+use ethrex_common::types::{MempoolTransaction, P2PTransaction};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -589,6 +589,7 @@ async fn send_all_pooled_tx_hashes(
         .get_all_txs_by_sender()?
         .into_values()
         .flatten()
+        .filter(|tx| !tx.is_privileged())
         .collect();
     if !txs.is_empty() {
         state
@@ -628,9 +629,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
     Ok(())
 }
 
-async fn should_send_block_range_update(
-    state: &mut Established,
-) -> Result<bool, PeerConnectionError> {
+async fn should_send_block_range_update(state: &Established) -> Result<bool, PeerConnectionError> {
     let latest_block = state.storage.get_latest_block_number().await?;
     if latest_block < state.last_block_range_update_block
         || latest_block - state.last_block_range_update_block >= 32
@@ -933,8 +932,11 @@ async fn handle_incoming_message(
                 for tx in &txs.transactions {
                     // Reject blob transactions in L2 mode
                     #[cfg(feature = "l2")]
-                    if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
-                        debug!(peer=%state.node, "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2");
+                    if (is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)))
+                        || tx.is_privileged()
+                    {
+                        let tx_type = tx.tx_type();
+                        debug!(peer=%state.node, "Rejecting transaction in L2 mode - {tx_type} transactions are not broadcasted in L2");
                         continue;
                     }
 
@@ -1023,8 +1025,26 @@ async fn handle_incoming_message(
             send(state, Message::PooledTransactions(response)).await?;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
+            // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
+            for tx in &msg.pooled_transactions {
+                if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx
+                    && (itx.blobs_bundle.is_empty()
+                        || itx
+                            .blobs_bundle
+                            .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
+                            .is_err())
+                {
+                    warn!(
+                        peer=%state.node,
+                        "disconnected from peer. Reason: Invalid/Missing Blobs",
+                    );
+                    send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
+                    return Err(PeerConnectionError::DisconnectSent(
+                        DisconnectReason::SubprotocolError,
+                    ));
+                }
+            }
             if state.blockchain.is_synced() {
-                // TODO(#3745): disconnect from peers that send invalid blob sidecars
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(requested, fork).await {
@@ -1057,14 +1077,11 @@ async fn handle_incoming_message(
         }
         Message::GetByteCodes(req) => {
             let storage_clone = state.storage.clone();
-            let response =
-                tokio::task::spawn_blocking(move || process_byte_codes_request(req, storage_clone))
-                    .await
-                    .map_err(|_| {
-                        PeerConnectionError::InternalError(
-                            "Failed to execute bytecode retrieval task".to_string(),
-                        )
-                    })??;
+            let response = process_byte_codes_request(req, storage_clone).map_err(|_| {
+                PeerConnectionError::InternalError(
+                    "Failed to execute bytecode retrieval task".to_string(),
+                )
+            })?;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {

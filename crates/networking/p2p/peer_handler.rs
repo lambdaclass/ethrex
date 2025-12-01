@@ -1,5 +1,6 @@
+use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
-    discv4::peer_table::{PeerData, PeerTable, PeerTableError, TARGET_PEERS},
+    discv4::peer_table::{PeerData, PeerTable, PeerTableError},
     metrics::{CurrentStepValue, METRICS},
     rlpx::{
         connection::server::PeerConnection,
@@ -34,6 +35,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io::ErrorKind,
@@ -68,6 +70,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: PeerTable,
+    pub initiator: GenServerHandle<RLPxInitiator>,
 }
 
 pub enum BlockRequestOrder {
@@ -142,14 +145,11 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTable) -> PeerHandler {
-        Self { peer_table }
-    }
-
-    /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
-    /// This should only be used in tests as it won't be able to interact with the node's connected peers
-    pub fn dummy() -> PeerHandler {
-        PeerHandler::new(PeerTable::spawn(TARGET_PEERS))
+    pub fn new(peer_table: PeerTable, initiator: GenServerHandle<RLPxInitiator>) -> PeerHandler {
+        Self {
+            peer_table,
+            initiator,
+        }
     }
 
     async fn make_request(
@@ -189,8 +189,6 @@ impl PeerHandler {
         METRICS
             .current_step
             .set(CurrentStepValue::DownloadingHeaders);
-
-        let initial_downloaded_headers = METRICS.downloaded_headers.load(Ordering::Relaxed);
 
         let mut ret = Vec::<BlockHeader>::new();
 
@@ -238,6 +236,9 @@ impl PeerHandler {
 
             retries += 1;
         }
+        METRICS
+            .sync_head_block
+            .store(sync_head_number, Ordering::Relaxed);
         sync_head_number = sync_head_number.min(start + MAX_HEADER_CHUNK);
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
@@ -248,12 +249,6 @@ impl PeerHandler {
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
-        METRICS
-            .sync_head_block
-            .store(sync_head_number, Ordering::Relaxed);
-        METRICS
-            .headers_to_download
-            .store(sync_head_number + 1, Ordering::Relaxed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = sync_head_number + 1 - start;
@@ -307,9 +302,7 @@ impl PeerHandler {
 
                 downloaded_count += headers.len() as u64;
 
-                METRICS
-                    .downloaded_headers
-                    .fetch_add(headers.len() as u64, Ordering::Relaxed);
+                METRICS.downloaded_headers.inc_by(headers.len() as u64);
 
                 let batch_show = downloaded_count / 10_000;
 
@@ -392,11 +385,6 @@ impl PeerHandler {
                     })
             });
         }
-
-        METRICS.downloaded_headers.store(
-            initial_downloaded_headers + downloaded_count,
-            Ordering::Relaxed,
-        );
 
         let elapsed = start_time.elapsed().unwrap_or_default();
 
@@ -570,28 +558,12 @@ impl PeerHandler {
         }
     }
 
-    /// Requests block bodies from any suitable peer given their block hashes
-    /// Returns the block bodies or None if:
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_block_bodies(
-        &mut self,
-        block_hashes: &[H256],
-    ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            if let Some((block_bodies, _)) = self.request_block_bodies_inner(block_hashes).await? {
-                return Ok(Some(block_bodies));
-            }
-        }
-        Ok(None)
-    }
-
     /// Requests block bodies from any suitable peer given their block headers and validates them
     /// Returns the requested block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
-    pub async fn request_and_validate_block_bodies(
+    pub async fn request_block_bodies(
         &mut self,
         block_headers: &[BlockHeader],
     ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
