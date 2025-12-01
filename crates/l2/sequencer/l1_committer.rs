@@ -619,7 +619,6 @@ impl L1Committer {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
-        let mut acc_messages = vec![];
         let mut acc_privileged_txs = vec![];
         let mut message_hashes = vec![];
         let mut privileged_transactions_hashes = vec![];
@@ -768,7 +767,6 @@ impl L1Committer {
             }
 
             // Accumulate block data with the rest of the batch.
-            acc_messages.extend(messages.clone());
             acc_privileged_txs.extend(privileged_transactions.clone());
 
             let acc_privileged_txs_len: u64 = acc_privileged_txs.len().try_into()?;
