@@ -218,7 +218,7 @@ where
         let next_value_path = Nibbles::from_bytes(next_value.0.as_bytes());
 
         // If the current parent isn't a parent of the next value, that means
-        // that the current value doesn't have a brother to the right
+        // that the current value doesn't have a sibling to the right
         // As such we write this node and change the current node to the current parent
         while !is_child(&next_value_path, &current_parent) {
             add_current_to_parent_and_write_queue(
