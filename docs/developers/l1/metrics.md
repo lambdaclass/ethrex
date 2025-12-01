@@ -11,10 +11,6 @@ We use the [Ethereum Metrics Exporter](https://github.com/ethpandaops/ethereum-m
 
 We provide a pre-configured Grafana dashboard to monitor Ethrex L1 nodes. For detailed information on the provided dashboard, see our [L1 Dashboard document](./dashboards.md).
 
-## Logs
-
-We use Loki and Promtail to collect and visualize logs. By default, logs are written to stdout. To enable file logging, use the `--log.dir` argument. For more information on configuring logs, see the [Logs section in Monitoring](../../l1/running/monitoring.md#logs).
-
 ### Running the execution node on other networks with metrics enabled
 
 As shown in [Monitoring](../../l1/running/monitoring.md) `docker-compose` is used to bundle prometheus and grafana services, the `*overrides` files define the ports and mounts the prometheus' configuration file.
