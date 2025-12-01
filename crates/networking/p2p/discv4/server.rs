@@ -486,7 +486,11 @@ impl DiscoveryServer {
         }
 
         self.peer_table
-            .record_enr_response_received(&node_id, enr_response_message.request_hash ,enr_response_message.node_record)
+            .record_enr_response_received(
+                &node_id,
+                enr_response_message.request_hash,
+                enr_response_message.node_record,
+            )
             .await?;
 
         Ok(())
