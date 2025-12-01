@@ -104,14 +104,12 @@ fn add_current_to_parent_and_write_queue(
     current_node: &CenterSide,
     parent_element: &mut StackElement,
 ) -> Result<(), TrieGenerationError> {
-    debug!("{:x?}", current_node.path);
-    debug!("{:x?}", parent_element.path);
     let mut nodehash_buffer = Vec::with_capacity(512);
     let mut path = current_node.path.clone();
     path.skip_prefix(&parent_element.path);
-    let index = path.next().ok_or(TrieGenerationError::IndexNotFound(
-        current_node.path.clone(),
-    ))?;
+    let index = path
+        .next()
+        .ok_or_else(|| TrieGenerationError::IndexNotFound(current_node.path.clone()))?;
     let top_path = parent_element.path.append_new(index);
     let (target_path, node): (Nibbles, Node) = match &current_node.element {
         CenterSideElement::Branch { node } => {
@@ -229,9 +227,9 @@ where
                 &mut current_parent,
             )?;
             let temp = CenterSide::from_stack_element(current_parent);
-            current_parent = trie_stack.pop().ok_or(TrieGenerationError::TrieStackEmpty(
-                current_node.path.clone(),
-            ))?;
+            current_parent = trie_stack
+                .pop()
+                .ok_or_else(|| TrieGenerationError::TrieStackEmpty(current_node.path.clone()))?;
             current_node = temp;
         }
 
