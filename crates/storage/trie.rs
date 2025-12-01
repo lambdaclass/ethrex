@@ -1,18 +1,18 @@
 use crate::api::tables::{
     ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
 };
-use crate::api::{StorageBackend, StorageLocked, StorageRwTx};
+use crate::api::{StorageBackend, StorageLocked};
 use crate::error::StoreError;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
-use std::sync::Mutex;
+use std::sync::Arc;
 
 /// StorageRwTx implementation for the TrieDB trait
 /// Wraps a transaction to allow multiple trie operations on the same transaction
 pub struct BackendTrieDB {
     /// Read-write transaction wrapped in Mutex for interior mutability
-    tx: Mutex<Box<dyn StorageRwTx + 'static>>,
+    db: Arc<dyn StorageBackend>,
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
     /// Storage trie address prefix (for storage tries)
@@ -22,13 +22,13 @@ pub struct BackendTrieDB {
 
 impl BackendTrieDB {
     pub fn new(
-        tx: Box<dyn StorageRwTx + 'static>,
+        db: Arc<dyn StorageBackend>,
         address_prefix: Option<H256>,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
-            tx: Mutex::new(tx),
+            db,
             last_computed_flatkeyvalue,
             address_prefix,
         })
@@ -65,13 +65,17 @@ impl TrieDB for BackendTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let prefixed_key = self.make_key(key);
         let table = self.table_for_key(&prefixed_key);
-        let tx = self.tx.lock().map_err(|_| TrieError::LockError)?;
+        let tx = self.db.begin_read().map_err(|e| {
+            TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
+        })?;
         tx.get(table, prefixed_key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let mut tx = self.tx.lock().map_err(|_| TrieError::LockError)?;
+        let mut tx = self.db.begin_write().map_err(|e| {
+            TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
+        })?;
         for (key, value) in key_values {
             let prefixed_key = self.make_key(key);
             let table = self.table_for_key(&prefixed_key);
@@ -80,14 +84,6 @@ impl TrieDB for BackendTrieDB {
         }
         tx.commit()
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
-    }
-
-    fn commit(&self) -> Result<(), TrieError> {
-        self.tx
-            .lock()
-            .map_err(|_| TrieError::LockError)?
-            .commit()
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to commit transaction: {}", e)))
     }
 }
 

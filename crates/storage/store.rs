@@ -1437,7 +1437,7 @@ impl Store {
                 }
             }
             info!("Generation of FlatKeyValue started.");
-            match flatkeyvalue_generator(backend_clone.as_ref(), &last_computed_fkv, &rx) {
+            match flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx) {
                 Ok(_) => info!("FlatKeyValue generation finished."),
                 Err(err) => error!("Error while generating FlatKeyValue: {err}"),
             }
@@ -2271,7 +2271,7 @@ impl Store {
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
             db: Box::new(state_trie_backend(
-                self.backend.as_ref(),
+                self.backend.clone(),
                 self.last_written()?,
             )?),
             prefix: None,
@@ -2285,7 +2285,7 @@ impl Store {
     pub fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         Ok(Trie::open(
             Box::new(state_trie_backend(
-                self.backend.as_ref(),
+                self.backend.clone(),
                 self.last_written()?,
             )?),
             state_root,
@@ -2328,7 +2328,7 @@ impl Store {
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
             db: Box::new(state_trie_backend(
-                self.backend.as_ref(),
+                self.backend.clone(),
                 self.last_written()?,
             )?),
             prefix: Some(account_hash),
@@ -2345,7 +2345,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         Ok(Trie::open(
             Box::new(storage_trie_backend(
-                self.backend.as_ref(),
+                self.backend.clone(),
                 account_hash,
                 self.last_written()?,
             )?),
@@ -2611,7 +2611,7 @@ fn apply_trie_updates(
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
 // with the other end of `control_rx`
 fn flatkeyvalue_generator(
-    backend: &dyn StorageBackend,
+    backend: &Arc<dyn StorageBackend>,
     last_computed_fkv: &Mutex<Vec<u8>>,
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
@@ -2653,7 +2653,7 @@ fn flatkeyvalue_generator(
         let mut ctr = 0;
         let mut write_txn = backend.begin_write()?;
         let mut iter = Trie::open(
-            Box::new(state_trie_backend(backend, last_written.clone())?),
+            Box::new(state_trie_backend(backend.clone(), last_written.clone())?),
             state_root,
         )
         .into_iter();
@@ -2680,7 +2680,7 @@ fn flatkeyvalue_generator(
 
             let mut iter_inner = Trie::open(
                 Box::new(storage_trie_backend(
-                    backend,
+                    backend.clone(),
                     account_hash,
                     path.as_ref().to_vec(),
                 )?),
@@ -2756,21 +2756,19 @@ fn fkv_check_for_stop_msg(
 }
 
 fn storage_trie_backend(
-    backend: &dyn StorageBackend,
+    backend: Arc<dyn StorageBackend>,
     hashed_address: H256,
     last_written: Vec<u8>,
 ) -> Result<BackendTrieDB, StoreError> {
-    let tx = backend.begin_write()?;
-    BackendTrieDB::new(tx, Some(hashed_address), last_written)
+    BackendTrieDB::new(backend, Some(hashed_address), last_written)
 }
 
 fn state_trie_backend(
-    backend: &dyn StorageBackend,
+    backend: Arc<dyn StorageBackend>,
     last_written: Vec<u8>,
 ) -> Result<BackendTrieDB, StoreError> {
-    let tx = backend.begin_write()?;
     // No address prefix for state trie
-    BackendTrieDB::new(tx, None, last_written)
+    BackendTrieDB::new(backend, None, last_written)
 }
 
 fn state_trie_locked_backend(
