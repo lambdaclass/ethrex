@@ -32,6 +32,7 @@ jobs:
         run: cargo install critcmp
 
       - name: Run bench main
+        continue-on-error: true
         run: make bench-rlp
       - name: Change to PR
         run: |
