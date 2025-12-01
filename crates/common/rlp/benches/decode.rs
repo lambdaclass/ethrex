@@ -1,12 +1,21 @@
 use criterion::{BatchSize, Bencher, BenchmarkId, Criterion, criterion_group, criterion_main};
-use ethereum_types::H256;
+use ethereum_types::{H256, U256};
+use ethrex_common::{H32, types::ForkId};
+use ethrex_p2p::{
+    rlpx::{p2p::Capability, snap::StorageSlot},
+    types::Endpoint,
+};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{Nibbles, NodeHash};
 use rand::{
     Rng,
     distr::{Alphanumeric, Distribution, SampleString, StandardUniform},
 };
-use std::{hint::black_box, iter::repeat_with};
+use std::{
+    hint::black_box,
+    iter::repeat_with,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+};
 
 fn bench_decode_scalars(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_scalars");
@@ -247,6 +256,48 @@ fn bench_decode_lists(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_decode_common_types(c: &mut Criterion) {
+    let mut group = c.benchmark_group("decode_common_types");
+
+    // TODO: AccountInfo
+    // TODO: AccountState
+    // TODO: BlobsBundle
+    // TODO: Block
+    // TODO: BlockHeader
+    // TODO: Withdrawal
+
+    group.bench_function(BenchmarkId::new("ForkId", 1000), |b| {
+        b.iter_batched_ref(
+            || {
+                let mut data = Vec::with_capacity(1000);
+                for _ in 0..1000 {
+                    data.push(
+                        ForkId {
+                            fork_hash: H32(rand::rng().random()),
+                            fork_next: rand::rng().random(),
+                        }
+                        .encode_to_vec(),
+                    );
+                }
+                data
+            },
+            |data| {
+                for data in data {
+                    black_box(ForkId::decode(data).unwrap());
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    // TODO: Receipt
+    // TODO: ReceiptWithBloom
+    // TODO: Log
+    // TODO: EncodedRequests
+
+    group.finish();
+}
+
 fn bench_decode_nibbles(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_nibbles");
 
@@ -344,13 +395,162 @@ fn bench_decode_trie(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_decode_transactions(c: &mut Criterion) {
+    // TODO: P2PTransaction
+    // TODO: WrappedEIP4844Transaction
+    // TODO: LegacyTransaction
+    // TODO: EIP2930Transaction
+    // TODO: EIP1559Transaction
+    // TODO: EIP4844Transaction
+    // TODO: EIP7702Transaction
+    // TODO: PrivilegedL2Transaction
+    // TODO: FeeTokenTransaction
+    // TODO: MempoolTransaction
+
+    // todo!()
+}
+
+fn bench_decode_p2p(c: &mut Criterion) {
+    let mut group = c.benchmark_group("decode_p2p");
+
+    group.bench_function(BenchmarkId::new("Endpoint", "ipv4/1000"), |b| {
+        b.iter_batched_ref(
+            || {
+                let mut data = Vec::with_capacity(1000);
+                let mut rng = rand::rng();
+                for _ in 0..1000 {
+                    data.push(
+                        Endpoint {
+                            ip: IpAddr::V4(Ipv4Addr::from_bits(rng.random())),
+                            udp_port: rng.random(),
+                            tcp_port: rng.random(),
+                        }
+                        .encode_to_vec(),
+                    );
+                }
+                data
+            },
+            |data| {
+                for data in data.iter() {
+                    black_box(Endpoint::decode(data).unwrap());
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function(BenchmarkId::new("Endpoint", "ipv6/1000"), |b| {
+        b.iter_batched_ref(
+            || {
+                let mut data = Vec::with_capacity(1000);
+                let mut rng = rand::rng();
+                for _ in 0..1000 {
+                    data.push(
+                        Endpoint {
+                            ip: IpAddr::V6(Ipv6Addr::from_bits(rng.random())),
+                            udp_port: rng.random(),
+                            tcp_port: rng.random(),
+                        }
+                        .encode_to_vec(),
+                    );
+                }
+                data
+            },
+            |data| {
+                for data in data.iter() {
+                    black_box(Endpoint::decode(data).unwrap());
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    // TODO: NodeRecord
+    // TODO: Node
+    // TODO: PingMessage
+    // TODO: FindNodeMessage
+    // TODO: NeighborsMessage
+    // TODO: ENRRequestMessage
+    // TODO: ENRRequestMessage (?)
+
+    {
+        fn make_bench(f: impl Fn(u8) -> Capability) -> impl Fn(&mut Bencher) {
+            move |b| {
+                b.iter_batched_ref(
+                    || {
+                        let mut data = Vec::with_capacity(1000);
+                        for _ in 0..1000 {
+                            data.push(f(rand::rng().random()).encode_to_vec());
+                        }
+                        data
+                    },
+                    |data| {
+                        for data in data {
+                            black_box(Capability::decode(data).unwrap());
+                        }
+                    },
+                    BatchSize::SmallInput,
+                )
+            }
+        }
+
+        group.bench_function(
+            BenchmarkId::new("Capability", "eth/1000"),
+            make_bench(Capability::eth),
+        );
+        group.bench_function(
+            BenchmarkId::new("Capability", "snap/1000"),
+            make_bench(Capability::snap),
+        );
+        group.bench_function(
+            BenchmarkId::new("Capability", "based/1000"),
+            make_bench(Capability::based),
+        );
+    }
+
+    // TODO: AccountRangeUnit
+    // TODO: AccountStateSlim
+
+    group.bench_function(BenchmarkId::new("StorageSlot", 1000), |b| {
+        b.iter_batched_ref(
+            || {
+                let mut data = Vec::new();
+                for _ in 0..1000 {
+                    data.push(
+                        StorageSlot {
+                            hash: H256(rand::rng().random()),
+                            data: U256(rand::rng().random()),
+                        }
+                        .encode_to_vec(),
+                    );
+                }
+                data
+            },
+            |data| {
+                for data in data {
+                    black_box(StorageSlot::decode(data).unwrap());
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    // TODO: AuthMessage (unavailable?)
+    // TODO: AckMessage (unavailable?)
+    // TODO: HashOrNumber (unavailable?)
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_decode_bytes,
+    bench_decode_common_types,
     bench_decode_lists,
     bench_decode_nibbles,
+    bench_decode_p2p,
     bench_decode_scalars,
     bench_decode_strings,
+    bench_decode_transactions,
     bench_decode_trie,
 );
 criterion_main!(benches);
