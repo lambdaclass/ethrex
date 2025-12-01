@@ -14,18 +14,24 @@ pub fn prove(
     input: ProgramInput,
     _format: ProofFormat,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
-    if cfg!(feature = "gpu") {
-        warn!("The Pico backend doesn't support GPU proving, falling back to CPU.");
-    }
+    unimplemented!("The pico backend doesn't support proving until Pico GPU support is added to ethrex.");
 
-    let client = DefaultProverClient::new(ZKVM_PICO_PROGRAM_ELF);
+    // Below is the code necessary to generate a proof using CPU, although the process
+    // crashes when doing so for any block. We didn't debug this further as we are interested
+    // in GPU proving.
 
-    let mut stdin = client.new_stdin_builder();
-    let input_bytes = rkyv::to_bytes::<Error>(&input)?;
-    stdin.write_slice(&input_bytes);
+    // if cfg!(feature = "gpu") {
+    //     warn!("The Pico backend doesn't support GPU proving, falling back to CPU.");
+    // }
 
-    let (_, compressed_proof) = client.prove(stdin)?;
-    Ok(compressed_proof)
+    // let client = DefaultProverClient::new(ZKVM_PICO_PROGRAM_ELF);
+
+    // let mut stdin = client.new_stdin_builder();
+    // let input_bytes = rkyv::to_bytes::<Error>(&input)?;
+    // stdin.write_slice(&input_bytes);
+
+    // let (_, compressed_proof) = client.prove(stdin)?;
+    // Ok(compressed_proof)
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
