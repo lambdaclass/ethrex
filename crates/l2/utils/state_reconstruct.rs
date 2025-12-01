@@ -115,9 +115,8 @@ async fn extract_block_messages(
         )));
     };
 
-    let mut txs = vec![];
     let mut receipts = vec![];
-    for (index, tx) in block_body.transactions.iter().enumerate() {
+    for index in 0..block_body.transactions.len() {
         let receipt = store
             .get_receipt(
                 block_number,
@@ -129,7 +128,6 @@ async fn extract_block_messages(
             .ok_or(UtilsError::RetrievalError(
                 "Transactions in a block should have a receipt".to_owned(),
             ))?;
-        txs.push(tx.clone());
         receipts.push(receipt);
     }
     Ok((
