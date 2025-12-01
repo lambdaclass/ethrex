@@ -183,6 +183,8 @@ pub fn verify_range(
 ) -> Result<bool, TrieError>
 ```
 
+We know we have finished a range if the last of the accounts downloaded is to the right of the bound we have set to the request, or if the `verify_range` returns true.
+
 #### Dump to file
 
 To avoid having all of the accounts in memory, when their size in memory exceeds 64MiB we dump them to a new file. 
@@ -192,7 +194,6 @@ For an optimization for faster insertion, these are stored ordered in the RocksD
 #### Flowchart
 
 ![request_account_range flowchart](snap_sync/Flow%20-%20Download%20Accounts.png)
-
 
 ### Insertion of Accounts
 
@@ -224,7 +225,7 @@ From these parameters, there is a couple of difficulties that pop up.
 
 To solve these issues we take two action:
 - Before we download the storage slots we ensure that the state trie is in a consistent complete state. This is accomplished by doing the insertion of accounts step first and then healing the trie. If during the storage slot download the pivot becomes stale, we heal the trie again with the new pivot, to keep the trie up to date.
-- When inserting the accounts, we grab a list of all the accounts with their storage root. If the account is healed, we marked the storage root as none, to indicate we should check in the DB what is the state of the storage root.
+- When inserting the accounts, we grab a list of all the accounts with their storage root. If the account is healed, we marked the storage root as `None`, to indicate we should check in the DB what is the state of the storage root.
 
 #### The time traveling problem
 
@@ -233,6 +234,38 @@ During the development of snap sync we found a recurring problem, the time trave
 The alternative is to always go to disk if there is to mark healed accounts as unreliable and go to disk to get the datum.
 This may not be a problem in path based again, but should be studied.
 
+#### Repeated Storage Roots
+
+A large amount of the accounts with storage have exactly the same storage as other accounts.[^5] As suche, when we are creating tasks for download, it's important to group the tasks by storage root and not download them twice.
+
+[^5]: This may be for a variety of reasons, but the most likely is ERC20 tokens that were deployed and never used.
+
 #### Big Accounts
 
-#### Repeated Storage Roots
+The storage trie is very unneven distribution of the accounts sizes. Between accounts with a single or two storage slots are around 70% of all accounts with storage trie. And large accounts have more storage slots than accounts slots are present in the state accounts. As such they need to be downloaded with special consideration.
+
+At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single requests. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.
+
+![proofs for missing slots](snap_sync/Snap%20Sync%20Downloading%20Storages%20-%201.png)
+
+When we reach that situation, we chunk the big account based on the "density" of storage slots we downloaded, following this code to get chunks of 10,000 slots[^6]
+
+[^6]: 10_000 slots is a number chosen without hard data, we should review that number.
+
+```rust
+    // start_hash_u256 is the hash of the address of the last slot
+    // slot_count is the amount of slots we have downloaded
+    // The division gives us the density (maximum possible slots/actual slots downloaded) 
+    // we want chunks of 10.000 slots, so we multiply those two numbers
+    let storage_density = start_hash_u256 / slot_count;
+    let slots_per_chunk = U256::from(10000);
+    let chunk_size = storage_density
+        .checked_mul(slots_per_chunk)
+        .unwrap_or(U256::MAX);
+```
+
+
+
+#### Memory concerns
+
+Currently, we use a struct `accounts_by_root_hash` that we don't check the memory size. When rewriting this algorithm we should check if we're not going over the memory limit.
