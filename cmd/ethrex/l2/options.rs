@@ -464,10 +464,7 @@ impl WatcherOptions {
         self.bridge_address = self.bridge_address.or(defaults.bridge_address);
         self.router_address = self.router_address.or(defaults.router_address);
         self.l2_rpc_urls = self.l2_rpc_urls.clone().or(defaults.l2_rpc_urls.clone());
-        self.l2_chain_ids = self
-            .l2_chain_ids
-            .clone()
-            .or(defaults.l2_chain_ids.clone());
+        self.l2_chain_ids = self.l2_chain_ids.clone().or(defaults.l2_chain_ids.clone());
     }
 }
 
