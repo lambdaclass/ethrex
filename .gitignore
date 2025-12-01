@@ -77,3 +77,6 @@ GEMINI.md
 
 # Documentation Graphs
 !docs/internal/l1/healing/*.svg
+
+# Logs
+logs/*

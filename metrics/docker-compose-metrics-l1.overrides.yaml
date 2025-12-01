@@ -46,7 +46,7 @@ services:
     image: grafana/promtail:latest
     volumes:
       - ./provisioning/promtail/promtail.yaml:/etc/promtail/config.yaml
-      - /var/log/ethrex:/var/log/ethrex
+      - ../logs:/var/log/ethrex
     command: -config.file=/etc/promtail/config.yaml
     extra_hosts:
       - "host.docker.internal:host-gateway"
