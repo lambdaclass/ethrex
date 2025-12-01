@@ -83,6 +83,9 @@ pub fn prove_timed(
         #[cfg(feature = "zisk")]
         Backend::ZisK => backend::zisk::prove_timed(input, format)
             .map(|(proof, duration)| (ProveOutput::ZisK(proof), duration)),
+        #[cfg(feature = "openvm")]
+        Backend::OpenVM => backend::openvm::prove_timed(input, format)
+            .map(|(proof, duration)| (ProveOutput::OpenVM(proof), duration)),
     }
 }
 
