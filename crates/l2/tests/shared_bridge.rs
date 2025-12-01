@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use ethrex_common::{Address, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
-use ethrex_l2_sdk::{build_generic_tx, calldata::encode_calldata, send_generic_transaction};
+use ethrex_l2_sdk::{build_generic_tx, calldata::encode_calldata, compile_contract, create_deploy, git_clone, send_generic_transaction};
 use ethrex_rpc::{
     EthClient,
     clients::Overrides,
@@ -18,7 +18,7 @@ use ethrex_rpc::{
 };
 use reqwest::Url;
 use secp256k1::SecretKey;
-use std::{str::FromStr, time::Duration};
+use std::{path::Path, str::FromStr, time::Duration};
 use tokio::time::sleep;
 
 const L2A_RPC_URL: &str = "http://localhost:1729";
@@ -105,6 +105,80 @@ async fn test_shared_bridge() {
         sender_balance_after < sender_balance - value,
         "Sender balance did not decrease correctly"
     );
+
+    println!("Deploying counter contract on L2A...");
+    let counter = compile_and_deploy_counter(l2a_client.clone(), private_key.clone()).await.expect("Error deploying counter contract");
+
+    println!("Getting initial counter state...");
+    let counter_balance = l2a_client
+        .get_balance(counter, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting counter balance");
+
+    let counter_value = l2a_client.call(counter, encode_calldata("get()", &vec![]).unwrap().into(), Overrides::default()).await.unwrap();
+    let counter_value_u256 = U256::from_str(&counter_value).unwrap();
+
+    let sender_balance = l2b_client
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
+
+    
+    let value = U256::from(VALUE);
+    let to = Address::from_str(COMMON_BRIDGE_ADDRESS).unwrap();
+    let data = vec![
+        Value::Uint(U256::from(L2_A_CHAIN_ID)),  // chainId
+        Value::Address(counter),        // to
+        Value::Uint(U256::from(DEST_GAS_LIMIT)), // destGasLimit
+        Value::Bytes(vec![0xd0,0x9d,0xe0,0x8a].into()),  // data
+    ];
+    println!("Sending shared bridge transaction...");
+    test_send(
+        &l2b_client,
+        &private_key,
+        value,
+        GAS_PRICE,
+        to,
+        SIGNATURE,
+        &data,
+        "shared bridge test",
+    )
+    .await
+    .expect("Error sending shared bridge transaction");
+
+    println!("Waiting 3 minutes for message to be processed...");
+    sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
+
+    println!("Getting final counter state...");
+    let counter_balance_after = l2a_client
+        .get_balance(counter, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting counter balance");
+
+    let counter_value_after = l2a_client.call(counter, encode_calldata("get()", &vec![]).unwrap().into(), Overrides::default()).await.unwrap();
+    let counter_value_u256_after = U256::from_str(&counter_value_after).unwrap();
+
+    let sender_balance_after = l2b_client
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
+
+    assert_eq!(
+        counter_balance_after,
+        counter_balance + value,
+        "Counter balance did not increase correctly"
+    );
+
+    assert_eq!(
+        counter_value_u256_after,
+        counter_value_u256 + U256::one(),
+        "Counter value did not increase correctly"
+    );
+
+    assert!(
+        sender_balance_after < sender_balance - value,
+        "Sender balance did not decrease correctly"
+    );
 }
 
 async fn connect(rpc_url: &str) -> EthClient {
@@ -157,4 +231,81 @@ async fn test_send(
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 1000)
         .await
         .with_context(|| format!("Failed to get receipt for {test}"))
+}
+
+async fn compile_and_deploy_counter(l2_client: EthClient, rich_wallet_private_key:SecretKey ) -> Result<Address> {
+    let contracts_path = Path::new("contracts");
+
+    get_contract_dependencies(contracts_path);
+    let remappings = [(
+        "@openzeppelin/contracts",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    compile_contract(
+        contracts_path,
+        &contracts_path.join("src/example/Counter.sol"),
+        false,
+        false,
+        Some(&remappings),
+        &[contracts_path],
+    )?;
+    let init_code_l2 = hex::decode(String::from_utf8(std::fs::read(
+        "contracts/solc_out/Counter.bin",
+    )?)?)?;
+
+    let counter = test_deploy(
+        &l2_client,
+        &init_code_l2,
+        &rich_wallet_private_key,
+        "test_shared_bridge",
+    )
+    .await?;
+
+    Ok(counter)
+}
+
+
+fn get_contract_dependencies(contracts_path: &Path) {
+    std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
+    git_clone(
+        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable")
+            .to_str()
+            .expect("Failed to convert path to str"),
+        Some("release-v5.4"),
+        true,
+    )
+    .unwrap();
+}
+
+/// Test deploying a contract on L2
+async fn test_deploy(
+    l2_client: &EthClient,
+    init_code: &[u8],
+    deployer_private_key: &SecretKey,
+    test_name: &str,
+) -> Result<Address> {
+    println!("{test_name}: Deploying contract on L2");
+
+    let deployer: Signer = LocalSigner::new(*deployer_private_key).into();
+
+    let (deploy_tx_hash, contract_address) = create_deploy(
+        l2_client,
+        &deployer,
+        init_code.to_vec().into(),
+        Overrides::default(),
+    )
+    .await?;
+
+    let deploy_tx_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, l2_client, 50).await?;
+
+    assert!(
+        deploy_tx_receipt.receipt.status,
+        "{test_name}: Deploy transaction failed"
+    );
+
+    Ok(contract_address)
 }
