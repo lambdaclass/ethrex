@@ -74,20 +74,22 @@ pub fn init_tracing(
         .with_ansi(use_color)
         .with_filter(filter);
 
-    let log_file = if let Some(log_file) = &opts.log_file {
-        log_file.clone()
+    let log_dir = if let Some(log_dir) = &opts.log_dir {
+        log_dir.clone()
     } else {
-        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let dir = PathBuf::from("logs");
-        if !dir.exists() {
-            let _ = std::fs::create_dir(&dir);
-        }
-        dir.join(format!("ethrex_{}_{}.log", branch, timestamp))
+        opts.datadir.join("logs")
     };
+
+    if !log_dir.exists() {
+        let _ = std::fs::create_dir_all(&log_dir);
+    }
+
+    let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let log_file = log_dir.join(format!("ethrex_{}_{}.log", branch, timestamp));
 
     let file = std::fs::OpenOptions::new()
         .append(true)

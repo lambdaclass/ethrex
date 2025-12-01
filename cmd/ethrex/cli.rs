@@ -125,12 +125,12 @@ pub struct Options {
     )]
     pub log_color: LogColor,
     #[arg(
-        long = "log.file",
-        value_name = "LOG_FILE",
-        help = "Path to the log file.",
+        long = "log.dir",
+        value_name = "LOG_DIR",
+        help = "Directory to store log files.",
         help_heading = "Node options"
     )]
-    pub log_file: Option<PathBuf>,
+    pub log_dir: Option<PathBuf>,
     #[arg(
         help = "Maximum size of the mempool in number of transactions",
         long = "mempool.maxsize",
@@ -318,7 +318,7 @@ impl Default for Options {
             ws_port: Default::default(),
             log_level: Level::INFO,
             log_color: Default::default(),
-            log_file: None,
+            log_dir: None,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
