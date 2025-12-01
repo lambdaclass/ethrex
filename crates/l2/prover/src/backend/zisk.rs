@@ -120,7 +120,9 @@ pub fn prove_timed(
 
     #[derive(serde::Deserialize)]
     struct ZisKResult {
+        #[serde(rename = "cycles")]
         _cycles: u64,
+        #[serde(rename = "id")]
         _id: String,
         time: f64,
     }
