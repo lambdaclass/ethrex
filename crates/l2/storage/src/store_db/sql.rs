@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethereum_types::U256;
 use ethrex_common::{
-    H256,
+    Address, H256,
     types::{
         AccountUpdate, Blob, BlockNumber, balance_diff::BalanceDiff, batch::Batch,
         fee_config::FeeConfig,
@@ -205,7 +205,11 @@ impl SQLStore {
                 (
                     batch_number,
                     Vec::from(balance_diff.chain_id.to_big_endian()),
-                    Vec::from(balance_diff.value.to_big_endian()),
+                    bincode::serialize(&balance_diff.value_per_token).map_err(|e| {
+                        RollupStoreError::Custom(format!(
+                            "Failed to serialize balance_diff value_per_token: {e}"
+                        ))
+                    })?,
                 )
                     .into_params()?,
             ));
@@ -512,8 +516,16 @@ impl StoreEngineRollup for SQLStore {
             .await?;
         while let Some(row) = rows.next().await? {
             let chain_id = U256::from_big_endian(&read_from_row_blob(&row, 1)?);
-            let value = U256::from_big_endian(&read_from_row_blob(&row, 2)?);
-            balance_diffs.push(BalanceDiff { chain_id, value });
+            let value_per_token: Vec<(Address, Address, Address, U256)> =
+                bincode::deserialize(&read_from_row_blob(&row, 2)?).map_err(|e| {
+                    RollupStoreError::Custom(format!(
+                        "Failed to deserialize balance diff value_per_token: {e}"
+                    ))
+                })?;
+            balance_diffs.push(BalanceDiff {
+                chain_id,
+                value_per_token,
+            });
         }
         if balance_diffs.is_empty() {
             Ok(None)
