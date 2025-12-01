@@ -198,7 +198,6 @@ fn default_bpo2_schedule() -> ForkBlobSchedule {
 #[allow(unused)]
 #[derive(
     Clone,
-    Copy,
     Debug,
     Serialize,
     Deserialize,
