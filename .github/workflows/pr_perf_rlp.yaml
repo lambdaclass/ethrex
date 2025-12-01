@@ -1,0 +1,62 @@
+name: Benchmark RLP
+
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/common/rlp/**"
+      - ".github/workflows/pr_perf_rlp.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  benchmark:
+    name: Benchmark RLP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy
+
+      - name: Install critcmp
+        run: cargo install critcmp
+
+      - name: Run bench main
+        run: make bench-rlp
+      - name: Change to PR
+        run: |
+         git fetch origin ${{ github.head_ref }}
+         git checkout ${{ github.head_ref }}
+      - name: Run bench PR
+        run: make bench-rlp
+
+      - name: Save comparison
+        run: echo "## RLP Bench Results\n\n" > result.md && critcmp --list >> result.md
+
+      - name: Find comment
+        continue-on-error: true
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "RLP Bench Results"
+
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: result.md
+          edit-mode: replace

@@ -16,7 +16,7 @@ snap.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
-criterion = { version = "0.7.0", features = ["html_reports"] }
+criterion = { version = "0.8.0", features = ["html_reports", "csv_output"] }
 ethrex-common.workspace = true
 ethrex-p2p.workspace = true
 ethrex-trie.workspace = true
