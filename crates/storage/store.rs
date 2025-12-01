@@ -2619,7 +2619,13 @@ fn flatkeyvalue_generator(
     let last_written = read_tx
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
-    if last_written == vec![0xff] {
+
+    if last_written.is_empty() {
+        // First time generating the FKV. Remove all FKV entries just in case
+        backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
+        backend.clear_table(STORAGE_FLATKEYVALUE)?;
+    } else if last_written == [0xff] {
+        // FKV was already generated
         return Ok(());
     }
 
@@ -2724,7 +2730,7 @@ fn flatkeyvalue_generator(
                 write_txn.commit()?;
                 *last_computed_fkv
                     .lock()
-                    .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
+                    .map_err(|_| StoreError::LockError)? = vec![0xff; 131];
                 return Ok(());
             }
         };
