@@ -32,26 +32,23 @@ This will launch Prometheus and Grafana, already set up to scrape ethrex metrics
 
 ## Logs
 
-Ethrex logs are written to the `logs` subdirectory within your data directory (`{datadir}/logs`) by default.
+Ethrex logs are written to stdout by default. To enable file logging, you must specify the `--log.dir` argument.
 
-- **Default Log Location:** `{datadir}/logs`
-  - **Docker:** `/data/logs` (mapped to `./logs` on host)
-  - **Standalone (Linux):** `~/.local/share/ethrex/logs`
-  - **Standalone (macOS):** `~/Library/Application Support/ethrex/logs`
 - **Promtail Configuration:** `metrics/provisioning/promtail/promtail.yaml`
 
-The promtail configuration expects by default that logs are store in `./logs` (relative to the repo root) because we can't calculate the correct datadir depending on the OS inside the yaml file. To correctly see the logs in Grafana, ensure that Promtail can access the logs directory either by:
-- If running via **Docker**, this is handled automatically.
-- If running **standalone**, you should should either:
-   - set the logs to the default directory expected by the `promtail.yaml` using `--log.dir ./logs` when running ethrex.
-   - set the `ETHREX_LOGS_DIR` environment variable when running the metrics stack to point to your system's datadir logs directory.
+The promtail configuration expects by default that logs are stored in `./logs` (relative to the repo root). To correctly see the logs in Grafana, ensure that Promtail can access the logs directory:
+
+- If running via **Docker**, ensure you map a volume to the log directory and pass `--log.dir` to the container.
+- If running **standalone**, use `--log.dir ./logs` when running ethrex.
 
 ```bash
-# on Linux:
-ETHREX_LOGS_DIR=~/.local/share/ethrex/logs docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
+ethrex --log.dir ./logs ...
+```
 
-# on macOS:
-ETHREX_LOGS_DIR=~/Library/Application\ Support/ethrex/logs docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
+If you choose to use a different directory, you must set the `ETHREX_LOGS_DIR` environment variable when running the metrics stack to point to your custom logs directory.
+
+```bash
+ETHREX_LOGS_DIR=/path/to/your/logs docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
 ```
 
 You can view the logs in Grafana by navigating to the logs row in our dashboard.
@@ -60,7 +57,7 @@ You can view the logs in Grafana by navigating to the logs row in our dashboard.
 
 If you run the `ethrex` Docker container manually (e.g., `docker run ...`) or use a custom `docker-compose.yaml` outside of this repository, you must ensure the logs are accessible to the monitoring stack.
 
-The `ethrex` container writes logs to `/data/logs`. You should mount this directory to a location on your host machine that Promtail can access.
+The `ethrex` container writes logs to the directory specified by `--log.dir`. You should mount this directory to a location on your host machine that Promtail can access.
 
 Example:
 ```bash
@@ -68,7 +65,8 @@ docker run -d \
   --name ethrex \
   -v $(pwd)/logs:/data/logs \
   ghcr.io/lambdaclass/ethrex:main \
-  --datadir /data
+  --datadir /data \
+  --log.dir /data/logs
 ```
 
 If you are using the provided monitoring stack in `metrics/`, it expects logs to be in the `logs` directory at the root of the repository (or `../logs` relative to the `metrics` folder). Ensure your volume mount matches this expectation or update the Promtail volume configuration.

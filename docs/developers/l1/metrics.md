@@ -13,7 +13,7 @@ We provide a pre-configured Grafana dashboard to monitor Ethrex L1 nodes. For de
 
 ## Logs
 
-We use Loki and Promtail to collect and visualize logs. By default, logs are written to the `logs` subdirectory of your data directory (`datadir/logs`). For more information on configuring logs, see the [Logs section in Monitoring](../../l1/running/monitoring.md#logs).
+We use Loki and Promtail to collect and visualize logs. By default, logs are written to stdout. To enable file logging, use the `--log.dir` argument. For more information on configuring logs, see the [Logs section in Monitoring](../../l1/running/monitoring.md#logs).
 
 ### Running the execution node on other networks with metrics enabled
 
