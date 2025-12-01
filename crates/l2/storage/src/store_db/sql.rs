@@ -40,7 +40,7 @@ const DB_SCHEMA: [&str; 17] = [
     "CREATE TABLE IF NOT EXISTS operation_count (_id INT PRIMARY KEY, transactions INT, privileged_transactions INT, messages INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0, 0) ON CONFLICT(_id) DO NOTHING",
     "CREATE TABLE IF NOT EXISTS latest_sent (_id INT PRIMARY KEY, batch INT)",
-    "INSERT INTO latest_sent VALUES (0, 0) ON CONFLICT (_id) DO NOTHING",
+    "INSERT INTO latest_sent VALUES (0, 0) ON CONFLICT(_id) DO NOTHING",
     "CREATE TABLE IF NOT EXISTS batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE IF NOT EXISTS block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE IF NOT EXISTS batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
