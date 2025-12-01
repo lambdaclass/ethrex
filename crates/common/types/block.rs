@@ -731,13 +731,9 @@ fn validate_excess_blob_gas(
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockHeaderError> {
     let expected_excess_blob_gas = chain_config
-        .get_blob_schedule_for_time(header.timestamp)
+        .get_fork_blob_schedule(header.timestamp)
         .map(|schedule| {
-            calc_excess_blob_gas(
-                parent_header,
-                schedule,
-                chain_config.get_fork(header.timestamp),
-            )
+            calc_excess_blob_gas(parent_header, schedule, chain_config.fork(header.timestamp))
         })
         .unwrap_or_default();
     if header
@@ -900,7 +896,9 @@ mod test {
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
+        assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
+        assert_eq!(block.encode_to_vec().len(), block.length());
     }
 
     #[test]

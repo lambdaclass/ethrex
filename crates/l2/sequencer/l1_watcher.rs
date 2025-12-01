@@ -266,7 +266,7 @@ impl L1Watcher {
     }
 
     async fn privileged_transaction_already_processed(
-        &mut self,
+        &self,
         tx_hash: H256,
     ) -> Result<bool, L1WatcherError> {
         if self
@@ -286,7 +286,7 @@ impl L1Watcher {
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 
-    async fn health(&mut self) -> CallResponse<Self> {
+    async fn health(&self) -> CallResponse<Self> {
         let l1_rpc_healthcheck = self.eth_client.test_urls().await;
         let l2_rpc_healthcheck = self.l2_client.test_urls().await;
 
