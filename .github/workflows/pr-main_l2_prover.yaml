@@ -77,11 +77,11 @@ jobs:
 
       - name: Check ${{ matrix.backend }} backend
         run: |
-          cargo ${{ matrix.backend == 'pico' && '+nightly' || '' }} check -r -p ethrex-prover -F "${{ matrix.backend }},ci"
+          cargo ${{ matrix.backend == 'pico' && '+nightly-2025-08-04' || '' }} check -r -p ethrex-prover -F "${{ matrix.backend }},ci"
 
       - name: Clippy ${{ matrix.backend }} backend
         run: |
-          cargo ${{ matrix.backend == 'pico' && '+nightly' || '' }} clippy -r -p ethrex-prover --all-targets -F "${{ matrix.backend }},ci"
+          cargo ${{ matrix.backend == 'pico' && '+nightly-2025-08-04' || '' }} clippy -r -p ethrex-prover --all-targets -F "${{ matrix.backend }},ci"
 
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |
