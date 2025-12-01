@@ -55,6 +55,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
+use ethrex_common::utils::ProfilingGuard;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -256,9 +257,13 @@ pub fn start_block_executor(
         .name("block_executor".to_string())
         .spawn(move || {
             while let Some((notify, block)) = block_receiver.blocking_recv() {
+                let profiler_guard = ProfilingGuard::start_profiling(9997, || {
+                    format!("block-execution-{}", hex::encode(&block.header.hash()[..4]))
+                });
                 let _ = notify
                     .send(blockchain.add_block_pipeline(block))
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
+                profiler_guard.stop();
             }
         })
         .expect("Falied to spawn block_executor thread");

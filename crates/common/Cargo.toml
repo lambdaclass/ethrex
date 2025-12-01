@@ -32,6 +32,7 @@ url.workspace = true
 rkyv.workspace = true
 rustc-hash.workspace = true
 k256.workspace = true
+pprof = { version = "0.15.0", features = ["flamegraph", "frame-pointer", "protobuf", "protobuf-codec", "prost-codec", "perfmaps", "huge-depth"], optional = true }
 
 secp256k1 = { workspace = true, optional = true }
 
@@ -47,6 +48,8 @@ risc0 = ["ethrex-crypto/risc0"]
 sp1 = []
 zisk = []
 openvm = ["ethrex-crypto/openvm"]
+
+profiling = ["dep:pprof"]
 
 [lib]
 path = "./common.rs"

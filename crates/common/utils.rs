@@ -79,6 +79,78 @@ pub fn truncate_array<const N: usize, const M: usize>(data: [u8; N]) -> [u8; M] 
     res
 }
 
+// Profiling tools
+#[cfg(feature = "profiling")]
+pub mod profiling {
+    use tracing::warn;
+    // TODO: convert to message passing with a dedicated thread
+    // so the rest of the program doesn't need to block.
+    pub struct ProfilingGuard {
+        // Keep the result so we don't pollute the callers with error checking
+        guard: pprof::Result<pprof::ProfilerGuard<'static>>,
+        name: String,
+    }
+    impl ProfilingGuard {
+        pub fn stop(self) {
+            use pprof::{flamegraph::Options, protos::Message};
+
+            let Ok(guard) = self.guard else {
+                warn!("Building profiler guard failed, no profile will be created");
+                return;
+            };
+            let Ok(report) = guard.report().build() else {
+                warn!("Building profiler report failed, no profile will be created");
+                return;
+            };
+            let Ok(mut files): Result<Vec<_>, _> =
+                ["profile", "pb", "flamegraph", "svg", "flamechart", "svg"]
+                    .chunks_exact(2)
+                    .map(|c| std::fs::File::create(format!("{}-{}.{}", c[0], &self.name, c[1])))
+                    .collect()
+            else {
+                warn!("Failed to create files, no profile will be created");
+                return;
+            };
+            if let Ok(profile) = report.pprof() {
+                _ = profile
+                    .write_to_writer(&mut files[0])
+                    .inspect_err(|e| warn!("Profile writing failed: {e}"));
+            };
+            _ = report
+                .flamegraph(&mut files[1])
+                .inspect_err(|e| warn!("Flamegraph writing failed: {e}"));
+            let mut chart_opts = Options::default();
+            chart_opts.flame_chart = true;
+            _ = report
+                .flamegraph_with_options(&mut files[2], &mut chart_opts)
+                .inspect_err(|e| warn!("Flamechart writing failed: {e}"));
+        }
+        pub fn start_profiling(freq: i32, name: impl FnOnce() -> String) -> ProfilingGuard {
+            let guard = pprof::ProfilerGuardBuilder::default()
+                .frequency(freq)
+                .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+                .build();
+            ProfilingGuard {
+                guard,
+                name: name(),
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "profiling"))]
+pub mod profiling {
+    pub struct ProfilingGuard();
+    impl ProfilingGuard {
+        pub fn stop(self) {}
+        pub fn start_profiling(_freq: i32, _name: impl FnOnce() -> String) -> ProfilingGuard {
+            ProfilingGuard()
+        }
+    }
+}
+
+pub use profiling::*;
+
 #[cfg(test)]
 mod test {
     use ethereum_types::U256;

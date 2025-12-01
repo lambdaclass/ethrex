@@ -19,11 +19,11 @@ use crate::{
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
-use ethrex_common::types::Code;
 use ethrex_common::{
     H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{AccountState, Block, BlockHash, BlockHeader},
+    types::{AccountState, Block, BlockHash, BlockHeader, Code},
+    utils::ProfilingGuard,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
@@ -304,6 +304,9 @@ impl Syncer {
     ) -> Result<(), SyncError> {
         info!("Syncing to sync_head {:?}", sync_head);
 
+        let profile_guard = ProfilingGuard::start_profiling(997, || {
+            format!("fullsync-{}", hex::encode(&sync_head[..4]))
+        });
         // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
         let mut pending_blocks = vec![];
         while let Some(block) = store.get_pending_block(sync_head).await? {
@@ -433,6 +436,7 @@ impl Syncer {
         }
 
         store.clear_fullsync_headers().await?;
+        profile_guard.stop();
         Ok(())
     }
 

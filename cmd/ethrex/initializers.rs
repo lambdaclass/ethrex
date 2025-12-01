@@ -6,8 +6,8 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
-use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
+use ethrex_common::{fd_limit::raise_fd_limit, utils::ProfilingGuard};
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
@@ -417,7 +417,9 @@ pub async fn init_l1(
         },
     );
 
+    let profile_guard = ProfilingGuard::start_profiling(997, || "regenerate_head".to_string());
     regenerate_head_state(&store, &blockchain).await?;
+    profile_guard.stop();
 
     let signer = get_signer(datadir);
 
