@@ -383,7 +383,7 @@ impl StoreEngine for Store {
 
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
         // Store cancun timestamp
-        self.inner()?.chain_data.chain_config = Some(*chain_config);
+        self.inner()?.chain_data.chain_config = Some(chain_config.clone());
         Ok(())
     }
 
