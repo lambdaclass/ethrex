@@ -1,3 +1,5 @@
+#[cfg(feature = "l2")]
+use ethrex_common::types::balance_diff::BalanceDiff;
 use ethrex_common::{H256, U256};
 use serde::{Deserialize, Serialize};
 
@@ -13,8 +15,8 @@ pub struct ProgramOutput {
     /// merkle root of all messages in a batch
     pub l1messages_merkle_root: H256,
     #[cfg(feature = "l2")]
-    /// hash of all the privileged transactions made in a batch
-    pub privileged_transactions_hash: H256,
+    /// hash of all the deposit transactions included in a batch
+    pub deposit_transactions_hash: H256,
     #[cfg(feature = "l2")]
     /// blob commitment versioned hash
     pub blob_versioned_hash: H256,
@@ -29,7 +31,7 @@ pub struct ProgramOutput {
     pub l2messages_merkle_root: H256,
     #[cfg(feature = "l2")]
     /// balance diffs for each chain id
-    pub balance_diffs: Vec<(U256, U256)>, // (chain_id, balance_diff)
+    pub balance_diffs: Vec<BalanceDiff>,
 }
 
 impl ProgramOutput {
@@ -40,7 +42,7 @@ impl ProgramOutput {
             #[cfg(feature = "l2")]
             self.l1messages_merkle_root.to_fixed_bytes(),
             #[cfg(feature = "l2")]
-            self.privileged_transactions_hash.to_fixed_bytes(),
+            self.deposit_transactions_hash.to_fixed_bytes(),
             #[cfg(feature = "l2")]
             self.blob_versioned_hash.to_fixed_bytes(),
             self.last_block_hash.to_fixed_bytes(),
@@ -51,10 +53,12 @@ impl ProgramOutput {
         ]
         .concat();
         #[cfg(feature = "l2")]
-        for (chain_id, balance_diff) in &self.balance_diffs {
-            encoded.extend_from_slice(&chain_id.to_big_endian());
-            encoded.extend_from_slice(&balance_diff.to_big_endian());
+        for diff in &self.balance_diffs {
+            encoded.extend_from_slice(&diff.chain_id.to_big_endian());
+            encoded.extend_from_slice(&diff.value.to_big_endian());
+            encoded.extend(diff.messasge_hashes.iter().flat_map(|h| h.to_fixed_bytes()));
         }
+
         encoded
     }
 }

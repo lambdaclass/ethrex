@@ -21,6 +21,18 @@ contract Router is
 
     uint256[] public registeredChainIds;
 
+    modifier onlyRegisteredBridge() {
+        addresses = getRegisteredAddresses();
+        bool isRegistered = false;
+        for (uint i = 0; i < addresses.length; i++) {
+            if (msg.sender == addresses[i]) {
+                isRegistered = true;
+                break;
+            }
+        }
+        require(isRegistered, "Router: Caller is not a registered bridge");
+    }
+
     function initialize(address owner) public initializer {
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -57,31 +69,16 @@ contract Router is
     }
 
     /// @inheritdoc IRouter
-    function sendMessage(uint256 chainId) public payable override {
-        if (bridges[chainId] == address(0)) {
-            emit TransferToChainNotRegistered(chainId);
-        } else {
-            ICommonBridge(bridges[chainId]).receiveMessage{value: msg.value}();
-        }
-    }
-
-    /// @inheritdoc IRouter
-    function verifyMessage(
+    function sendMessages(
         uint256 chainId,
-        uint256 l2MessageBatchNumber,
-        bytes32 l2MessageLeaf,
-        bytes32[] calldata l2MessageProof
-    ) external view returns (bool) {
-        address bridge = bridges[chainId];
-        if (bridge == address(0)) {
-            revert ChainNotRegistered(chainId);
+        bytes32[] messasge_hashes
+    ) public payable override onlyRegisteredBridge {
+        if (bridges[chainId] == address(0)) {
+            revert TransferToChainNotRegistered(chainId);
         }
-        return
-            ICommonBridge(bridge).verifyMessage(
-                l2MessageLeaf,
-                l2MessageBatchNumber,
-                l2MessageProof
-            );
+        ICommonBridge(bridges[chainId]).receiveMessage{value: msg.value}(
+            message_hashes
+        );
     }
 
     /// @notice Allow owner to upgrade the contract.
@@ -101,7 +98,9 @@ contract Router is
     function removeChainID(uint256 chainId) internal {
         for (uint i = 0; i < registeredChainIds.length; i++) {
             if (registeredChainIds[i] == chainId) {
-                registeredChainIds[i] = registeredChainIds[registeredChainIds.length - 1];
+                registeredChainIds[i] = registeredChainIds[
+                    registeredChainIds.length - 1
+                ];
                 registeredChainIds.pop();
                 return;
             }
@@ -110,5 +109,17 @@ contract Router is
 
     function getRegisteredChainIds() external view returns (uint256[] memory) {
         return registeredChainIds;
+    }
+
+    function getRegisteredAddresses()
+        external
+        view
+        returns (address[] memory addresses)
+    {
+        addresses = new address[](registeredChainIds.length);
+        for (uint i = 0; i < registeredChainIds.length; i++) {
+            addresses[i] = bridges[registeredChainIds[i]];
+        }
+        return addresses;
     }
 }

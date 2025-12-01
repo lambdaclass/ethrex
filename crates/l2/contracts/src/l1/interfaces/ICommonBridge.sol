@@ -58,6 +58,7 @@ interface ICommonBridge {
     struct BalanceDiff {
         uint256 chainId;
         uint256 value;
+        bytes32[] messasge_hashes;
     }
 
     /// @notice Method to retrieve all the pending transaction hashes.
@@ -121,11 +122,9 @@ interface ICommonBridge {
     /// @dev This method is used by the L2 OnChainProposer to publish the L2
     /// messages when an L2 batch is committed.
     /// @param l2MessagesBatchNumber the batch number in L2 where the l2 messages were emitted.
-    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
-    /// @param balanceDiffs Array of balance differences for cross-chain accounting.
+    /// @param balanceDiffs Array of balance differences and associated message hashes to be sent to different chains.
     function publishL2Messages(
         uint256 l2MessagesBatchNumber,
-        bytes32 l2MessagesMerkleRoot,
         BalanceDiff[] calldata balanceDiffs
     ) external;
 
@@ -141,10 +140,13 @@ interface ICommonBridge {
         bytes32[] calldata l2MessageProof
     ) external view returns (bool);
 
-    /// @notice Receives a message from another chain via shared bridge router.
+    /// @notice Receives messages from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
-    function receiveMessage() external payable;
+    /// @param messasge_hashes The hashes of the messages being received.
+    function receiveMessages(
+        bytes32[] calldata messasge_hashes
+    ) external payable;
 
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:

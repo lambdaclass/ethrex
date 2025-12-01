@@ -384,13 +384,10 @@ contract OnChainProposer is
             }
         }
 
-        if (batchCommitments[batchNumber].l2MessagesMerkleRoot != bytes32(0)) {
-            ICommonBridge(BRIDGE).publishL2Messages(
-                batchNumber,
-                batchCommitments[batchNumber].l2MessagesMerkleRoot,
-                batchCommitments[batchNumber].balanceDiffs
-            );
-        }
+        ICommonBridge(BRIDGE).publishL2Messages(
+            batchNumber,
+            batchCommitments[batchNumber].balanceDiffs
+        );
 
         lastVerifiedBatch = batchNumber;
 
@@ -494,8 +491,19 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        uint256 registered_chains = batchCommitments[batchNumber].balanceDiffs.length;
-        if (publicData.length != 288 + 64 * registered_chains) {
+        uint256 targetedChains = batchCommitments[batchNumber]
+            .balanceDiffs
+            .length;
+        uint256 messagesCount = 0;
+        for (uint256 i = 0; i < targetedChains; i++) {
+            messagesCount += batchCommitments[batchNumber]
+                .balanceDiffs[i]
+                .messasge_hashes
+                .length;
+        }
+        if (
+            publicData.length != 288 + 64 * targetedChains + messagesCount * 32
+        ) {
             return "00n"; // invalid public data length
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -563,17 +571,38 @@ contract OnChainProposer is
                 "00w"; // l2 messages merkle root public inputs don't match with committed l2 messages merkle root
         }
 
-        for (uint256 i = 0; i < registered_chains; i++) {
-            uint256 offset = 288 + i * 64;
+        uint256 offset = 288;
+        for (uint256 i = 0; i < targetedChains; i++) {
             uint256 chainId = uint256(bytes32(publicData[offset:offset + 32]));
-            uint256 value = uint256(bytes32(publicData[offset + 32:offset + 64]));
+            uint256 value = uint256(
+                bytes32(publicData[offset + 32:offset + 64])
+            );
+            uint256 messagesCount = batchCommitments[batchNumber]
+                .balanceDiffs[i]
+                .messasge_hashes
+                .length;
             if (
-                batchCommitments[batchNumber].balanceDiffs[i].chainId != chainId ||
+                batchCommitments[batchNumber].balanceDiffs[i].chainId !=
+                chainId ||
                 batchCommitments[batchNumber].balanceDiffs[i].value != value
             ) {
                 return
                     "00x"; // balance diffs public inputs don't match with committed balance diffs
             }
+            for (uint256 j = 0; j < messagesCount; j++) {
+                bytes32 messageHash = bytes32(
+                    publicData[offset + 64 + j * 32:offset + 64 + (j + 1) * 32]
+                );
+                if (
+                    batchCommitments[batchNumber]
+                        .balanceDiffs[i]
+                        .messasge_hashes[j] != messageHash
+                ) {
+                    return "00y"; // message hash public inputs don't match with committed message hashes
+                }
+            }
+
+            offset += 64 + messagesCount * 32;
         }
         return "";
     }

@@ -29,8 +29,7 @@ use ethrex_l2_common::{
         get_l1_message_hash, get_l2_message_hash,
     },
     privileged_transactions::{
-        PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash,
-        get_block_l1_privileged_transactions,
+        PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash, get_block_deposits,
     },
     prover::ProverInputData,
 };
@@ -555,7 +554,7 @@ impl L1Committer {
             new_state_root,
             l1_message_hashes,
             l2_messages,
-            privileged_transactions_hash,
+            deposit_transactions_hash,
             last_block_of_batch,
         )) = result
         else {
@@ -563,7 +562,6 @@ impl L1Committer {
             return Ok(None);
         };
 
-        let balance_diffs = get_balance_diffs(&l2_messages);
         let l2_message_hashes: Vec<H256> = l2_messages.iter().map(get_l2_message_hash).collect();
         info!("l2 messages hashes in batch: {}", l2_message_hashes.len());
 
@@ -572,10 +570,9 @@ impl L1Committer {
             first_block: first_block_to_commit,
             last_block: last_block_of_batch,
             state_root: new_state_root,
-            privileged_transactions_hash,
+            deposit_transactions_hash,
             l1_message_hashes,
             l2_message_hashes,
-            balance_diffs,
             blobs_bundle,
             commit_tx: None,
             verify_tx: None,
@@ -640,10 +637,10 @@ impl L1Committer {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
-        let mut acc_privileged_txs = vec![];
+        let mut acc_deposits = vec![];
         let mut l1_message_hashes = vec![];
         let mut acc_l2_messages = vec![];
-        let mut privileged_transactions_hashes = vec![];
+        let mut deposit_transactions_hashes = vec![];
         let mut new_state_root = H256::default();
         let mut acc_gas_used = 0_u64;
         let mut acc_blocks = vec![];
@@ -728,8 +725,7 @@ impl L1Committer {
             let l1_messages = get_block_l1_messages(&receipts);
             let l2_messages = get_block_l2_messages(&receipts);
             info!("Got l2 messages: {}", l2_messages.len());
-            let privileged_transactions =
-                get_block_l1_privileged_transactions(&txs, self.store.chain_config.chain_id);
+            let deposits = get_block_deposits(&txs, self.store.chain_config.chain_id);
 
             // Get block account updates.
             let account_updates = if let Some(account_updates) = self
@@ -792,10 +788,10 @@ impl L1Committer {
             }
 
             // Accumulate block data with the rest of the batch.
-            acc_privileged_txs.extend(privileged_transactions.clone());
+            acc_deposits.extend(deposits.clone());
 
-            let acc_privileged_txs_len: u64 = acc_privileged_txs.len().try_into()?;
-            if acc_privileged_txs_len > PRIVILEGED_TX_BUDGET {
+            let deposits_len: u64 = acc_deposits.len().try_into()?;
+            if deposits_len > PRIVILEGED_TX_BUDGET {
                 warn!(
                     "Privileged transactions budget exceeded. Any remaining blocks will be processed in the next batch."
                 );
@@ -845,8 +841,8 @@ impl L1Committer {
                 blob_size = latest_blob_size;
             );
 
-            privileged_transactions_hashes.extend(
-                privileged_transactions
+            deposit_transactions_hashes.extend(
+                deposits
                     .iter()
                     .filter_map(|tx| tx.get_privileged_hash())
                     .collect::<Vec<H256>>(),
@@ -873,7 +869,7 @@ impl L1Committer {
         }
 
         metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
-                privileged_transactions_hashes.len().try_into(),
+                deposit_transactions_hashes.len().try_into(),
                 l1_message_hashes.len().try_into()
             ) {
                 let _ = self
@@ -896,12 +892,12 @@ impl L1Committer {
         );
 
         info!(
-            "Added {} privileged transactions to the batch",
-            privileged_transactions_hashes.len()
+            "Added {} deposits to the batch",
+            deposit_transactions_hashes.len()
         );
 
-        let privileged_transactions_hash =
-            compute_privileged_transactions_hash(privileged_transactions_hashes)?;
+        let deposit_transactions_hash =
+            compute_privileged_transactions_hash(deposit_transactions_hashes)?;
 
         let last_block_hash = acc_blocks
             .last()
@@ -925,7 +921,7 @@ impl L1Committer {
             new_state_root,
             l1_message_hashes,
             acc_l2_messages,
-            privileged_transactions_hash,
+            deposit_transactions_hash,
             last_added_block_number,
         )))
     }
@@ -1086,21 +1082,32 @@ impl L1Committer {
 
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
         let l1_messages_merkle_root = compute_merkle_root(&batch.l1_message_hashes);
-        let l2_messages_merkle_root = compute_merkle_root(&batch.l2_message_hashes);
         debug!("l2 messages merkle root: {l2_messages_merkle_root:#x}");
         debug!("l2 messages hashes len: {}", batch.l2_message_hashes.len());
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
-        let balance_diffs: Vec<Value> = batch
+        let balance_diffs = get_balance_diffs(&l2_messages);
+        let balance_diff_values: Vec<Value> = batch
             .balance_diffs
             .iter()
-            .map(|d| Value::Tuple(vec![Value::Uint(d.chain_id), Value::Uint(d.value)]))
+            .map(|d| {
+                Value::Tuple(vec![
+                    Value::Uint(d.chain_id),
+                    Value::Uint(d.value),
+                    Value::Array(
+                        d.message_hashes
+                            .iter()
+                            .map(|h| Value::FixedBytes(h.0.to_vec().into()))
+                            .collect(),
+                    ),
+                ])
+            })
             .collect();
 
         let mut calldata_values = vec![
             Value::Uint(U256::from(batch.number)),
             Value::FixedBytes(batch.state_root.0.to_vec().into()),
             Value::FixedBytes(l1_messages_merkle_root.0.to_vec().into()),
-            Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
+            Value::FixedBytes(batch.deposit_transactions_hash.0.to_vec().into()),
             Value::FixedBytes(last_block_hash.0.to_vec().into()),
         ];
 
@@ -1125,7 +1132,7 @@ impl L1Committer {
             (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
         } else {
             calldata_values.push(Value::FixedBytes(l2_messages_merkle_root.0.to_vec().into()));
-            calldata_values.push(Value::Array(balance_diffs));
+            calldata_values.push(Value::Array(balance_diff_values));
             (COMMIT_FUNCTION_SIGNATURE, calldata_values)
         };
 

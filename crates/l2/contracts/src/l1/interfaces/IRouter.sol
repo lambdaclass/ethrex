@@ -13,21 +13,13 @@ interface IRouter {
     /// @param chainId The ID of the chain to deregister.
     function deregister(uint256 chainId) external;
 
-    /// @notice Sends a message to a specified chain via its CommonBridge.
+    /// @notice Sends messages to a specified chain via its CommonBridge.
     /// @param chainId The ID of the destination chain.
-    function sendMessage(uint256 chainId) external payable;
-
-    /// @notice Verifies a message from a specified chain via its CommonBridge.
-    /// @param chainId The ID of the source chain.
-    /// @param l2MessageBatchNumber The batch number where the L2 message was emitted.
-    /// @param l2MessageLeaf The leaf of the L2 message to verify.
-    /// @param l2MessageProof The Merkle proof for the L2 message.
-    function verifyMessage(
+    /// @param messasge_hashes The hashes of the messages to be sent.
+    function sendMessages(
         uint256 chainId,
-        uint256 l2MessageBatchNumber,
-        bytes32 l2MessageLeaf,
-        bytes32[] calldata l2MessageProof
-    ) external view returns (bool);
+        bytes32[] calldata messasge_hashes
+    ) external payable;
 
     /// @notice Emitted when a new chain is registered.
     /// @param chainId The ID of the registered chain.
@@ -37,7 +29,6 @@ interface IRouter {
     /// @notice Emitted when a chain is deregistered.
     /// @param chainId The ID of the deregistered chain.
     event ChainDeregistered(uint256 indexed chainId);
-
 
     /// @notice Emitted when a message is sent to a chain that is not registered.
     /// @param chainId The ID of the chain that is not registered.
@@ -51,7 +42,7 @@ interface IRouter {
     /// @param chainId The ID of the already registered chain.
     error ChainAlreadyRegistered(uint256 chainId);
 
-    /// @notice Error indicating a chain is not registered.
-    /// @param chainId The ID of the not registered chain.
-    error ChainNotRegistered(uint256 chainId);
+    /// @notice Error indicating the caller is not a registered bridge.
+    /// @param caller The address of the caller.
+    error CallerNotBridge(address caller);
 }

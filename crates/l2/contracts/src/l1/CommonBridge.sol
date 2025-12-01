@@ -9,7 +9,9 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {
+    MerkleProof
+} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
@@ -105,12 +107,11 @@ contract CommonBridge is
     /// @notice Address of the SharedBridgeRouter contract
     address public SHARED_BRIDGE_ROUTER = address(0);
 
-    /// @notice Mapping of merkle roots to the L2 withdrawal transaction logs.
-    /// @dev The key is the L2 batch number where the messages were emitted.
-    /// @dev The value is the merkle root of the messages.
-    /// @dev If there exist a merkle root for a given batch number it means
-    /// that the messages were published on L1, and that that batch was committed.
-    mapping(uint256 => bytes32) public l2MessagesMerkleRoots;
+    /// @notice Mapping of chain ID to array of pending message hashes received from that chain.
+    mapping(uint256 => bytes32[]) public pendingMessagesHashesPerChain;
+
+    /// @notice Mapping of chain ID to index of the first unprocessed message hash in the array.
+    mapping(uint256 => bytes32) public pendingMessagesIndexPerChain;
 
     modifier onlyOnChainProposer() {
         require(
@@ -355,30 +356,33 @@ contract CommonBridge is
     /// @inheritdoc ICommonBridge
     function publishL2Messages(
         uint256 l2MessagesBatchNumber,
-        bytes32 l2MessagesMerkleRoot,
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer {
-        require(
-            l2MessagesMerkleRoots[l2MessagesBatchNumber] == bytes32(0),
-            "CommonBridge: l2 messages already published"
-        );
-        l2MessagesMerkleRoots[
-            l2MessagesBatchNumber
-        ] = l2MessagesMerkleRoot;
-        emit L2MessagesPublished(l2MessagesBatchNumber, l2MessagesMerkleRoot);
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: balanceDiffs[i].value}(
-                balanceDiffs[i].chainId
-            );
+            IRouter(SHARED_BRIDGE_ROUTER).sendMessage{
+                value: balanceDiffs[i].value
+            }(balanceDiffs[i].chainId, balanceDiffs[i].messasge_hashes);
         }
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveMessage() public override payable {
+    function receiveMessages(
+        bytes32 chainID,
+        bytes32[] memory message_hashes
+    ) public payable override {
         require(
             msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"
         );
+
+        // Append new hashes instead of overwriting
+        for (uint i = 0; i < message_hashes.length; i++) {
+            pendingMessagesHashesPerChain[chainID].push(message_hashes[i]);
+
+            privilegedTxDeadline[message_hashes[i]] =
+                block.timestamp +
+                PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
+        }
     }
 
     /// @inheritdoc ICommonBridge
@@ -387,11 +391,12 @@ contract CommonBridge is
         uint256 l2MessageBatchNumber,
         bytes32[] calldata l2MessageProof
     ) external view override returns (bool) {
-        return MerkleProof.verify(
-            l2MessageProof,
-            l2MessagesMerkleRoots[l2MessageBatchNumber],
-            l2MessageLeaf
-        );
+        return
+            MerkleProof.verify(
+                l2MessageProof,
+                l2MessagesMerkleRoots[l2MessageBatchNumber],
+                l2MessageLeaf
+            );
     }
 
     /// @inheritdoc ICommonBridge
