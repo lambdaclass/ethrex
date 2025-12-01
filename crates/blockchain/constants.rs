@@ -18,6 +18,9 @@ pub const TX_ACCESS_LIST_ADDRESS_GAS: u64 = 2400;
 // Gas cost for each storage key specified on access lists
 pub const TX_ACCESS_LIST_STORAGE_KEY_GAS: u64 = 1900;
 
+// Gas cost for each non zero byte on transaction data
+pub const TX_DATA_NON_ZERO_GAS: u64 = 68;
+
 // === EIP-170 constants ===
 
 // Max bytecode size
@@ -34,7 +37,7 @@ pub const MAX_TRANSACTION_DATA_SIZE: u32 = 4 * 32 * 1024; // 128 Kb
 // === EIP-2028 constants ===
 
 // Gas cost for each non zero byte on transaction data
-pub const TX_DATA_NON_ZERO_GAS: u64 = 16;
+pub const TX_DATA_NON_ZERO_GAS_EIP2028: u64 = 16;
 
 // === EIP-4844 constants ===
 

@@ -2,7 +2,7 @@ use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
-use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork, Fork::*};
+use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -62,7 +62,7 @@ impl RpcHandler for NewPayloadV2Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let chain_config = &context.storage.get_chain_config();
-        if chain_config.is_fork_activated(Shanghai, self.payload.timestamp) {
+        if chain_config.is_shanghai_activated(self.payload.timestamp) {
             validate_execution_payload_v2(&self.payload)?;
         } else {
             // Behave as a v1
@@ -206,7 +206,7 @@ impl RpcHandler for NewPayloadV4Request {
 
         let chain_config = context.storage.get_chain_config();
 
-        if !chain_config.is_fork_activated(Prague, block.header.timestamp) {
+        if !chain_config.is_prague_activated(block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
@@ -334,13 +334,13 @@ impl RpcHandler for GetPayloadV4Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config();
 
-        if !chain_config.is_fork_activated(Prague, payload_bundle.block.header.timestamp) {
+        if !chain_config.is_prague_activated(payload_bundle.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
-        if chain_config.is_fork_activated(Osaka, payload_bundle.block.header.timestamp) {
+        if chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!("{:?}", Fork::Osaka)));
         }
 
@@ -386,7 +386,7 @@ impl RpcHandler for GetPayloadV5Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config();
 
-        if !chain_config.is_fork_activated(Osaka, payload_bundle.block.header.timestamp) {
+        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
@@ -543,7 +543,7 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
 
 fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
     let chain_config = &context.storage.get_chain_config();
-    if chain_config.is_fork_activated(Cancun, block.header.timestamp) {
+    if chain_config.is_cancun_activated(block.header.timestamp) {
         return Err(RpcErr::UnsuportedFork(
             "Cancun payload received".to_string(),
         ));

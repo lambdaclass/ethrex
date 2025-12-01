@@ -151,8 +151,8 @@ where
             "Cancun" => Fork::Cancun,
             "Prague" => Fork::Prague,
             "Byzantium" => Fork::Byzantium,
-            "EIP158" => Fork::EIP158,
-            "EIP150" => Fork::EIP150,
+            "EIP158" => Fork::SpuriousDragon,
+            "EIP150" => Fork::Tangerine,
             other => {
                 return Err(serde::de::Error::custom(format!(
                     "Unknown fork name: {other}",

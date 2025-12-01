@@ -1,9 +1,7 @@
 use ethrex_common::{
     H256,
     serde_utils::{self},
-    types::{
-        Blob, CELLS_PER_EXT_BLOB, Fork::*, Proof, blobs_bundle::kzg_commitment_to_versioned_hash,
-    },
+    types::{Blob, CELLS_PER_EXT_BLOB, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -122,7 +120,7 @@ impl RpcHandler for BlobsV2Request {
             && !context
                 .storage
                 .get_chain_config()
-                .is_fork_activated(Osaka, current_block_header.timestamp)
+                .is_osaka_activated(current_block_header.timestamp)
         {
             // validation requested in https://github.com/ethereum/execution-apis/blob/a1d95fb555cd91efb3e0d6555e4ab556d9f5dd06/src/engine/osaka.md?plain=1#L130
             return Err(RpcErr::UnsuportedFork(
