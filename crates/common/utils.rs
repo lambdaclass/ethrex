@@ -91,7 +91,7 @@ pub mod profiling {
         name: String,
     }
     impl ProfilingGuard {
-        pub fn stop(mut self) {
+        pub fn stop(self) {
             use pprof::{flamegraph::Options, protos::Message};
 
             let Ok(guard) = self.guard else {
