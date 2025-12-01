@@ -1605,15 +1605,16 @@ dependencies = [
 [[package]]
 name = "kzg-rs"
 version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9201effeea3fcc93b587904ae2df9ce97e433184b9d6d299e9ebc9830a546636"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-kzg/?branch=zisk-patch%2Fv0.2.7#e1554d6708338a8a0296522ffb5355669c37a4ab"
 dependencies = [
+ "cfg-if",
  "ff",
  "hex",
  "serde_arrays",
  "sha2",
  "sp1_bls12_381",
  "spin",
+ "ziskos",
 ]
 
 [[package]]

@@ -28,6 +28,7 @@ k256 = { git = "https://github.com/0xPolygonHermez/zisk-patch-elliptic-curves.gi
 substrate-bn = { git = "https://github.com/0xPolygonHermez/zisk-patch-bn.git", tag = "patch-0.6.0-zisk-0.14.0" }
 sp1_bls12_381 = { git = "https://github.com/han0110/bls12_381.git", branch = "zisk-patch/v0.8.0-upgrade-sp1-lib" }
 tiny-keccak = { git = "https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak/", branch = "zisk" }
+kzg-rs = { git = "https://github.com/0xPolygonHermez/zisk-patch-kzg/", branch = "zisk-patch/v0.2.7" }
 
 [features]
 l2 = ["guest_program/l2"]
