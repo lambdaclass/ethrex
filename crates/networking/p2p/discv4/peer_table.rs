@@ -75,7 +75,6 @@ impl Contact {
     }
 
     pub fn record_enr_request_sent(&mut self, request_hash: H256) {
-        self.validation_timestamp = Some(Instant::now());
         self.enr_request_hash = Some(request_hash);
     }
 

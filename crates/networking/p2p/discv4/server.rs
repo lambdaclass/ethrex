@@ -41,11 +41,6 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
 pub const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
 pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
-/// The initial interval between enr lookups, until the number of peers reaches
-/// [target_peers](DiscoverySideCarState::target_peers), or the number of
-/// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_ENR_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
-pub const ENR_LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -298,15 +293,6 @@ impl DiscoveryServer {
                 .await?;
         }
         Ok(())
-    }
-
-    async fn get_enr_lookup_interval(&mut self) -> Duration {
-        if !self.peer_table.target_reached().await.unwrap_or(false) {
-            INITIAL_ENR_LOOKUP_INTERVAL
-        } else {
-            trace!("Reached target number of peers or contacts. Using longer enr lookup interval.");
-            ENR_LOOKUP_INTERVAL
-        }
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
@@ -632,7 +618,7 @@ impl GenServer for DiscoveryServer {
                     .await
                     .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
 
-                let interval = self.get_enr_lookup_interval().await;
+                let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::EnrLookup);
             }
             Self::CastMsg::Prune => {
