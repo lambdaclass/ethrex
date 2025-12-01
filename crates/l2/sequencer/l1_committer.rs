@@ -442,7 +442,7 @@ impl L1Committer {
     }
 
     async fn execute_batch_to_generate_checkpoint(
-        &mut self,
+        &self,
         batch: &Batch,
         one_time_checkpoint_store: Store,
         one_time_checkpoint_blockchain: Arc<Blockchain>,
@@ -621,7 +621,7 @@ impl L1Committer {
     }
 
     async fn prepare_batch_from_block(
-        &mut self,
+        &self,
         mut last_added_block_number: BlockNumber,
         batch_number: u64,
         checkpoint_store: Store,
@@ -1243,7 +1243,7 @@ impl L1Committer {
         self.cancellation_token = Some(handle.cancellation_token);
     }
 
-    async fn health(&mut self) -> CallResponse<Self> {
+    async fn health(&self) -> CallResponse<Self> {
         let rpc_urls = self.eth_client.test_urls().await;
         let signer_status = self.signer.health().await;
 
