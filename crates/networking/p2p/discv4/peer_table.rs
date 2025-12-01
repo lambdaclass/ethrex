@@ -75,6 +75,7 @@ impl Contact {
     }
 
     pub fn record_enr_request_sent(&mut self, request_hash: H256) {
+        self.validation_timestamp = Some(Instant::now());
         self.enr_request_hash = Some(request_hash);
     }
 
@@ -385,19 +386,6 @@ impl PeerTable {
         }
     }
 
-    ///Get a contact by node_id
-    pub async fn get_contact(&mut self, node_id: H256) -> Result<Option<Contact>, PeerTableError> {
-        match self
-            .handle
-            .call(CallMessage::GetContact { node_id })
-            .await?
-        {
-            OutMessage::Contact(contact) => Ok(Some(*contact)),
-            OutMessage::NotFound => Ok(None),
-            _ => unreachable!(),
-        }
-    }
-
     /// Provide a contact to initiate a connection
     pub async fn get_contact_to_initiate(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactToInitiate).await? {
@@ -410,6 +398,19 @@ impl PeerTable {
     /// Provide a contact to perform Discovery lookup
     pub async fn get_contact_for_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactForLookup).await? {
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Provide a contact to perform ENR lookup
+    pub async fn get_contact_for_enr_lookup(&mut self) -> Result<Option<Contact>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetContactForEnrLookup)
+            .await?
+        {
             OutMessage::Contact(contact) => Ok(Some(*contact)),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
@@ -676,8 +677,19 @@ impl PeerTableServer {
             .cloned()
     }
 
-    fn get_contact(&mut self, node_id: H256) -> Option<Contact> {
-        self.contacts.get(&node_id).cloned()
+    fn get_contact_for_enr_lookup(&mut self) -> Option<Contact> {
+        self.contacts
+            .values()
+            .filter(|c| {
+                c.was_validated()
+                    && !c.has_pending_enr_request()
+                    && c.record.is_none()
+                    && !c.disposable
+            })
+            .collect::<Vec<_>>()
+            .choose(&mut rand::rngs::OsRng)
+            .cloned()
+            .cloned()
     }
 
     fn get_contacts_to_revalidate(&mut self, revalidation_interval: Duration) -> Vec<Contact> {
@@ -894,9 +906,9 @@ enum CallMessage {
     PeerCountByCapabilities { capabilities: Vec<Capability> },
     TargetReached,
     TargetPeersReached,
-    GetContact { node_id: H256 },
     GetContactToInitiate,
     GetContactForLookup,
+    GetContactForEnrLookup,
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
     GetScore { node_id: H256 },
@@ -971,11 +983,6 @@ impl GenServer for PeerTableServer {
             CallMessage::TargetPeersReached => CallResponse::Reply(Self::OutMsg::TargetReached(
                 self.peers.len() >= self.target_peers,
             )),
-            CallMessage::GetContact { node_id } => CallResponse::Reply(
-                self.get_contact(node_id)
-                    .map(Box::new)
-                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
-            ),
             CallMessage::GetContactToInitiate => CallResponse::Reply(
                 self.get_contact_to_initiate()
                     .map(Box::new)
@@ -983,6 +990,11 @@ impl GenServer for PeerTableServer {
             ),
             CallMessage::GetContactForLookup => CallResponse::Reply(
                 self.get_contact_for_lookup()
+                    .map(Box::new)
+                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
+            ),
+            CallMessage::GetContactForEnrLookup => CallResponse::Reply(
+                self.get_contact_for_enr_lookup()
                     .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),

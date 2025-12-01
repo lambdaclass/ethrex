@@ -70,6 +70,7 @@ pub enum InMessage {
     Message(Box<Discv4Message>),
     Revalidate,
     Lookup,
+    EnrLookup,
     Prune,
     ChangeFindNodeMessage,
     Shutdown,
@@ -270,6 +271,44 @@ impl DiscoveryServer {
         }
     }
 
+    async fn enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {
+        if let Some(contact) = self.peer_table.get_contact_for_enr_lookup().await? {
+            let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+            let enr_request = Message::ENRRequest(ENRRequestMessage { expiration });
+
+            let mut buf = Vec::new();
+            enr_request.encode_with_header(&mut buf, &self.signer);
+            let enr_request_hash: [u8; 32] = buf[..32]
+                .try_into()
+                .expect("first 32 bytes are the message hash");
+
+            if self.udp_socket.send_to(&buf, contact.node.udp_addr())
+                .await
+                .inspect_err( |e| error!(sending = "ENRRequest", addr = ?&contact.node.udp_addr(), to = %format!("{:#x}", contact.node.public_key), err=?e, "Error sending message"),)
+                .is_err()
+            {
+                self.peer_table
+                    .set_disposable(&contact.node.node_id())
+                    .await?;
+                METRICS.record_new_discarded_node().await;
+            }
+
+            self.peer_table
+                .record_enr_request_sent(&contact.node.node_id(), H256::from(enr_request_hash))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn get_enr_lookup_interval(&mut self) -> Duration {
+        if !self.peer_table.target_reached().await.unwrap_or(false) {
+            INITIAL_ENR_LOOKUP_INTERVAL
+        } else {
+            trace!("Reached target number of peers or contacts. Using longer enr lookup interval.");
+            ENR_LOOKUP_INTERVAL
+        }
+    }
+
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
         match self.send_ping_internal(node).await {
             Ok(ping_hash) => {
@@ -351,41 +390,6 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn send_enr_request(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
-        match self.send_enr_request_internal(node).await {
-            Ok(enr_request_hash) => {
-                self.peer_table
-                    .record_enr_request_sent(&node.node_id(), enr_request_hash)
-                    .await?;
-            }
-            Err(err) => {
-                error!(sending = "ENRRequest", addr = ?node.udp_addr(), to = %format!("{:#x}", node.public_key), err=?err, "Error sending message");
-                self.peer_table.set_disposable(&node.node_id()).await?;
-                METRICS.record_new_discarded_node().await;
-            }
-        }
-        Ok(())
-    }
-
-    async fn send_enr_request_internal(
-        &mut self,
-        node: &Node,
-    ) -> Result<H256, DiscoveryServerError> {
-        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
-        let enr_request = Message::ENRRequest(ENRRequestMessage { expiration });
-
-        let mut buf = Vec::new();
-        enr_request.encode_with_header(&mut buf, &self.signer);
-        let enr_request_hash: [u8; 32] = buf[..32]
-            .try_into()
-            .expect("first 32 bytes are the message hash");
-
-        self.udp_socket.send_to(&buf, node.udp_addr()).await?;
-
-        debug!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key));
-        Ok(H256::from(enr_request_hash))
-    }
-
     async fn send_enr_response(
         &self,
         request_hash: H256,
@@ -417,15 +421,6 @@ impl DiscoveryServer {
         self.peer_table
             .record_pong_received(&node_id, message.ping_hash)
             .await?;
-
-        // Request peer's ENR right away with ENRRequest.
-        let contact = self
-            .peer_table
-            .get_contact(node_id)
-            .await?
-            .ok_or(DiscoveryServerError::InvalidContact)?;
-        self.send_enr_request(&contact.node).await?;
-
         Ok(())
     }
 
@@ -595,6 +590,7 @@ impl GenServer for DiscoveryServer {
             InMessage::ChangeFindNodeMessage,
         );
         let _ = handle.clone().cast(InMessage::Lookup).await;
+        let _ = handle.clone().cast(InMessage::EnrLookup).await;
         send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
 
         Ok(Success(self))
@@ -628,6 +624,16 @@ impl GenServer for DiscoveryServer {
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
+            }
+            Self::CastMsg::EnrLookup => {
+                trace!(received = "EnrLookup");
+                let _ = self
+                    .enr_lookup()
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
+
+                let interval = self.get_enr_lookup_interval().await;
+                send_after(interval, handle.clone(), Self::CastMsg::EnrLookup);
             }
             Self::CastMsg::Prune => {
                 trace!(received = "Prune");
