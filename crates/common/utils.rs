@@ -89,7 +89,6 @@ pub mod profiling {
         // Keep the result so we don't pollute the callers with error checking
         guard: pprof::Result<pprof::ProfilerGuard<'static>>,
         name: String,
-        thread_prefixes: Vec<String>,
     }
     impl ProfilingGuard {
         pub fn stop(mut self) {
@@ -100,18 +99,7 @@ pub mod profiling {
                 return;
             };
             let prefixes = std::mem::take(&mut self.thread_prefixes);
-            let Ok(report) = guard
-                .report()
-                .frames_post_processor(move |frames| {
-                    for prefix in &prefixes {
-                        if frames.thread_name.starts_with(prefix) {
-                            return;
-                        }
-                    }
-                    frames.frames.clear()
-                })
-                .build()
-            else {
+            let Ok(report) = guard.report().build() else {
                 warn!("Building profiler report failed, no profile will be created");
                 return;
             };
@@ -138,11 +126,7 @@ pub mod profiling {
                 .flamegraph_with_options(&mut files[2], &mut chart_opts)
                 .inspect_err(|e| warn!("Flamechart writing failed: {e}"));
         }
-        pub fn start_profiling(
-            freq: i32,
-            name: impl FnOnce() -> String,
-            thread_prefixes: &[&str],
-        ) -> ProfilingGuard {
+        pub fn start_profiling(freq: i32, name: impl FnOnce() -> String) -> ProfilingGuard {
             let guard = pprof::ProfilerGuardBuilder::default()
                 .frequency(freq)
                 .blocklist(&["libc", "libgcc", "pthread", "vdso"])
@@ -150,7 +134,6 @@ pub mod profiling {
             ProfilingGuard {
                 guard,
                 name: name(),
-                thread_prefixes: thread_prefixes.iter().map(|tp| tp.to_string()).collect(),
             }
         }
     }
@@ -163,11 +146,7 @@ pub mod profiling {
         #[inline(always)]
         pub fn stop(self) {}
         #[inline(always)]
-        pub fn start_profiling(
-            _freq: i32,
-            _name: impl FnOnce() -> String,
-            _thread_prefixes: &[&str],
-        ) -> ProfilingGuard {
+        pub fn start_profiling(_freq: i32, _name: impl FnOnce() -> String) -> ProfilingGuard {
             ProfilingGuard()
         }
     }

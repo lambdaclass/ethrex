@@ -257,11 +257,9 @@ pub fn start_block_executor(
         .name("pipeline_manager".to_string())
         .spawn(move || {
             while let Some((notify, block)) = block_receiver.blocking_recv() {
-                let profiler_guard = ProfilingGuard::start_profiling(
-                    9997,
-                    || format!("block-execution-{}", hex::encode(&block.header.hash()[..4])),
-                    &["pipeline", "executor", "merkle"],
-                );
+                let profiler_guard = ProfilingGuard::start_profiling(9997, || {
+                    format!("block-execution-{}", hex::encode(&block.header.hash()[..4]))
+                });
                 let _ = notify
                     .send(blockchain.add_block_pipeline(block))
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
