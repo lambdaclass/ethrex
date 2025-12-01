@@ -233,8 +233,8 @@ where
             current_node = temp;
         }
 
-        // If the "distance" between the current and next value is equal to the
-        // parent node, that means that they're both "siblings" on the current path
+        // If the "distance" (same prefix count) between the current and next value is equal to the
+        // parent node, that means that they're both "siblings" of the current parent
         // Ex: parent=[05] current=[0567] next=[0589]
         // there is not a branch between the parent and current, so we just write the
         // current element and change the current with the next value while
