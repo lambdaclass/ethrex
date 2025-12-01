@@ -96,7 +96,7 @@ pub trait StorageRwTx: StorageRoTx + Send {
 /// This is optimized for scenarios where many reads are performed on the same
 /// table, such as trie traversal operations.
 /// This is currently only used in snapsync stage.
-/// TODO: Check if we can remove this trait and use [`StorageRoTx`] instead.
+// TODO: Check if we can remove this trait and use [`StorageRoTx`] instead.
 pub trait StorageLocked: Send + Sync {
     /// Retrieves a value by key from the locked table.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
