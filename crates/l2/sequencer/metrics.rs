@@ -81,7 +81,7 @@ impl MetricsGatherer {
         Ok(metrics)
     }
 
-    async fn gather_metrics(&mut self) -> Result<(), MetricsGathererError> {
+    async fn gather_metrics(&self) -> Result<(), MetricsGathererError> {
         let last_committed_batch =
             get_last_committed_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
 

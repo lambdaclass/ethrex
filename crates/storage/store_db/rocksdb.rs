@@ -436,7 +436,7 @@ impl Store {
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
-            let mut rx = fkv_rx;
+            let rx = fkv_rx;
             loop {
                 match rx.recv() {
                     Ok(FKVGeneratorControlMessage::Continue) => break,
@@ -448,7 +448,7 @@ impl Store {
                 }
             }
             info!("Generation of FlatKeyValue started.");
-            match store_clone.flatkeyvalue_generator(&mut rx) {
+            match store_clone.flatkeyvalue_generator(&rx) {
                 Ok(_) => info!("FlatKeyValue generation finished."),
                 Err(err) => error!("Error while generating FlatKeyValue: {err}"),
             }
@@ -639,7 +639,7 @@ impl Store {
 
     fn flatkeyvalue_generator(
         &self,
-        control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+        control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
         let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
         let cf_accounts_fkv = self.cf_handle(CF_ACCOUNT_FLATKEYVALUE)?;

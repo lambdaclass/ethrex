@@ -438,7 +438,7 @@ impl L1Committer {
     }
 
     async fn execute_batch_to_generate_checkpoint(
-        &mut self,
+        &self,
         batch: &Batch,
         one_time_checkpoint_store: Store,
         one_time_checkpoint_blockchain: Arc<Blockchain>,
@@ -610,7 +610,7 @@ impl L1Committer {
     }
 
     async fn prepare_batch_from_block(
-        &mut self,
+        &self,
         mut last_added_block_number: BlockNumber,
         batch_number: u64,
         checkpoint_store: Store,
@@ -1059,7 +1059,7 @@ impl L1Committer {
         Ok((checkpoint_store, checkpoint_blockchain))
     }
 
-    async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
+    async fn send_commitment(&self, batch: &Batch) -> Result<H256, CommitterError> {
         let messages_merkle_root = compute_merkle_root(&batch.message_hashes);
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
 
@@ -1208,7 +1208,7 @@ impl L1Committer {
         self.cancellation_token = Some(handle.cancellation_token);
     }
 
-    async fn health(&mut self) -> CallResponse<Self> {
+    async fn health(&self) -> CallResponse<Self> {
         let rpc_urls = self.eth_client.test_urls().await;
         let signer_status = self.signer.health().await;
 

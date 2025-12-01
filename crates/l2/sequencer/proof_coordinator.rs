@@ -216,7 +216,7 @@ impl ProofCoordinator {
         Ok(())
     }
 
-    async fn handle_listens(&mut self, listener: Arc<TcpListener>) {
+    async fn handle_listens(&self, listener: Arc<TcpListener>) {
         info!("Starting TCP server at {}:{}.", self.listen_ip, self.port);
         loop {
             let res = listener.accept().await;
@@ -243,7 +243,7 @@ impl ProofCoordinator {
     }
 
     async fn handle_request(
-        &mut self,
+        &self,
         stream: &mut TcpStream,
         commit_hash: String,
     ) -> Result<(), ProofCoordinatorError> {
@@ -317,7 +317,7 @@ impl ProofCoordinator {
     }
 
     async fn handle_submit(
-        &mut self,
+        &self,
         stream: &mut TcpStream,
         batch_number: u64,
         batch_proof: BatchProof,
@@ -365,7 +365,7 @@ impl ProofCoordinator {
     }
 
     async fn handle_setup(
-        &mut self,
+        &self,
         stream: &mut TcpStream,
         prover_type: ProverType,
         payload: Bytes,
