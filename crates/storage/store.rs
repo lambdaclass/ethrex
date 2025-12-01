@@ -18,7 +18,7 @@ use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
-use std::{collections::hash_map::Entry, sync::Arc};
+use std::{collections::hash_map::Entry, path::PathBuf, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Mutex,
@@ -239,14 +239,14 @@ impl Store {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         self.engine.get_block_bodies(from, to).await
     }
 
     pub async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError> {
+    ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         self.engine.get_block_bodies_by_hash(hashes).await
     }
 
@@ -1349,7 +1349,7 @@ impl Store {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError> {
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
         self.engine.read_fullsync_batch(start, limit).await
     }
 
@@ -1364,6 +1364,10 @@ impl Store {
 
     pub async fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
         self.engine.create_checkpoint(path.as_ref()).await
+    }
+
+    pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
+        self.engine.get_store_directory()
     }
 }
 
