@@ -14,7 +14,9 @@ pub fn prove(
     input: ProgramInput,
     _format: ProofFormat,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
-    unimplemented!("The pico backend doesn't support proving until Pico GPU support is added to ethrex.");
+    unimplemented!(
+        "The pico backend doesn't support proving until Pico GPU support is added to ethrex."
+    );
 
     // Below is the code necessary to generate a proof using CPU, although the process
     // crashes when doing so for any block. We didn't debug this further as we are interested
