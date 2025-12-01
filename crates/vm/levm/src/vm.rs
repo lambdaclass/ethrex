@@ -549,9 +549,28 @@ impl<'a> VM<'a> {
 impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
+        let tx_access_list = tx.access_list();
+
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = HashSet::new();
         let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+
+        // Add precompiled contracts addresses to accessed accounts.
+        let max_precompile_address = if env.config.fork >= Fork::Prague {
+            SIZE_PRECOMPILES_PRAGUE
+        } else if env.config.fork >= Fork::Cancun {
+            SIZE_PRECOMPILES_CANCUN
+        } else {
+            SIZE_PRECOMPILES_PRE_CANCUN
+        };
+
+        let fixed_accounts = 1 + usize::from(env.config.fork >= Fork::Shanghai); // origin + optional coinbase
+
+        let precompile_count =
+            max_precompile_address as usize + usize::from(env.config.fork >= Fork::Osaka); // include P256 verify
+
+        // Initialize accessed addresses with known capacity.
+        let mut initial_accessed_addresses =
+            HashSet::with_capacity(fixed_accounts + precompile_count + tx_access_list.len());
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
@@ -560,14 +579,6 @@ impl Substate {
         if env.config.fork >= Fork::Shanghai {
             initial_accessed_addresses.insert(env.coinbase);
         }
-
-        // Add precompiled contracts addresses to accessed accounts.
-        let max_precompile_address = match env.config.fork {
-            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
-            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
-            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
-            _ => return Err(InternalError::InvalidFork.into()),
-        };
 
         for i in 1..=max_precompile_address {
             initial_accessed_addresses.insert(Address::from_low_u64_be(i));
@@ -579,13 +590,11 @@ impl Substate {
         }
 
         // Add access lists contents to accessed accounts and accessed storage slots.
-        for (address, keys) in tx.access_list().clone() {
-            initial_accessed_addresses.insert(address);
+        for (address, keys) in tx_access_list {
+            initial_accessed_addresses.insert(*address);
             // Access lists can have different entries even for the same address, that's why we check if there's an existing set instead of considering it empty
-            let warm_slots = initial_accessed_storage_slots.entry(address).or_default();
-            for slot in keys {
-                warm_slots.insert(slot);
-            }
+            let warm_slots = initial_accessed_storage_slots.entry(*address).or_default();
+            warm_slots.extend(keys.iter().copied());
         }
 
         let substate =
