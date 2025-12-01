@@ -14,17 +14,19 @@ use crate::utils::{
 };
 use crate::{
     metrics::METRICS,
-    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    peer_handler::{MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+#[cfg(not(feature = "rocksdb"))]
+use ethrex_common::U256;
 use ethrex_common::types::Code;
 use ethrex_common::{
-    BigEndianHash, H256, U256,
+    H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
+use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -32,7 +34,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use std::{
-    array,
     cmp::min,
     collections::HashMap,
     sync::{
@@ -45,7 +46,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
-const MIN_FULL_BLOCKS: usize = 64;
+const MIN_FULL_BLOCKS: u64 = 10_000;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 /// Amount of seconds between blocks
@@ -66,19 +67,6 @@ lazy_static::lazy_static! {
 #[cfg(not(feature = "sync-test"))]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
-}
-
-lazy_static::lazy_static! {
-    // Size of each state trie segment
-    static ref STATE_TRIE_SEGMENT_SIZE: U256 = HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS;
-    // Starting hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_START: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * i)))
-    };
-    // Ending hash of each state trie segment
-    static ref STATE_TRIE_SEGMENTS_END: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * (i+1))))
-    };
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -117,21 +105,6 @@ impl Syncer {
             cancel_token,
             blockchain,
             datadir,
-        }
-    }
-
-    /// Creates a dummy Syncer for tests where syncing is not needed
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
-        Self {
-            snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::dummy(),
-            // This won't be used
-            cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
-            )),
-            datadir: ".".into(),
         }
     }
 
@@ -285,17 +258,16 @@ impl Syncer {
             current_head = last_block_hash;
             current_head_number = last_block_number;
 
-            // If the sync head is less than 64 blocks away from our current head switch to full-sync
-            if sync_head_found {
-                let latest_block_number = store.get_latest_block_number().await?;
-                if last_block_number.saturating_sub(latest_block_number) < MIN_FULL_BLOCKS as u64 {
-                    // Too few blocks for a snap sync, switching to full sync
-                    debug!(
-                        "Sync head is less than {MIN_FULL_BLOCKS} blocks away, switching to FullSync"
-                    );
-                    self.snap_enabled.store(false, Ordering::Relaxed);
-                    return self.sync_cycle_full(sync_head, store.clone()).await;
-                }
+            // If the sync head is not 0 we search to fullsync
+            let head_found = sync_head_found && store.get_latest_block_number().await? > 0;
+            // Or the head is very close to 0
+            let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
+
+            if head_found || head_close_to_0 {
+                // Too few blocks for a snap sync, switching to full sync
+                info!("Sync head is found, switching to FullSync");
+                self.snap_enabled.store(false, Ordering::Relaxed);
+                return self.sync_cycle_full(sync_head, store.clone()).await;
             }
 
             // Discard the first header as we already have it
@@ -411,7 +383,12 @@ impl Syncer {
             let final_batch = end_block_number == start + batch_size as u64;
             // Retrieve batch from DB
             if !single_batch {
-                headers = store.read_fullsync_batch(start, batch_size as u64).await?;
+                headers = store
+                    .read_fullsync_batch(start, batch_size as u64)
+                    .await?
+                    .into_iter()
+                    .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
+                    .collect::<Result<Vec<_>, SyncError>>()?;
             }
             let mut blocks = Vec::new();
             // Request block bodies
@@ -420,7 +397,7 @@ impl Syncer {
                 let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
                 let bodies = self
                     .peers
-                    .request_and_validate_block_bodies(header_batch)
+                    .request_block_bodies(header_batch)
                     .await?
                     .ok_or(SyncError::BodiesNotFound)?;
                 debug!("Obtained: {} block bodies", bodies.len());
@@ -554,46 +531,53 @@ impl Syncer {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
-            let mut last_valid_hash = H256::default();
-            for block in blocks {
-                let block_hash = block.hash();
-                blockchain.add_block_pipeline(block).map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
-                last_valid_hash = block_hash;
-            }
-            Ok(())
+            tokio::task::spawn_blocking(move || {
+                let mut last_valid_hash = H256::default();
+                for block in blocks {
+                    let block_hash = block.hash();
+                    blockchain.add_block_pipeline(block).map_err(|e| {
+                        (
+                            e,
+                            Some(BatchBlockProcessingFailure {
+                                last_valid_hash,
+                                failed_block_hash: block_hash,
+                            }),
+                        )
+                    })?;
+                    last_valid_hash = block_hash;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| (ChainError::Custom(e.to_string()), None))?
         } else {
             blockchain.add_blocks_in_batch(blocks, cancel_token).await
         }
     }
 }
 
-/// Fetches all block bodies for the given block hashes via p2p and stores them
+/// Fetches all block bodies for the given block headers via p2p and stores them
 async fn store_block_bodies(
-    mut block_hashes: Vec<BlockHash>,
+    mut block_headers: Vec<BlockHeader>,
     mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(&block_hashes).await? {
+        if let Some(block_bodies) = peers.request_block_bodies(&block_headers).await? {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
-            let current_block_hashes = block_hashes.drain(..block_bodies.len());
+            let current_block_headers = block_headers.drain(..block_bodies.len());
             // Add bodies to storage
-            for (hash, body) in current_block_hashes.zip(block_bodies.into_iter()) {
+            for (hash, body) in current_block_headers
+                .map(|h| h.hash())
+                .zip(block_bodies.into_iter())
+            {
                 store.add_block_body(hash, body).await?;
             }
 
             // Check if we need to ask for another batch
-            if block_hashes.is_empty() {
+            if block_headers.is_empty() {
                 break;
             }
         }
@@ -986,7 +970,12 @@ impl Syncer {
 
         debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
 
-        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
+        store_block_bodies(
+            vec![pivot_header.clone()],
+            self.peers.clone(),
+            store.clone(),
+        )
+        .await?;
 
         let block = store
             .get_block_by_hash(pivot_header.hash())
@@ -1190,6 +1179,8 @@ pub enum SyncError {
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
+    #[error("Missing fullsync batch")]
+    MissingFullsyncBatch,
 }
 
 impl SyncError {
@@ -1213,7 +1204,8 @@ impl SyncError {
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
-            | SyncError::PeerTableError(_) => false,
+            | SyncError::PeerTableError(_)
+            | SyncError::MissingFullsyncBatch => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

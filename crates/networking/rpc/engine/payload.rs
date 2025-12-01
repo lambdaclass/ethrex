@@ -2,7 +2,7 @@ use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
-use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
+use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork, Fork::*};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -62,7 +62,7 @@ impl RpcHandler for NewPayloadV2Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let chain_config = &context.storage.get_chain_config();
-        if chain_config.is_shanghai_activated(self.payload.timestamp) {
+        if chain_config.is_fork_activated(Shanghai, self.payload.timestamp) {
             validate_execution_payload_v2(&self.payload)?;
         } else {
             // Behave as a v1
@@ -206,7 +206,7 @@ impl RpcHandler for NewPayloadV4Request {
 
         let chain_config = context.storage.get_chain_config();
 
-        if !chain_config.is_prague_activated(block.header.timestamp) {
+        if !chain_config.is_fork_activated(Prague, block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
@@ -334,13 +334,13 @@ impl RpcHandler for GetPayloadV4Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config();
 
-        if !chain_config.is_prague_activated(payload_bundle.block.header.timestamp) {
+        if !chain_config.is_fork_activated(Prague, payload_bundle.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
-        if chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+        if chain_config.is_fork_activated(Osaka, payload_bundle.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!("{:?}", Fork::Osaka)));
         }
 
@@ -386,7 +386,7 @@ impl RpcHandler for GetPayloadV5Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config();
 
-        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+        if !chain_config.is_fork_activated(Osaka, payload_bundle.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
@@ -470,9 +470,11 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
             return Err(RpcErr::TooLargeRequest);
         }
         let latest_block_number = context.storage.get_latest_block_number().await?;
+        // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
+        // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
         let bodies = context.storage.get_block_bodies(self.start, last).await?;
-        build_payload_body_response(bodies.into_iter().map(Some).collect())
+        build_payload_body_response(bodies)
     }
 }
 
@@ -489,7 +491,7 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
-        return Err(RpcErr::BadParams("Expected 1 params".to_owned()));
+        return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     }
     serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
@@ -541,7 +543,7 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
 
 fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
     let chain_config = &context.storage.get_chain_config();
-    if chain_config.is_cancun_activated(block.header.timestamp) {
+    if chain_config.is_fork_activated(Cancun, block.header.timestamp) {
         return Err(RpcErr::UnsuportedFork(
             "Cancun payload received".to_string(),
         ));
@@ -591,6 +593,11 @@ async fn handle_new_payload_v1_v2(
     block: Block,
     context: RpcApiContext,
 ) -> Result<PayloadStatus, RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "New payload requested but syncer is not initialized".to_string(),
+        ));
+    };
     // Validate block hash
     if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
         return Ok(PayloadStatus::invalid_with_err(&error_msg));
@@ -604,7 +611,7 @@ async fn handle_new_payload_v1_v2(
     // We have validated ancestors, the parent is correct
     let latest_valid_hash = block.header.parent_hash;
 
-    if context.syncer.sync_mode() == SyncMode::Snap {
+    if syncer.sync_mode() == SyncMode::Snap {
         debug!("Snap sync in progress, skipping new payload validation");
         return Ok(PayloadStatus::syncing());
     }
@@ -698,6 +705,11 @@ async fn try_execute_payload(
     context: &RpcApiContext,
     latest_valid_hash: H256,
 ) -> Result<PayloadStatus, RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "New payload requested but syncer is not initialized".to_string(),
+        ));
+    };
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
@@ -714,7 +726,7 @@ async fn try_execute_payload(
     match add_block(context, block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
-            context.syncer.sync_to_head(block_hash);
+            syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }
         // Under the current implementation this is not possible: we always calculate the state

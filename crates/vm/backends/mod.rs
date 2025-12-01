@@ -73,12 +73,16 @@ impl Evm {
         }
     }
 
-    #[instrument(level = "trace", name = "Block execution", skip_all)]
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         LEVM::execute_block(block, &mut self.db, self.vm_type)
     }
 
-    #[instrument(level = "trace", name = "Block execution", skip_all)]
+    #[instrument(
+        level = "trace",
+        name = "Block execution",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,
@@ -121,7 +125,7 @@ impl Evm {
     /// This function is used to run/apply all the system contracts to the state.
     pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
         let chain_config = self.db.store.get_chain_config()?;
-        let fork = chain_config.fork(block_header.timestamp);
+        let fork = chain_config.get_fork(block_header.timestamp);
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             LEVM::beacon_root_contract_call(block_header, &mut self.db, self.vm_type)?;

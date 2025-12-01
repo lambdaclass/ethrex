@@ -28,6 +28,7 @@ pub struct Environment {
     pub difficulty: U256,
     pub chain_id: U256,
     pub base_fee_per_gas: U256,
+    pub base_blob_fee_per_gas: U256,
     pub gas_price: U256, // Effective gas price
     pub block_excess_blob_gas: Option<U256>,
     pub block_blob_gas_used: Option<U256>,
@@ -38,6 +39,7 @@ pub struct Environment {
     pub tx_nonce: u64,
     pub block_gas_limit: u64,
     pub is_privileged: bool,
+    pub fee_token: Option<Address>,
 }
 
 /// This struct holds special configuration variables specific to the
@@ -63,10 +65,10 @@ impl EVMConfig {
     }
 
     pub fn new_from_chain_config(chain_config: &ChainConfig, block_header: &BlockHeader) -> Self {
-        let fork = chain_config.fork(block_header.timestamp);
+        let fork = chain_config.get_fork(block_header.timestamp);
 
         let blob_schedule = chain_config
-            .get_fork_blob_schedule(block_header.timestamp)
+            .get_blob_schedule_for_time(block_header.timestamp)
             .unwrap_or_else(|| EVMConfig::canonical_values(fork));
 
         EVMConfig::new(fork, blob_schedule)

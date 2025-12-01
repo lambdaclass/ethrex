@@ -3,8 +3,7 @@ use ethrex_blockchain::{
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
 };
-use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
-use ethrex_p2p::sync::SyncMode;
+use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER, Fork::*};
 use serde_json::Value;
 use tracing::{info, warn};
 
@@ -38,7 +37,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
             handle_forkchoice(&self.fork_choice_state, context.clone(), 1).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();
-            if chain_config.is_cancun_activated(attributes.timestamp) {
+            if chain_config.is_fork_activated(Cancun, attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV1 used to build Cancun payload".to_string(),
                 ));
@@ -71,11 +70,11 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();
-            if chain_config.is_cancun_activated(attributes.timestamp) {
+            if chain_config.is_fork_activated(Cancun, attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV2 used to build Cancun payload".to_string(),
                 ));
-            } else if chain_config.is_shanghai_activated(attributes.timestamp) {
+            } else if chain_config.is_fork_activated(Shanghai, attributes.timestamp) {
                 validate_attributes_v2(attributes, &head_block)?;
             } else {
                 // Behave as a v1
@@ -170,6 +169,11 @@ async fn handle_forkchoice(
     context: RpcApiContext,
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "Fork choice requested but syncer is not initialized".to_string(),
+        ));
+    };
     info!(
         version = %format!("v{}", version),
         head = %format!("{:#x}", fork_choice_state.head_block_hash),
@@ -215,6 +219,7 @@ async fn handle_forkchoice(
         ));
     }
 
+    /*   Revert #4985
     if context.syncer.sync_mode() == SyncMode::Snap {
         // Don't trigger a sync if the block is already canonical
         if context
@@ -229,7 +234,7 @@ async fn handle_forkchoice(
                 .sync_to_head(fork_choice_state.head_block_hash);
             return Ok((None, PayloadStatus::syncing().into()));
         }
-    }
+    } */
 
     match apply_fork_choice(
         &context.storage,
@@ -278,9 +283,7 @@ async fn handle_forkchoice(
                 ),
                 InvalidForkChoice::Syncing => {
                     // Start sync
-                    context
-                        .syncer
-                        .sync_to_head(fork_choice_state.head_block_hash);
+                    syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
@@ -352,7 +355,7 @@ fn validate_attributes_v3(
             "Attribute parent_beacon_block_root is null".to_string(),
         ));
     }
-    if !chain_config.is_cancun_activated(attributes.timestamp) {
+    if !chain_config.is_fork_activated(Cancun, attributes.timestamp) {
         return Err(RpcErr::UnsuportedFork(
             "forkChoiceV3 used to build pre-Cancun payload".to_string(),
         ));
