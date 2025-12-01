@@ -10,7 +10,7 @@ use tracing::debug;
 
 /// The elements of the stack represent the branch node that is the parent of the current
 /// parent element. When the current parent is no longer valid (is not the parent of
-/// the current elements). The stack gets popped and this element becomes the parent
+/// the current elements), the stack gets popped and this element becomes the parent
 #[derive(Debug, Default, Clone)]
 struct StackElement {
     path: Nibbles,
