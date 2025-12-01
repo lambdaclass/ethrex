@@ -476,16 +476,17 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         let node_id = node_id(&sender_public_key);
 
-        if self
+        let contact = self
             .validate_contact(sender_public_key, node_id, from, "ENRResponse")
-            .await
-            .is_err()
-        {
-            return Ok(());
+            .await?;
+
+        if !contact.has_pending_enr_request() {
+            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "unsolicited message received, skipping");
+            return Err(DiscoveryServerError::InvalidContact);
         }
 
         self.peer_table
-            .set_node_record(&node_id, enr_response_message.node_record)
+            .record_enr_response_received(&node_id, enr_response_message.request_hash ,enr_response_message.node_record)
             .await?;
 
         Ok(())

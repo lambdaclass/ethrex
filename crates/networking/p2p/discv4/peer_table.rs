@@ -79,8 +79,14 @@ impl Contact {
     }
 
     // If hash does not match, ignore. Otherwise, reset enr_request_hash
-    pub fn record_enr_response_received(&mut self, request_hash: H256) {
-        self.enr_request_hash.take_if(|h| *h == request_hash);
+    pub fn record_enr_response_received(&mut self, request_hash: H256, record: NodeRecord) {
+        if self
+            .enr_request_hash
+            .take_if(|h| *h == request_hash)
+            .is_some()
+        {
+            self.record = Some(record);
+        }
     }
 
     pub fn has_pending_enr_request(&self) -> bool {
@@ -289,25 +295,12 @@ impl PeerTable {
         &mut self,
         node_id: &H256,
         request_hash: H256,
+        record: NodeRecord,
     ) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordEnrResponseReceived {
                 node_id: *node_id,
                 request_hash,
-            })
-            .await?;
-        Ok(())
-    }
-
-    /// Set node record for peer.
-    pub async fn set_node_record(
-        &mut self,
-        node_id: &H256,
-        record: NodeRecord,
-    ) -> Result<(), PeerTableError> {
-        self.handle
-            .cast(CastMessage::SetNodeRecord {
-                node_id: *node_id,
                 record,
             })
             .await?;
@@ -881,9 +874,6 @@ enum CastMessage {
     RecordEnrResponseReceived {
         node_id: H256,
         request_hash: H256,
-    },
-    SetNodeRecord {
-        node_id: H256,
         record: NodeRecord,
     },
     SetDisposable {
@@ -1155,14 +1145,10 @@ impl GenServer for PeerTableServer {
             CastMessage::RecordEnrResponseReceived {
                 node_id,
                 request_hash,
+                record,
             } => {
                 self.contacts.entry(node_id).and_modify(|contact| {
-                    contact.record_enr_response_received(request_hash);
-                });
-            }
-            CastMessage::SetNodeRecord { node_id, record } => {
-                self.contacts.entry(node_id).and_modify(|contact| {
-                    contact.record = Some(record);
+                    contact.record_enr_response_received(request_hash, record);
                 });
             }
             CastMessage::SetDisposable { node_id } => {
