@@ -395,7 +395,7 @@ impl DiscoveryServer {
             // Sending all in one packet would exceed bounds with the nodes only, weighing
             // up to 1424B.
             for chunk in neighbors.chunks(8) {
-                self.send_neighbors(chunk.to_vec(), &contact.node).await?;
+                let _ = self.send_neighbors(chunk.to_vec(), &contact.node).await;
             }
         }
         Ok(())
