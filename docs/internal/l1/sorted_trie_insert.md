@@ -82,7 +82,7 @@ at which point the algorithm returns a hash to the root node branch.
 In general, each write to disk is prepared to properly handle extensions
 as the write function knows what it's writing and what was its parent
 and full path. As such, it can check if the insertion is a branch and
-if there's an extension need.
+if an extension is needed.
 
 A specific edge case is the root node, which is assumed to always be a branch
 node, but the code has special case to check if the root node has 
