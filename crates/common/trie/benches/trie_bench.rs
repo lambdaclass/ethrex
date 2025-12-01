@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
-use ethereum_types::H256;
 use hasher::HasherKeccak;
+use rand::rngs::StdRng;
+use rand::{RngCore, SeedableRng};
 
 use cita_trie::MemoryDB;
 use cita_trie::{PatriciaTrie, Trie};
@@ -186,11 +187,14 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
 }
 
 fn random_data(n: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+    let mut rng = StdRng::seed_from_u64(0xdeadbeef);
     let mut keys = Vec::with_capacity(n);
     let mut values = Vec::with_capacity(n);
     for _ in 0..n {
-        let k = H256::random().to_fixed_bytes().into();
-        let v = H256::random().to_fixed_bytes().into();
+        let mut k = vec![0u8; 32];
+        rng.fill_bytes(&mut k);
+        let mut v = vec![0u8; 32];
+        rng.fill_bytes(&mut v);
         keys.push(k);
         values.push(v);
     }
@@ -201,10 +205,12 @@ fn random_data(n: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
 fn shared_prefix_data(n: usize, shared_prefix_bytes: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     assert!(shared_prefix_bytes + 4 <= 32);
 
+    let mut rng = StdRng::seed_from_u64(0xdeadbeef);
     let mut keys = Vec::with_capacity(n);
     let mut values = Vec::with_capacity(n);
 
-    let base = H256::random().to_fixed_bytes();
+    let mut base = [0u8; 32];
+    rng.fill_bytes(&mut base);
 
     for i in 0..n {
         let mut k = base;
@@ -212,7 +218,8 @@ fn shared_prefix_data(n: usize, shared_prefix_bytes: usize) -> (Vec<Vec<u8>>, Ve
         k[shared_prefix_bytes..shared_prefix_bytes + 4].copy_from_slice(&suffix);
         keys.push(k.into());
 
-        let v = H256::random().to_fixed_bytes().to_vec();
+        let mut v = vec![0u8; 32];
+        rng.fill_bytes(&mut v);
         values.push(v);
     }
 
