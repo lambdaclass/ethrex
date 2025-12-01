@@ -2667,7 +2667,7 @@ fn flatkeyvalue_generator(
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
             write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-            write_txn.put(ACCOUNT_TRIE_NODES, path.as_ref(), &node.value)?;
+            write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
             ctr += 1;
             if ctr > 10_000 {
                 write_txn.commit()?;
@@ -2697,7 +2697,7 @@ fn flatkeyvalue_generator(
                 };
                 let key = apply_prefix(Some(account_hash), path);
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node.value)?;
+                write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;
