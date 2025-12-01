@@ -143,10 +143,11 @@ impl StorageRoTx for InMemoryRwTx {
             .read()
             .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
 
-        Ok(db
+        let value = db
             .get(table)
             .and_then(|table_ref| table_ref.get(key))
-            .cloned())
+            .cloned();
+        Ok(value)
     }
 
     fn prefix_iterator(

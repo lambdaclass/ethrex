@@ -35,21 +35,23 @@ impl BackendTrieDB {
     }
 
     fn make_key(&self, path: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, path).as_ref().to_vec()
+        apply_prefix(self.address_prefix, path).into_vec()
     }
 
     /// Key might be for an account or storage slot
-    fn table_for_key(&self, key: &Nibbles) -> &'static str {
-        if key.is_leaf() {
-            if self.address_prefix.is_some() {
-                STORAGE_FLATKEYVALUE
-            } else {
+    fn table_for_key(&self, key: &[u8]) -> &'static str {
+        let is_leaf = key.len() == 65 || key.len() == 131;
+        let is_account = key.len() <= 65;
+        if is_leaf {
+            if is_account {
                 ACCOUNT_FLATKEYVALUE
+            } else {
+                STORAGE_FLATKEYVALUE
             }
-        } else if self.address_prefix.is_some() {
-            STORAGE_TRIE_NODES
-        } else {
+        } else if is_account {
             ACCOUNT_TRIE_NODES
+        } else {
+            STORAGE_TRIE_NODES
         }
     }
 }
@@ -61,18 +63,19 @@ impl TrieDB for BackendTrieDB {
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let table = self.table_for_key(&key);
-        let key = self.make_key(key);
+        let prefixed_key = self.make_key(key);
+        let table = self.table_for_key(&prefixed_key);
         let tx = self.tx.lock().map_err(|_| TrieError::LockError)?;
-        tx.get(table, &key)
+        tx.get(table, prefixed_key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let mut tx = self.tx.lock().map_err(|_| TrieError::LockError)?;
         for (key, value) in key_values {
-            let table = self.table_for_key(&key);
-            tx.put_batch(table, vec![(self.make_key(key), value)])
+            let prefixed_key = self.make_key(key);
+            let table = self.table_for_key(&prefixed_key);
+            tx.put_batch(table, vec![(prefixed_key, value)])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
         tx.commit()
