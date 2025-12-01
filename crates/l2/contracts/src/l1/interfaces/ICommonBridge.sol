@@ -55,9 +55,16 @@ interface ICommonBridge {
         bytes data;
     }
 
+    struct TokenValue {
+        address token_l1;
+        address token_l2;
+        address other_chain_token_l2;
+        uint256 value;
+    }
+
     struct BalanceDiff {
         uint256 chainId;
-        uint256 value;
+        TokenValue[] value_per_token;
     }
 
     /// @notice Method to retrieve all the pending transaction hashes.
@@ -145,6 +152,12 @@ interface ICommonBridge {
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
     function receiveMessage() external payable;
+
+    function receiveERC20Message(
+        address token_l1,
+        address token_l2,
+        uint256 amount
+    ) external payable;
 
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:

@@ -101,6 +101,37 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             keccak256(abi.encodePacked(tokenL1, tokenL2, destination, amount))
         );
     }
+
+    // TODO: add it to the interface
+    // TODO: ensure that if using sendToL2 burns anyway the tokens
+    function transfer_erc20(
+        uint256 chainId,
+        address to,
+        uint256 amount,
+        address token_l2,
+        address other_chain_token_l2
+    ) external {
+        IERC20L2 token = IERC20L2(token_l2);
+        token.crosschainBurn(msg.sender, amount);
+        address token_l1 = token.l1Address();
+        // TODO: we cannot use calldata, anyone can set this
+        bytes memory data = abi.encodeCall(
+            ICommonBridgeL2.crosschainMintERC20,
+            (token_l1, token_l2, other_chain_token_l2, to, amount)
+        );
+        this.sendToL2(chainId, to, 21000 * 10, data);
+    }
+
+    function crosschainMintERC20(
+        address tokenL1,
+        address tokenL2,
+        address otherChainTokenL2,
+        address to,
+        uint256 amount
+    ) external onlySelf {
+        this.mintERC20(tokenL1, otherChainTokenL2, to, amount);
+    }
+
     /// @inheritdoc ICommonBridgeL2
     function sendToL2(
         uint256 chainId,
@@ -117,7 +148,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
                 destGasLimit,
                 transactionIds[chainId],
                 msg.value,
-                abi.encodeCall(ICommonBridgeL2.mintETH,(msg.sender))
+                abi.encodeCall(ICommonBridgeL2.mintETH, (msg.sender))
             );
             transactionIds[chainId] += 1;
         }

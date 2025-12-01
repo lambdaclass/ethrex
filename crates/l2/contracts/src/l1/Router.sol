@@ -5,6 +5,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IRouter} from "./interfaces/IRouter.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 
@@ -57,11 +58,33 @@ contract Router is
     }
 
     /// @inheritdoc IRouter
-    function sendMessage(uint256 chainId) public payable override {
+    function sendMessage(
+        uint256 chainId,
+        TokenValue[] calldata tokenValues
+    ) public payable override {
         if (bridges[chainId] == address(0)) {
             emit TransferToChainNotRegistered(chainId);
         } else {
             ICommonBridge(bridges[chainId]).receiveMessage{value: msg.value}();
+        }
+    }
+
+    /// @inheritdoc IRouter
+    function sendERC20Message(
+        uint256 chainId,
+        address token_l1,
+        address other_chain_token_l2,
+        uint256 amount
+    ) public payable override {
+        if (bridges[chainId] == address(0)) {
+            emit TransferToChainNotRegistered(chainId);
+        } else {
+            ICommonBridge(bridges[chainId]).receiveERC20Message(
+                token_l1,
+                other_chain_token_l2,
+                amount
+            );
+            IERC20(token_l1).safeTransfer(bridges[chainId], amount);
         }
     }
 
@@ -101,7 +124,9 @@ contract Router is
     function removeChainID(uint256 chainId) internal {
         for (uint i = 0; i < registeredChainIds.length; i++) {
             if (registeredChainIds[i] == chainId) {
-                registeredChainIds[i] = registeredChainIds[registeredChainIds.length - 1];
+                registeredChainIds[i] = registeredChainIds[
+                    registeredChainIds.length - 1
+                ];
                 registeredChainIds.pop();
                 return;
             }

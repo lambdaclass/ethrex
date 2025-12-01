@@ -9,7 +9,9 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {
+    MerkleProof
+} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
@@ -362,19 +364,52 @@ contract CommonBridge is
             l2MessagesMerkleRoots[l2MessagesBatchNumber] == bytes32(0),
             "CommonBridge: l2 messages already published"
         );
-        l2MessagesMerkleRoots[
-            l2MessagesBatchNumber
-        ] = l2MessagesMerkleRoot;
+        l2MessagesMerkleRoots[l2MessagesBatchNumber] = l2MessagesMerkleRoot;
         emit L2MessagesPublished(l2MessagesBatchNumber, l2MessagesMerkleRoot);
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: balanceDiffs[i].value}(
-                balanceDiffs[i].chainId
-            );
+            // TODO: if token is ETH_TOKEN, send value ETH
+            // else send amount of the token with transfer
+            // we need a different sendMessage function that takes token address + amount
+            for (uint j = 0; j < balanceDiffs[i].value_per_token.length; j++) {
+                TokenValue memory tv = balanceDiffs[i].value_per_token[j];
+                if (tv.token_l1 == address(0)) {
+                    IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: tv.value}(
+                        balanceDiffs[i].chainId // TODO: change this. We need to send value ETH or a token
+                    );
+                } else {
+                    // TODO: update the deposits map and how do we get the token_l2 address
+                    // TODO: we need to transfer the locked erc20 token to the router first
+                    deposits[tv.token_l1][tv.token_l2] -= tv.value;
+                    IERC20(tv.token_l1).safeTransfer(
+                        SHARED_BRIDGE_ROUTER,
+                        tv.value
+                    );
+                    IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
+                        balanceDiffs[i].chainId,
+                        tv.token_l1,
+                        tv.other_chain_token_l2,
+                        tv.value
+                    );
+                }
+            }
         }
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveMessage() public override payable {
+    function receiveMessage() public payable override {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+    }
+
+    /// @dev in here we already have the tokens locked on the bridge because of the router
+    function receiveERC20Message(
+        address token_l1,
+        address token_l2,
+        uint256 amount
+    ) public payable override {
+        deposits[token_l1][token_l2] += amount;
         require(
             msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"
@@ -387,11 +422,12 @@ contract CommonBridge is
         uint256 l2MessageBatchNumber,
         bytes32[] calldata l2MessageProof
     ) external view override returns (bool) {
-        return MerkleProof.verify(
-            l2MessageProof,
-            l2MessagesMerkleRoots[l2MessageBatchNumber],
-            l2MessageLeaf
-        );
+        return
+            MerkleProof.verify(
+                l2MessageProof,
+                l2MessagesMerkleRoots[l2MessageBatchNumber],
+                l2MessageLeaf
+            );
     }
 
     /// @inheritdoc ICommonBridge
