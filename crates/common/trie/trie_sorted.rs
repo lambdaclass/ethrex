@@ -6,7 +6,6 @@ use crossbeam::channel::{Receiver, Sender, bounded};
 use ethereum_types::H256;
 use ethrex_threadpool::ThreadPool;
 use std::{sync::Arc, thread::scope};
-use tracing::debug;
 
 /// The elements of the stack represent the branch node that is the parent of the current
 /// parent element. When the current parent is no longer valid (is not the parent of
