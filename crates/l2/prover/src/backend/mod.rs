@@ -15,7 +15,10 @@ pub mod sp1;
 #[cfg(feature = "zisk")]
 pub mod zisk;
 
-#[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum)]
+#[cfg(feature = "openvm")]
+pub mod openvm;
+
+#[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum, PartialEq)]
 pub enum Backend {
     #[default]
     Exec,
@@ -25,6 +28,8 @@ pub enum Backend {
     RISC0,
     #[cfg(feature = "zisk")]
     ZisK,
+    #[cfg(feature = "openvm")]
+    OpenVM,
 }
 
 // Needed for Clap
@@ -40,6 +45,8 @@ impl FromStr for Backend {
             "risc0" => Ok(Backend::RISC0),
             #[cfg(feature = "zisk")]
             "zisk" => Ok(Backend::ZisK),
+            #[cfg(feature = "openvm")]
+            "openvm" => Ok(Backend::OpenVM),
             _ => Err(Self::Err::from("Invalid backend")),
         }
     }
@@ -53,4 +60,6 @@ pub enum ProveOutput {
     RISC0(risc0_zkvm::Receipt),
     #[cfg(feature = "zisk")]
     ZisK(zisk::ProveOutput),
+    #[cfg(feature = "openvm")]
+    OpenVM(openvm::ProveOutput),
 }

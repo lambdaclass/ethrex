@@ -19,20 +19,22 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-    EIP4844Transaction, Fork::*, Receipt, Transaction, WrappedEIP4844Transaction,
-    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_prague_header_fields, validate_pre_cancun_header_fields,
+    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
+    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
+    validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -432,20 +434,34 @@ impl Blockchain {
             state_updates_map.extend(worker_result.state_updates);
         }
 
-        if real_root.choices.iter().filter(|c| c.is_valid()).count() < 2 {
-            // On most chains, there's no way to go from a branch root node to a leaf or extension.
-            // There are exceptions in networks engineered to trigger this case, but it's
-            // not expected in normal operation.
-            //
-            // Example: network starts with a single account in genesis, transfers to other addresses,
-            // generating more subtries, then deploys a contract which self-destructs in each of those
-            // addresses, reverting back to the base case.
-            //
-            // TODO(#5387): support this case
-            todo!("real root has less than 2 valid subtries after merkleization");
-        }
-        let root_node = real_root.encode_to_vec();
-        let state_trie_hash = keccak(&root_node);
+        // Turn the root back into an extension or leaf if applicable
+        let root_node_opt = {
+            let children = real_root
+                .choices
+                .iter()
+                .filter(|child| child.is_valid())
+                // No need to check all of them
+                .take(2)
+                .count();
+
+            match children {
+                0 | 1 => collapse_root_node(
+                    real_root,
+                    &mut state_updates_map,
+                    &self.storage,
+                    parent_header,
+                )?,
+                // More than one child. Keep as branch
+                _ => Some(Node::Branch(real_root)),
+            }
+        };
+
+        let (state_trie_hash, root_node) = if let Some(root_node) = &root_node_opt {
+            let encoded_root_node = root_node.encode_to_vec();
+            (keccak(&encoded_root_node), encoded_root_node)
+        } else {
+            (*EMPTY_TRIE_HASH, vec![RLP_NULL])
+        };
         state_updates_map.insert(Nibbles::default(), root_node);
         let state_updates = state_updates_map.into_iter().collect();
         let storage_updates = storage_updates_map
@@ -1400,7 +1416,7 @@ impl Blockchain {
 
         // Add transaction and blobs bundle to storage
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         Ok(hash)
     }
@@ -1426,7 +1442,7 @@ impl Blockchain {
 
         // Add transaction to storage
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
 
         Ok(hash)
     }
@@ -1497,7 +1513,7 @@ impl Blockchain {
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
-        if config.is_fork_activated(Shanghai, header.timestamp)
+        if config.is_shanghai_activated(header.timestamp)
             && tx.is_contract_creation()
             && tx.data().len() > MAX_INITCODE_SIZE as usize
         {
@@ -1508,8 +1524,7 @@ impl Blockchain {
             return Err(MempoolError::TxMaxDataSizeError);
         }
 
-        if config.is_fork_activated(Osaka, header.timestamp)
-            && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
@@ -1643,7 +1658,7 @@ impl Blockchain {
             .storage
             .get_block_header(latest_block_number)?
             .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
-        Ok(chain_config.get_fork(latest_block.timestamp))
+        Ok(chain_config.fork(latest_block.timestamp))
     }
 }
 
@@ -1666,7 +1681,7 @@ pub fn validate_requests_hash(
     chain_config: &ChainConfig,
     requests: &[Requests],
 ) -> Result<(), ChainError> {
-    if !chain_config.is_fork_activated(Prague, header.timestamp) {
+    if !chain_config.is_prague_activated(header.timestamp) {
         return Ok(());
     }
 
@@ -1743,6 +1758,9 @@ pub fn find_parent_header(
 /// Performs pre-execution validation of the block's header values in reference to the parent_header
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
 /// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas
+///
+/// Note that this doesn't validate that the transactions or withdrawals root of the header matches the body
+/// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
 pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
@@ -1753,8 +1771,8 @@ pub fn validate_block(
     validate_block_header(&block.header, parent_header, elasticity_multiplier)
         .map_err(InvalidBlockError::from)?;
 
-    if chain_config.is_fork_activated(Osaka, block.header.timestamp) {
-        let block_rlp_size = block.encode_to_vec().len();
+    if chain_config.is_osaka_activated(block.header.timestamp) {
+        let block_rlp_size = block.length();
         if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(error::ChainError::InvalidBlock(
                 InvalidBlockError::MaximumRlpSizeExceeded(
@@ -1764,14 +1782,14 @@ pub fn validate_block(
             ));
         }
     }
-    if chain_config.is_fork_activated(Prague, block.header.timestamp) {
+    if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
-        if chain_config.is_fork_activated(Osaka, block.header.timestamp) {
+        if chain_config.is_osaka_activated(block.header.timestamp) {
             verify_transaction_max_gas_limit(block)?;
         }
-    } else if chain_config.is_fork_activated(Cancun, block.header.timestamp) {
+    } else if chain_config.is_cancun_activated(block.header.timestamp) {
         validate_cancun_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
@@ -1813,7 +1831,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     let mut blob_gas_used = 0_u32;
     let mut blobs_in_block = 0_u32;
     let max_blob_number_per_block = config
-        .get_blob_schedule_for_time(block.header.timestamp)
+        .get_fork_blob_schedule(block.header.timestamp)
         .map(|schedule| schedule.max)
         .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
     let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
@@ -1867,6 +1885,58 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
 /// Calculates the blob gas required by a transaction
 pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
+}
+
+/// Collapses a root branch node into an extension or leaf node if it has only one valid child.
+/// Returns None if there are no valid children.
+///
+/// NOTE: this assumes the branch has 0 or 1 children. If there are more than 1,
+/// it will discard all but the first valid child found.
+#[cold]
+fn collapse_root_node(
+    real_root: Box<BranchNode>,
+    state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
+    storage: &Store,
+    parent_header: &BlockHeader,
+) -> Result<Option<Node>, StoreError> {
+    // Collapse the branch into an extension or leaf
+    let Some((choice, only_child)) = real_root
+        .choices
+        .into_iter()
+        .enumerate()
+        .find(|(_, c)| c.is_valid())
+    else {
+        return Ok(None);
+    };
+    let path = Nibbles::from_hex(vec![choice as u8]);
+    let child_bytes = match state_updates_map.get(&path) {
+        Some(v) => v.clone(),
+        None => storage
+            .state_trie(parent_header.hash())?
+            .ok_or(StoreError::MissingStore)?
+            .db()
+            .get(path)?
+            .ok_or_else(|| StoreError::Custom("Missing child node during root collapse".into()))?,
+    };
+    // Same match as in [`BranchNode::remove`]
+    let child = match Node::decode(&child_bytes)? {
+        // Replace root with an extension node leading to the child
+        Node::Branch(_) => {
+            ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child).into()
+        }
+        // Replace root with the child extension node, updating its path in the process
+        Node::Extension(mut extension_node) => {
+            let mut extension_node = extension_node.take();
+            extension_node.prefix.prepend(choice as u8);
+            extension_node.into()
+        }
+        Node::Leaf(mut leaf) => {
+            let mut leaf = leaf.take();
+            leaf.partial.prepend(choice as u8);
+            leaf.into()
+        }
+    };
+    Ok(Some(child))
 }
 
 #[cfg(test)]
