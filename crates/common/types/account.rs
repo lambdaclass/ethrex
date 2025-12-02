@@ -45,7 +45,7 @@ impl Code {
 
     fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
         debug_assert!(code.len() <= u32::MAX as usize);
-        let mut targets = Vec::new();
+        let mut targets = Vec::with_capacity(code.len());
         let mut i = 0;
         while i < code.len() {
             // TODO: we don't use the constants from the vm module to avoid a circular dependency
