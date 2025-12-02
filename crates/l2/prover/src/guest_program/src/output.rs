@@ -55,12 +55,20 @@ impl ProgramOutput {
         #[cfg(feature = "l2")]
         for (chain_id, balance_diff) in &self.balance_diffs {
             encoded.extend_from_slice(&chain_id.to_big_endian());
+            let mut total_value = U256::zero();
             for &(token_l1, token_l2, other_chain_token_l2, amount) in balance_diff {
+                // Addresses are padded to 32 bytes to align with ABI decoding on-chain.
+                encoded.extend_from_slice(&[0u8; 12]);
                 encoded.extend_from_slice(&token_l1.to_fixed_bytes());
+                encoded.extend_from_slice(&[0u8; 12]);
                 encoded.extend_from_slice(&token_l2.to_fixed_bytes());
+                encoded.extend_from_slice(&[0u8; 12]);
                 encoded.extend_from_slice(&other_chain_token_l2.to_fixed_bytes());
                 encoded.extend_from_slice(&amount.to_big_endian());
+                total_value += amount;
             }
+            // Append the per-chain total value for convenience in on-chain verification.
+            encoded.extend_from_slice(&total_value.to_big_endian());
         }
         encoded
     }
