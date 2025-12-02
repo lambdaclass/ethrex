@@ -13,7 +13,11 @@ use sp1_sdk::{
     HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
-use std::{fmt::Debug, sync::OnceLock, time::{Duration, Instant}};
+use std::{
+    fmt::Debug,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 use tracing::info;
 use url::Url;
 
