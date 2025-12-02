@@ -178,7 +178,8 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             continue;
         }
         let mut offset = 4;
-        let (token_l1, token_l2, other_chain_token_l2) = if let Some(selector) = m.data.get(..4)
+        let (token_l1, token_l2, other_chain_token_l2, value) = if let Some(selector) =
+            m.data.get(..4)
             && *selector
                 == keccak("crosschainMintERC20(address,address,address,address,uint256)".as_bytes())
                     [..4]
@@ -199,13 +200,19 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 );
                 continue;
             };
+            offset += 32 + 32; // skip to
+            let Some(value_bytes) = m.data.get(offset..offset + 32) else {
+                println!("Invalid L2Message data for crosschainMintERC20: missing value");
+                continue;
+            };
             (
                 Address::from_slice(token_l1),
                 Address::from_slice(token_l2),
                 Address::from_slice(other_chain_token_l2),
+                U256::from_big_endian(value_bytes),
             )
         } else {
-            (Address::zero(), Address::zero(), Address::zero())
+            (Address::zero(), Address::zero(), Address::zero(), m.value)
         };
         let entry = acc.entry(m.chain_id).or_insert(BalanceDiff {
             chain_id: m.chain_id,
@@ -214,7 +221,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
         let mut found = false;
         for (t1, t2, oct2, v) in &mut entry.value_per_token {
             if *t1 == token_l1 && *t2 == token_l2 && *oct2 == other_chain_token_l2 {
-                *v += m.value;
+                *v += value;
                 found = true;
                 break;
             }
@@ -222,7 +229,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
         if !found {
             entry
                 .value_per_token
-                .push((token_l1, token_l2, other_chain_token_l2, m.value));
+                .push((token_l1, token_l2, other_chain_token_l2, value));
         }
     }
     acc.into_values().collect()
