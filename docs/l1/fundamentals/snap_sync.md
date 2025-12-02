@@ -211,6 +211,8 @@ The download of the storage slots is conceptually similar to the download of acc
 - limitHash: Storage slot hash after which to stop serving
 - responseBytes: Soft limit at which to stop returning data
 
+The parameters `startingHash` and `limitHash` are only read when `accountHashes` is a single account.
+
 The return is similar to the one from `GetAccountRange`, but with multiple results, one for each account provided, with the following parameters:
 
 - slots: List of list of consecutive slots from the trie (one list per account)
@@ -248,7 +250,7 @@ At the beginning of the algorithm, we divide the accounts into chunks of 300 sto
 
 ![proofs for missing slots](snap_sync/Snap%20Sync%20Downloading%20Storages%20-%201.png)
 
-When we reach that situation, we chunk the big account based on the "density"[^7] of storage slots we downloaded, following this code to get chunks of 10,000 slots[^6]
+When we reach that situation, we chunk the big account based on the "density"[^7] of storage slots we downloaded, following this code to get chunks of 10,000 slots[^6]. We create the tasks to download those intervals, and store all of the intervals in a struct to check when everything for that account was properly download.
 
 [^6]: 10_000 slots is a number chosen without hard data, we should review that number.
 
@@ -266,8 +268,46 @@ When we reach that situation, we chunk the big account based on the "density"[^7
         .unwrap_or(U256::MAX);
 ```
 
+#### Tasks API
+
+```rust
+struct StorageTask {
+    // Index of the first storage account we want to download
+    start_index: usize,
+    // Index of the last storage account we want to download (not inclusive)
+    end_index: usize,
+    // startingHash, used when the task is downloading a single account
+    start_hash: H256,
+    // end_hash is Some if the task is to download a big task
+    end_hash: Option<H256>,
+}
+
+struct StorageTaskResult {
+    // Index of the first storage account we want to download
+    start_index: usize,
+    // Slots we have succesfuly downloaded with the hash of the slot + value
+    account_storages: Vec<Vec<(H256, U256)>>,
+    // Which peer answered the task, used for scoring
+    peer_id: H256,
+    // Index of the first storage account we still need to download
+    remaining_start: usize,
+    // Index of the last storage account we still need to download
+    remaining_end: usize,
+    // remaining_hash_range[0] is the hash of the last slot we downloaded (so we need to download starting from there)
+    // remaining_hash_range[1] is the end_hash from the original StorageTask
+    remaining_hash_range: (H256, Option<H256>),
+}
+```
+
+#### Big Accounts Flow
+
+![Big Account logic](snap_sync/Flow%20-%20Big%20Account%20Logic.png)
 
 
-#### Memory concerns
+#### Memory Concerns
 
 Currently, we use a struct `accounts_by_root_hash` that we don't check the memory size. When rewriting this algorithm we should check if we're not going over the memory limit.
+
+#### Retry Limit
+
+Currently, if ethrex has been downloading storages for more than 2 pivots, the node will stop trying to download storage, and fallback to heal (fast sync) all the storage accounts that were still missing downloads. This stops ethrex hanging due to a problem but it indicates that we still have bugs in our storage slots download.
