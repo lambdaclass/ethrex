@@ -107,11 +107,10 @@ pub mod profiling {
             report
                 .data
                 .retain(|k, _| prefixes.iter().any(|p| k.thread_name.starts_with(p)));
-            let Ok(mut files): Result<Vec<_>, _> =
-                ["profile", "pb", "flamegraph", "svg", "flamechart", "svg"]
-                    .chunks_exact(2)
-                    .map(|c| std::fs::File::create(format!("{}-{}.{}", c[0], &self.name, c[1])))
-                    .collect()
+            let Ok(mut files): Result<Vec<_>, _> = ["profile", "pb", "flamegraph", "svg"]
+                .chunks_exact(2)
+                .map(|c| std::fs::File::create(format!("{}-{}.{}", c[0], &self.name, c[1])))
+                .collect()
             else {
                 warn!("Failed to create files, no profile will be created");
                 return;
@@ -124,11 +123,6 @@ pub mod profiling {
             _ = report
                 .flamegraph(&mut files[1])
                 .inspect_err(|e| warn!("Flamegraph writing failed: {e}"));
-            let mut chart_opts = Options::default();
-            chart_opts.flame_chart = true;
-            _ = report
-                .flamegraph_with_options(&mut files[2], &mut chart_opts)
-                .inspect_err(|e| warn!("Flamechart writing failed: {e}"));
         }
         pub fn start_profiling(
             freq: i32,
