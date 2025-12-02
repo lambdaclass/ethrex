@@ -71,8 +71,7 @@ pub fn init_tracing(
 
     let fmt_layer = fmt::layer()
         .with_target(include_target)
-        .with_ansi(use_color)
-        .with_filter(filter);
+        .with_ansi(use_color);
 
     let (file_layer, guard) = if let Some(log_dir) = &opts.log_dir {
         if !log_dir.exists() {
@@ -106,8 +105,7 @@ pub fn init_tracing(
     let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
 
     let subscriber = Registry::default()
-        .with(fmt_layer)
-        .with(file_layer)
+        .with(fmt_layer.and_then(file_layer).with_filter(filter))
         .with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
