@@ -936,7 +936,11 @@ impl Syncer {
                             .write_account_code_batch(
                                 code_hashes_to_download
                                     .drain(..)
-                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                                    .zip(bytecodes)
+                                    // SAFETY: hash already checked by the download worker
+                                    .map(|(hash, code)| {
+                                        (hash, Code::from_bytecode_unchecked(code, hash))
+                                    })
                                     .collect(),
                             )
                             .await?;
@@ -957,7 +961,9 @@ impl Syncer {
                 .write_account_code_batch(
                     code_hashes_to_download
                         .drain(..)
-                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                        .zip(bytecodes)
+                        // SAFETY: hash already checked by the download worker
+                        .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
                         .collect(),
                 )
                 .await?;
