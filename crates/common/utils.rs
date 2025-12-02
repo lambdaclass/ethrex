@@ -93,7 +93,7 @@ pub mod profiling {
     }
     impl ProfilingGuard {
         pub fn stop(mut self) {
-            use pprof::protos::Message;
+            use pprof::{flamegraph::Options, protos::Message};
 
             let Ok(guard) = self.guard else {
                 warn!("Building profiler guard failed, no profile will be created");
