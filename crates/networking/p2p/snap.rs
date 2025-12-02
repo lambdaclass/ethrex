@@ -9,6 +9,7 @@ use crate::rlpx::{
         GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
     },
 };
+use ethrex_common::types::AccountStateSlimCodec;
 
 // Request Processing
 
@@ -21,7 +22,7 @@ pub async fn process_account_range_request(
         let mut bytes_used = 0;
         for (hash, account) in store.iter_accounts_from(request.root_hash, request.starting_hash)? {
             debug_assert!(hash >= request.starting_hash);
-            bytes_used += 32 + account.length() as u64;
+            bytes_used += 32 + AccountStateSlimCodec(account).length() as u64;
             accounts.push(AccountRangeUnit { hash, account });
             if hash >= request.limit_hash || bytes_used >= request.response_bytes {
                 break;
