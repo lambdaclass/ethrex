@@ -125,7 +125,7 @@ impl Evm {
     /// This function is used to run/apply all the system contracts to the state.
     pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
         let chain_config = self.db.store.get_chain_config()?;
-        let fork = chain_config.get_fork(block_header.timestamp);
+        let fork = chain_config.fork(block_header.timestamp);
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             LEVM::beacon_root_contract_call(block_header, &mut self.db, self.vm_type)?;
