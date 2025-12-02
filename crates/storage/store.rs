@@ -295,14 +295,16 @@ impl Store {
 
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
+            let hash_key = hash.encode_to_vec();
+
             let mut txn = backend.begin_write()?;
             txn.delete(
                 CANONICAL_BLOCK_HASHES,
                 block_number.to_le_bytes().as_slice(),
             )?;
-            txn.delete(BODIES, hash.as_bytes())?;
-            txn.delete(HEADERS, hash.as_bytes())?;
-            txn.delete(BLOCK_NUMBERS, hash.as_bytes())?;
+            txn.delete(BODIES, &hash_key)?;
+            txn.delete(HEADERS, &hash_key)?;
+            txn.delete(BLOCK_NUMBERS, &hash_key)?;
             txn.commit()
         })
         .await
@@ -358,8 +360,10 @@ impl Store {
             let txn = backend.begin_read()?;
             let mut block_bodies = Vec::new();
             for hash in hashes {
+                let hash_key = hash.encode_to_vec();
+
                 let Some(block_body) = txn
-                    .get(BODIES, hash.as_bytes())?
+                    .get(BODIES, &hash_key)?
                     .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
                     .transpose()
                     .map_err(StoreError::from)?
@@ -381,7 +385,7 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        self.read_async(BODIES, block_hash.as_bytes().to_vec())
+        self.read_async(BODIES, block_hash.encode_to_vec())
             .await?
             .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
             .transpose()
@@ -423,7 +427,7 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let number_value = block_number.to_le_bytes().to_vec();
-        self.write_async(BLOCK_NUMBERS, block_hash.as_bytes().to_vec(), number_value)
+        self.write_async(BLOCK_NUMBERS, block_hash.encode_to_vec(), number_value)
             .await
     }
 
@@ -432,7 +436,7 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        self.read_async(BLOCK_NUMBERS, block_hash.as_bytes().to_vec())
+        self.read_async(BLOCK_NUMBERS, block_hash.encode_to_vec())
             .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
@@ -1048,7 +1052,7 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
         let txn = self.backend.begin_read()?;
-        txn.get(BLOCK_NUMBERS, block_hash.as_bytes())?
+        txn.get(BLOCK_NUMBERS, &block_hash.encode_to_vec())?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
@@ -2453,7 +2457,8 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
         let txn = self.backend.begin_read()?;
-        let header_value = txn.get(HEADERS, block_hash.as_bytes())?;
+        let hash_key = block_hash.encode_to_vec();
+        let header_value = txn.get(HEADERS, hash_key.as_slice())?;
         let mut header = header_value
             .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
             .transpose()
