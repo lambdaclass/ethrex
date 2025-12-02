@@ -309,7 +309,7 @@ impl Syncer {
             || format!("fullsync-{}", hex::encode(&sync_head[..4])),
             &[
                 std::thread::current().name().unwrap_or(""),
-                "executor",
+                "block_executor",
                 "pipeline",
                 "merkle",
             ],
