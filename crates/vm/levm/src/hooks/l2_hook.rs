@@ -164,7 +164,7 @@ fn finalize_non_privileged_execution(
 }
 
 fn validate_sufficient_max_fee_per_gas_l2(
-    vm: &mut VM<'_>,
+    vm: &VM<'_>,
     operator_fee_config: &Option<OperatorFeeConfig>,
 ) -> Result<(), TxValidationError> {
     let Some(fee_config) = operator_fee_config else {
@@ -582,7 +582,7 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
 /// Executes an L2 call as if it originated from the common bridge, returning
 /// both the execution report and the mutated database snapshot.
 fn simulate_common_bridge_call(
-    vm: &mut VM<'_>,
+    vm: &VM<'_>,
     to: Address,
     data: Bytes,
 ) -> Result<(ExecutionReport, GeneralizedDatabase), VMError> {
@@ -684,7 +684,7 @@ fn calculate_l1_fee(
 /// Calculates the L1 fee gas based on the account diffs size and the L1 fee config.
 /// Returns 0 if no L1 fee config is provided.
 fn calculate_l1_fee_gas(
-    vm: &mut VM<'_>,
+    vm: &VM<'_>,
     l1_fee_config: &Option<L1FeeConfig>,
 ) -> Result<u64, crate::errors::VMError> {
     let Some(fee_config) = l1_fee_config else {
