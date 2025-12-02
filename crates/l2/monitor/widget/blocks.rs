@@ -32,11 +32,38 @@ struct BlockEntry {
     size: usize,
 }
 
+impl From<&BlockEntry> for BlockListItem {
+    fn from(entry: &BlockEntry) -> Self {
+        BlockListItem {
+            number: entry.number.to_string(),
+            transaction_count: entry.transaction_count.to_string(),
+            hash: format!("{:#x}", entry.hash),
+            coinbase: format!("{:#x}", entry.coinbase),
+            gas_used: entry.gas_used.to_string(),
+            blob_gas_used: entry
+                .blob_gas_used
+                .map_or("0".to_string(), |bg| bg.to_string()),
+            size: entry.size.to_string(),
+        }
+    }
+}
+
+#[derive(Clone)]
+/// block number | #transactions | hash | coinbase | gas | blob gas | size
+struct BlockListItem {
+    number: String,
+    transaction_count: String,
+    hash: String,
+    coinbase: String,
+    gas_used: String,
+    blob_gas_used: String,
+    size: String,
+}
+
 #[derive(Clone, Default)]
 pub struct BlocksTable {
     pub state: TableState,
-    // block number | #transactions | hash | coinbase | gas | blob gas | size
-    pub items: Vec<(String, String, String, String, String, String, String)>,
+    items: Vec<BlockListItem>,
     last_l2_block_known: u64,
     selected: bool,
 }
@@ -61,27 +88,16 @@ impl BlocksTable {
     async fn refresh_items(
         last_l2_block_known: &mut u64,
         store: &Store,
-    ) -> Result<Vec<(String, String, String, String, String, String, String)>, MonitorError> {
+    ) -> Result<Vec<BlockListItem>, MonitorError> {
         let new_blocks = Self::get_blocks(last_l2_block_known, store).await?;
 
         let new_blocks_processed = Self::process_blocks(new_blocks);
 
-        Ok(new_blocks_processed
+        let new_items = new_blocks_processed
             .iter()
-            .map(|block| {
-                (
-                    block.number.to_string(),
-                    block.transaction_count.to_string(),
-                    format!("{:#x}", block.hash),
-                    format!("{:#x}", block.coinbase),
-                    block.gas_used.to_string(),
-                    block
-                        .blob_gas_used
-                        .map_or("0".to_string(), |bg| bg.to_string()),
-                    block.size.to_string(),
-                )
-            })
-            .collect())
+            .map(BlockListItem::from)
+            .collect();
+        Ok(new_items)
     }
 
     async fn get_blocks(
@@ -148,20 +164,17 @@ impl StatefulWidget for &mut BlocksTable {
             Constraint::Length(GAS_USED_LENGTH_IN_DIGITS),
             Constraint::Length(BLOCK_SIZE_LENGTH_IN_DIGITS),
         ];
-        let rows = self
-            .items
-            .iter()
-            .map(|(number, n_txs, hash, coinbase, gas, blob_bas, size)| {
-                Row::new(vec![
-                    Span::styled(number, Style::default()),
-                    Span::styled(n_txs.to_string(), Style::default()),
-                    Span::styled(hash, Style::default()),
-                    Span::styled(coinbase, Style::default()),
-                    Span::styled(gas.to_string(), Style::default()),
-                    Span::styled(blob_bas.to_string(), Style::default()),
-                    Span::styled(size.to_string(), Style::default()),
-                ])
-            });
+        let rows = self.items.iter().map(|item| {
+            Row::new(vec![
+                Span::styled(&item.number, Style::default()),
+                Span::styled(&item.transaction_count, Style::default()),
+                Span::styled(&item.hash, Style::default()),
+                Span::styled(&item.coinbase, Style::default()),
+                Span::styled(&item.gas_used, Style::default()),
+                Span::styled(&item.blob_gas_used, Style::default()),
+                Span::styled(&item.size, Style::default()),
+            ])
+        });
         let latest_blocks_table = Table::new(rows, constraints)
             .header(
                 Row::new(vec![
