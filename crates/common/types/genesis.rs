@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{BufReader, Error},
@@ -197,16 +197,7 @@ fn default_bpo2_schedule() -> ForkBlobSchedule {
 /// Blockchain settings defined per block
 #[allow(unused)]
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    Default,
-    PartialEq,
-    RSerialize,
-    RDeserialize,
-    Archive,
+    Clone, Debug, Serialize, Deserialize, Default, PartialEq, RSerialize, RDeserialize, Archive,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ChainConfig {
@@ -705,7 +696,7 @@ impl Genesis {
     pub fn compute_state_root(&self) -> H256 {
         let iter = self.alloc.iter().map(|(addr, account)| {
             (
-                keccak_hash(addr).to_vec(),
+                Keccak256::digest(addr).to_vec(),
                 AccountState::from(account).encode_to_vec(),
             )
         });
