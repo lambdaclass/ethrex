@@ -284,6 +284,8 @@ impl PeerHandler {
 
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
+        let mut logged_no_free_peers_count = 0;
+
         loop {
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
@@ -340,7 +342,14 @@ impl PeerHandler {
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
-                trace!("We didn't get a peer from the table");
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count >= 1000 {
+                    trace!("We didn't get a peer from the table");
+                    logged_no_free_peers_count = 0;
+                }
+                logged_no_free_peers_count += 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
