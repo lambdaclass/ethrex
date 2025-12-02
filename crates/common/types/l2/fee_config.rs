@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::Address;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -216,24 +216,6 @@ impl Decoder {
         Ok(res)
     }
 
-    pub fn get_u256(&mut self) -> Result<U256, DecoderError> {
-        let res = U256::from_big_endian(self.bytes.get(self.offset..self.offset + 32).ok_or(
-            DecoderError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
-        )?);
-        self.offset += 32;
-
-        Ok(res)
-    }
-
-    pub fn get_h256(&mut self) -> Result<H256, DecoderError> {
-        let res = H256::from_slice(self.bytes.get(self.offset..self.offset + 32).ok_or(
-            DecoderError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
-        )?);
-        self.offset += 32;
-
-        Ok(res)
-    }
-
     pub fn get_u8(&mut self) -> Result<u8, DecoderError> {
         let res = self
             .bytes
@@ -244,23 +226,6 @@ impl Decoder {
         self.offset += 1;
 
         Ok(*res)
-    }
-
-    pub fn get_u16(&mut self) -> Result<u16, DecoderError> {
-        let res = u16::from_be_bytes(
-            self.bytes
-                .get(self.offset..self.offset + 2)
-                .ok_or(DecoderError::FailedToDeserializeStateDiff(
-                    "Not enough bytes".to_string(),
-                ))?
-                .try_into()
-                .map_err(|_| {
-                    DecoderError::FailedToDeserializeStateDiff("Cannot parse u16".to_string())
-                })?,
-        );
-        self.offset += 2;
-
-        Ok(res)
     }
 
     pub fn get_u64(&mut self) -> Result<u64, DecoderError> {
@@ -278,14 +243,5 @@ impl Decoder {
         self.offset += 8;
 
         Ok(res)
-    }
-
-    pub fn get_bytes(&mut self, size: usize) -> Result<Bytes, DecoderError> {
-        let res = self.bytes.get(self.offset..self.offset + size).ok_or(
-            DecoderError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
-        )?;
-        self.offset += size;
-
-        Ok(Bytes::copy_from_slice(res))
     }
 }
