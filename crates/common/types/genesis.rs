@@ -372,6 +372,8 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
+    /// Get the timestamp at which a given fork was activated
+    /// Only considers time-based forks (Post-Merge)
     pub fn fork_activation_time(&self, fork: Fork) -> Option<u64> {
         match fork {
             Fork::Shanghai => self.shanghai_time,
@@ -387,6 +389,8 @@ impl ChainConfig {
         }
     }
 
+    /// Get the block at which a given fork was activated
+    /// Only considers block-based forks (Pre-Merge)
     pub fn fork_activation_block(&self, fork: Fork) -> Option<u64> {
         match fork {
             Frontier => Some(0),
@@ -422,11 +426,15 @@ impl ChainConfig {
         }
     }
 
+    /// Returns true if the given fork is active at the given timestamp
+    /// Only considers time-based forks (Post-Merge)
     pub fn is_fork_activated(&self, fork: Fork, timestamp: u64) -> bool {
         self.fork_activation_time(fork)
             .is_some_and(|time| time <= timestamp)
     }
 
+    /// Returns true if the given fork is active at the given block
+    /// Only considers block-based forks (Pre-Merge)
     pub fn is_fork_activated_for_block(&self, fork: Fork, block: u64) -> bool {
         self.fork_activation_block(fork)
             .is_some_and(|act_block| act_block <= block)
@@ -459,6 +467,8 @@ impl ChainConfig {
         output
     }
 
+    /// Obtain the latest active fork given a block's timestamp
+    /// If no time-based (aka Post-Merge) fork is active, it will default to Paris
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
         FORKS
             .into_iter()
