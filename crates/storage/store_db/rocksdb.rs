@@ -475,32 +475,34 @@ impl Store {
 
             - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
         */
-        std::thread::spawn(move || {
-            let rx = trie_upd_rx;
-            loop {
-                match rx.recv() {
-                    Ok((
-                        notify,
-                        parent_state_root,
-                        child_state_root,
-                        account_updates,
-                        storage_updates,
-                    )) => {
-                        // FIXME: what should we do on error?
-                        let _ = store_clone
-                            .apply_trie_updates(
-                                notify,
-                                parent_state_root,
-                                child_state_root,
-                                account_updates,
-                                storage_updates,
-                            )
-                            .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
+        std::thread::Builder::new()
+            .name("bg_trie_updater".to_string())
+            .spawn(move || {
+                let rx = trie_upd_rx;
+                loop {
+                    match rx.recv() {
+                        Ok((
+                            notify,
+                            parent_state_root,
+                            child_state_root,
+                            account_updates,
+                            storage_updates,
+                        )) => {
+                            // FIXME: what should we do on error?
+                            let _ = store_clone
+                                .apply_trie_updates(
+                                    notify,
+                                    parent_state_root,
+                                    child_state_root,
+                                    account_updates,
+                                    storage_updates,
+                                )
+                                .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
+                        }
+                        Err(err) => error!("Error while reading diff layer: {err}"),
                     }
-                    Err(err) => error!("Error while reading diff layer: {err}"),
                 }
-            }
-        });
+            });
         Ok(store)
     }
 

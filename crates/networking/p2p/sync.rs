@@ -312,6 +312,7 @@ impl Syncer {
                 "block_executor",
                 "pipeline",
                 "merkle",
+                "bg_trie_updater",
             ],
         );
         // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain

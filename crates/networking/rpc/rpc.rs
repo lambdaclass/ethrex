@@ -260,7 +260,7 @@ pub fn start_block_executor(
                 let profiler_guard = ProfilingGuard::start_profiling(
                     9997,
                     || format!("block-execution-{}", hex::encode(&block.header.hash()[..4])),
-                    &["pipeline", "block_executor", "merkle"],
+                    &["pipeline", "block_executor", "merkle", "bg_trie_updater"],
                 );
                 let _ = notify
                     .send(blockchain.add_block_pipeline(block))
