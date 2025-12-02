@@ -265,6 +265,7 @@ pub struct NodeRecord {
     pub seq: u64,
     // holds optional values in (key, value) format
     // value represents the rlp encoded bytes
+    // The key/value pairs must be sorted by key and must be unique
     pub pairs: Vec<(Bytes, Bytes)>,
 }
 
@@ -371,6 +372,23 @@ impl NodeRecord {
         Ok(record)
     }
 
+    pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SecretKey) -> Result<(), NodeError> {
+        // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+        // [forkHash, forkNext]
+        // But the spec requires nested lists:
+        // [[forkHash, forkNext]]
+        let eth = vec![fork_id];
+        self.pairs.push(("eth".into(), eth.encode_to_vec().into()));
+
+        //Pairs need to be sorted by their key.
+        //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
+        //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
+        self.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+        self.signature = self.sign_record(signer)?;
+        Ok(())
+    }
+
     fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
         let digest = &self.get_signature_digest();
         let msg = secp256k1::Message::from_digest_slice(digest)
@@ -396,6 +414,11 @@ impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
     fn from(value: NodeRecordPairs) -> Self {
         let mut pairs = vec![];
         if let Some(eth) = value.eth {
+            // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+            // [forkHash, forkNext]
+            // But the spec requires nested lists:
+            // [[forkHash, forkNext]]
+            let eth = vec![eth];
             pairs.push(("eth".into(), eth.encode_to_vec().into()));
         }
         if let Some(id) = value.id {
@@ -494,6 +517,7 @@ mod tests {
         utils::public_key_from_signing_key,
     };
     use ethrex_common::H512;
+    use ethrex_rlp::decode::RLPDecode;
     use ethrex_storage::{EngineType, Store};
     use secp256k1::SecretKey;
     use std::{net::SocketAddr, str::FromStr};
@@ -583,5 +607,42 @@ mod tests {
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);
+    }
+
+    #[tokio::test]
+    async fn encode_decode_node_record_with_forkid() {
+        let signer = SecretKey::from_slice(&[
+            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
+            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+        ])
+        .unwrap();
+        let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
+
+        let mut storage =
+            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        storage
+            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
+            .await
+            .expect("Failed to build test genesis");
+
+        let node = Node::new(
+            addr.ip(),
+            addr.port(),
+            addr.port(),
+            public_key_from_signing_key(&signer),
+        );
+        let fork_id = storage.get_fork_id().await.unwrap();
+
+        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        record.set_fork_id(fork_id.clone(), &signer).unwrap();
+
+        record.sign_record(&signer).unwrap();
+
+        let enr_url = record.enr_url().unwrap();
+        let base64_decoded = ethrex_common::base64::decode(&enr_url.as_bytes()[4..]);
+        let parsed_record = NodeRecord::decode(&base64_decoded).unwrap();
+        let pairs = parsed_record.decode_pairs();
+
+        assert_eq!(pairs.eth, Some(fork_id));
     }
 }
