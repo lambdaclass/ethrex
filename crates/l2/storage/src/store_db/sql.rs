@@ -29,23 +29,23 @@ impl Debug for SQLStore {
 }
 
 const DB_SCHEMA: [&str; 17] = [
-    "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
-    "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
-    "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
-    "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE account_updates (block_number INT PRIMARY KEY, updates BLOB)",
-    "CREATE TABLE commit_txs (batch INT PRIMARY KEY, commit_tx BLOB)",
-    "CREATE TABLE verify_txs (batch INT PRIMARY KEY, verify_tx BLOB)",
-    "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, privileged_transactions INT, messages INT)",
-    "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
-    "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
-    "INSERT INTO latest_sent VALUES (0, 0)",
-    "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
-    "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
-    "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
-    "CREATE TABLE batch_prover_input (batch INT, prover_version TEXT, prover_input BLOB, PRIMARY KEY (batch, prover_version))",
-    "CREATE TABLE fee_config (block_number INT PRIMARY KEY, fee_config BLOB)",
+    "CREATE TABLE IF NOT EXISTS blocks (block_number INT PRIMARY KEY, batch INT)",
+    "CREATE TABLE IF NOT EXISTS messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE IF NOT EXISTS privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
+    "CREATE TABLE IF NOT EXISTS state_roots (batch INT PRIMARY KEY, state_root BLOB)",
+    "CREATE TABLE IF NOT EXISTS blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE IF NOT EXISTS account_updates (block_number INT PRIMARY KEY, updates BLOB)",
+    "CREATE TABLE IF NOT EXISTS commit_txs (batch INT PRIMARY KEY, commit_tx BLOB)",
+    "CREATE TABLE IF NOT EXISTS verify_txs (batch INT PRIMARY KEY, verify_tx BLOB)",
+    "CREATE TABLE IF NOT EXISTS operation_count (_id INT PRIMARY KEY, transactions INT, privileged_transactions INT, messages INT)",
+    "INSERT INTO operation_count VALUES (0, 0, 0, 0) ON CONFLICT(_id) DO NOTHING",
+    "CREATE TABLE IF NOT EXISTS latest_sent (_id INT PRIMARY KEY, batch INT)",
+    "INSERT INTO latest_sent VALUES (0, 0) ON CONFLICT(_id) DO NOTHING",
+    "CREATE TABLE IF NOT EXISTS batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
+    "CREATE TABLE IF NOT EXISTS block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE IF NOT EXISTS batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE IF NOT EXISTS batch_prover_input (batch INT, prover_version TEXT, prover_input BLOB, PRIMARY KEY (batch, prover_version))",
+    "CREATE TABLE IF NOT EXISTS fee_config (block_number INT PRIMARY KEY, fee_config BLOB)",
 ];
 
 impl SQLStore {
@@ -82,20 +82,14 @@ impl SQLStore {
         // https://sqlite.org/wal.html#concurrency
         // still a limit of only 1 writer is imposed by sqlite databases
         self.query("PRAGMA journal_mode=WAL;", ()).await?;
-        let mut rows = self
-            .query(
-                "SELECT name FROM sqlite_schema WHERE type='table' AND name='blocks'",
-                (),
-            )
-            .await?;
-        if rows.next().await?.is_none() {
-            let empty_param = ().into_params()?;
-            let queries = DB_SCHEMA
-                .iter()
-                .map(|v| (*v, empty_param.clone()))
-                .collect();
-            self.execute_in_tx(queries, None).await?;
-        }
+
+        // Create DB schema if not exists
+        let empty_param = ().into_params()?;
+        let queries = DB_SCHEMA
+            .iter()
+            .map(|v| (*v, empty_param.clone()))
+            .collect();
+        self.execute_in_tx(queries, None).await?;
         Ok(())
     }
 
