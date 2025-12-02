@@ -1,6 +1,7 @@
 use crate::api::tables::{
     ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-    CANONICAL_BLOCK_HASHES, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE,
+    STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
     PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, tables::TABLES,
@@ -60,7 +61,15 @@ impl RocksDBBackend {
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
-        opts.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
+
+        let compressible_tables = [
+            BLOCK_NUMBERS,
+            HEADERS,
+            BODIES,
+            RECEIPTS,
+            TRANSACTION_LOCATIONS,
+            FULLSYNC_HEADERS,
+        ];
 
         // opts.enable_statistics();
         // opts.set_stats_dump_period_sec(600);
@@ -80,7 +89,12 @@ impl RocksDBBackend {
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
-            cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+            if compressible_tables.contains(&cf_name.as_str()) {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            } else {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+            }
 
             match cf_name.as_str() {
                 HEADERS | BODIES => {
