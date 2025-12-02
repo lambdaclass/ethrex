@@ -25,7 +25,7 @@ use errors::{
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlobsBundle, Block, GenericTransaction, TxKind},
+    types::{AuthorizationTupleEntry, BlobsBundle, Block, GenericTransaction, TxKind},
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -66,9 +66,11 @@ pub struct Overrides {
     pub max_fee_per_gas: Option<u64>,
     pub max_priority_fee_per_gas: Option<u64>,
     pub access_list: Vec<(Address, Vec<H256>)>,
+    pub fee_token: Option<Address>,
     pub gas_price_per_blob: Option<U256>,
     pub block: Option<BlockIdentifier>,
     pub blobs_bundle: Option<BlobsBundle>,
+    pub authorization_list: Option<Vec<AuthorizationTupleEntry>>,
     pub wrapper_version: Option<u8>,
 }
 

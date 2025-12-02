@@ -1,5 +1,3 @@
-#[cfg(any(test, feature = "test-utils"))]
-use crate::discv4::peer_table::TARGET_PEERS;
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     discv4::peer_table::{PeerData, PeerTable, PeerTableError},
@@ -152,14 +150,6 @@ impl PeerHandler {
             peer_table,
             initiator,
         }
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
-    /// This should only be used in tests as it won't be able to interact with the node's connected peers
-    pub async fn dummy() -> PeerHandler {
-        let peer_table = PeerTable::spawn(TARGET_PEERS);
-        PeerHandler::new(peer_table.clone(), RLPxInitiator::dummy(peer_table).await)
     }
 
     async fn make_request(
@@ -568,28 +558,12 @@ impl PeerHandler {
         }
     }
 
-    /// Requests block bodies from any suitable peer given their block hashes
-    /// Returns the block bodies or None if:
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_block_bodies(
-        &mut self,
-        block_hashes: &[H256],
-    ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            if let Some((block_bodies, _)) = self.request_block_bodies_inner(block_hashes).await? {
-                return Ok(Some(block_bodies));
-            }
-        }
-        Ok(None)
-    }
-
     /// Requests block bodies from any suitable peer given their block headers and validates them
     /// Returns the requested block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
-    pub async fn request_and_validate_block_bodies(
+    pub async fn request_block_bodies(
         &mut self,
         block_headers: &[BlockHeader],
     ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {

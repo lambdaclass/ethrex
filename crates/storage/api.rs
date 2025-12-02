@@ -3,7 +3,7 @@ use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, Index, Receipt,
     Transaction,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
@@ -58,13 +58,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StoreError>;
+    ) -> Result<Vec<Option<BlockBody>>, StoreError>;
 
     /// Obtain block bodies from a list of hashes
     async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StoreError>;
+    ) -> Result<Vec<Option<BlockBody>>, StoreError>;
 
     /// Obtain any block body using the hash
     async fn get_block_body_by_hash(
@@ -378,7 +378,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         start: BlockNumber,
         limit: u64,
-    ) -> Result<Vec<BlockHeader>, StoreError>;
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError>;
 
     /// Clear all headers downloaded during fullsync
     async fn clear_fullsync_headers(&self) -> Result<(), StoreError>;
@@ -386,6 +386,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn generate_flatkeyvalue(&self) -> Result<(), StoreError>;
 
     async fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    fn get_store_directory(&self) -> Result<PathBuf, StoreError>;
 
     fn flatkeyvalue_computed(&self, _account: H256) -> Result<bool, StoreError> {
         Ok(false)

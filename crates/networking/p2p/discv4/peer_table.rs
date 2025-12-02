@@ -582,12 +582,12 @@ impl PeerTableServer {
             }
         }
         // No untried contact found, resetting tried peers.
-        tracing::info!("Resetting list of tried peers.");
+        tracing::trace!("Resetting list of tried peers.");
         self.already_tried_peers.clear();
         None
     }
 
-    fn get_contact_for_lookup(&mut self) -> Option<Contact> {
+    fn get_contact_for_lookup(&self) -> Option<Contact> {
         self.contacts
             .values()
             .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
@@ -597,7 +597,7 @@ impl PeerTableServer {
             .cloned()
     }
 
-    fn get_contacts_to_revalidate(&mut self, revalidation_interval: Duration) -> Vec<Contact> {
+    fn get_contacts_to_revalidate(&self, revalidation_interval: Duration) -> Vec<Contact> {
         self.contacts
             .values()
             .filter(|c| Self::is_validation_needed(c, revalidation_interval))
@@ -605,7 +605,7 @@ impl PeerTableServer {
             .collect()
     }
 
-    fn validate_contact(&mut self, node_id: H256, sender_ip: IpAddr) -> OutMessage {
+    fn validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> OutMessage {
         let Some(contact) = self.contacts.get(&node_id) else {
             return OutMessage::UnknownContact;
         };
@@ -623,7 +623,7 @@ impl PeerTableServer {
         OutMessage::Contact(contact.clone())
     }
 
-    fn get_closest_nodes(&mut self, node_id: H256) -> Vec<Node> {
+    fn get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
         let mut nodes: Vec<(Node, usize)> = vec![];
 
         for (contact_id, contact) in &self.contacts {
@@ -655,7 +655,7 @@ impl PeerTableServer {
         }
     }
 
-    fn peer_count_by_capabilities(&mut self, capabilities: Vec<Capability>) -> usize {
+    fn peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> usize {
         self.peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
@@ -673,10 +673,7 @@ impl PeerTableServer {
             .len()
     }
 
-    fn get_peer_connections(
-        &mut self,
-        capabilities: Vec<Capability>,
-    ) -> Vec<(H256, PeerConnection)> {
+    fn get_peer_connections(&self, capabilities: Vec<Capability>) -> Vec<(H256, PeerConnection)> {
         self.peers
             .iter()
             .filter_map(|(peer_id, peer_data)| {
@@ -695,7 +692,7 @@ impl PeerTableServer {
             .collect()
     }
 
-    fn get_random_peer(&mut self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
+    fn get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
         let peers: Vec<(H256, PeerConnection)> = self
             .peers
             .iter()
