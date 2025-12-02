@@ -237,11 +237,12 @@ async fn heal_state_trie(
                     paths.extend(batch);
 
                     // Log ~ once every 10 seconds
-                    if logged_no_free_peers_count >= 1000 {
+                    if logged_no_free_peers_count == 0 {
                         trace!("We are missing peers in heal_state_trie");
-                        logged_no_free_peers_count = 0;
+                        logged_no_free_peers_count = 1000;
                     }
-                    logged_no_free_peers_count += 1;
+                    logged_no_free_peers_count -= 1;
+
                     // Sleep a bit to avoid busy polling
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     continue;
