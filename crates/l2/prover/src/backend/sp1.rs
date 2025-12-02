@@ -13,7 +13,11 @@ use sp1_sdk::{
     HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
-use std::{fmt::Debug, sync::OnceLock, time::Instant};
+use std::{
+    fmt::Debug,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 use tracing::info;
 use url::Url;
 
@@ -84,13 +88,23 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 
     let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
 
-    let now = Instant::now();
     setup.client.execute(ZKVM_SP1_PROGRAM_ELF, &stdin)?;
-    let elapsed = now.elapsed();
-
-    info!("Successfully executed SP1 program in {elapsed:.2?}");
 
     Ok(())
+}
+
+pub fn execute_timed(input: ProgramInput) -> Result<Duration, Box<dyn std::error::Error>> {
+    let mut stdin = SP1Stdin::new();
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
+
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
+
+    let start = Instant::now();
+    setup.client.execute(ZKVM_SP1_PROGRAM_ELF, &stdin)?;
+    let duration = start.elapsed();
+
+    Ok(duration)
 }
 
 pub fn prove(
@@ -103,19 +117,36 @@ pub fn prove(
 
     let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
 
-    // contains the receipt along with statistics about execution of the guest
     let format = match format {
         ProofFormat::Compressed => SP1ProofMode::Compressed,
         ProofFormat::Groth16 => SP1ProofMode::Groth16,
     };
 
-    let now = Instant::now();
     let proof = setup.client.prove(&setup.pk, &stdin, format)?;
-    let elapsed = now.elapsed();
-
-    info!("Successfully proved SP1 program in {elapsed:.2?}");
 
     Ok(ProveOutput::new(proof, setup.vk.clone()))
+}
+
+pub fn prove_timed(
+    input: ProgramInput,
+    format: ProofFormat,
+) -> Result<(ProveOutput, Duration), Box<dyn std::error::Error>> {
+    let mut stdin = SP1Stdin::new();
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
+
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
+
+    let format = match format {
+        ProofFormat::Compressed => SP1ProofMode::Compressed,
+        ProofFormat::Groth16 => SP1ProofMode::Groth16,
+    };
+
+    let start = Instant::now();
+    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
+    let duration = start.elapsed();
+
+    Ok((ProveOutput::new(proof, setup.vk.clone()), duration))
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {

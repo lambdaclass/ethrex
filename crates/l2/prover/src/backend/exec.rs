@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use ethrex_l2_common::{
@@ -16,6 +16,14 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn execute_timed(input: ProgramInput) -> Result<Duration, Box<dyn std::error::Error>> {
+    let now = Instant::now();
+    execution_program(input)?;
+    let duration = now.elapsed();
+
+    Ok(duration)
+}
+
 pub fn prove(
     input: ProgramInput,
     _format: ProofFormat,
@@ -23,6 +31,18 @@ pub fn prove(
     warn!("\"exec\" prover backend generates no proof, only executes");
     let output = execution_program(input)?;
     Ok(output)
+}
+
+pub fn prove_timed(
+    input: ProgramInput,
+    _format: ProofFormat,
+) -> Result<(ProgramOutput, Duration), Box<dyn std::error::Error>> {
+    warn!("\"exec\" prover backend generates no proof, only executes");
+    let now = Instant::now();
+    let output = execution_program(input)?;
+    let duration = now.elapsed();
+
+    Ok((output, duration))
 }
 
 pub fn verify(_proof: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>> {

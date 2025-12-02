@@ -12,7 +12,7 @@ use risc0_zkvm::{
     serde::Error as Risc0SerdeError,
 };
 use rkyv::rancor::Error as RkyvError;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::info;
 
 #[derive(thiserror::Error, Debug)]
@@ -39,13 +39,24 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 
     let executor = default_executor();
 
-    let now = Instant::now();
     let _session_info = executor.execute(env, ZKVM_RISC0_PROGRAM_ELF)?;
-    let elapsed = now.elapsed();
-
-    info!("Successfully executed RISC0 program in {elapsed:.2?}");
 
     Ok(())
+}
+
+pub fn execute_timed(input: ProgramInput) -> Result<Duration, Box<dyn std::error::Error>> {
+    let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
+    let env = ExecutorEnv::builder()
+        .write_slice(bytes.as_slice())
+        .build()?;
+
+    let executor = default_executor();
+
+    let start = Instant::now();
+    let _session_info = executor.execute(env, ZKVM_RISC0_PROGRAM_ELF)?;
+    let duration = start.elapsed();
+
+    Ok(duration)
 }
 
 pub fn prove(
@@ -67,13 +78,35 @@ pub fn prove(
         ProofFormat::Groth16 => ProverOpts::groth16(),
     };
 
-    let now = Instant::now();
     let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)?;
-    let elapsed = now.elapsed();
-
-    info!("Successfully proved RISC0 program in {elapsed:.2?}");
 
     Ok(prove_info.receipt)
+}
+
+pub fn prove_timed(
+    input: ProgramInput,
+    format: ProofFormat,
+) -> Result<(Receipt, Duration), Box<dyn std::error::Error>> {
+    let mut stdout = Vec::new();
+
+    let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
+    let env = ExecutorEnv::builder()
+        .stdout(&mut stdout)
+        .write_slice(bytes.as_slice())
+        .build()?;
+
+    let prover = default_prover();
+
+    let prover_opts = match format {
+        ProofFormat::Compressed => ProverOpts::succinct(),
+        ProofFormat::Groth16 => ProverOpts::groth16(),
+    };
+
+    let start = Instant::now();
+    let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)?;
+    let duration = start.elapsed();
+
+    Ok((prove_info.receipt, duration))
 }
 
 pub fn verify(receipt: &Receipt) -> Result<(), Error> {
