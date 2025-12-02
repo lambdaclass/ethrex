@@ -100,21 +100,13 @@ pub mod profiling {
                 return;
             };
             let prefixes = std::mem::take(&mut self.thread_prefixes);
-            let Ok(report) = guard
-                .report()
-                .frames_post_processor(move |frames| {
-                    for prefix in &prefixes {
-                        if frames.thread_name.starts_with(prefix) {
-                            return;
-                        }
-                    }
-                    frames.frames.clear()
-                })
-                .build()
-            else {
+            let Ok(mut report) = guard.report().build() else {
                 warn!("Building profiler report failed, no profile will be created");
                 return;
             };
+            report
+                .data
+                .retain(|k, _| prefixes.iter().any(|p| k.thread_name.starts_with(p)));
             let Ok(mut files): Result<Vec<_>, _> =
                 ["profile", "pb", "flamegraph", "svg", "flamechart", "svg"]
                     .chunks_exact(2)
