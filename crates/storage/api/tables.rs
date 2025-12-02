@@ -2,21 +2,21 @@
 
 /// Canonical block hashes column family: [`u8;_`] => [`Vec<u8>`]
 /// - [`u8;_`] = `block_number.to_le_bytes()`
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
+/// - [`Vec<u8>`] = `block_hash.encode_to_vec()`
 pub const CANONICAL_BLOCK_HASHES: &str = "canonical_block_hashes";
 
 /// Block numbers column family: [`Vec<u8>`] => [`u8;_`]
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
+/// - [`Vec<u8>`] = `block_hash.encode_to_vec()`
 /// - [`u8;_`] = `block_number.to_le_bytes()`
 pub const BLOCK_NUMBERS: &str = "block_numbers";
 
 /// Block headers column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
+/// - [`Vec<u8>`] = `block_hash.encode_to_vec()`
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
 pub const HEADERS: &str = "headers";
 
 /// Block bodies column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone();`
+/// - [`Vec<u8>`] = `block_hash.encode_to_vec();`
 /// - [`Vec<u8>`] = `BlockBodyRLP::from(block.body.clone()).bytes().clone()`
 pub const BODIES: &str = "bodies";
 
@@ -47,7 +47,7 @@ pub const CHAIN_DATA: &str = "chain_data";
 
 /// Snap state column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint)`
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
+/// - [`Vec<u8>`] = `block_hash.encode_to_vec()`
 pub const SNAP_STATE: &str = "snap_state";
 
 /// Account State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]

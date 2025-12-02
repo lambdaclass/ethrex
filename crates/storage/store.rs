@@ -187,34 +187,33 @@ impl Store {
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let mut txn = db.begin_write()?;
+            let mut tx = db.begin_write()?;
 
             // TODO: Same logic in apply_updates
             for block in blocks {
                 let block_number = block.header.number;
                 let block_hash = block.hash();
+                let hash_key = block_hash.encode_to_vec();
+
+                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+                tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
+
+                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+                tx.put(BODIES, &hash_key, body_value.bytes())?;
+
+                tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
+                    let tx_hash = transaction.hash();
+                    // Key: tx_hash + block_hash
                     let mut composite_key = Vec::with_capacity(64);
-                    composite_key.extend_from_slice(transaction.hash().as_bytes());
+                    composite_key.extend_from_slice(tx_hash.as_bytes());
                     composite_key.extend_from_slice(block_hash.as_bytes());
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    txn.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                    tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
                 }
-
-                let header_value = BlockHeaderRLP::from(block.header).into_vec();
-                txn.put(HEADERS, block_hash.as_bytes(), &header_value)?;
-
-                let body_value = BlockBodyRLP::from(block.body).into_vec();
-                txn.put(BODIES, block_hash.as_bytes(), &body_value)?;
-
-                txn.put(
-                    BLOCK_NUMBERS,
-                    block_hash.as_bytes(),
-                    &block_number.to_le_bytes(),
-                )?;
             }
-            txn.commit()
+            tx.commit()
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -226,9 +225,9 @@ impl Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
+        let hash_key = block_hash.encode_to_vec();
         let header_value = BlockHeaderRLP::from(block_header).into_vec();
-        self.write_async(HEADERS, block_hash.as_bytes().to_vec(), header_value)
-            .await
+        self.write_async(HEADERS, hash_key, header_value).await
     }
 
     /// Add a batch of block headers
@@ -241,7 +240,7 @@ impl Store {
         for header in block_headers {
             let block_hash = header.hash();
             let block_number = header.number;
-            let hash_key = block_hash.as_bytes().to_vec();
+            let hash_key = block_hash.encode_to_vec();
             let header_value = BlockHeaderRLP::from(header).into_vec();
 
             txn.put(HEADERS, &hash_key, &header_value)?;
@@ -271,9 +270,9 @@ impl Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
+        let hash_key = block_hash.encode_to_vec();
         let body_value = BlockBodyRLP::from(block_body).into_vec();
-        self.write_async(BODIES, block_hash.as_bytes().to_vec(), body_value)
-            .await
+        self.write_async(BODIES, hash_key, body_value).await
     }
 
     /// Obtain canonical block body
@@ -332,8 +331,9 @@ impl Store {
                     block_bodies.push(None);
                     continue;
                 };
+                let hash_key = hash.encode_to_vec();
                 let block_body_opt = txn
-                    .get(BODIES, hash.as_bytes())?
+                    .get(BODIES, &hash_key)?
                     .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
                     .transpose()
                     .map_err(StoreError::from)?;
@@ -1306,18 +1306,15 @@ impl Store {
         for block in update_batch.blocks {
             let block_number = block.header.number;
             let block_hash = block.hash();
+            let hash_key = block_hash.encode_to_vec();
 
             let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            tx.put(HEADERS, block_hash.as_bytes(), header_value_rlp.bytes())?;
+            tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
 
             let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            tx.put(BODIES, block_hash.as_bytes(), body_value.bytes())?;
+            tx.put(BODIES, &hash_key, body_value.bytes())?;
 
-            tx.put(
-                BLOCK_NUMBERS,
-                block_hash.as_bytes(),
-                &block_number.to_le_bytes(),
-            )?;
+            tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
