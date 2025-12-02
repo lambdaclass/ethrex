@@ -236,7 +236,7 @@ This may not be a problem in path based again, but should be studied.
 
 #### Repeated Storage Roots
 
-A large amount of the accounts with storage have exactly the same storage as other accounts.[^5] As suche, when we are creating tasks for download, it's important to group the tasks by storage root and not download them twice.
+A large amount of the accounts with storage have exactly the same storage as other accounts.[^5] As such, when we are creating tasks for download, it's important to group the tasks by storage root and not download them twice.
 
 [^5]: This may be for a variety of reasons, but the most likely is ERC20 tokens that were deployed and never used.
 
