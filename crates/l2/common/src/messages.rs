@@ -92,13 +92,6 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
         .collect()
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct L2MessageProof {
-    pub batch_number: u64,
-    pub message_hash: H256,
-    pub merkle_proof: Vec<H256>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Represents a message from the L2 to another L2
 pub struct L2Message {
@@ -180,10 +173,10 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
         let entry = acc.entry(m.chain_id).or_insert(BalanceDiff {
             chain_id: m.chain_id,
             value: U256::zero(),
-            messasge_hashes: Vec::new(),
+            message_hashes: Vec::new(),
         });
         entry.value += m.value;
-        entry.messasge_hashes.push(get_l2_message_hash(m));
+        entry.message_hashes.push(get_l2_message_hash(m));
     }
     acc.into_values().collect()
 }

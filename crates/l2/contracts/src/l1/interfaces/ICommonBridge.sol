@@ -58,7 +58,12 @@ interface ICommonBridge {
     struct BalanceDiff {
         uint256 chainId;
         uint256 value;
-        bytes32[] messasge_hashes;
+        bytes32[] message_hashes;
+    }
+
+    struct L2MessageRollingHash {
+        uint256 chainId;
+        bytes32 rollingHash;
     }
 
     /// @notice Method to retrieve all the pending transaction hashes.
@@ -97,6 +102,15 @@ interface ICommonBridge {
     /// As transactions are processed in order, we don't need to specify
     /// the transaction hashes to remove, only the number of them.
     function removePendingTransactionHashes(uint16 number) external;
+
+    /// @notice Remove pending L2 messages from the queue.
+    /// @dev This method is used by the L2 OnChainProposer to remove the pending
+    /// L2 messages from the queue after the messages are included.
+    /// @param chainId the chain id of the L2 messages to remove.
+    /// @param number of pending transaction hashes to remove.
+    /// As transactions are processed in order, we don't need to specify
+    /// the transaction hashes to remove, only the number of them.
+    function removePendingL2Messages(uint256 chainId, uint16 number) external;
 
     /// @notice Method to retrieve the merkle root of the withdrawal logs of a
     /// given block.
@@ -143,9 +157,9 @@ interface ICommonBridge {
     /// @notice Receives messages from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
-    /// @param messasge_hashes The hashes of the messages being received.
+    /// @param message_hashes The hashes of the messages being received.
     function receiveMessages(
-        bytes32[] calldata messasge_hashes
+        bytes32[] calldata message_hashes
     ) external payable;
 
     /// @notice Method that claims an L2 withdrawal.

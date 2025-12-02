@@ -7,7 +7,10 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
+    types::{
+        AccountUpdate, Blob, BlockNumber, balance_diff::BalanceDiff, batch::Batch,
+        fee_config::FeeConfig,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -22,12 +25,14 @@ struct StoreInner {
     batches_by_block: HashMap<BlockNumber, u64>,
     /// Map of l1 message hashes by batch numbers
     l1_message_hashes_by_batch: HashMap<u64, Vec<H256>>,
-    /// Map of l2 message hashes by batch numbers
-    l2_message_hashes_by_batch: HashMap<u64, Vec<H256>>,
+    /// Map of balance diffs by batch numbers
+    balance_diffs_by_batch: HashMap<u64, Vec<BalanceDiff>>,
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
     /// Map of batch number to deposit logs hash
     privileged_transactions_hashes: HashMap<u64, H256>,
+    /// Map of batch number to L2 in message rolling hashes
+    l2_in_message_rolling_hashes: HashMap<u64, Vec<(u64, H256)>>,
     /// Map of batch number to state root
     state_roots: HashMap<u64, H256>,
     /// Map of batch number to blob
@@ -85,13 +90,13 @@ impl StoreEngineRollup for Store {
             .cloned())
     }
 
-    async fn get_l2_message_hashes_by_batch(
+    async fn get_balance_diffs_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
+    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError> {
         Ok(self
             .inner()?
-            .l2_message_hashes_by_batch
+            .balance_diffs_by_batch
             .get(&batch_number)
             .cloned())
     }
@@ -116,6 +121,17 @@ impl StoreEngineRollup for Store {
         Ok(self
             .inner()?
             .privileged_transactions_hashes
+            .get(&batch_number)
+            .cloned())
+    }
+
+    async fn get_l2_in_message_rolling_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<(u64, H256)>>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .l2_in_message_rolling_hashes
             .get(&batch_number)
             .cloned())
     }
@@ -294,9 +310,6 @@ impl StoreEngineRollup for Store {
             .l1_message_hashes_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
-            .l2_message_hashes_by_batch
-            .retain(|batch, _| *batch <= batch_number);
-        store
             .block_numbers_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
@@ -322,15 +335,19 @@ impl StoreEngineRollup for Store {
 
         inner
             .l1_message_hashes_by_batch
-            .insert(batch.number, batch.l1_message_hashes);
-
-        inner
-            .l2_message_hashes_by_batch
-            .insert(batch.number, batch.l2_message_hashes);
+            .insert(batch.number, batch.l1_out_message_hashes);
 
         inner
             .privileged_transactions_hashes
-            .insert(batch.number, batch.deposit_transactions_hash);
+            .insert(batch.number, batch.l1_in_message_rolling_hash);
+
+        inner
+            .balance_diffs_by_batch
+            .insert(batch.number, batch.balance_diffs);
+
+        inner
+            .l2_in_message_rolling_hashes
+            .insert(batch.number, batch.l2_in_message_rolling_hashes);
 
         inner.blobs.insert(batch.number, batch.blobs_bundle.blobs);
 

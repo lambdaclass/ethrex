@@ -111,7 +111,11 @@ contract CommonBridge is
     mapping(uint256 => bytes32[]) public pendingMessagesHashesPerChain;
 
     /// @notice Mapping of chain ID to index of the first unprocessed message hash in the array.
-    mapping(uint256 => bytes32) public pendingMessagesIndexPerChain;
+    mapping(uint256 => uint256) public pendingMessagesIndexPerChain;
+
+    /// @notice Array of the chain IDs of the received L2 messages.
+    /// @dev Used to iterate over the mapping keys.
+    uint256[] public receivedL2MessageChainIDs;
 
     modifier onlyOnChainProposer() {
         require(
@@ -306,6 +310,35 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
+    function getPendingL2MessagesVersionedHash(
+        uint256 chainId,
+        uint16 number
+    ) public view returns (bytes32) {
+        require(number > 0, "CommonBridge: number is zero (get)");
+        require(
+            uint256(number) <= pendinL2MessagesLength(chainId),
+            "CommonBridge: number is greater than the length of pendingL2Messages (get)"
+        );
+
+        bytes memory hashes;
+        bytes32[] pendingMessagesHashes = pendingMessagesHashesPerChain[
+            chainId
+        ];
+        uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
+
+        for (uint i = 0; i < number; i++) {
+            hashes = bytes.concat(
+                hashes,
+                pendingMessagesHashes[i + pendingMessageIndex]
+            );
+        }
+
+        return
+            bytes32(bytes2(number)) |
+            bytes32(uint256(uint240(uint256(keccak256(hashes)))));
+    }
+
+    /// @inheritdoc ICommonBridge
     function removePendingTransactionHashes(
         uint16 number
     ) public onlyOnChainProposer {
@@ -318,13 +351,48 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
+    function removePendingL2Messages(
+        uint256 chainId,
+        uint16 number
+    ) public onlyOnChainProposer {
+        require(
+            number <= pendinL2MessagesLength(chainId),
+            "CommonBridge: number is greater than the length of pendingL2Messages (remove)"
+        );
+
+        pendingMessagesIndexPerChain[chainId] += number;
+    }
+
+    /// @inheritdoc ICommonBridge
     function hasExpiredPrivilegedTransactions() public view returns (bool) {
-        if (pendingTxHashesLength() == 0) {
-            return false;
+        if (pendingTxHashesLength() != 0) {
+            if (
+                block.timestamp >
+                privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]]
+            ) {
+                return true;
+            }
         }
-        return
-            block.timestamp >
-            privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]];
+        for (uint256 i = 0; i < receivedL2MessageChainIDs.length; i++) {
+            uint256 chainId = receivedL2MessageChainIDs[i];
+            uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
+            bytes32[]
+                storage pendingMessagesHashes = pendingMessagesHashesPerChain[
+                    chainId
+                ];
+            if (pendingMessageIndex < pendingMessagesHashes.length) {
+                if (
+                    block.timestamp >
+                    privilegedTxDeadline[
+                        pendingMessagesHashes[pendingMessageIndex]
+                    ]
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// @inheritdoc ICommonBridge
@@ -361,20 +429,22 @@ contract CommonBridge is
         for (uint i = 0; i < balanceDiffs.length; i++) {
             IRouter(SHARED_BRIDGE_ROUTER).sendMessage{
                 value: balanceDiffs[i].value
-            }(balanceDiffs[i].chainId, balanceDiffs[i].messasge_hashes);
+            }(balanceDiffs[i].chainId, balanceDiffs[i].message_hashes);
         }
     }
 
     /// @inheritdoc ICommonBridge
     function receiveMessages(
-        bytes32 chainID,
+        uint256 chainID,
         bytes32[] memory message_hashes
     ) public payable override {
         require(
             msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"
         );
-
+        if (pendingMessagesIndexPerChain[chainID]) {
+            receivedL2MessageChainIDs.push(chainID);
+        }
         // Append new hashes instead of overwriting
         for (uint i = 0; i < message_hashes.length; i++) {
             pendingMessagesHashesPerChain[chainID].push(message_hashes[i]);
@@ -502,6 +572,13 @@ contract CommonBridge is
     }
     function pendingTxHashesLength() private view returns (uint256) {
         return pendingTxHashes.length - pendingPrivilegedTxIndex;
+    }
+    function pendinL2MessagesLength(
+        uint256 chainId
+    ) private view returns (uint256) {
+        return
+            pendingMessagesHashesPerChain[chainId].length -
+            pendingMessagesIndexPerChain[chainId];
     }
 
     function upgradeL2Contract(

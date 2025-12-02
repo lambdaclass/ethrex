@@ -15,10 +15,10 @@ interface IRouter {
 
     /// @notice Sends messages to a specified chain via its CommonBridge.
     /// @param chainId The ID of the destination chain.
-    /// @param messasge_hashes The hashes of the messages to be sent.
+    /// @param message_hashes The hashes of the messages to be sent.
     function sendMessages(
         uint256 chainId,
-        bytes32[] calldata messasge_hashes
+        bytes32[] calldata message_hashes
     ) external payable;
 
     /// @notice Emitted when a new chain is registered.

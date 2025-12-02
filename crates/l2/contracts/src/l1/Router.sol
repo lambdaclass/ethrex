@@ -71,7 +71,7 @@ contract Router is
     /// @inheritdoc IRouter
     function sendMessages(
         uint256 chainId,
-        bytes32[] messasge_hashes
+        bytes32[] message_hashes
     ) public payable override onlyRegisteredBridge {
         if (bridges[chainId] == address(0)) {
             revert TransferToChainNotRegistered(chainId);

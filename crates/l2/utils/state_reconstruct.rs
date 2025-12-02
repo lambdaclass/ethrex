@@ -68,12 +68,12 @@ pub async fn get_batch(
         first_block: first_block.header.number,
         last_block: last_block.header.number,
         state_root: new_state_root,
-        deposit_transactions_hash: privileged_transactions_hash,
-        l1_message_hashes,
+        l1_in_message_rolling_hash: privileged_transactions_hash,
+        l1_out_message_hashes: l1_message_hashes,
         blobs_bundle,
         commit_tx,
         verify_tx: None,
-        l2_message_hashes,
+        l2_out_message_hashes: l2_message_hashes,
     })
 }
 
