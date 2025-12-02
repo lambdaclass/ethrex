@@ -187,21 +187,40 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let multiplicand: U512 = multiplicand.into();
-        let multiplier: U512 = multiplier.into();
+        #[cfg(feature = "zisk")]
+        let product_mod = {
+            use ziskos::zisklib::{addmod256_ptr, mulmod256_ptr, redmod256_ptr};
+            let mut product_mod = U256::zero();
+            unsafe {
+                mulmod256_ptr(
+                    multiplicand.0.as_ptr(),
+                    multiplier.0.as_ptr(),
+                    modulus.0.as_ptr(),
+                    product_mod.0.as_mut_ptr(),
+                );
+            }
+            product_mod
+        };
 
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "both values come from a u256, so the product can fit in a U512"
-        )]
-        let product = multiplicand * multiplier;
-        #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
-        let product_mod = product % modulus;
+        #[cfg(not(feature = "zisk"))]
+        let product_mod = {
+            let multiplicand: U512 = multiplicand.into();
+            let multiplier: U512 = multiplier.into();
 
-        #[allow(clippy::expect_used, reason = "can't overflow")]
-        let product_mod: U256 = product_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
+            #[allow(
+                clippy::arithmetic_side_effects,
+                reason = "both values come from a u256, so the product can fit in a U512"
+            )]
+            let product = multiplicand * multiplier;
+            #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
+            let product_mod = product % modulus;
+
+            #[allow(clippy::expect_used, reason = "can't overflow")]
+            let product_mod: U256 = product_mod
+                .try_into()
+                .expect("can't fail because we applied % mod where mod is a U256 value");
+            product_mod
+        };
 
         current_call_frame.stack.push(product_mod)?;
 
