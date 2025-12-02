@@ -80,9 +80,7 @@ impl RLPDecode for Block {
 }
 
 /// Header part of a block on the chain.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize, RSerialize, RDeserialize, Archive,
-)]
+#[derive(Clone, Debug, Serialize, Default, Deserialize, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
     #[serde(skip)]
@@ -145,6 +143,35 @@ pub struct BlockHeader {
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub requests_hash: Option<H256>,
 }
+
+// Needs a explicit impl due to the hash OnceLock.
+impl PartialEq for BlockHeader {
+    fn eq(&self, other: &Self) -> bool {
+        self.parent_hash == other.parent_hash
+            && self.number == other.number
+            && self.timestamp == other.timestamp
+            && self.nonce == other.nonce
+            && self.gas_used == other.gas_used
+            && self.gas_limit == other.gas_limit
+            && self.base_fee_per_gas == other.base_fee_per_gas
+            && self.blob_gas_used == other.blob_gas_used
+            && self.excess_blob_gas == other.excess_blob_gas
+            && self.parent_beacon_block_root == other.parent_beacon_block_root
+            && self.prev_randao == other.prev_randao
+            && self.coinbase == other.coinbase
+            && self.state_root == other.state_root
+            && self.transactions_root == other.transactions_root
+            && self.receipts_root == other.receipts_root
+            && self.withdrawals_root == other.withdrawals_root
+            && self.difficulty == other.difficulty
+            && self.ommers_hash == other.ommers_hash
+            && self.requests_hash == other.requests_hash
+            && self.logs_bloom == other.logs_bloom
+            && self.extra_data == other.extra_data
+    }
+}
+
+impl Eq for BlockHeader {}
 
 impl RLPEncode for BlockHeader {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
