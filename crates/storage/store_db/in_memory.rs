@@ -741,7 +741,7 @@ impl StoreEngine for Store {
     async fn get_snap_client_version(&self) -> Result<Option<String>, StoreError> {
         Ok(self.inner()?.latest_snap_client_version.clone())
     }
-  
+
     fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
         Ok(PathBuf::from("in_memory_store"))
     }
