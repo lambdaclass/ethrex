@@ -107,17 +107,22 @@ pub mod profiling {
             report
                 .data
                 .retain(|k, _| prefixes.iter().any(|p| k.thread_name.starts_with(p)));
-            let Ok(mut file) = std::fs::File::create(format!("profile-{}.pb", &self.name)) else {
+            let Ok(mut files): Result<Vec<_>, _> = ["profile", "pb", "flamegraph", "svg"]
+                .chunks_exact(2)
+                .map(|c| std::fs::File::create(format!("{}-{}.{}", c[0], &self.name, c[1])))
+                .collect()
+            else {
                 warn!("Failed to create files, no profile will be created");
                 return;
             };
-            let Ok(profile) = report.pprof() else {
-                warn!("Failed to create pprof report, no profile will be created");
-                return;
+            if let Ok(profile) = report.pprof() {
+                _ = profile
+                    .write_to_writer(&mut files[0])
+                    .inspect_err(|e| warn!("Profile writing failed: {e}"));
             };
-            _ = profile
-                .write_to_writer(&mut file)
-                .inspect_err(|e| warn!("Profile writing failed: {e}"));
+            _ = report
+                .flamegraph(&mut files[1])
+                .inspect_err(|e| warn!("Flamegraph writing failed: {e}"));
         }
         pub fn start_profiling(
             freq: i32,

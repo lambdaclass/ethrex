@@ -5733,6 +5733,24 @@ dependencies = [
 
 [[package]]
 name = "inferno"
+version = "0.11.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "232929e1d75fe899576a3d5c7416ad0d88dbfbb3c3d6aa00873a7408a50ddb88"
+dependencies = [
+ "ahash",
+ "indexmap 2.12.1",
+ "is-terminal",
+ "itoa",
+ "log",
+ "num-format",
+ "once_cell",
+ "quick-xml 0.26.0",
+ "rgb",
+ "str_stack",
+]
+
+[[package]]
+name = "inferno"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d35223c50fdd26419a4ccea2c73be68bd2b29a3d7d6123ffe101c17f4c20a52a"
@@ -5748,7 +5766,7 @@ dependencies = [
  "log",
  "num-format",
  "once_cell",
- "quick-xml",
+ "quick-xml 0.38.4",
  "rgb",
  "str_stack",
 ]
@@ -9624,6 +9642,7 @@ dependencies = [
  "backtrace",
  "cfg-if 1.0.4",
  "findshlibs",
+ "inferno 0.11.21",
  "libc",
  "log",
  "nix 0.26.4",
@@ -9650,7 +9669,7 @@ dependencies = [
  "anyhow",
  "backtrace",
  "flate2",
- "inferno",
+ "inferno 0.12.4",
  "num",
  "paste",
  "prost 0.13.5",
@@ -10078,6 +10097,15 @@ name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
+
+[[package]]
+name = "quick-xml"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f50b1c63b38611e7d4d7f68b82d3ad0cc71a2ad2e7f61fc10f1328d917c93cd"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "quick-xml"
