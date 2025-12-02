@@ -428,7 +428,7 @@ pub enum Subcommand {
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
-        let _guard = match self {
+        let _guard = match &self {
             #[cfg(feature = "l2")]
             Self::L2(_) => None,
             _ => {
@@ -436,11 +436,7 @@ impl Subcommand {
                 guard
             }
         };
-        match self {
-            #[cfg(feature = "l2")]
-            Self::L2(_) => {}
-            _ => {}
-        }
+
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
