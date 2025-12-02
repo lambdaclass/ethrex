@@ -420,7 +420,7 @@ pub async fn init_l1(
     let profile_guard = ProfilingGuard::start_profiling(
         997,
         || "regenerate_head".to_string(),
-        &["executor", "merkle"],
+        &["block_executor", "merkle"],
     );
     regenerate_head_state(&store, &blockchain).await?;
     profile_guard.stop();
