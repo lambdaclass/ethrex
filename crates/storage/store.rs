@@ -723,7 +723,7 @@ impl Store {
     /// Ignores previously stored values if present
     pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
         self.chain_config = *chain_config;
-        let key = vec![ChainDataIndex::ChainConfig as u8];
+        let key = chain_data_key(ChainDataIndex::ChainConfig);
         let value = serde_json::to_string(chain_config)
             .map_err(|_| StoreError::Custom("Failed to serialize chain config".to_string()))?
             .into_bytes();
@@ -735,14 +735,14 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        let key = vec![ChainDataIndex::EarliestBlockNumber as u8];
+        let key = chain_data_key(ChainDataIndex::EarliestBlockNumber);
         let value = block_number.to_le_bytes().to_vec();
         self.write_async(CHAIN_DATA, key, value).await
     }
 
     /// Obtain earliest block number
     pub async fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        let key = vec![ChainDataIndex::EarliestBlockNumber as u8];
+        let key = chain_data_key(ChainDataIndex::EarliestBlockNumber);
         self.read_async(CHAIN_DATA, key)
             .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -756,7 +756,7 @@ impl Store {
 
     /// Obtain finalized block number
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = vec![ChainDataIndex::FinalizedBlockNumber as u8];
+        let key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
         self.read_async(CHAIN_DATA, key)
             .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -770,7 +770,7 @@ impl Store {
 
     /// Obtain safe block number
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = vec![ChainDataIndex::SafeBlockNumber as u8];
+        let key = chain_data_key(ChainDataIndex::SafeBlockNumber);
         self.read_async(CHAIN_DATA, key)
             .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -792,14 +792,14 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        let key = vec![ChainDataIndex::PendingBlockNumber as u8];
+        let key = chain_data_key(ChainDataIndex::PendingBlockNumber);
         let value = block_number.to_le_bytes().to_vec();
         self.write_async(CHAIN_DATA, key, value).await
     }
 
     /// Obtain pending block number
     pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = vec![ChainDataIndex::PendingBlockNumber as u8];
+        let key = chain_data_key(ChainDataIndex::PendingBlockNumber);
         self.read_async(CHAIN_DATA, key)
             .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -826,45 +826,33 @@ impl Store {
 
             if let Some(canonical_blocks) = new_canonical_blocks {
                 for (block_number, block_hash) in canonical_blocks {
+                    let head_key = block_number.to_le_bytes();
                     let head_value = block_hash.encode_to_vec();
-                    txn.put(
-                        CANONICAL_BLOCK_HASHES,
-                        &block_number.to_le_bytes(),
-                        &head_value,
-                    )?;
+                    txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
                 }
             }
 
-            for number in (head_number + 1)..(latest + 1) {
+            for number in (head_number + 1)..=(latest) {
                 txn.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
             }
 
             // Make head canonical
+            let head_key = head_number.to_le_bytes();
             let head_value = head_hash.encode_to_vec();
-            txn.put(
-                CANONICAL_BLOCK_HASHES,
-                &head_number.to_le_bytes(),
-                &head_value,
-            )?;
+            txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
 
             // Update chain data
-            let latest_key = [ChainDataIndex::LatestBlockNumber as u8];
+            let latest_key = chain_data_key(ChainDataIndex::LatestBlockNumber);
             txn.put(CHAIN_DATA, &latest_key, &head_number.to_le_bytes())?;
 
-            if let Some(finalized) = finalized {
-                txn.put(
-                    CHAIN_DATA,
-                    &[ChainDataIndex::FinalizedBlockNumber as u8],
-                    &finalized.to_le_bytes(),
-                )?;
+            if let Some(safe) = safe {
+                let safe_key = chain_data_key(ChainDataIndex::SafeBlockNumber);
+                txn.put(CHAIN_DATA, &safe_key, &safe.to_le_bytes())?;
             }
 
-            if let Some(safe) = safe {
-                txn.put(
-                    CHAIN_DATA,
-                    &[ChainDataIndex::SafeBlockNumber as u8],
-                    &safe.to_le_bytes(),
-                )?;
+            if let Some(finalized) = finalized {
+                let finalized_key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+                txn.put(CHAIN_DATA, &finalized_key, &finalized.to_le_bytes())?;
             }
 
             txn.commit()
@@ -2426,7 +2414,7 @@ impl Store {
 
     /// Loads the latest block number stored in the database, bypassing the latest block number cache
     async fn load_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = vec![ChainDataIndex::LatestBlockNumber as u8];
+        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
         self.read_async(CHAIN_DATA, key)
             .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -2833,6 +2821,10 @@ fn hash_address_fixed(address: &Address) -> H256 {
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
     keccak_hash(key.to_fixed_bytes()).to_vec()
+}
+
+fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
+    (index as u8).encode_to_vec()
 }
 
 #[derive(Debug, Default, Clone)]

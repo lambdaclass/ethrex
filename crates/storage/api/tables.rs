@@ -41,7 +41,7 @@ pub const RECEIPTS: &str = "receipts";
 pub const TRANSACTION_LOCATIONS: &str = "transaction_locations";
 
 /// Chain data column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `Self::chain_data_key(ChainDataIndex::ChainConfig)`
+/// - [`Vec<u8>`] = `chain_data_key(ChainDataIndex::ChainConfig)`
 /// - [`Vec<u8>`] = `serde_json::to_string(chain_config)`
 pub const CHAIN_DATA: &str = "chain_data";
 
