@@ -489,7 +489,7 @@ impl DiscoveryServer {
         let node_id = node_id(&sender_public_key);
 
         if self
-            .validate_enr_request(sender_public_key, node_id, from)
+            .validate_enr_response(sender_public_key, node_id, from)
             .await
             .is_err()
         {
@@ -540,7 +540,7 @@ impl DiscoveryServer {
         }
     }
 
-    async fn validate_enr_request(
+    async fn validate_enr_response(
         &mut self,
         sender_public_key: H512,
         node_id: H256,
