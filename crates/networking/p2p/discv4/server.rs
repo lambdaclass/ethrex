@@ -438,9 +438,13 @@ impl DiscoveryServer {
         neighbors_message: NeighborsMessage,
     ) -> Result<(), DiscoveryServerError> {
         // TODO(#3746): check that we requested neighbors from the node
+        let nodes = neighbors_message.nodes.clone();
         self.peer_table
-            .new_contacts(neighbors_message.nodes, self.local_node.node_id())
+            .new_contacts(nodes, self.local_node.node_id())
             .await?;
+        for node in neighbors_message.nodes {
+            self.send_ping(&node).await?;
+        }
         Ok(())
     }
 
