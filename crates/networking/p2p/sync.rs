@@ -304,9 +304,16 @@ impl Syncer {
     ) -> Result<(), SyncError> {
         info!("Syncing to sync_head {:?}", sync_head);
 
-        let profile_guard = ProfilingGuard::start_profiling(997, || {
-            format!("fullsync-{}", hex::encode(&sync_head[..4]))
-        });
+        let profile_guard = ProfilingGuard::start_profiling(
+            997,
+            || format!("fullsync-{}", hex::encode(&sync_head[..4])),
+            &[
+                std::thread::current().name().unwrap_or(""),
+                "executor",
+                "pipeline",
+                "merkle",
+            ],
+        );
         // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
         let mut pending_blocks = vec![];
         while let Some(block) = store.get_pending_block(sync_head).await? {
