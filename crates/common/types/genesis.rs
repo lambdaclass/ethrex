@@ -387,6 +387,27 @@ impl ChainConfig {
         }
     }
 
+    pub fn fork_activation_block(&self, fork: Fork) -> Option<u64> {
+        match fork {
+            Frontier => Some(0),
+            Homestead => self.homestead_block,
+            DaoFork => self.dao_fork_block,
+            EIP150 => self.eip150_block,
+            EIP155 => self.eip155_block,
+            EIP158 => self.eip158_block,
+            Byzantium => self.byzantium_block,
+            Constantinople => self.constantinople_block,
+            Petersburg => self.petersburg_block,
+            Istanbul => self.istanbul_block,
+            MuirGlacier => self.muir_glacier_block,
+            Berlin => self.berlin_block,
+            London => self.london_block,
+            ArrowGlacier => self.arrow_glacier_block,
+            GrayGlacier => self.gray_glacier_block,
+            _ => None,
+        }
+    }
+
     pub fn get_blob_schedule_for_fork(&self, fork: Fork) -> Option<ForkBlobSchedule> {
         match fork {
             Fork::Cancun => Some(self.blob_schedule.cancun),
@@ -404,6 +425,11 @@ impl ChainConfig {
     pub fn is_fork_activated(&self, fork: Fork, timestamp: u64) -> bool {
         self.fork_activation_time(fork)
             .is_some_and(|time| time <= timestamp)
+    }
+
+    pub fn is_fork_activated_for_block(&self, fork: Fork, block: u64) -> bool {
+        self.fork_activation_block(fork)
+            .is_some_and(|act_block| act_block <= block)
     }
 
     pub fn display_config(&self) -> String {
@@ -549,15 +575,13 @@ impl Genesis {
         let mut blob_gas_used: Option<u64> = None;
         let mut excess_blob_gas: Option<u64> = None;
 
-        if let Some(cancun_time) = self.config.cancun_time
-            && cancun_time <= self.timestamp
-        {
+        if self.config.is_fork_activated(Cancun, self.timestamp) {
             blob_gas_used = Some(self.blob_gas_used.unwrap_or(0));
             excess_blob_gas = Some(self.excess_blob_gas.unwrap_or(0));
         }
         let base_fee_per_gas = self.base_fee_per_gas.or_else(|| {
             self.config
-                .is_fork_activated(London, 0)
+                .is_fork_activated_for_block(London, 0)
                 .then_some(INITIAL_BASE_FEE)
         });
 
