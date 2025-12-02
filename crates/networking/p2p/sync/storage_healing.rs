@@ -328,9 +328,8 @@ async fn ask_peers_for_nodes(
             )
             .unwrap_or(None)
         else {
-            // warn!("We have no free peers for storage healing!"); way too spammy, moving to trace
-            // If we have no peers we shrug our shoulders and wait until next free peer
-            trace!("We have no free peers for storage healing!");
+            // TODO: this could be a busy loop
+            trace!("We are missing peers in heal_storage_trie");
             return;
         };
         let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);

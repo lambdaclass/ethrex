@@ -19,7 +19,7 @@ use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -230,6 +230,8 @@ async fn heal_state_trie(
                     )
                     .unwrap_or(None)
                 else {
+                    // TODO: this could be a busy loop
+                    trace!("We are missing peers in heal_state_trie");
                     // If there are no peers available, re-add the batch to the paths vector, and continue
                     paths.extend(batch);
                     continue;

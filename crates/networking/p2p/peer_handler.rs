@@ -344,7 +344,7 @@ impl PeerHandler {
             else {
                 // Log ~ once every 10 seconds
                 if logged_no_free_peers_count >= 1000 {
-                    trace!("We didn't get a peer from the table");
+                    trace!("We are missing peers in request_block_headers");
                     logged_no_free_peers_count = 0;
                 }
                 logged_no_free_peers_count += 1;
@@ -1035,6 +1035,8 @@ impl PeerHandler {
 
         let mut completed_tasks = 0;
 
+        let mut logged_no_free_peers_count = 0;
+
         loop {
             if let Ok(result) = task_receiver.try_recv() {
                 let TaskResult {
@@ -1073,6 +1075,14 @@ impl PeerHandler {
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count >= 1000 {
+                    trace!("We are missing peers in request_bytecodes");
+                    logged_no_free_peers_count = 0;
+                }
+                logged_no_free_peers_count += 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
@@ -1241,6 +1251,8 @@ impl PeerHandler {
         // Maps storage root to vector of hashed addresses matching that root and
         // vector of hashed storage keys and storage values.
         let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
+
+        let mut logged_no_free_peers_count = 0;
 
         debug!("Starting request_storage_ranges loop");
         loop {
@@ -1587,6 +1599,14 @@ impl PeerHandler {
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count >= 1000 {
+                    trace!("We are missing peers in request_storage_ranges");
+                    logged_no_free_peers_count = 0;
+                }
+                logged_no_free_peers_count += 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
