@@ -5,8 +5,8 @@ use ethrex_storage::{Store, error::StoreError};
 use crate::rlpx::{
     error::PeerConnectionError,
     snap::{
-        AccountRange, AccountRangeUnit, AccountStateSlim, ByteCodes, GetAccountRange, GetByteCodes,
-        GetStorageRanges, GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
+        AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges,
+        GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
     },
 };
 
@@ -21,7 +21,6 @@ pub async fn process_account_range_request(
         let mut bytes_used = 0;
         for (hash, account) in store.iter_accounts_from(request.root_hash, request.starting_hash)? {
             debug_assert!(hash >= request.starting_hash);
-            let account = AccountStateSlim::from(account);
             bytes_used += 32 + account.length() as u64;
             accounts.push(AccountRangeUnit { hash, account });
             if hash >= request.limit_hash || bytes_used >= request.response_bytes {
@@ -177,12 +176,10 @@ pub(crate) fn encodable_to_proof(proof: &[Bytes]) -> Vec<Vec<u8>> {
 mod tests {
     use std::str::FromStr;
 
-    use ethrex_common::{BigEndianHash, H256, types::AccountState};
+    use ethrex_common::{BigEndianHash, H256, types::AccountStateSlimCodec};
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
     use ethrex_storage::EngineType;
     use ethrex_trie::EMPTY_TRIE_HASH;
-
-    use crate::rlpx::snap::AccountStateSlim;
 
     use super::*;
 
@@ -1000,7 +997,7 @@ mod tests {
         let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
         for (address, account) in accounts {
             let hashed_address = H256::from_str(address).unwrap().as_bytes().to_vec();
-            let account = AccountState::from(AccountStateSlim::decode(&account).unwrap());
+            let AccountStateSlimCodec(account) = RLPDecode::decode(&account).unwrap();
             state_trie
                 .insert(hashed_address, account.encode_to_vec())
                 .unwrap();

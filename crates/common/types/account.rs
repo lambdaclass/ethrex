@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::Trie;
@@ -102,13 +102,16 @@ pub struct AccountInfo {
     pub nonce: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountState {
     pub nonce: u64,
     pub balance: U256,
     pub storage_root: H256,
     pub code_hash: H256,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AccountStateSlimCodec(pub AccountState);
 
 impl Default for AccountInfo {
     fn default() -> Self {
@@ -216,6 +219,101 @@ impl RLPDecode for AccountState {
     }
 }
 
+impl RLPEncode for AccountStateSlimCodec {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        struct StorageRootCodec<'a>(&'a H256);
+        impl RLPEncode for StorageRootCodec<'_> {
+            fn encode(&self, buf: &mut dyn BufMut) {
+                let data = if *self.0 != *EMPTY_TRIE_HASH {
+                    self.0.as_bytes()
+                } else {
+                    &[]
+                };
+
+                data.encode(buf);
+            }
+        }
+
+        struct CodeHashCodec<'a>(&'a H256);
+        impl RLPEncode for CodeHashCodec<'_> {
+            fn encode(&self, buf: &mut dyn BufMut) {
+                let data = if *self.0 != *EMPTY_KECCACK_HASH {
+                    self.0.as_bytes()
+                } else {
+                    &[]
+                };
+
+                data.encode(buf);
+            }
+        }
+
+        Encoder::new(buf)
+            .encode_field(&self.0.nonce)
+            .encode_field(&self.0.balance)
+            .encode_field(&StorageRootCodec(&self.0.storage_root))
+            .encode_field(&CodeHashCodec(&self.0.code_hash))
+            .finish();
+    }
+}
+
+impl RLPDecode for AccountStateSlimCodec {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        struct StorageRootCodec(H256);
+        impl RLPDecode for StorageRootCodec {
+            fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+                let value = match rlp.split_off_first() {
+                    Some(0x80) => *EMPTY_TRIE_HASH,
+                    Some(0xA0) => {
+                        let data;
+                        (data, rlp) = rlp
+                            .split_first_chunk::<32>()
+                            .ok_or(RLPDecodeError::InvalidLength)?;
+                        H256(*data)
+                    }
+                    _ => return Err(RLPDecodeError::InvalidLength),
+                };
+
+                Ok((Self(value), rlp))
+            }
+        }
+
+        struct CodeHashCodec(H256);
+        impl RLPDecode for CodeHashCodec {
+            fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+                let value = match rlp.split_off_first() {
+                    Some(0x80) => *EMPTY_KECCACK_HASH,
+                    Some(0xA0) => {
+                        let data;
+                        (data, rlp) = rlp
+                            .split_first_chunk::<32>()
+                            .ok_or(RLPDecodeError::InvalidLength)?;
+                        H256(*data)
+                    }
+                    _ => return Err(RLPDecodeError::InvalidLength),
+                };
+
+                Ok((Self(value), rlp))
+            }
+        }
+
+        let decoder = Decoder::new(rlp)?;
+        let (nonce, decoder) = decoder.decode_field("nonce")?;
+        let (balance, decoder) = decoder.decode_field("balance")?;
+        let (StorageRootCodec(storage_root), decoder) = decoder.decode_field("storage_root")?;
+        let (CodeHashCodec(code_hash), decoder) = decoder.decode_field("code_hash")?;
+
+        Ok((
+            Self(AccountState {
+                nonce,
+                balance,
+                storage_root,
+                code_hash,
+            }),
+            decoder.finish()?,
+        ))
+    }
+}
+
 pub fn compute_storage_root(storage: &HashMap<U256, U256>) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
         (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
@@ -269,5 +367,45 @@ mod test {
             H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
                 .unwrap()
         )
+    }
+}
+
+#[cfg(test)]
+mod test2 {
+    use super::*;
+    use secp256k1::rand;
+
+    #[test]
+    fn asdf() {
+        let account = AccountState {
+            nonce: 0,
+            balance: U256::zero(),
+            storage_root: H256::random(),
+            code_hash: H256::random(),
+        };
+
+        let encoded_norm = account.encode_to_vec();
+        let encoded_slim = AccountStateSlimCodec(account).encode_to_vec();
+        assert_eq!(encoded_norm, encoded_slim);
+    }
+
+    #[test]
+    fn asdf2() {
+        for _ in 0..1000000 {
+            let account = AccountState {
+                nonce: rand::random(),
+                balance: U256(rand::random()),
+                storage_root: H256::random(),
+                code_hash: H256::random(),
+            };
+
+            let encoded_norm = account.encode_to_vec();
+            let encoded_slim = AccountStateSlimCodec(account).encode_to_vec();
+            assert_eq!(encoded_norm, encoded_slim);
+            assert_eq!(
+                AccountState::decode(&encoded_norm).unwrap(),
+                AccountStateSlimCodec::decode(&encoded_slim).unwrap().0,
+            );
+        }
     }
 }
