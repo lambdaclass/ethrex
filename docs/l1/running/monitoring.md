@@ -32,7 +32,7 @@ This will launch Prometheus and Grafana, already set up to scrape ethrex metrics
 
 ## Logs
 
-Ethrex logs are written to stdout by default. To enable file logging, you must specify the `--log.dir` argument.
+Ethrex logs are written to stdout by default. To enable file logging, you must specify the `--log.dir` argument, with this you'll be able to have Promtail collect the logs and send them to Grafana Loki for log visualization.
 
 - **Promtail Configuration:** `metrics/provisioning/promtail/promtail.yaml`
 
@@ -51,7 +51,7 @@ If you choose to use a different directory, you must set the `ETHREX_LOGS_DIR` e
 ETHREX_LOGS_DIR=/path/to/your/logs docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
 ```
 
-You can view the logs in Grafana by navigating to the logs row in our dashboard.
+You can view the logs in Grafana by navigating to the [logs row](../../developers/l1/dashboards.md#logs) in our dashboard.
 
 ### Running Docker Container Manually
 

@@ -342,6 +342,8 @@
             "wrapLogMessage": false
           },
           "pluginVersion": "12.2.1",
+          "repeat": "instance",
+          "repeatDirection": "v",
           "targets": [
             {
               "datasource": {

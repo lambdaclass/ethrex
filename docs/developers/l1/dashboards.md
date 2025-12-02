@@ -1,4 +1,4 @@
-# Ethrex L1 Performance Dashboard (Nov 2025)
+# Ethrex L1 Performance Dashboard (Dic 2025)
 
 Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is `prometheus`, and the `job` variable defaults to `ethrex L1`, which is the job configured by default in our provisioning.
 
@@ -25,6 +25,12 @@ Shows the consensus configuration reported by `ethereum-metrics-exporter`, helpi
 Highlights the active fork reported by `ethereum-metrics-exporter`, which is a useful signal during planned upgrades.
 
 ![Consensus Fork](img/consensus_fork.png)
+
+## Logs
+
+Collapsed row that allows you to view the logs of the selected instances directly within the dashboard. This is useful for correlating metrics with log events without leaving Grafana.
+
+![Logs row](img/logs_row.png)
 
 ## Block processing
 
