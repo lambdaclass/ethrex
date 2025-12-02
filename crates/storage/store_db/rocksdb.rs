@@ -502,7 +502,8 @@ impl Store {
                         Err(err) => error!("Error while reading diff layer: {err}"),
                     }
                 }
-            });
+            })
+            .map_err(|e| StoreError::Custom(format!("failed to spawn background worker: {e}")))?;
         Ok(store)
     }
 
