@@ -139,16 +139,6 @@ fn add_current_to_parent_and_write_queue(
     };
     parent_element.element.choices[index as usize] =
         node.compute_hash_no_alloc(&mut nodehash_buffer).into();
-    debug!(
-        "branch {:x?}",
-        parent_element
-            .element
-            .choices
-            .iter()
-            .enumerate()
-            .filter_map(|(index, child)| child.is_valid().then_some(index))
-            .collect::<Vec<_>>()
-    );
     nodes_to_write.push((target_path, node));
     Ok(())
 }
