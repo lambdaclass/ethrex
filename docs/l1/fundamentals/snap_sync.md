@@ -199,7 +199,7 @@ For an optimization for faster insertion, these are stored ordered in the RocksD
 
 The sst files in the `"account_state_snapshots"` subfolder are ingested into a RocksDB database. This provides an ordered array that is used for insertion.
 
-For a more detailed documentation in sorted wait until PR #4792 is merged.
+[More detailed documentation foun in sorted_trie_insert.md](../../internal/l1/sorted_trie_insert.md).
 
 ### Downloading Storage Slots
 
@@ -248,9 +248,11 @@ At the beginning of the algorithm, we divide the accounts into chunks of 300 sto
 
 ![proofs for missing slots](snap_sync/Snap%20Sync%20Downloading%20Storages%20-%201.png)
 
-When we reach that situation, we chunk the big account based on the "density" of storage slots we downloaded, following this code to get chunks of 10,000 slots[^6]
+When we reach that situation, we chunk the big account based on the "density"[^7] of storage slots we downloaded, following this code to get chunks of 10,000 slots[^6]
 
 [^6]: 10_000 slots is a number chosen without hard data, we should review that number.
+
+[^7]: actually [specific volume](https://en.wikipedia.org/wiki/Specific_volume) (maximum possible slots/actual slots downloaded)
 
 ```rust
     // start_hash_u256 is the hash of the address of the last slot
