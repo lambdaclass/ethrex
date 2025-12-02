@@ -708,6 +708,8 @@ impl PeerHandler {
         let mut last_update: SystemTime = SystemTime::now();
         let mut write_set = tokio::task::JoinSet::new();
 
+        let mut logged_no_free_peers_count = 0;
+
         loop {
             if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
@@ -788,7 +790,14 @@ impl PeerHandler {
                 .inspect_err(|err| error!(err= ?err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
             else {
-                trace!("We are missing peers in request_account_range_request");
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count >= 1000 {
+                    trace!("We are missing peers in request_account_range_request");
+                    logged_no_free_peers_count = 0;
+                }
+                logged_no_free_peers_count += 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
