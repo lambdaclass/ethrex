@@ -98,6 +98,7 @@ pub mod profiling {
                 warn!("Building profiler guard failed, no profile will be created");
                 return;
             };
+            let prefixes = std::mem::take(&mut self.thread_prefixes);
             let Ok(report) = guard.report().build() else {
                 warn!("Building profiler report failed, no profile will be created");
                 return;
