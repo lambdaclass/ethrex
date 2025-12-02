@@ -61,7 +61,7 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
     serde_json::to_value(node_info).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
-pub async fn set_log_level(
+pub fn set_log_level(
     req: &RpcRequest,
     log_filter_handler: &Option<reload::Handle<EnvFilter, Registry>>,
 ) -> Result<Value, RpcErr> {

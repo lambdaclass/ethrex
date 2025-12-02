@@ -443,7 +443,6 @@ pub async fn init_l1(
         None,
         opts.tx_broadcasting_time_interval,
     )
-    .await
     .expect("P2P context could not be created");
 
     let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;

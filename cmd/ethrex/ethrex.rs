@@ -40,7 +40,7 @@ async fn server_shutdown(
     info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
-    store_node_config_file(node_config, node_config_path).await;
+    store_node_config_file(node_config, node_config_path);
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
 }
