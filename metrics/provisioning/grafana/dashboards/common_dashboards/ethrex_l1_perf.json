@@ -350,7 +350,7 @@
               },
               "direction": "backward",
               "editorMode": "builder",
-              "expr": "",
+              "expr": "{job=\"ethrex\"} |= ``",
               "queryType": "range",
               "refId": "A"
             }
