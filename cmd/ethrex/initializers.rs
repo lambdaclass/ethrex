@@ -88,7 +88,6 @@ pub fn init_tracing(
         let file = std::fs::OpenOptions::new()
             .append(true)
             .create(true)
-            .write(true)
             .open(log_file)
             .expect("Failed to open log file");
 
