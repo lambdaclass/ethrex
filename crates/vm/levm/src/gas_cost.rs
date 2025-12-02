@@ -574,17 +574,6 @@ pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
     Ok(calldata_cost)
 }
 
-pub fn tx_creation(code_length: u64, number_of_words: u64) -> Result<u64, VMError> {
-    let mut creation_cost = code_length.checked_mul(CODE_DEPOSIT_COST).ok_or(OutOfGas)?;
-    creation_cost = creation_cost
-        .checked_add(CREATE_BASE_COST)
-        .ok_or(OutOfGas)?;
-
-    // GInitCodeword * number_of_words rounded up. GinitCodeWord = 2
-    let words_cost = number_of_words.checked_mul(2).ok_or(OutOfGas)?;
-    creation_cost.checked_add(words_cost).ok_or(OutOfGas.into())
-}
-
 fn address_access_cost(
     address_was_cold: bool,
     static_cost: u64,

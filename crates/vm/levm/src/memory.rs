@@ -191,20 +191,6 @@ impl Memory {
         self.store(data, offset, data.len())
     }
 
-    /// Stores the given data and data size at the given offset.
-    ///
-    /// Resizes memory to fit the given data.
-    #[inline(always)]
-    pub fn store_range(&mut self, offset: usize, size: usize, data: &[u8]) -> Result<(), VMError> {
-        if size == 0 {
-            return Ok(());
-        }
-
-        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
-        self.resize(new_size)?;
-        self.store(data, offset, size)
-    }
-
     /// Stores a word at the given offset, resizing memory if needed.
     #[inline(always)]
     pub fn store_word(&mut self, offset: usize, word: U256) -> Result<(), VMError> {

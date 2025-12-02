@@ -66,6 +66,7 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
 }
 
 // TODO: Ideally this would be a try_from but crate dependencies complicate this matter
+// This function is used by ethrex-replay
 pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,

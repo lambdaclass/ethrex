@@ -7,7 +7,6 @@ use ethrex_p2p::{
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
-use ethrex_rlp::decode::RLPDecode;
 use hex::FromHexError;
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -63,13 +62,6 @@ pub fn generate_jwt_secret() -> String {
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
     let chain_file = std::fs::File::open(chain_rlp_path).expect("Failed to open chain rlp file");
     decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
-}
-
-pub fn read_block_file(block_file_path: &str) -> Block {
-    let encoded_block = std::fs::read(block_file_path)
-        .unwrap_or_else(|_| panic!("Failed to read block file with path {block_file_path}"));
-    Block::decode(&encoded_block)
-        .unwrap_or_else(|_| panic!("Failed to decode block file {block_file_path}"))
 }
 
 pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {

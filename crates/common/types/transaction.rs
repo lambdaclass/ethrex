@@ -603,11 +603,6 @@ impl EIP4844Transaction {
         self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
         buf.len()
     }
-    pub fn rlp_encode_as_pooled_tx_to_vec(&self, blobs_bundle: &BlobsBundle) -> Vec<u8> {
-        let mut buf = Vec::new();
-        self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
-        buf
-    }
 }
 
 impl RLPEncode for EIP7702Transaction {
