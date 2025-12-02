@@ -341,6 +341,8 @@ impl PeerHandler {
                 .await?
             else {
                 trace!("We didn't get a peer from the table");
+                // Sleep for a bit, to avoid busy waiting
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             };
 
