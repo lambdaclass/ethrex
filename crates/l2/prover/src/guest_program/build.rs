@@ -12,6 +12,9 @@ fn main() {
 
     #[cfg(all(not(clippy), feature = "openvm"))]
     build_openvm_program();
+
+    #[cfg(all(not(clippy), feature = "pico"))]
+    build_pico_program();
 }
 
 #[cfg(all(not(clippy), feature = "risc0"))]
@@ -217,6 +220,29 @@ fn build_openvm_program() {
     }
 
     fs::copy(&elf_src, &elf_dst).expect("failed to copy zkvm-openvm-program");
+}
+
+#[cfg(all(not(clippy), feature = "pico"))]
+fn build_pico_program() {
+    let _ = std::fs::create_dir("./src/pico/out");
+    let mut build_command = std::process::Command::new("cargo");
+    build_command
+        .args(["pico", "build", "--output-directory", "out"])
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .current_dir("./src/pico");
+
+    println!("{build_command:?}");
+
+    println!("CWD = {}", std::env::current_dir().unwrap().display());
+
+    let build_status = build_command
+        .status()
+        .expect("Failed to execute pico build command");
+
+    if !build_status.success() {
+        panic!("Failed to build guest program with pico toolchain");
+    }
 }
 
 #[cfg(all(not(clippy), feature = "zisk"))]

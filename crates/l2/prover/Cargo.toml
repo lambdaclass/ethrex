@@ -51,6 +51,9 @@ openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "open
 openvm-continuations = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-continuations", optional = true }
 openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", package = "openvm-stark-sdk", tag = "v1.2.1", optional = true }
 
+pico-sdk = { git = "https://github.com/brevis-network/pico", optional = true, tag = "v1.1.9" }
+pico-vm = { git = "https://github.com/brevis-network/pico", optional = true, tag = "v1.1.9" }
+
 [dev-dependencies]
 ethrex-storage.workspace = true
 
@@ -76,6 +79,7 @@ openvm = [
     "dep:openvm-stark-sdk",
     "dep:openvm-continuations",
 ]
+pico = ["guest_program/pico", "dep:pico-sdk", "dep:pico-vm"]
 profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda", "openvm-sdk?/cuda"]

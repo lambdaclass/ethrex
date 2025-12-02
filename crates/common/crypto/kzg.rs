@@ -116,9 +116,9 @@ pub fn verify_blob_kzg_proof(
     #[cfg(all(not(feature = "c-kzg"), not(feature = "openvm-kzg")))]
     {
         kzg_rs::KzgProof::verify_blob_kzg_proof(
-            kzg_rs::Blob(blob),
-            &kzg_rs::Bytes48(commitment),
-            &kzg_rs::Bytes48(proof),
+            kzg_rs::Blob::from_slice(blob.as_slice())?,
+            &kzg_rs::Bytes48::from_slice(commitment.as_slice())?,
+            &kzg_rs::Bytes48::from_slice(proof.as_slice())?,
             &kzg_rs::get_kzg_settings(),
         )
         .map_err(KzgError::from)
@@ -178,10 +178,10 @@ pub fn verify_kzg_proof(
     #[cfg(all(not(feature = "c-kzg"), not(feature = "openvm-kzg")))]
     {
         kzg_rs::KzgProof::verify_kzg_proof(
-            &kzg_rs::Bytes48(commitment_bytes),
-            &kzg_rs::Bytes32(z),
-            &kzg_rs::Bytes32(y),
-            &kzg_rs::Bytes48(proof_bytes),
+            &kzg_rs::Bytes48::from_slice(commitment_bytes.as_slice())?,
+            &kzg_rs::Bytes32::from_slice(z.as_slice())?,
+            &kzg_rs::Bytes32::from_slice(y.as_slice())?,
+            &kzg_rs::Bytes48::from_slice(proof_bytes.as_slice())?,
             &kzg_rs::get_kzg_settings(),
         )
         .map_err(KzgError::from)

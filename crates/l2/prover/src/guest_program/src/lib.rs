@@ -21,6 +21,11 @@ pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] =
 #[cfg(any(clippy, not(feature = "zisk")))]
 pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 
+#[cfg(all(not(clippy), feature = "pico"))]
+pub const ZKVM_PICO_PROGRAM_ELF: &[u8] = include_bytes!("./pico/out/riscv32im-pico-zkvm-elf");
+#[cfg(any(clippy, not(feature = "pico")))]
+pub const ZKVM_PICO_PROGRAM_ELF: &[u8] = &[0];
+
 /// Report cycles used in a code block when running inside SP1 zkVM.
 ///
 /// When the feature "sp1-cycles" is enabled, it will print start and end cycle

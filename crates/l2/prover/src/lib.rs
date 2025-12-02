@@ -26,6 +26,8 @@ pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std:
         Backend::ZisK => backend::zisk::execute(input),
         #[cfg(feature = "openvm")]
         Backend::OpenVM => backend::openvm::execute(input),
+        #[cfg(feature = "pico")]
+        Backend::Pico => backend::pico::execute(input),
     }
 }
 
@@ -45,6 +47,8 @@ pub fn prove(
         Backend::ZisK => backend::zisk::prove(input, format).map(ProveOutput::ZisK),
         #[cfg(feature = "openvm")]
         Backend::OpenVM => backend::openvm::prove(input, format).map(ProveOutput::OpenVM),
+        #[cfg(feature = "pico")]
+        Backend::Pico => backend::pico::prove(input, format).map(ProveOutput::Pico),
     }
 }
 
@@ -62,5 +66,7 @@ pub fn to_batch_proof(
         ProveOutput::ZisK(proof) => backend::zisk::to_batch_proof(proof, format),
         #[cfg(feature = "openvm")]
         ProveOutput::OpenVM(proof) => backend::openvm::to_batch_proof(proof, format),
+        #[cfg(feature = "pico")]
+        ProveOutput::Pico(proof) => backend::pico::to_batch_proof(proof, format),
     }
 }
