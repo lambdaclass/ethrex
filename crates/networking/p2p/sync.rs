@@ -939,7 +939,11 @@ impl Syncer {
                             .write_account_code_batch(
                                 code_hashes_to_download
                                     .drain(..)
-                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                                    .zip(bytecodes)
+                                    // SAFETY: hash already checked by the download worker
+                                    .map(|(hash, code)| {
+                                        (hash, Code::from_bytecode_unchecked(code, hash))
+                                    })
                                     .collect(),
                             )
                             .await?;
@@ -960,7 +964,9 @@ impl Syncer {
                 .write_account_code_batch(
                     code_hashes_to_download
                         .drain(..)
-                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                        .zip(bytecodes)
+                        // SAFETY: hash already checked by the download worker
+                        .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
                         .collect(),
                 )
                 .await?;
@@ -1379,6 +1385,72 @@ async fn insert_accounts(
     Ok((computed_state_root, BTreeSet::new()))
 }
 
+#[cfg(feature = "rocksdb")]
+async fn insert_accounts(
+    store: Store,
+    storage_accounts: &mut AccountStorageRoots,
+    account_state_snapshots_dir: &Path,
+    datadir: &Path,
+    code_hash_collector: &mut CodeHashCollector,
+) -> Result<(H256, BTreeSet<H256>), SyncError> {
+    use crate::utils::get_rocksdb_temp_accounts_dir;
+    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+
+    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
+    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
+        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
+    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+        .into_iter()
+        .map(|res| res.path())
+        .collect();
+    db.ingest_external_file(file_paths)
+        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    for account in iter {
+        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
+        if account_state.code_hash != *EMPTY_KECCACK_HASH {
+            code_hash_collector.add(account_state.code_hash);
+            code_hash_collector.flush_if_needed().await?;
+        }
+    }
+
+    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    let compute_state_root = trie_from_sorted_accounts_wrap(
+        trie.db(),
+        &mut iter
+            .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
+            .inspect(|(k, v)| {
+                METRICS
+                    .account_tries_inserted
+                    .fetch_add(1, Ordering::Relaxed);
+                let account_state = AccountState::decode(v).expect("We should have accounts here");
+                if account_state.storage_root != *EMPTY_TRIE_HASH {
+                    storage_accounts.accounts_with_storage_root.insert(
+                        H256::from_slice(k),
+                        (Some(account_state.storage_root), Vec::new()),
+                    );
+                }
+            })
+            .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
+    )
+    .map_err(SyncError::TrieGenerationError)?;
+
+    std::fs::remove_dir_all(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
+    std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
+        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
+
+    let accounts_with_storage =
+        BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
+    Ok((compute_state_root, accounts_with_storage))
+}
+
 #[cfg(not(feature = "rocksdb"))]
 async fn insert_storages(
     store: Store,
@@ -1444,72 +1516,6 @@ async fn insert_storages(
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
 
     Ok(())
-}
-
-#[cfg(feature = "rocksdb")]
-async fn insert_accounts(
-    store: Store,
-    storage_accounts: &mut AccountStorageRoots,
-    account_state_snapshots_dir: &Path,
-    datadir: &Path,
-    code_hash_collector: &mut CodeHashCollector,
-) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    use crate::utils::get_rocksdb_temp_accounts_dir;
-    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
-
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
-    let mut db_options = rocksdb::Options::default();
-    db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
-    db.ingest_external_file(file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            code_hash_collector.add(account_state.code_hash);
-            code_hash_collector.flush_if_needed().await?;
-        }
-    }
-
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    let compute_state_root = trie_from_sorted_accounts_wrap(
-        trie.db(),
-        &mut iter
-            .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-            .inspect(|(k, v)| {
-                METRICS
-                    .account_tries_inserted
-                    .fetch_add(1, Ordering::Relaxed);
-                let account_state = AccountState::decode(v).expect("We should have accounts here");
-                if account_state.storage_root != *EMPTY_TRIE_HASH {
-                    storage_accounts.accounts_with_storage_root.insert(
-                        H256::from_slice(k),
-                        (Some(account_state.storage_root), Vec::new()),
-                    );
-                }
-            })
-            .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
-    )
-    .map_err(SyncError::TrieGenerationError)?;
-
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
-
-    let accounts_with_storage =
-        BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
-    Ok((compute_state_root, accounts_with_storage))
 }
 
 #[cfg(feature = "rocksdb")]
