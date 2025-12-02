@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-12-01
+
+- Improve RLP decoding for primitives [#5402](https://github.com/lambdaclass/ethrex/pull/5402)
+
 ### 2025-11-28
 
 - Change some calls from `encode_to_vec().len()` to `.length()` when wanting to get the rlp encoded length [#5374](https://github.com/lambdaclass/ethrex/pull/5374)
