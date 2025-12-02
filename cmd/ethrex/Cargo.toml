@@ -51,7 +51,6 @@ reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
-semver = "1.0.27"
 
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true

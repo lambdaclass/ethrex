@@ -5,7 +5,6 @@ use ethrex::{
     utils::{NodeConfigFile, get_client_version, store_node_config_file},
 };
 use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
-use semver::Version;
 use serde::Deserialize;
 use std::{path::Path, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
@@ -49,7 +48,7 @@ async fn server_shutdown(
 
 /// Fetches the latest release version on github
 /// Returns None if there was an error when requesting the latest version
-async fn latest_release_version() -> Option<Version> {
+async fn latest_release_version() -> Option<String> {
     #[derive(Deserialize)]
     struct Release {
         tag_name: String,
@@ -64,32 +63,50 @@ async fn latest_release_version() -> Option<Version> {
     if !response.status().is_success() {
         None
     } else {
-        Version::parse(
+        Some(
             response
                 .json::<Release>()
                 .await
                 .ok()?
                 .tag_name
-                .trim_start_matches("v"),
+                .trim_start_matches("v")
+                .to_string(),
         )
-        .ok()
     }
 }
 
 /// Reads current crate version
-fn current_version() -> Option<Version> {
-    Version::parse(env!("CARGO_PKG_VERSION")).ok()
+fn current_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+fn is_higher_than_current(latest_version: &str) -> bool {
+    // ethrex.x.y.z
+    let current_version_numbers = current_version()
+        .split(".")
+        .map(|c| c.parse::<u64>().unwrap_or_default());
+    let latest_version_numbers = latest_version
+        .split(".")
+        .map(|c| c.parse::<u64>().unwrap_or_default());
+    for (current, latest) in current_version_numbers.zip(latest_version_numbers) {
+        match current.cmp(&latest) {
+            std::cmp::Ordering::Less => return true,
+            std::cmp::Ordering::Equal => {}
+            std::cmp::Ordering::Greater => return false,
+        };
+    }
+    false
 }
 
 /// Checks if the latest released version is higher than the current version and emits an info log
 /// Won't emit a log line if the current version is newer or equal, or if there was a problem reading either version
 async fn check_version_update() {
-    if let (Some(current_version), Some(latest_version)) =
-        (current_version(), latest_release_version().await)
-        && current_version < latest_version
+    if let Some(latest_version) = latest_release_version().await
+        && is_higher_than_current(&latest_version)
     {
         info!(
-            "There is a newer ethrex version available, current version: {current_version} vs latest version: {latest_version}"
+            "There is a newer ethrex version available, current version: {} vs latest version: {latest_version}",
+            current_version()
         );
     }
 }
