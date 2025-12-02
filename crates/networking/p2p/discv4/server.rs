@@ -488,15 +488,11 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         let node_id = node_id(&sender_public_key);
 
-        if let Ok(contact) = self
-            .validate_contact(sender_public_key, node_id, from, "ENRResponse")
+        if self
+            .validate_enr_request(sender_public_key, node_id, from)
             .await
+            .is_err()
         {
-            if !contact.has_pending_enr_request() {
-                debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "unsolicited message received, skipping");
-                return Ok(());
-            }
-        } else {
             return Ok(());
         }
 
@@ -542,6 +538,22 @@ impl DiscoveryServer {
             PeerTableOutMessage::Contact(contact) => Ok(*contact),
             _ => unreachable!(),
         }
+    }
+
+    async fn validate_enr_request(
+        &mut self,
+        sender_public_key: H512,
+        node_id: H256,
+        from: SocketAddr,
+    ) -> Result<Contact, DiscoveryServerError> {
+        let contact = self
+            .validate_contact(sender_public_key, node_id, from, "ENRRequest")
+            .await?;
+        if !contact.has_pending_enr_request() {
+            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "unsolicited message received, skipping");
+            return Err(DiscoveryServerError::InvalidContact);
+        }
+        Ok(contact)
     }
 
     async fn send(
