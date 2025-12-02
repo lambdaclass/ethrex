@@ -22,6 +22,16 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+struct BlockEntry {
+    number: u64,
+    transaction_count: usize,
+    hash: H256,
+    coinbase: Address,
+    gas_used: u64,
+    blob_gas_used: Option<u64>,
+    size: usize,
+}
+
 #[derive(Clone, Default)]
 pub struct BlocksTable {
     pub state: TableState,
@@ -58,15 +68,17 @@ impl BlocksTable {
 
         Ok(new_blocks_processed
             .iter()
-            .map(|(number, n_txs, hash, coinbase, gas, blob_gas, size)| {
+            .map(|block| {
                 (
-                    number.to_string(),
-                    n_txs.to_string(),
-                    format!("{hash:#x}"),
-                    format!("{coinbase:#x}"),
-                    gas.to_string(),
-                    blob_gas.map_or("0".to_string(), |bg| bg.to_string()),
-                    size.to_string(),
+                    block.number.to_string(),
+                    block.transaction_count.to_string(),
+                    format!("{:#x}", block.hash),
+                    format!("{:#x}", block.coinbase),
+                    block.gas_used.to_string(),
+                    block
+                        .blob_gas_used
+                        .map_or("0".to_string(), |bg| bg.to_string()),
+                    block.size.to_string(),
                 )
             })
             .collect())
@@ -100,27 +112,21 @@ impl BlocksTable {
         Ok(new_blocks)
     }
 
-    fn process_blocks(
-        new_blocks: Vec<Block>,
-    ) -> Vec<(u64, usize, H256, Address, u64, Option<u64>, usize)> {
+    fn process_blocks(new_blocks: Vec<Block>) -> Vec<BlockEntry> {
         let mut new_blocks_processed = new_blocks
             .iter()
-            .map(|block| {
-                (
-                    block.header.number,
-                    block.body.transactions.len(),
-                    block.header.hash(),
-                    block.header.coinbase,
-                    block.header.gas_used,
-                    block.header.blob_gas_used,
-                    block.length(),
-                )
+            .map(|block| BlockEntry {
+                number: block.header.number,
+                transaction_count: block.body.transactions.len(),
+                hash: block.header.hash(),
+                coinbase: block.header.coinbase,
+                gas_used: block.header.gas_used,
+                blob_gas_used: block.header.blob_gas_used,
+                size: block.length(),
             })
             .collect::<Vec<_>>();
 
-        new_blocks_processed.sort_by(
-            |(number_a, _, _, _, _, _, _), (number_b, _, _, _, _, _, _)| number_b.cmp(number_a),
-        );
+        new_blocks_processed.sort_by(|a, b| b.number.cmp(&a.number));
 
         new_blocks_processed
     }
