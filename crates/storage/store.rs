@@ -891,14 +891,14 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<(), StoreError> {
-        let key = vec![SnapStateIndex::HeaderDownloadCheckpoint as u8];
+        let key = snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
         let value = block_hash.encode_to_vec();
         self.write_async(SNAP_STATE, key, value).await
     }
 
     /// Gets the hash of the last header downloaded during a snap sync
     pub async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        let key = [SnapStateIndex::HeaderDownloadCheckpoint as u8];
+        let key = snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
         self.backend
             .begin_read()?
             .get(SNAP_STATE, &key)?
@@ -912,7 +912,7 @@ impl Store {
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
-        let key = vec![SnapStateIndex::StateTrieKeyCheckpoint as u8];
+        let key = snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
         let value = last_keys.to_vec().encode_to_vec();
         self.write_async(SNAP_STATE, key, value).await
     }
@@ -921,7 +921,7 @@ impl Store {
     pub async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        let key = [SnapStateIndex::StateTrieKeyCheckpoint as u8];
+        let key = snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
         let txn = self.backend.begin_read()?;
         match txn.get(SNAP_STATE, &key)? {
             Some(keys_bytes) => {
@@ -943,14 +943,14 @@ impl Store {
         &self,
         paths: Vec<(Nibbles, H256)>,
     ) -> Result<(), StoreError> {
-        let key = vec![SnapStateIndex::StateHealPaths as u8];
+        let key = snap_state_key(SnapStateIndex::StateHealPaths);
         let value = paths.encode_to_vec();
         self.write_async(SNAP_STATE, key, value).await
     }
 
     /// Gets the state trie paths in need of healing
     pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
-        let key = [SnapStateIndex::StateHealPaths as u8];
+        let key = snap_state_key(SnapStateIndex::StateHealPaths);
 
         self.backend
             .begin_read()?
@@ -965,7 +965,7 @@ impl Store {
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        let key = vec![SnapStateIndex::StateTrieRebuildCheckpoint as u8];
+        let key = snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
         let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
         self.write_async(SNAP_STATE, key, value).await
     }
@@ -974,7 +974,7 @@ impl Store {
     pub async fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        let key = [SnapStateIndex::StateTrieRebuildCheckpoint as u8];
+        let key = snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
         let txn = self.backend.begin_read()?;
         match txn.get(SNAP_STATE, &key)? {
             Some(bytes) => {
@@ -997,7 +997,7 @@ impl Store {
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
-        let key = vec![SnapStateIndex::StorageTrieRebuildPending as u8];
+        let key = snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
         let value = pending.encode_to_vec();
         self.write_async(SNAP_STATE, key, value).await
     }
@@ -1006,7 +1006,7 @@ impl Store {
     pub async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        let key = vec![SnapStateIndex::StorageTrieRebuildPending as u8];
+        let key = snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
         self.read_async(SNAP_STATE, key)
             .await?
             .map(|bytes| Vec::<(H256, H256)>::decode(bytes.as_slice()))
@@ -2824,6 +2824,10 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 }
 
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
+    (index as u8).encode_to_vec()
+}
+
+fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
 

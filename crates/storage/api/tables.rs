@@ -46,7 +46,7 @@ pub const TRANSACTION_LOCATIONS: &str = "transaction_locations";
 pub const CHAIN_DATA: &str = "chain_data";
 
 /// Snap state column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `Self::snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint)`
+/// - [`Vec<u8>`] = `snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint)`
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
 pub const SNAP_STATE: &str = "snap_state";
 
