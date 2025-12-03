@@ -80,8 +80,8 @@ fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Returns true if the received latest version is higher than the current ethrex version
 fn is_higher_than_current(latest_version: &str) -> bool {
-    // ethrex.x.y.z
     let current_version_numbers = current_version()
         .split(".")
         .map(|c| c.parse::<u64>().unwrap_or_default());
