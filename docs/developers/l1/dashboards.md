@@ -1,4 +1,4 @@
-# Ethrex L1 Performance Dashboard (Dic 2025)
+# Ethrex L1 Performance Dashboard (Dec 2025)
 
 Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is `prometheus`, and the `job` variable defaults to `ethrex L1`, which is the job configured by default in our provisioning.
 

@@ -33,6 +33,8 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - prometheus
 
   loki:
     image: grafana/loki:latest
@@ -50,3 +52,5 @@ services:
     command: -config.file=/etc/promtail/config.yaml
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - loki

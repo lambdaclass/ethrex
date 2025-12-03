@@ -75,7 +75,7 @@ pub fn init_tracing(
 
     let (file_layer, guard) = if let Some(log_dir) = &opts.log_dir {
         if !log_dir.exists() {
-            let _ = std::fs::create_dir_all(log_dir);
+            std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
         }
 
         let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
