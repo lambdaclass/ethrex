@@ -5,16 +5,18 @@ use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::balance_diff::BalanceDiff;
 use ethrex_common::{
     U256,
-    types::{Block, BlockNumber, PrivilegedL2Transaction, Transaction, batch::Batch},
+    types::{Block, BlockNumber, PrivilegedL2Transaction, batch::Batch},
 };
-use ethrex_l2_common::messages::{
-    L2Message, get_balance_diffs, get_block_l2_messages, get_l2_message_hash,
+use ethrex_l2_common::messages::{L2Message, get_balance_diffs, get_block_l2_messages};
+use ethrex_l2_common::privileged_transactions::{
+    get_block_l1_in_messages, get_block_l2_in_messages,
 };
 use ethrex_l2_common::{
     messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
     privileged_transactions::compute_privileged_transactions_hash,
 };
 use ethrex_storage::Store;
+use std::collections::BTreeMap;
 
 use crate::utils::error::UtilsError;
 
@@ -24,26 +26,38 @@ pub async fn get_batch(
     batch_number: U256,
     commit_tx: Option<H256>,
     blobs_bundle: BlobsBundle,
+    chain_id: u64,
 ) -> Result<Batch, UtilsError> {
-    let privileged_transactions: Vec<PrivilegedL2Transaction> = batch
+    let l1_in_messages: Vec<PrivilegedL2Transaction> = batch
         .iter()
-        .flat_map(|block| {
-            block.body.transactions.iter().filter_map(|tx| {
-                if let Transaction::PrivilegedL2Transaction(tx) = tx {
-                    Some(tx.clone())
-                } else {
-                    None
-                }
-            })
-        })
+        .flat_map(|block| get_block_l1_in_messages(&block.body.transactions, chain_id))
         .collect();
-    let privileged_transaction_hashes = privileged_transactions
+    let l1_in_messages_hashes = l1_in_messages
         .iter()
         .filter_map(|tx| tx.get_privileged_hash())
         .collect();
+    let l1_in_message_rolling_hash = compute_privileged_transactions_hash(l1_in_messages_hashes)?;
 
-    let privileged_transactions_hash =
-        compute_privileged_transactions_hash(privileged_transaction_hashes)?;
+    let l2_in_messages: Vec<PrivilegedL2Transaction> = batch
+        .iter()
+        .flat_map(|block| get_block_l2_in_messages(&block.body.transactions, chain_id))
+        .collect();
+
+    let mut l2_in_message_hashes = BTreeMap::new();
+    for tx in l2_in_messages {
+        let tx_hash = tx
+            .get_privileged_hash()
+            .ok_or(UtilsError::InvalidPrivilegedTransaction)?;
+        l2_in_message_hashes
+            .entry(tx.chain_id)
+            .or_insert_with(Vec::new)
+            .push(tx_hash);
+    }
+    let mut l2_in_message_rolling_hashes = Vec::new();
+    for (chain_id, hashes) in &l2_in_message_hashes {
+        let rolling_hash = compute_privileged_transactions_hash(hashes.clone())?;
+        l2_in_message_rolling_hashes.push((*chain_id, rolling_hash));
+    }
 
     let first_block = batch.first().ok_or(UtilsError::RetrievalError(
         "Batch is empty. This shouldn't happen.".to_owned(),
@@ -60,7 +74,7 @@ pub async fn get_batch(
         ))?
         .hash_no_commit();
 
-    let (l1_message_hashes, l2_message_hashes, balance_diffs) =
+    let (l1_out_message_hashes, balance_diffs) =
         get_batch_message_hashes_and_balance_diffs(store, batch).await?;
 
     Ok(Batch {
@@ -68,19 +82,20 @@ pub async fn get_batch(
         first_block: first_block.header.number,
         last_block: last_block.header.number,
         state_root: new_state_root,
-        l1_in_message_rolling_hash: privileged_transactions_hash,
-        l1_out_message_hashes: l1_message_hashes,
+        l1_in_message_rolling_hash,
+        l2_in_message_rolling_hashes,
+        l1_out_message_hashes,
         blobs_bundle,
         commit_tx,
         verify_tx: None,
-        l2_out_message_hashes: l2_message_hashes,
+        balance_diffs,
     })
 }
 
 async fn get_batch_message_hashes_and_balance_diffs(
     store: &Store,
     batch: &[Block],
-) -> Result<(Vec<H256>, Vec<H256>, Vec<BalanceDiff>), UtilsError> {
+) -> Result<(Vec<H256>, Vec<BalanceDiff>), UtilsError> {
     let mut l1_message_hashes = Vec::new();
     let mut l2_messages = Vec::new();
 
@@ -99,9 +114,7 @@ async fn get_batch_message_hashes_and_balance_diffs(
 
     let balance_diffs = get_balance_diffs(&l2_messages);
 
-    let l2_message_hashes = l2_messages.iter().map(get_l2_message_hash).collect();
-
-    Ok((l1_message_hashes, l2_message_hashes, balance_diffs))
+    Ok((l1_message_hashes, balance_diffs))
 }
 
 async fn extract_block_messages(

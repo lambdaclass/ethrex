@@ -26,7 +26,7 @@ use ethrex_l2_common::{
     merkle_tree::compute_merkle_root,
     messages::{
         L2Message, get_balance_diffs, get_block_l1_messages, get_block_l2_messages,
-        get_l1_message_hash, get_l2_message_hash,
+        get_l1_message_hash,
     },
     privileged_transactions::{
         PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash, get_block_l1_in_messages,
@@ -858,7 +858,7 @@ impl L1Committer {
             for tx in l2_in_messages {
                 let tx_hash = tx
                     .get_privileged_hash()
-                    .ok_or(StatelessExecutionError::InvalidPrivilegedTransaction)?;
+                    .ok_or(CommitterError::InvalidPrivilegedTransaction)?;
                 l2_in_message_hashes
                     .entry(tx.chain_id)
                     .or_insert_with(Vec::new)
@@ -916,9 +916,8 @@ impl L1Committer {
         let l1_in_message_rolling_hash =
             compute_privileged_transactions_hash(l1_in_message_hashes)?;
         let mut l2_in_message_rolling_hashes = Vec::new();
-        for (chain_id, hashes) in &l2_in_hashes_per_chain_id {
-            let rolling_hash = compute_privileged_transactions_hash(hashes.clone())
-                .map_err(StatelessExecutionError::PrivilegedTransactionError)?;
+        for (chain_id, hashes) in &l2_in_message_hashes {
+            let rolling_hash = compute_privileged_transactions_hash(hashes.clone())?;
             l2_in_message_rolling_hashes.push((*chain_id, rolling_hash));
         }
 
@@ -945,7 +944,7 @@ impl L1Committer {
             l1_out_message_hashes,
             acc_l2_out_messages,
             l1_in_message_rolling_hash,
-            l2_in_message_rolling_hashes.into(),
+            l2_in_message_rolling_hashes,
             last_added_block_number,
         )))
     }
@@ -1106,11 +1105,6 @@ impl L1Committer {
 
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
         let l1_messages_merkle_root = compute_merkle_root(&batch.l1_out_message_hashes);
-        debug!("l2 messages merkle root: {l2_messages_merkle_root:#x}");
-        debug!(
-            "l2 messages hashes len: {}",
-            batch.l2_out_message_hashes.len()
-        );
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
         let balance_diff_values: Vec<Value> = batch
             .balance_diffs
@@ -1134,7 +1128,7 @@ impl L1Committer {
             .iter()
             .map(|(chain_id, hash)| {
                 Value::Tuple(vec![
-                    Value::Uint(*chain_id),
+                    Value::Uint(U256::from(*chain_id)),
                     Value::FixedBytes(hash.0.to_vec().into()),
                 ])
             })
@@ -1168,7 +1162,6 @@ impl L1Committer {
 
             (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
         } else {
-            calldata_values.push(Value::FixedBytes(l2_messages_merkle_root.0.to_vec().into()));
             calldata_values.push(Value::Array(balance_diff_values));
             calldata_values.push(Value::Array(l2_in_message_rolling_hashes_values));
             (COMMIT_FUNCTION_SIGNATURE, calldata_values)

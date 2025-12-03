@@ -11,7 +11,6 @@ use ethrex_common::{
         WrappedEIP4844Transaction,
     },
 };
-use ethrex_l2_common::messages::L2Message;
 use ethrex_l2_common::{calldata::Value, messages::L1MessageProof};
 use ethrex_l2_rpc::{
     clients::get_l1_message_proof,
@@ -1130,7 +1129,7 @@ pub async fn get_last_fetched_l1_block(
     _call_u64_variable(client, b"lastFetchedL1Block()", common_bridge_address).await
 }
 
-pub async fn get_pending_privileged_transactions(
+pub async fn get_pending_l1_messages(
     client: &EthClient,
     common_bridge_address: Address,
 ) -> Result<Vec<H256>, EthClientError> {
@@ -1140,6 +1139,28 @@ pub async fn get_pending_privileged_transactions(
         common_bridge_address,
     )
     .await?;
+    from_hex_string_to_h256_array(&response)
+}
+
+pub async fn get_pending_l2_messages(
+    client: &EthClient,
+    common_bridge_address: Address,
+    chain_id: u64,
+) -> Result<Vec<H256>, EthClientError> {
+    let selector = keccak(b"getPendingL2MessageHashes(uint256)")
+        .as_bytes()
+        .get(..4)
+        .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
+        .to_vec();
+
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&selector);
+    calldata.extend_from_slice(&U256::from(chain_id).to_big_endian());
+
+    let response = client
+        .call(common_bridge_address, calldata.into(), Overrides::default())
+        .await?;
+
     from_hex_string_to_h256_array(&response)
 }
 
@@ -1161,16 +1182,6 @@ pub async fn get_l1_active_fork(
     } else {
         Ok(Fork::Osaka)
     }
-}
-
-pub async fn verify_message(
-    _chain_id: u64,
-    _eth_client: &EthClient,
-    _l2_message: &L2Message,
-    _bridge_address: Address,
-) -> Result<bool, EthClientError> {
-    // TODO: check if the message hash is pending in the bridge
-    unimplemented!()
 }
 
 async fn _generic_call(

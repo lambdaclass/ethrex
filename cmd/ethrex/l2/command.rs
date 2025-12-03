@@ -398,6 +398,8 @@ impl Command {
                 )
                 .await?;
 
+                let chain_id = store.get_chain_config().chain_id;
+
                 let rollup_store =
                     StoreRollup::new(&store_path.join("rollup_store"), rollup_store_type)?;
                 rollup_store
@@ -517,6 +519,7 @@ impl Command {
                         U256::from(batch_number),
                         None,
                         blobs_bundle,
+                        chain_id,
                     )
                     .await?;
 

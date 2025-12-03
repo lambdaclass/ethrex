@@ -9,10 +9,8 @@ use ethrex_common::types::{Log, PrivilegedL2Transaction, TxKind, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
 use ethrex_l2_common::messages::{L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS};
-use ethrex_l2_rpc::clients::get_l2_message_proof;
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
-    verify_message,
+    build_generic_tx, get_last_fetched_l1_block, get_pending_l1_messages, get_pending_l2_messages,
 };
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
@@ -394,7 +392,7 @@ impl L1Watcher {
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
         let pending_privileged_transactions =
-            get_pending_privileged_transactions(&self.eth_client, self.bridge_address).await?;
+            get_pending_l1_messages(&self.eth_client, self.bridge_address).await?;
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 
@@ -474,7 +472,7 @@ impl L1Watcher {
 }
 
 pub async fn filter_verified_messages(
-    router_address: Address,
+    bridge_address: Address,
     l1_client: &EthClient,
     l2_client: &L2Client,
     logs: Vec<RpcLog>,
@@ -483,27 +481,6 @@ pub async fn filter_verified_messages(
     info!("Filtering L2 messages");
 
     for rpc_log in logs {
-        info!(
-            "Verifying L2 Message with tx hash {:#}",
-            rpc_log.transaction_hash
-        );
-        let Some(message_proof) =
-            get_l2_message_proof(&l2_client.eth_client, rpc_log.transaction_hash).await?
-        else {
-            // Message proof not found.
-            // Given that logs are fetched in block order, we can stop here.
-            break;
-        };
-        info!("Got message proofs {}", message_proof.len());
-        info!("log_index index {}", rpc_log.log_index);
-
-        let index: usize = usize::try_from(rpc_log.log_index).map_err(|_| {
-            L1WatcherError::Custom("L2 Message proof index out of bounds".to_owned())
-        })?;
-        let proof = message_proof.get(index).ok_or(L1WatcherError::Custom(
-            "L2 Message proof is empty".to_owned(),
-        ))?;
-
         let log = Log {
             address: rpc_log.log.address,
             topics: rpc_log.log.topics.clone(),
@@ -518,15 +495,31 @@ pub async fn filter_verified_messages(
 
         info!("l2 message parsed from log");
 
-        if !verify_message(
-            l2_client.chain_id,
-            l1_client,
-            &l2_message,
-            proof,
-            router_address,
-        )
-        .await?
-        {
+        // If we have a reconstructed state, we don't have the transaction in our store.
+        // Check if the transaction is marked as pending in the contract.
+        let pending_l2_messages =
+            get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
+
+        // TODO: refactor this.
+        let mint_transaction = PrivilegedL2Transaction {
+            chain_id: l2_client.chain_id,
+            nonce: l2_message.tx_id.as_u64(),
+            max_priority_fee_per_gas: Default::default(),
+            max_fee_per_gas: Default::default(),
+            gas_limit: l2_message.gas_limit.as_u64(),
+            to: TxKind::Call(l2_message.to),
+            value: l2_message.value,
+            data: l2_message.data.clone(),
+            access_list: vec![],
+            from: l2_message.from,
+            inner_hash: Default::default(),
+        };
+        let message_hash = mint_transaction.get_privileged_hash().ok_or(
+            L1WatcherError::FailedToDeserializeLog(
+                "Failed to compute privileged hash from L2 message".to_owned(),
+            ),
+        )?;
+        if !pending_l2_messages.contains(&message_hash) {
             // Message not verified.
             // Given that logs are fetched in block order, we can stop here.
             break;
