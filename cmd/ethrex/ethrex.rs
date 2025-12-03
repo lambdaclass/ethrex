@@ -11,6 +11,8 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
+
 #[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -55,7 +57,7 @@ async fn latest_release_version() -> Option<String> {
     }
     let client = reqwest::Client::new();
     let response = client
-        .get("https://api.github.com/repos/lambdaclass/ethrex/releases/latest")
+        .get(LATEST_VERSION_URL)
         .header("User-Agent", "ethrex")
         .send()
         .await
