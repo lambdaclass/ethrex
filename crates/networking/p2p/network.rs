@@ -379,6 +379,7 @@ P2P Snap Sync | elapsed {elapsed} | peers {peer_number} | step {current_step} | 
 pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable) {
     const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(60);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
+
     loop {
         // clone peers to keep the lock short
         let peers: Vec<PeerData> = peer_table.get_peers_data().await.unwrap_or(Vec::new());
@@ -386,6 +387,18 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable)
             .iter()
             .filter(|peer| -> bool { peer.connection.as_ref().is_some() })
             .count();
+
+        #[cfg(feature = "metrics")]
+        {
+            let mut current_clients = std::collections::HashMap::new();
+            for peer in peers.iter().filter(|p| p.connection.as_ref().is_some()) {
+                let client_name = peer.node.client_name();
+                *current_clients.entry(client_name.to_string()).or_insert(0) += 1;
+            }
+
+            ethrex_metrics::p2p::METRICS_P2P.update_peers(active_peers as i64, current_clients);
+        }
+
         let snap_active_peers = peers
             .iter()
             .filter(|peer| -> bool {

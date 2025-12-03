@@ -1,5 +1,8 @@
 use prometheus::{Encoder, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
-use std::sync::LazyLock;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, LazyLock, Mutex},
+};
 
 use crate::MetricsError;
 
@@ -10,6 +13,7 @@ pub struct MetricsP2P {
     peer_count: IntGauge,
     peer_clients: IntGaugeVec,
     disconnections: IntCounterVec,
+    known_clients: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Default for MetricsP2P {
@@ -36,6 +40,31 @@ impl MetricsP2P {
                 &["reason", "client_name"],
             )
             .expect("Failed to create disconnections metric"),
+            known_clients: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    pub fn update_peers(&self, active_peers: i64, current_clients: HashMap<String, i64>) {
+        self.peer_count.set(active_peers);
+
+        let mut known_clients = self.known_clients.lock().unwrap();
+
+        // Update metrics for current clients
+        for (client, count) in &current_clients {
+            self.peer_clients.with_label_values(&[client]).set(*count);
+            known_clients.insert(client.clone());
+        }
+
+        // Zero out clients that are no longer present
+        let mut clients_to_remove = Vec::new();
+        for client in known_clients.iter() {
+            if !current_clients.contains_key(client) {
+                self.peer_clients.with_label_values(&[client]).set(0);
+                clients_to_remove.push(client.clone());
+            }
+        }
+        for client in clients_to_remove {
+            known_clients.remove(&client);
         }
     }
 
