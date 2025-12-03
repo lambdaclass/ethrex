@@ -55,6 +55,7 @@ interface ICommonBridge {
         bytes data;
     }
 
+    /// @notice Structure representing balance to send to each chain.
     struct BalanceDiff {
         uint256 chainId;
         uint256 value;
@@ -158,7 +159,7 @@ interface ICommonBridge {
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
     /// @param message_hashes The hashes of the messages being received.
-    function receiveMessages(
+    function receiveFromSharedBridges(
         bytes32[] calldata message_hashes
     ) external payable;
 

@@ -63,13 +63,6 @@ pub fn get_l2_message_hash(msg: &L2Message) -> H256 {
     keccak(msg.encode())
 }
 
-pub fn get_block_l1_message_hashes(receipts: &[Receipt]) -> Vec<H256> {
-    get_block_l1_messages(receipts)
-        .iter()
-        .map(get_l1_message_hash)
-        .collect()
-}
-
 pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
     receipts
         .iter()

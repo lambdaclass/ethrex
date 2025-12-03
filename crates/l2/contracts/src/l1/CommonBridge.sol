@@ -425,7 +425,7 @@ contract CommonBridge is
     function publishL2Messages(
         uint256 l2MessagesBatchNumber,
         BalanceDiff[] calldata balanceDiffs
-    ) public onlyOnChainProposer {
+    ) public onlyOnChainProposer nonReentrant {
         for (uint i = 0; i < balanceDiffs.length; i++) {
             IRouter(SHARED_BRIDGE_ROUTER).sendMessage{
                 value: balanceDiffs[i].value
@@ -434,7 +434,7 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveMessages(
+    function receiveFromSharedBridges(
         uint256 chainID,
         bytes32[] memory message_hashes
     ) public payable override {

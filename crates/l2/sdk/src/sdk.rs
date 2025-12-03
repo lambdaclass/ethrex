@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::types::EIP7702Transaction;
 use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
@@ -38,10 +39,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x7907c8e504a5539467ef23b61cf86aaa66704a14
+// 0x7b90db056a46a4b3b9568932f2c7fb64a9e8ef0a
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x79, 0x07, 0xc8, 0xe5, 0x04, 0xa5, 0x53, 0x94, 0x67, 0xef, 0x23, 0xb6, 0x1c, 0xf8, 0x6a, 0xaa,
-    0x66, 0x70, 0x4a, 0x14,
+    0x7b, 0x90, 0xdb, 0x05, 0x6a, 0x46, 0xa4, 0xb3, 0xb9, 0x56, 0x89, 0x32, 0xf2, 0xc7, 0xfb, 0x64,
+    0xa9, 0xe8, 0xef, 0x0a,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -810,6 +811,14 @@ pub async fn send_generic_transaction(
 
             tx.encode(&mut encoded_tx);
         }
+        TxType::EIP7702 => {
+            let tx: EIP7702Transaction = generic_tx.try_into()?;
+            let signed_tx = tx
+                .sign(signer)
+                .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+            signed_tx.encode(&mut encoded_tx);
+        }
         TxType::FeeToken => {
             let tx: FeeTokenTransaction = generic_tx.try_into()?;
             let signed_tx = tx
@@ -820,9 +829,10 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         _ => {
-            return Err(EthClientError::Custom(
-                "Unsupported transaction type".to_string(),
-            ));
+            return Err(EthClientError::Custom(format!(
+                "Unsupported transaction type: {:?}",
+                generic_tx.r#type
+            )));
         }
     };
 
@@ -956,8 +966,12 @@ pub async fn build_generic_tx(
     overrides: Overrides,
 ) -> Result<GenericTransaction, EthClientError> {
     match r#type {
-        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged | TxType::FeeToken => {}
-        TxType::EIP2930 | TxType::EIP7702 | TxType::Legacy => {
+        TxType::EIP1559
+        | TxType::EIP4844
+        | TxType::EIP7702
+        | TxType::Privileged
+        | TxType::FeeToken => {}
+        TxType::EIP2930 | TxType::Legacy => {
             return Err(EthClientError::Custom(
                 "Unsupported tx type in build_generic_tx".to_owned(),
             ));
@@ -996,6 +1010,7 @@ pub async fn build_generic_tx(
         fee_token: overrides.fee_token,
         from,
         wrapper_version: overrides.wrapper_version,
+        authorization_list: overrides.authorization_list,
         ..Default::default()
     };
     tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();

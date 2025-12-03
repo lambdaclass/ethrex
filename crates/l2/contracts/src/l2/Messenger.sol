@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
-import "./interfaces/IL2ToL1Messenger.sol";
+import "./interfaces/IMessenger.sol";
 
-/// @title L2ToL1Messenger contract.
+/// @title Messenger contract.
 /// @author LambdaClass
-contract L2ToL1Messenger is IL2ToL1Messenger {
+contract Messenger is IMessenger {
     /// @notice Id of the last emitted message.
     /// @dev Message Id that should be incremented before a message is sent
     uint256 public lastMessageId;
@@ -16,7 +16,7 @@ contract L2ToL1Messenger is IL2ToL1Messenger {
         _;
     }
 
-    /// @inheritdoc IL2ToL1Messenger
+    /// @inheritdoc IMessenger
     function sendMessageToL1(bytes32 data) external {
         // This event gets pushed to L1, the sequencer monitors
         // them on every block.
@@ -24,7 +24,7 @@ contract L2ToL1Messenger is IL2ToL1Messenger {
         emit L1Message(msg.sender, data, lastMessageId);
     }
 
-    /// @inheritdoc IL2ToL1Messenger
+    /// @inheritdoc IMessenger
     function sendMessageToL2(
         uint256 chainId,
         address from,
