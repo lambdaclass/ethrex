@@ -7,11 +7,12 @@ use crate::api::{
     PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, tables::TABLES,
 };
 use crate::error::StoreError;
+use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
+    WriteBatch,
 };
-use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -21,7 +22,7 @@ use tracing::{info, warn};
 #[derive(Debug)]
 pub struct RocksDBBackend {
     /// Optimistric transaction database
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
 impl RocksDBBackend {
@@ -75,7 +76,7 @@ impl RocksDBBackend {
         // opts.set_stats_dump_period_sec(600);
 
         // Open all column families
-        let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
+        let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
             .unwrap_or_else(|_| vec!["default".to_string()]);
 
         let mut all_cfs_to_open = HashSet::new();
@@ -178,7 +179,7 @@ impl RocksDBBackend {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &opts,
             path.as_ref(),
             cf_descriptors,
@@ -209,7 +210,7 @@ impl StorageBackend for RocksDBBackend {
             .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
         let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-        let mut batch = WriteBatchWithTransaction::<true>::default();
+        let mut batch = WriteBatch::default();
 
         while let Some(Ok((key, _))) = iter.next() {
             batch.delete_cf(&cf, key);
@@ -227,7 +228,7 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError> {
-        let batch = WriteBatchWithTransaction::<true>::default();
+        let batch = WriteBatch::default();
 
         Ok(Box::new(RocksDBRwTx {
             db: self.db.clone(),
@@ -262,7 +263,7 @@ impl StorageBackend for RocksDBBackend {
 /// Read-only transaction for RocksDB
 pub struct RocksDBRoTx {
     /// Transaction
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
 impl StorageRoTx for RocksDBRoTx {
@@ -297,9 +298,9 @@ impl StorageRoTx for RocksDBRoTx {
 /// Read-write transaction for RocksDB
 pub struct RocksDBRwTx {
     /// Database reference for writing
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Write batch for accumulating changes
-    batch: WriteBatchWithTransaction<true>,
+    batch: WriteBatch,
 }
 
 impl StorageRoTx for RocksDBRwTx {
@@ -375,9 +376,9 @@ impl StorageRwTx for RocksDBRwTx {
 /// This is used for batch read operations in snap sync
 pub struct RocksDBLocked {
     /// Reference to database
-    db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: &'static Arc<DBWithThreadMode<MultiThreaded>>,
     /// Snapshot/locked transaction
-    lock: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
+    lock: SnapshotWithThreadMode<'static, DBWithThreadMode<MultiThreaded>>,
     /// Column family handle
     cf: Arc<rocksdb::BoundColumnFamily<'static>>,
 }
@@ -394,8 +395,8 @@ impl Drop for RocksDBLocked {
     fn drop(&mut self) {
         unsafe {
             drop(Box::from_raw(
-                self.db as *const Arc<OptimisticTransactionDB<MultiThreaded>>
-                    as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
+                self.db as *const Arc<DBWithThreadMode<MultiThreaded>>
+                    as *mut Arc<DBWithThreadMode<MultiThreaded>>,
             ));
         }
     }
