@@ -488,7 +488,7 @@ services:
         psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l2 <<EOF
         INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'd23061db')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"withdrawERC20\",\"inputs\":[{\"name\":\"tokenL1\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"tokenL2\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"destination\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"amount\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
       EOF
-        echo inserting withdrawERC20 signature
+        echo inserting sendMessageToL1 signature
         psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l2 <<EOF
         INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'00cffbe5')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"sendMessageToL1\",\"inputs\":[{\"name\":\"data\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
       EOF
