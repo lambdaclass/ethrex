@@ -34,12 +34,13 @@ use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode};
-use ethrex_trie::{Nibbles, Node, NodeHash, NodeRef, Trie, TrieNode};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieNode};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::Sender;
 use std::sync::{
@@ -62,7 +63,6 @@ use ethrex_common::types::BlobsBundle;
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
-type StoreUpdatesMap = FxHashMap<H256, (Result<Trie, StoreError>, FxHashMap<Nibbles, Vec<u8>>)>;
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
@@ -111,12 +111,6 @@ impl Default for BlockchainOptions {
     }
 }
 
-struct PartialMerkleizationResults {
-    state_updates: FxHashMap<Nibbles, Vec<u8>>,
-    storage_updates: StoreUpdatesMap,
-    code_updates: FxHashMap<H256, Code>,
-}
-
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
@@ -143,7 +137,7 @@ enum MerklizationRequest {
         delete_all: bool,
     },
     Collect {
-        tx: Sender<(Option<H256>, u8, H256, Vec<TrieNode>)>,
+        tx: Sender<(Option<H256>, u8, Node, Vec<TrieNode>)>,
     },
 }
 
@@ -325,16 +319,6 @@ impl Blockchain {
         'a: 's,
         'b: 's,
     {
-        // Fetch the old root from the DB and decode it
-        let old_root_opt = self
-            .storage
-            .state_trie(parent_header.hash())?
-            .ok_or(StoreError::MissingStore)?
-            .db()
-            .get(Nibbles::default())?
-            .map(|v| Node::decode(&v))
-            .transpose()?;
-
         let mut workers_tx = Vec::with_capacity(16);
         let mut workers_handles = Vec::with_capacity(16);
         for i in 0..16 {
@@ -342,7 +326,7 @@ impl Blockchain {
             let handle = std::thread::Builder::new()
                 .name(format!("block_executor_merkleization_shard_worker_{i}"))
                 .spawn_scoped(scope, move || {
-                    self.handle_merkleization_subtrie(rx, parent_header)
+                    self.handle_merkleization_subtrie(rx, parent_header, i)
                 })
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}",)))?;
             workers_handles.push(handle);
@@ -360,18 +344,23 @@ impl Blockchain {
                 for (key, value) in update.added_storage {
                     let hashed_key = keccak(key);
                     let bucket = hashed_key.as_fixed_bytes()[0];
-                    workers_tx[bucket as usize].send(MerklizationRequest::Merklize {
-                        prefix: Some(prefix),
-                        key: hashed_key,
-                        value: value.encode_to_vec(),
-                        delete_all: update.removed_storage,
-                    });
+                    workers_tx[bucket as usize]
+                        .send(MerklizationRequest::Merklize {
+                            prefix: Some(prefix),
+                            key: hashed_key,
+                            value: value.encode_to_vec(),
+                            delete_all: update.removed_storage,
+                        })
+                        .unwrap();
                 }
             }
         }
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &workers_tx {
-            tx.send(MerklizationRequest::Collect { tx: gatherer_tx.clone() });
+            tx.send(MerklizationRequest::Collect {
+                tx: gatherer_tx.clone(),
+            })
+            .unwrap();
         }
 
         let mut storage_state: FxHashMap<H256, (BranchNode, Vec<TrieNode>)> = Default::default();
@@ -383,7 +372,14 @@ impl Blockchain {
             };
             let (root, node_list) = storage_state.entry(prefix).or_default();
             node_list.extend(nodes);
-            root.choices[index as usize] = NodeHash::Hashed(subroot).into();
+            root.choices[index as usize] = subroot.into();
+        }
+        for (root, nodes) in storage_state.values_mut() {
+            if let Some(root) = collapse_root_node(root.clone()) {
+                nodes.push((Nibbles::default(), root.encode_to_vec()));
+            } else {
+                nodes.push((Nibbles::default(), vec![]));
+            }
         }
 
         let mut storage_roots: FxHashMap<H256, H256> = Default::default();
@@ -426,42 +422,123 @@ impl Blockchain {
             } else {
                 account_state.insert(hashed_address, Some(state.clone()));
             }
-            workers_tx[hashed_address.as_fixed_bytes()[0] as usize].send(
-                MerklizationRequest::Merklize {
+            workers_tx[hashed_address.as_fixed_bytes()[0] as usize]
+                .send(MerklizationRequest::Merklize {
                     prefix: None,
                     key: hashed_address,
                     value: state.encode_to_vec(),
                     delete_all: update.removed,
-                },
-            );
+                })
+                .unwrap();
         }
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &workers_tx {
-            tx.send(MerklizationRequest::Collect { tx: gatherer_tx.clone() });
+            tx.send(MerklizationRequest::Collect {
+                tx: gatherer_tx.clone(),
+            })
+            .unwrap();
         }
 
         let mut root = BranchNode::new(BranchNode::EMPTY_CHOICES);
         let mut state_updates = Vec::new();
         for (_prefix, index, subroot, nodes) in gatherer_rx {
             state_updates.extend(nodes);
-            root.choices[index as usize] = NodeHash::Hashed(subroot).into();
+            root.choices[index as usize] = subroot.into();
         }
         state_updates.push((Nibbles::default(), root.encode_to_vec()));
+        let state_trie_hash = if let Some(root) = collapse_root_node(root) {
+            state_updates.push((Nibbles::default(), root.encode_to_vec()));
+            root.compute_hash().finalize()
+        } else {
+            state_updates.push((Nibbles::default(), vec![]));
+            *EMPTY_TRIE_HASH
+        };
 
         Ok(AccountUpdatesList {
-            state_trie_hash: root.compute_hash().finalize(),
+            state_trie_hash,
             state_updates,
             storage_updates,
             code_updates: code_updates.into_iter().collect(),
         })
     }
 
+    fn load_trie_for_merkelization(
+        &self,
+        parent_header: &BlockHeader,
+        prefix: Option<H256>,
+        index: u8,
+    ) -> Result<Trie, StoreError> {
+        let mut trie = match prefix {
+            Some(account_hash) => {
+                let trie = self.storage.open_storage_trie(
+                    account_hash,
+                    *EMPTY_TRIE_HASH,
+                    parent_header.state_root,
+                )?;
+                let root = trie
+                    .db()
+                    .get(Nibbles::default())?
+                    .map(keccak)
+                    .unwrap_or(*EMPTY_TRIE_HASH);
+                self.storage
+                    .open_storage_trie(account_hash, root, parent_header.state_root)?
+            }
+            None => self.storage.open_state_trie(parent_header.state_root)?,
+        };
+
+        if !trie
+            .root_node()?
+            .is_some_and(|node| matches!(node.as_ref(), Node::Branch(_)))
+        {
+            // force the trie into having a branch node in the root
+            // to avoid interfering with the given merkelization task, we insert
+            // fake values to paths whose first nibble isn't the one we're processing
+            let mut path = vec![index; 32];
+            path[0] = path[0].wrapping_add(16); // increase high nibble
+            trie.insert(path.clone(), vec![0xf; 64])?;
+            path[0] = path[0].wrapping_add(16);
+            trie.insert(path, vec![0xf; 64])?;
+        }
+
+        Ok(trie)
+    }
+
     fn handle_merkleization_subtrie(
         &self,
         rx: Receiver<MerklizationRequest>,
         parent_header: &BlockHeader,
-    ) -> Result<Vec<TrieNode>, StoreError> {
-        todo!();
+        index: u8,
+    ) -> Result<(), StoreError> {
+        let mut tree: FxHashMap<Option<H256>, Trie> = Default::default();
+        for msg in rx {
+            match msg {
+                MerklizationRequest::Merklize {
+                    prefix,
+                    key,
+                    value,
+                    delete_all,
+                } => {
+                    if delete_all {
+                        tree.remove(&prefix);
+                    }
+                    let trie = match tree.entry(prefix.clone()) {
+                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+                        Entry::Vacant(vacant_entry) => vacant_entry.insert(
+                            self.load_trie_for_merkelization(parent_header, prefix, index)?,
+                        ),
+                    };
+                    trie.insert(key.as_bytes().to_vec(), value)?;
+                }
+                MerklizationRequest::Collect { tx } => {
+                    for (prefix, mut trie) in tree.drain() {
+                        let (_, nodes) = trie.collect_changes_since_last_hash();
+                        let subroot = Node::decode(&trie.get_node(&vec![index])?)?;
+                        tx.send((prefix, index, subroot, nodes)).unwrap();
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Executes a block from a given vm instance an does not clear its state
@@ -1690,43 +1767,30 @@ pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
 /// Collapses a root branch node into an extension or leaf node if it has only one valid child.
 /// Returns None if there are no valid children.
 ///
-/// NOTE: this assumes the branch has 0 or 1 children. If there are more than 1,
-/// it will discard all but the first valid child found.
-#[cold]
-fn collapse_root_node(
-    real_root: Box<BranchNode>,
-    state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
-    storage: &Store,
-    parent_header: &BlockHeader,
-) -> Result<Option<Node>, StoreError> {
-    // Collapse the branch into an extension or leaf
-    let Some((choice, only_child)) = real_root
+/// Precondition: the branch node's reference to their children are of type NodeRef::Node
+fn collapse_root_node(root: BranchNode) -> Option<Node> {
+    let mut valid_children_iter = root
         .choices
-        .into_iter()
+        .iter()
         .enumerate()
-        .find(|(_, c)| c.is_valid())
-    else {
-        return Ok(None);
+        .filter(|(_, choice)| choice.is_valid());
+    let child_a = valid_children_iter.next();
+    let child_b = valid_children_iter.next();
+    let (choice, only_child) = match (child_a, child_b) {
+        (None, None) => return None,
+        (None, Some(child)) => child,
+        (Some(child), None) => child,
+        (Some(_), Some(_)) => return Some(Node::Branch(Box::from(root))),
     };
-    let path = Nibbles::from_hex(vec![choice as u8]);
-    let child_bytes = match state_updates_map.get(&path) {
-        Some(v) => v.clone(),
-        None => storage
-            .state_trie(parent_header.hash())?
-            .ok_or(StoreError::MissingStore)?
-            .db()
-            .get(path)?
-            .ok_or_else(|| StoreError::Custom("Missing child node during root collapse".into()))?,
+    let only_child = match only_child {
+        NodeRef::Node(node, _) => Arc::unwrap_or_clone(node.clone()),
+        NodeRef::Hash(_) => return None, // precondition fail
     };
-    // Same match as in [`BranchNode::remove`]
-    let child = match Node::decode(&child_bytes)? {
-        // Replace root with an extension node leading to the child
+    Some(match only_child {
         Node::Branch(_) => {
-            ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child).into()
+            ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child.into()).into()
         }
-        // Replace root with the child extension node, updating its path in the process
         Node::Extension(mut extension_node) => {
-            let mut extension_node = extension_node.take();
             extension_node.prefix.prepend(choice as u8);
             extension_node.into()
         }
@@ -1735,8 +1799,7 @@ fn collapse_root_node(
             leaf.partial.prepend(choice as u8);
             leaf.into()
         }
-    };
-    Ok(Some(child))
+    })
 }
 
 #[cfg(test)]
