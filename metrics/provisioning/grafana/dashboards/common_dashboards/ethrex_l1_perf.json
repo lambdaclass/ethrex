@@ -2904,7 +2904,10 @@
           "id": 201,
           "options": {
             "legend": {
-              "calcs": [],
+              "calcs": [
+                "mean",
+                "last"
+              ],
               "displayMode": "list",
               "placement": "bottom",
               "showLegend": true
@@ -2926,12 +2929,12 @@
               },
               "editorMode": "code",
               "expr": "ethrex_p2p_peer_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
-              "legendFormat": "{{instance}}",
+              "legendFormat": "Peer Count",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Peer Count",
+          "title": "Peer Count - $instance",
           "type": "timeseries"
         },
         {
@@ -2985,7 +2988,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.1",
+          "pluginVersion": "12.2.0-16764329129",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
@@ -3001,7 +3004,7 @@
               "refId": "A"
             }
           ],
-          "title": "Peer Clients Distribution",
+          "title": "Peer Clients Distribution - $instance",
           "type": "piechart"
         },
         {
@@ -3038,7 +3041,6 @@
                   "type": "linear"
                 },
                 "showPoints": "auto",
-                "showValues": false,
                 "spanNulls": false,
                 "stacking": {
                   "group": "A",
@@ -3074,7 +3076,9 @@
           "id": 202,
           "options": {
             "legend": {
-              "calcs": [],
+              "calcs": [
+                "last"
+              ],
               "displayMode": "list",
               "placement": "bottom",
               "showLegend": true
@@ -3085,7 +3089,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.1",
+          "pluginVersion": "12.2.0-16764329129",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
@@ -3101,7 +3105,7 @@
               "refId": "A"
             }
           ],
-          "title": "Peer Clients",
+          "title": "Peer Clients - $instance",
           "type": "timeseries"
         },
         {
@@ -3121,7 +3125,7 @@
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
-                "barWidthFactor": 0.6,
+                "barWidthFactor": 1,
                 "drawStyle": "bars",
                 "fillOpacity": 100,
                 "gradientMode": "none",
@@ -3132,12 +3136,12 @@
                 },
                 "insertNulls": false,
                 "lineInterpolation": "linear",
-                "lineWidth": 1,
+                "lineWidth": 10,
                 "pointSize": 5,
                 "scaleDistribution": {
                   "type": "linear"
                 },
-                "showPoints": "auto",
+                "showPoints": "never",
                 "spanNulls": false,
                 "stacking": {
                   "group": "A",
@@ -3166,11 +3170,12 @@
           },
           "gridPos": {
             "h": 10,
-            "w": 6,
+            "w": 5,
             "x": 13,
             "y": 31
           },
           "id": 203,
+          "interval": "5s",
           "options": {
             "legend": {
               "calcs": [],
@@ -3194,13 +3199,13 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (reason) (increase(ethrex_p2p_disconnections{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
+              "expr": "sum by (reason) (\n  changes(\n    ethrex_p2p_disconnections{\n      job=\"$job\",\n      instance=~\"$instance(:\\\\d+)?$\"\n    }[$__rate_interval]\n  )\n)",
               "legendFormat": "{{reason}}",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Peer Disconnections",
+          "title": "Peer Disconnections - $instance",
           "type": "timeseries"
         },
         {
@@ -3239,8 +3244,8 @@
           },
           "gridPos": {
             "h": 10,
-            "w": 5,
-            "x": 19,
+            "w": 6,
+            "x": 18,
             "y": 31
           },
           "id": 205,
@@ -3280,7 +3285,7 @@
               "refId": "A"
             }
           ],
-          "title": "Disconnections by Reason and Client",
+          "title": "Disconnections Details - $instance",
           "transformations": [
             {
               "id": "organize",
