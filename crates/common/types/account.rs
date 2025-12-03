@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bitvec::{order::Lsb0, vec::BitVec};
+use bitvec::{bitvec, order::Lsb0, vec::BitVec};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
@@ -60,7 +60,7 @@ impl Code {
 
     fn compute_jump_targets(code: &[u8]) -> BitVec<usize, Lsb0> {
         debug_assert!(code.len() <= u32::MAX as usize);
-        let mut targets = BitVec::with_capacity(code.len());
+        let mut targets = bitvec![usize, Lsb0; 0; code.len()];
         let mut i = 0;
         while i < code.len() {
             // TODO: we don't use the constants from the vm module to avoid a circular dependency
