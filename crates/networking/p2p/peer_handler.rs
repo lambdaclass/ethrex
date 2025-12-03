@@ -749,7 +749,7 @@ impl PeerHandler {
             else {
                 // Log ~ once every 10 seconds
                 if logged_no_free_peers_count == 0 {
-                    trace!("We are missing peers in request_account_range_request");
+                    trace!("We are missing peers in request_account_range");
                     logged_no_free_peers_count = 1000;
                 }
                 logged_no_free_peers_count -= 1;

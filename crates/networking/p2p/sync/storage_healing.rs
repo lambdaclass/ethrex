@@ -323,12 +323,9 @@ async fn ask_peers_for_nodes(
             .peer_table
             .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
             .await
-            .inspect_err(
-                |err| debug!(err= ?err, "Error requesting a peer to perform storage healing"),
-            )
+            .inspect_err(|err| debug!(?err, "Error requesting a peer to perform storage healing"))
             .unwrap_or(None)
         else {
-            // TODO: this could be a busy loop
             trace!("We are missing peers in heal_storage_trie");
             return;
         };
