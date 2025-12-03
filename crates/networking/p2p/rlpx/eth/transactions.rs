@@ -261,6 +261,7 @@ impl PooledTransactions {
             }
             let tx_size = tx.encode_canonical_to_vec().len();
             if tx_size != expected_size {
+                dbg!(tx_size, expected_size);
                 return Err(MempoolError::InvalidPooledTxSize);
             }
         }
