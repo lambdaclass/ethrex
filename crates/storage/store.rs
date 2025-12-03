@@ -1263,12 +1263,12 @@ impl Store {
         self.engine.get_storage_trie_rebuild_pending().await
     }
 
-    /// Set the client version for the last completed snap sync
+    /// Save the current store schema version
     pub async fn set_store_schema_version(&self) -> Result<(), StoreError> {
         self.engine.set_store_schema_version().await
     }
 
-    /// Get the client version for the last completed snap sync
+    /// Obtain the latest used store schema version
     pub async fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
         self.engine.get_store_schema_version().await
     }
