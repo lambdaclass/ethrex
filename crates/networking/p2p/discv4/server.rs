@@ -545,7 +545,7 @@ impl DiscoveryServer {
         sender_public_key: H512,
         node_id: H256,
         from: SocketAddr,
-    ) -> Result<Contact, DiscoveryServerError> {
+    ) -> Result<(), DiscoveryServerError> {
         let contact = self
             .validate_contact(sender_public_key, node_id, from, "ENRResponse")
             .await?;
@@ -553,7 +553,7 @@ impl DiscoveryServer {
             debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "unsolicited message received, skipping");
             return Err(DiscoveryServerError::InvalidContact);
         }
-        Ok(contact)
+        Ok(())
     }
 
     async fn send(
