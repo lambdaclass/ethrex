@@ -119,7 +119,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             ICommonBridgeL2.crosschainMintERC20,
             (token_l1, token_l2, other_chain_token_l2, to, amount)
         );
-        this.sendToL2(chainId, to, 21000 * 10, data);
+        this.sendToL2(chainId, address(this), 21000 * 10, data); // i think here should be the common bridge address
     }
 
     function crosschainMintERC20(
