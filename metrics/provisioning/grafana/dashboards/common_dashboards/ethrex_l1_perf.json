@@ -2869,7 +2869,6 @@
                   "type": "linear"
                 },
                 "showPoints": "auto",
-                "showValues": false,
                 "spanNulls": false,
                 "stacking": {
                   "group": "A",
@@ -2897,10 +2896,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
-            "w": 8,
+            "h": 10,
+            "w": 3,
             "x": 0,
-            "y": 30
+            "y": 31
           },
           "id": 201,
           "options": {
@@ -2916,6 +2915,9 @@
               "sort": "none"
             }
           },
+          "pluginVersion": "12.2.0-16764329129",
+          "repeat": "instance",
+          "repeatDirection": "v",
           "targets": [
             {
               "datasource": {
@@ -2931,6 +2933,73 @@
           ],
           "title": "Peer Count",
           "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              "mappings": []
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 5,
+            "x": 3,
+            "y": 31
+          },
+          "id": 204,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "right",
+              "showLegend": true
+            },
+            "pieType": "pie",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "repeat": "instance",
+          "repeatDirection": "v",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "ethrex_p2p_peer_clients{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+              "legendFormat": "{{client_name}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Peer Clients Distribution",
+          "type": "piechart"
         },
         {
           "datasource": {
@@ -2994,10 +3063,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
-            "w": 8,
+            "h": 10,
+            "w": 5,
             "x": 8,
-            "y": 30
+            "y": 31
           },
           "id": 202,
           "options": {
@@ -3013,6 +3082,9 @@
               "sort": "none"
             }
           },
+          "pluginVersion": "12.2.1",
+          "repeat": "instance",
+          "repeatDirection": "v",
           "targets": [
             {
               "datasource": {
@@ -3047,8 +3119,8 @@
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
+                "drawStyle": "bars",
+                "fillOpacity": 100,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
@@ -3063,7 +3135,6 @@
                   "type": "linear"
                 },
                 "showPoints": "auto",
-                "showValues": false,
                 "spanNulls": false,
                 "stacking": {
                   "group": "A",
@@ -3091,10 +3162,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 16,
-            "y": 30
+            "h": 10,
+            "w": 6,
+            "x": 13,
+            "y": 31
           },
           "id": 203,
           "options": {
@@ -3110,6 +3181,9 @@
               "sort": "none"
             }
           },
+          "pluginVersion": "12.2.0-16764329129",
+          "repeat": "instance",
+          "repeatDirection": "v",
           "targets": [
             {
               "datasource": {
@@ -3125,6 +3199,114 @@
           ],
           "title": "Peer Disconnections",
           "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 5,
+            "x": 19,
+            "y": 31
+          },
+          "id": 205,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "Value"
+              }
+            ]
+          },
+          "pluginVersion": "12.2.0-16764329129",
+          "repeat": "instance",
+          "repeatDirection": "v",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "sum by (reason, client_name) (increase(ethrex_p2p_disconnections{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__range]))",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "__auto",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Disconnections by Reason and Client",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "Value": "Count",
+                  "client_name": "Client",
+                  "reason": "Reason"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "fields": {},
+                "sort": [
+                  {
+                    "desc": true,
+                    "field": "Count"
+                  }
+                ]
+              }
+            }
+          ],
+          "type": "table"
         }
       ],
       "title": "P2P Metrics",

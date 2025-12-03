@@ -33,7 +33,7 @@ impl MetricsP2P {
                     "ethrex_p2p_disconnections",
                     "Total number of peer disconnections",
                 ),
-                &["reason"],
+                &["reason", "client_name"],
             )
             .expect("Failed to create disconnections metric"),
         }
@@ -55,8 +55,10 @@ impl MetricsP2P {
         self.peer_clients.with_label_values(&[client_name]).dec();
     }
 
-    pub fn inc_disconnection(&self, reason: &str) {
-        self.disconnections.with_label_values(&[reason]).inc();
+    pub fn inc_disconnection(&self, reason: &str, client_name: &str) {
+        self.disconnections
+            .with_label_values(&[reason, client_name])
+            .inc();
     }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {

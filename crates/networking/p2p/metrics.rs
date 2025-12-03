@@ -236,6 +236,8 @@ impl Metrics {
             let split = client_version.split('/').collect::<Vec<&str>>();
             if let Some(client_type) = split.first() {
                 METRICS_P2P.inc_peer_client(client_type);
+            } else {
+                METRICS_P2P.inc_peer_client("unknown");
             }
         }
 
@@ -276,8 +278,11 @@ impl Metrics {
             let split = client_version.split('/').collect::<Vec<&str>>();
             if let Some(client_type) = split.first() {
                 METRICS_P2P.dec_peer_client(client_type);
+                METRICS_P2P.inc_disconnection(&reason.to_string(), client_type);
+            } else {
+                METRICS_P2P.dec_peer_client("unknown");
+                METRICS_P2P.inc_disconnection(&reason.to_string(), "unknown");
             }
-            METRICS_P2P.inc_disconnection(&reason.to_string());
         }
 
         let mut clients = self.peers_by_client_type.lock().await;
