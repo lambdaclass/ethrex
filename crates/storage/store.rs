@@ -1264,13 +1264,13 @@ impl Store {
     }
 
     /// Set the client version for the last completed snap sync
-    pub async fn set_snap_client_version(&self, version: &str) -> Result<(), StoreError> {
-        self.engine.set_snap_client_version(version).await
+    pub async fn set_store_schema_version(&self) -> Result<(), StoreError> {
+        self.engine.set_store_schema_version().await
     }
 
     /// Get the client version for the last completed snap sync
-    pub async fn get_snap_client_version(&self) -> Result<Option<String>, StoreError> {
-        self.engine.get_snap_client_version().await
+    pub async fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
+        self.engine.get_store_schema_version().await
     }
 
     /// Clears all checkpoint data created during the last snap sync

@@ -49,8 +49,6 @@ pub struct StoreInner {
     snap_state: SnapState,
     // Stores fetched headers during a fullsync
     fullsync_headers: HashMap<BlockNumber, BlockHeader>,
-    // The client version at which the latest snap sync was performed
-    latest_snap_client_version: Option<String>,
 }
 
 #[derive(Default, Debug)]
@@ -731,15 +729,14 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    /// Set the client version for the last completed snap sync
-    async fn set_snap_client_version(&self, version: &str) -> Result<(), StoreError> {
-        self.inner()?.latest_snap_client_version = Some(version.to_string());
+    async fn set_store_schema_version(&self) -> Result<(), StoreError> {
+        // This is not relevant for InMemory store as it won't be saved once execution ends
         Ok(())
     }
 
-    /// Get the client version for the last completed snap sync
-    async fn get_snap_client_version(&self) -> Result<Option<String>, StoreError> {
-        Ok(self.inner()?.latest_snap_client_version.clone())
+    async fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
+        // This is not relevant for InMemory store as it won't be saved once execution ends
+        Ok(None)
     }
 
     fn get_store_directory(&self) -> Result<PathBuf, StoreError> {

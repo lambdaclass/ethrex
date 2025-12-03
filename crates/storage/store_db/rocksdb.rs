@@ -1,4 +1,5 @@
 use crate::{
+    STORE_SCHEMA_VERSION,
     rlp::AccountCodeHashRLP,
     trie_db::{
         layering::{TrieLayerCache, TrieWrapper, apply_prefix},
@@ -2134,19 +2135,24 @@ impl StoreEngine for Store {
         Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
     }
 
-    async fn set_snap_client_version(&self, version: &str) -> Result<(), StoreError> {
+    async fn set_store_schema_version(&self) -> Result<(), StoreError> {
         self.write_async(
             CF_MISC_VALUES,
-            "snap_client_version",
-            version.as_bytes().to_vec(),
+            "store_schema_version",
+            STORE_SCHEMA_VERSION.to_le_bytes(),
         )
         .await
     }
 
-    async fn get_snap_client_version(&self) -> Result<Option<String>, StoreError> {
-        self.read_async(CF_MISC_VALUES, "snap_client_version")
+    async fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
+        self.read_async(CF_MISC_VALUES, "store_schema_version")
             .await?
-            .map(String::from_utf8)
+            .map(|bytes| -> Result<u64, StoreError> {
+                let array: [u8; 8] = bytes.try_into().map_err(|_| {
+                    StoreError::Custom("Invalid store schema version bytes".to_string())
+                })?;
+                Ok(u64::from_le_bytes(array))
+            })
             .transpose()
             .map_err(|_| StoreError::DecodeError)
     }
