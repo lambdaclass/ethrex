@@ -547,7 +547,7 @@ impl DiscoveryServer {
         from: SocketAddr,
     ) -> Result<Contact, DiscoveryServerError> {
         let contact = self
-            .validate_contact(sender_public_key, node_id, from, "ENRRequest")
+            .validate_contact(sender_public_key, node_id, from, "ENRResponse")
             .await?;
         if !contact.has_pending_enr_request() {
             debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "unsolicited message received, skipping");
