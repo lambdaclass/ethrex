@@ -9,6 +9,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import "./Print.sol";
 import {
     MerkleProof
 } from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
@@ -379,7 +380,13 @@ contract CommonBridge is
                 } else {
                     // TODO: update the deposits map and how do we get the token_l2 address
                     // TODO: we need to transfer the locked erc20 token to the router first
-                    deposits[tv.token_l1][tv.token_l2] -= tv.value;
+                    // TODO: uncomment the following lines after testing
+                    // uint256 deposited = deposits[tv.token_l1][tv.token_l2];
+                    // require(
+                    //     deposited >= tv.value,
+                    //     "CommonBridge: trying to withdraw more tokens than were deposited"
+                    // );
+                    // deposits[tv.token_l1][tv.token_l2] -= tv.value;
                     IERC20(tv.token_l1).safeTransfer(
                         SHARED_BRIDGE_ROUTER,
                         tv.value

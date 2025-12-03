@@ -494,10 +494,16 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        uint256 registered_chains = batchCommitments[batchNumber]
-            .balanceDiffs
-            .length;
-        if (publicData.length != 288 + 64 * registered_chains) {
+        ICommonBridge.BalanceDiff[] storage balanceDiffs = batchCommitments[
+            batchNumber
+        ].balanceDiffs;
+        uint256 registered_chains = balanceDiffs.length;
+        uint256 expected_length = 288;
+        for (uint256 i = 0; i < registered_chains; i++) {
+            expected_length += 32;
+            expected_length += balanceDiffs[i].value_per_token.length * 128;
+        }
+        if (publicData.length != expected_length) {
             return "0x"; // invalid public data length
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -557,10 +563,6 @@ contract OnChainProposer is
             return "0G"; // l2 messages merkle root public inputs don't match with committed l2 messages merkle root
         }
 
-        if (batchCommitments[batchNumber].balanceDiffs.length != registered_chains) {
-            return "0x"; // invalid public data length
-        }
-
         uint256 offset = 288;
         for (uint256 i = 0; i < registered_chains; i++) {
             if (publicData.length < offset + 32) {
@@ -570,20 +572,14 @@ contract OnChainProposer is
             uint256 chainId = uint256(bytes32(publicData[offset:offset + 32]));
             offset += 32;
 
-            if (
-                batchCommitments[batchNumber].balanceDiffs[i].chainId != chainId
-            ) {
+            if (balanceDiffs[i].chainId != chainId) {
                 return "0H"; // balance diffs public inputs don't match with committed balance diffs
             }
 
             // Validate each token entry
             for (
                 uint256 j = 0;
-                j <
-                batchCommitments[batchNumber]
-                    .balanceDiffs[i]
-                    .value_per_token
-                    .length;
+                j < balanceDiffs[i].value_per_token.length;
                 j++
             ) {
                 if (publicData.length < offset + 128) {
@@ -596,9 +592,19 @@ contract OnChainProposer is
                     address other_chain_token_l2,
                     uint256 token_value
                 ) = (
-                        address(bytes20(bytes32(publicData[offset:offset + 32]))),
-                        address(bytes20(bytes32(publicData[offset + 32:offset + 64]))),
-                        address(bytes20(bytes32(publicData[offset + 64:offset + 96]))),
+                        address(
+                            bytes20(bytes32(publicData[offset:offset + 32]))
+                        ),
+                        address(
+                            bytes20(
+                                bytes32(publicData[offset + 32:offset + 64])
+                            )
+                        ),
+                        address(
+                            bytes20(
+                                bytes32(publicData[offset + 64:offset + 96])
+                            )
+                        ),
                         uint256(bytes32(publicData[offset + 96:offset + 128]))
                     );
 
@@ -610,22 +616,11 @@ contract OnChainProposer is
                     address committed_other_chain_token_l2,
                     uint256 committed_value
                 ) = (
-                        batchCommitments[batchNumber]
-                            .balanceDiffs[i]
-                            .value_per_token[j]
-                            .token_l1,
-                        batchCommitments[batchNumber]
-                            .balanceDiffs[i]
-                            .value_per_token[j]
-                            .token_l2,
-                        batchCommitments[batchNumber]
-                            .balanceDiffs[i]
-                            .value_per_token[j]
-                            .other_chain_token_l2,
-                        batchCommitments[batchNumber]
-                            .balanceDiffs[i]
-                            .value_per_token[j]
-                            .value);
+                        balanceDiffs[i].value_per_token[j].token_l1,
+                        balanceDiffs[i].value_per_token[j].token_l2,
+                        balanceDiffs[i].value_per_token[j].other_chain_token_l2,
+                        balanceDiffs[i].value_per_token[j].value
+                    );
 
                 if (
                     token_l1 != committed_token_l1 ||
@@ -636,6 +631,9 @@ contract OnChainProposer is
                     return "0I"; // balance diffs public inputs don't match with committed balance diffs
                 }
             }
+        }
+        if (offset != publicData.length) {
+            return "0x"; // invalid public data length
         }
         return "";
     }
