@@ -724,6 +724,8 @@ async fn deploy_contracts(
         ON_CHAIN_PROPOSER_BYTECODE.to_vec()
     };
 
+    println!("OnChainProposer bytecode length: {}", bytecode.len());
+
     if bytecode.is_empty() {
         return Err(DeployerError::BytecodeNotFound);
     }

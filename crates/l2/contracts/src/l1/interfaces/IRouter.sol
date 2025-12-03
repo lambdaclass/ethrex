@@ -21,6 +21,9 @@ interface IRouter {
         bytes32[] calldata message_hashes
     ) external payable;
 
+    /// @notice Retrieves the list of registered chain IDs.
+    function getRegisteredChainIds() external view returns (uint256[] memory);
+
     /// @notice Emitted when a new chain is registered.
     /// @param chainId The ID of the registered chain.
     /// @param commonBridge The address of the CommonBridge for the registered chain.
@@ -32,7 +35,7 @@ interface IRouter {
 
     /// @notice Emitted when a message is sent to a chain that is not registered.
     /// @param chainId The ID of the chain that is not registered.
-    event TransferToChainNotRegistered(uint256 indexed chainId);
+    error TransferToChainNotRegistered(uint256 chainId);
 
     /// @notice Error indicating an invalid address was provided.
     /// @param addr The invalid address.
@@ -45,4 +48,8 @@ interface IRouter {
     /// @notice Error indicating the caller is not a registered bridge.
     /// @param caller The address of the caller.
     error CallerNotBridge(address caller);
+
+    /// @notice Error indicating a chain is not registered.
+    /// @param chainId The ID of the chain that is not registered.
+    error ChainNotRegistered(uint256 chainId);
 }

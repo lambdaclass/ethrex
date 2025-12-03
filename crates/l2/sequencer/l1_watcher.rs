@@ -452,7 +452,7 @@ impl L1Watcher {
             info!("Fetched {} L2 logs from L2 client", logs.len());
 
             let verified_logs =
-                filter_verified_messages(self.router_address, &self.eth_client, l2_client, logs)
+                filter_verified_messages(self.bridge_address, &self.eth_client, l2_client, logs)
                     .await?;
 
             info!("Verified {} L2 logs from L2 client", verified_logs.len());

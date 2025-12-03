@@ -265,8 +265,6 @@ pub fn stateless_validation_l1(
         #[cfg(feature = "l2")]
         l1_out_messages_merkle_root: H256::zero(),
         #[cfg(feature = "l2")]
-        l2_out_messages_merkle_root: H256::zero(),
-        #[cfg(feature = "l2")]
         l1_in_message_hash: H256::zero(),
         #[cfg(feature = "l2")]
         l2_in_message_rolling_hashes: Vec::new(),
@@ -308,17 +306,12 @@ pub fn stateless_validation_l2(
     let (l1_out_messages, l2_out_messages, l1_in_messages, l2_in_messages) =
         get_batch_messages_and_deposit_transactions(blocks, &receipts, chain_id)?;
 
-    let (
-        l1_out_messages_merkle_root,
-        l2_out_messages_merkle_root,
-        l1_in_message_hash,
-        l2_in_message_rolling_hashes,
-    ) = compute_messages_and_deposit_transactions_digests(
-        &l1_out_messages,
-        &l2_out_messages,
-        &l1_in_messages,
-        &l2_in_messages,
-    )?;
+    let (l1_out_messages_merkle_root, l1_in_message_hash, l2_in_message_rolling_hashes) =
+        compute_messages_and_deposit_transactions_digests(
+            &l1_out_messages,
+            &l1_in_messages,
+            &l2_in_messages,
+        )?;
 
     let balance_diffs = get_balance_diffs(&l2_out_messages);
 
@@ -337,7 +330,6 @@ pub fn stateless_validation_l2(
         initial_state_hash,
         final_state_hash,
         l1_out_messages_merkle_root,
-        l2_out_messages_merkle_root,
         l1_in_message_hash,
         l2_in_message_rolling_hashes,
         blob_versioned_hash,
@@ -500,7 +492,7 @@ type MessagesAndPrivilegedTransactions = (
 );
 
 #[cfg(feature = "l2")]
-type MessagesHashes = (H256, H256, H256, Vec<(u64, H256)>);
+type MessagesHashes = (H256, H256, Vec<(u64, H256)>);
 
 #[cfg(feature = "l2")]
 fn get_batch_messages_and_deposit_transactions(
@@ -534,19 +526,13 @@ fn get_batch_messages_and_deposit_transactions(
 #[cfg(feature = "l2")]
 fn compute_messages_and_deposit_transactions_digests(
     l1_out_messages: &[L1Message],
-    l2_out_messages: &[L2Message],
     l1_in_messages: &[PrivilegedL2Transaction],
     l2_in_messages: &[PrivilegedL2Transaction],
 ) -> Result<MessagesHashes, StatelessExecutionError> {
-    use ethrex_l2_common::{
-        merkle_tree::compute_merkle_root,
-        messages::{get_l1_message_hash, get_l2_message_hash},
-    };
+    use ethrex_l2_common::{merkle_tree::compute_merkle_root, messages::get_l1_message_hash};
 
     let l1_out_message_hashes: Vec<_> = l1_out_messages.iter().map(get_l1_message_hash).collect();
-    let l2_out_message_hashes: Vec<_> = l2_out_messages.iter().map(get_l2_message_hash).collect();
     let l1_out_messages_merkle_root = compute_merkle_root(&l1_out_message_hashes);
-    let l2_out_messages_merkle_root = compute_merkle_root(&l2_out_message_hashes);
 
     let l1_in_message_hashes: Vec<_> = l1_in_messages
         .iter()
@@ -580,7 +566,6 @@ fn compute_messages_and_deposit_transactions_digests(
 
     Ok((
         l1_out_messages_merkle_root,
-        l2_out_messages_merkle_root,
         l1_in_rolling_hash,
         l2_in_rolling_hashes,
     ))

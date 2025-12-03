@@ -113,10 +113,6 @@ contract CommonBridge is
     /// @notice Mapping of chain ID to index of the first unprocessed message hash in the array.
     mapping(uint256 => uint256) public pendingMessagesIndexPerChain;
 
-    /// @notice Array of the chain IDs of the received L2 messages.
-    /// @dev Used to iterate over the mapping keys.
-    uint256[] public receivedL2MessageChainIDs;
-
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -321,7 +317,7 @@ contract CommonBridge is
         );
 
         bytes memory hashes;
-        bytes32[] pendingMessagesHashes = pendingMessagesHashesPerChain[
+        bytes32[] memory pendingMessagesHashes = pendingMessagesHashesPerChain[
             chainId
         ];
         uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
@@ -373,8 +369,11 @@ contract CommonBridge is
                 return true;
             }
         }
-        for (uint256 i = 0; i < receivedL2MessageChainIDs.length; i++) {
-            uint256 chainId = receivedL2MessageChainIDs[i];
+        uint256[] memory registeredChainIDs = IRouter(SHARED_BRIDGE_ROUTER)
+            .getRegisteredChainIds();
+
+        for (uint256 i = 0; i < registeredChainIDs.length; i++) {
+            uint256 chainId = registeredChainIDs[i];
             uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
             bytes32[]
                 storage pendingMessagesHashes = pendingMessagesHashesPerChain[
@@ -423,18 +422,17 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function publishL2Messages(
-        uint256 l2MessagesBatchNumber,
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer nonReentrant {
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            IRouter(SHARED_BRIDGE_ROUTER).sendMessage{
+            IRouter(SHARED_BRIDGE_ROUTER).sendMessages{
                 value: balanceDiffs[i].value
             }(balanceDiffs[i].chainId, balanceDiffs[i].message_hashes);
         }
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveFromSharedBridges(
+    function receiveFromSharedBridge(
         uint256 chainID,
         bytes32[] memory message_hashes
     ) public payable override {
@@ -442,9 +440,6 @@ contract CommonBridge is
             msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"
         );
-        if (pendingMessagesIndexPerChain[chainID]) {
-            receivedL2MessageChainIDs.push(chainID);
-        }
         // Append new hashes instead of overwriting
         for (uint i = 0; i < message_hashes.length; i++) {
             pendingMessagesHashesPerChain[chainID].push(message_hashes[i]);
@@ -453,20 +448,6 @@ contract CommonBridge is
                 block.timestamp +
                 PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
         }
-    }
-
-    /// @inheritdoc ICommonBridge
-    function verifyMessage(
-        bytes32 l2MessageLeaf,
-        uint256 l2MessageBatchNumber,
-        bytes32[] calldata l2MessageProof
-    ) external view override returns (bool) {
-        return
-            MerkleProof.verify(
-                l2MessageProof,
-                l2MessagesMerkleRoots[l2MessageBatchNumber],
-                l2MessageLeaf
-            );
     }
 
     /// @inheritdoc ICommonBridge

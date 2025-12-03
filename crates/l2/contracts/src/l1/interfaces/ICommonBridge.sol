@@ -96,6 +96,15 @@ interface ICommonBridge {
         uint16 number
     ) external view returns (bytes32);
 
+    /// @notice Method to retrieve the versioned hash of the first `number`
+    /// pending L2 messages.
+    /// @param chainId the chain id of the L2 messages to retrieve.
+    /// @param number of pending L2 messages to retrieve the versioned hash.
+    function getPendingL2MessagesVersionedHash(
+        uint256 chainId,
+        uint16 number
+    ) external view returns (bytes32);
+
     /// @notice Remove pending transaction hashes from the queue.
     /// @dev This method is used by the L2 OnChainOperator to remove the pending
     /// privileged transactions from the queue after the transaction is included.
@@ -136,30 +145,16 @@ interface ICommonBridge {
     /// @notice Publishes the L2 messages in the router contract.
     /// @dev This method is used by the L2 OnChainProposer to publish the L2
     /// messages when an L2 batch is committed.
-    /// @param l2MessagesBatchNumber the batch number in L2 where the l2 messages were emitted.
     /// @param balanceDiffs Array of balance differences and associated message hashes to be sent to different chains.
-    function publishL2Messages(
-        uint256 l2MessagesBatchNumber,
-        BalanceDiff[] calldata balanceDiffs
-    ) external;
-
-    /// @notice Verifies a message from L2 using a Merkle proof.
-    /// @dev This method is used to verify that a message from L2 was indeed
-    /// included in a committed L2 batch.
-    /// @param l2MessageLeaf The leaf of the L2 message to verify.
-    /// @param l2MessageBatchNumber The batch number where the L2 message was emitted.
-    /// @param l2MessageProof The Merkle proof for the L2 message.
-    function verifyMessage(
-        bytes32 l2MessageLeaf,
-        uint256 l2MessageBatchNumber,
-        bytes32[] calldata l2MessageProof
-    ) external view returns (bool);
+    function publishL2Messages(BalanceDiff[] calldata balanceDiffs) external;
 
     /// @notice Receives messages from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
+    /// @param chainID The ID of the source chain.
     /// @param message_hashes The hashes of the messages being received.
-    function receiveFromSharedBridges(
+    function receiveFromSharedBridge(
+        uint256 chainID,
         bytes32[] calldata message_hashes
     ) external payable;
 

@@ -15,9 +15,6 @@ pub struct ProgramOutput {
     /// merkle root of all L1 output messages in a batch
     pub l1_out_messages_merkle_root: H256,
     #[cfg(feature = "l2")]
-    /// merkle root of all L2 output messages in a batch
-    pub l2_out_messages_merkle_root: H256,
-    #[cfg(feature = "l2")]
     /// hash of all the deposit transactions included in a batch
     pub l1_in_message_hash: H256,
     #[cfg(feature = "l2")]
@@ -51,8 +48,6 @@ impl ProgramOutput {
             self.last_block_hash.to_fixed_bytes(),
             self.chain_id.to_big_endian(),
             self.non_privileged_count.to_big_endian(),
-            #[cfg(feature = "l2")]
-            self.l2_out_messages_merkle_root.to_fixed_bytes(),
         ]
         .concat();
         #[cfg(feature = "l2")]

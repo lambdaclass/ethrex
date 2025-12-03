@@ -69,7 +69,8 @@ use spawned_concurrency::tasks::{
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32, bytes32,bytes32,bytes32,bytes32,(uint256,uint256, bytes32[])[], (uint256,bytes32)[]";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,(uint256,uint256,bytes32[])[],(uint256,bytes32)[])
+";
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
@@ -728,7 +729,6 @@ impl L1Committer {
             // Get block messages and privileged transactions
             let l1_out_messages = get_block_l1_messages(&receipts);
             let l2_out_messages = get_block_l2_messages(&receipts);
-            info!("Got l2 out messages: {}", l2_out_messages.len());
             let l1_in_messages = get_block_l1_in_messages(&txs, self.store.chain_config.chain_id);
             let l2_in_messages = get_block_l2_in_messages(&txs, self.store.chain_config.chain_id);
 
@@ -794,7 +794,7 @@ impl L1Committer {
 
             // Accumulate block data with the rest of the batch.
             acc_l1_in_messages.extend(l1_in_messages.clone());
-            acc_l2_in_messages.extend(l1_in_messages.clone());
+            acc_l2_in_messages.extend(l2_in_messages.clone());
 
             let l1_in_messages_len: u64 = acc_l1_in_messages.len().try_into()?;
             let l2_in_messages_len: u64 = acc_l2_in_messages.len().try_into()?;
@@ -881,7 +881,7 @@ impl L1Committer {
         } // end loop
 
         if acc_blocks.is_empty() {
-            debug!("No new blocks were available to build batch {batch_number}, skipping it");
+            info!("No new blocks were available to build batch {batch_number}, skipping it");
             return Ok(None);
         }
 
@@ -937,6 +937,8 @@ impl L1Committer {
                 None,
             )
             .await?;
+
+        info!("L1 in rolling hash: {l1_in_message_rolling_hash:#x}");
 
         Ok(Some((
             blobs_bundle,

@@ -21,17 +21,7 @@ contract Router is
 
     uint256[] public registeredChainIds;
 
-    modifier onlyRegisteredBridge() {
-        addresses = getRegisteredAddresses();
-        bool isRegistered = false;
-        for (uint i = 0; i < addresses.length; i++) {
-            if (msg.sender == addresses[i]) {
-                isRegistered = true;
-                break;
-            }
-        }
-        require(isRegistered, "Router: Caller is not a registered bridge");
-    }
+    mapping(address => bool) public registeredAddresses;
 
     function initialize(address owner) public initializer {
         OwnableUpgradeable.__Ownable_init(owner);
@@ -52,6 +42,7 @@ contract Router is
 
         bridges[chainId] = _commonBridge;
         registeredChainIds.push(chainId);
+        registeredAddresses[_commonBridge] = true;
 
         emit ChainRegistered(chainId, _commonBridge);
     }
@@ -62,8 +53,10 @@ contract Router is
             revert ChainNotRegistered(chainId);
         }
 
+        address bridge = bridges[chainId];
         delete bridges[chainId];
         removeChainID(chainId);
+        registeredAddresses[bridge] = false;
 
         emit ChainDeregistered(chainId);
     }
@@ -71,14 +64,18 @@ contract Router is
     /// @inheritdoc IRouter
     function sendMessages(
         uint256 chainId,
-        bytes32[] message_hashes
-    ) public payable override onlyRegisteredBridge {
+        bytes32[] memory message_hashes
+    ) public payable override {
+        if (!registeredAddresses[msg.sender]) {
+            revert CallerNotBridge(msg.sender);
+        }
         if (bridges[chainId] == address(0)) {
             revert TransferToChainNotRegistered(chainId);
         }
+
         ICommonBridge(bridges[chainId]).receiveFromSharedBridge{
             value: msg.value
-        }(message_hashes);
+        }(chainId, message_hashes);
     }
 
     function removeChainID(uint256 chainId) internal {
@@ -93,20 +90,14 @@ contract Router is
         }
     }
 
-    function getRegisteredChainIds() external view returns (uint256[] memory) {
-        return registeredChainIds;
-    }
-
-    function getRegisteredAddresses()
+    /// @inheritdoc IRouter
+    function getRegisteredChainIds()
         external
         view
-        returns (address[] memory addresses)
+        override
+        returns (uint256[] memory)
     {
-        addresses = new address[](registeredChainIds.length);
-        for (uint i = 0; i < registeredChainIds.length; i++) {
-            addresses[i] = bridges[registeredChainIds[i]];
-        }
-        return addresses;
+        return registeredChainIds;
     }
 
     /// @notice Allow owner to upgrade the contract.
