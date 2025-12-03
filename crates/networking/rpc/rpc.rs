@@ -258,7 +258,7 @@ pub fn start_block_executor(
         .spawn(move || {
             while let Some((notify, block)) = block_receiver.blocking_recv() {
                 let profiler_guard = ProfilingGuard::start_profiling(
-                    9997,
+                    99997,
                     || format!("block-execution-{}", hex::encode(&block.header.hash()[..4])),
                     &["pipeline", "block_executor", "merkle", "bg_trie_updater"],
                 );
