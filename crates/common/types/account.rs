@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bitvec::{order::Lsb0, vec::BitVec};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
@@ -29,11 +30,10 @@ pub struct Code {
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
     // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
-    pub jump_targets: Vec<u32>,
+    pub jump_targets: BitVec<usize, Lsb0>,
 }
 
 impl Code {
@@ -58,16 +58,16 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+    fn compute_jump_targets(code: &[u8]) -> BitVec<usize, Lsb0> {
         debug_assert!(code.len() <= u32::MAX as usize);
-        let mut targets = Vec::with_capacity(code.len());
+        let mut targets = BitVec::with_capacity(code.len());
         let mut i = 0;
         while i < code.len() {
             // TODO: we don't use the constants from the vm module to avoid a circular dependency
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    targets.push(i as u32);
+                    targets.set(i, true);
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
@@ -151,7 +151,7 @@ impl Default for Code {
         Self {
             bytecode: Bytes::new(),
             hash: *EMPTY_KECCACK_HASH,
-            jump_targets: Vec::new(),
+            jump_targets: BitVec::new(),
         }
     }
 }

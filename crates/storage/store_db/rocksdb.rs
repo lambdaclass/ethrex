@@ -1002,6 +1002,7 @@ impl StoreEngine for Store {
                 6 + code.bytecode.len()
                     + code
                         .jump_targets
+                        .as_raw_slice()
                         .iter()
                         .map(std::mem::size_of_val)
                         .sum::<usize>(),
@@ -1395,6 +1396,7 @@ impl StoreEngine for Store {
             6 + code.bytecode.len()
                 + code
                     .jump_targets
+                    .as_raw_slice()
                     .iter()
                     .map(std::mem::size_of_val)
                     .sum::<usize>(),
@@ -1453,7 +1455,7 @@ impl StoreEngine for Store {
         let code = Code {
             hash: code_hash,
             bytecode: Bytes::copy_from_slice(bytecode),
-            jump_targets: <Vec<_>>::decode(targets)?,
+            jump_targets: RLPDecode::decode(targets)?,
         };
 
         // insert into cache and evict if needed
@@ -2052,6 +2054,7 @@ impl StoreEngine for Store {
                 6 + code.bytecode.len()
                     + code
                         .jump_targets
+                        .as_raw_slice()
                         .iter()
                         .map(std::mem::size_of_val)
                         .sum::<usize>(),

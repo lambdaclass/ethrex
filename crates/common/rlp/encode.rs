@@ -1,3 +1,4 @@
+use bitvec::{order::Lsb0, vec::BitVec};
 use bytes::{BufMut, Bytes};
 use ethereum_types::U256;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -492,6 +493,18 @@ impl RLPEncode for Bytes {
 
     fn length(&self) -> usize {
         self.as_ref().length()
+    }
+}
+
+impl RLPEncode for BitVec<usize, Lsb0> {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        // TODO: implement RLPEncode for [usize] to avoid allocating a vec
+        self.as_raw_slice().to_vec().encode(buf)
+    }
+
+    fn length(&self) -> usize {
+        // TODO: implement RLPEncode for [usize] to avoid allocating a vec
+        self.as_raw_slice().to_vec().length()
     }
 }
 
