@@ -22,7 +22,7 @@ use ethrex_common::U256;
 use ethrex_common::{
     H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{AccountState, Block, BlockHash, BlockHeader, Code},
+    types::{AccountState, Block, BlockHeader, Code},
     utils::ProfilingGuard,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
@@ -597,31 +597,6 @@ async fn store_block_bodies(
     Ok(())
 }
 
-/// Fetches all receipts for the given block hashes via p2p and stores them
-// TODO: remove allow when used again
-#[allow(unused)]
-async fn store_receipts(
-    mut block_hashes: Vec<BlockHash>,
-    mut peers: PeerHandler,
-    store: Store,
-) -> Result<(), SyncError> {
-    loop {
-        debug!("Requesting Receipts ");
-        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await? {
-            debug!(" Received {} Receipts", receipts.len());
-            // Track which blocks we have already fetched receipts for
-            for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
-                store.add_receipts(block_hash, receipts).await?;
-            }
-            // Check if we need to ask for another batch
-            if block_hashes.is_empty() {
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Persisted State during the Block Sync phase for SnapSync
 #[derive(Clone)]
 pub struct SnapBlockSyncState {
@@ -948,7 +923,11 @@ impl Syncer {
                             .write_account_code_batch(
                                 code_hashes_to_download
                                     .drain(..)
-                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                                    .zip(bytecodes)
+                                    // SAFETY: hash already checked by the download worker
+                                    .map(|(hash, code)| {
+                                        (hash, Code::from_bytecode_unchecked(code, hash))
+                                    })
                                     .collect(),
                             )
                             .await?;
@@ -969,7 +948,9 @@ impl Syncer {
                 .write_account_code_batch(
                     code_hashes_to_download
                         .drain(..)
-                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                        .zip(bytecodes)
+                        // SAFETY: hash already checked by the download worker
+                        .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
                         .collect(),
                 )
                 .await?;
