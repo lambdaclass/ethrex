@@ -333,15 +333,22 @@ impl StorageRoTx for RocksDBRwTx {
 }
 
 impl StorageRwTx for RocksDBRwTx {
-    /// Stores multiple key-value pairs in different tables using WriteBatch.
+    fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
+        self.batch.put_cf(&cf, key, value);
+        Ok(())
+    }
+
+    /// Stores multiple key-value pairs in a single table.
     /// Changes are accumulated in the batch and written atomically on commit.
     fn put_batch(
         &mut self,
         table: &'static str,
         batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
-        // Fast-path if we have only one table in the batch
-        // All tables are the same
         let cf = self
             .db
             .cf_handle(table)
