@@ -885,7 +885,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        get_account_state_from_trie(&state_trie, address)
+        self.get_account_state_from_trie(&state_trie, address)
     }
 
     pub fn get_account_state_by_root(
@@ -1381,17 +1381,6 @@ pub struct StorageSlotProof {
     pub proof: Vec<NodeRLP>,
     pub key: H256,
     pub value: U256,
-}
-
-fn get_account_state_from_trie(
-    state_trie: &Trie,
-    address: Address,
-) -> Result<Option<AccountState>, StoreError> {
-    let hashed_address = hash_address(&address);
-    let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-        return Ok(None);
-    };
-    Ok(Some(AccountState::decode(&encoded_state)?))
 }
 
 pub struct AncestorIterator {
