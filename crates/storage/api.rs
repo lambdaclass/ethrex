@@ -325,10 +325,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
 
     /// Save the current store schema version
-    async fn set_store_schema_version(&self) -> Result<(), StoreError>;
+    fn set_store_schema_version(&self) -> Result<(), StoreError>;
 
     /// Obtain the latest used store schema version
-    async fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError>;
+    fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError>;
 
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.

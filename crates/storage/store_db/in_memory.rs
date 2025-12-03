@@ -729,12 +729,12 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn set_store_schema_version(&self) -> Result<(), StoreError> {
+    fn set_store_schema_version(&self) -> Result<(), StoreError> {
         // This is not relevant for InMemory store as it won't be saved once execution ends
         Ok(())
     }
 
-    async fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
+    fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
         // This is not relevant for InMemory store as it won't be saved once execution ends
         Ok(None)
     }

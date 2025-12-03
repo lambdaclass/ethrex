@@ -22,7 +22,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, STORE_SCHEMA_VERSION, Store};
+use ethrex_storage::{EngineType, Store};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -404,15 +404,6 @@ pub async fn init_l1(
     if opts.syncmode == SyncMode::Full {
         store.generate_flatkeyvalue()?;
     }
-
-    if let Some(latest_store_schema_version) = store.get_store_schema_version().await?
-        && latest_store_schema_version != STORE_SCHEMA_VERSION
-    {
-        return Err(eyre::eyre!(
-            "Incompatible DB version. Please run `ethrex removedb` and restart node"
-        ));
-    }
-    store.set_store_schema_version().await?;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
