@@ -40,8 +40,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
-pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
+pub const INITIAL_LOOKUP_INTERVAL_MS: u64 = 100; // 10 per second
+pub const LOOKUP_INTERVAL_MS: u64 = 600; // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -87,6 +87,7 @@ pub struct DiscoveryServer {
     /// The last `FindNode` message sent, cached due to message
     /// signatures being expensive.
     find_node_message: BytesMut,
+    initial_lookup_interval: u64,
 }
 
 impl DiscoveryServer {
@@ -97,6 +98,7 @@ impl DiscoveryServer {
         udp_socket: Arc<UdpSocket>,
         mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
+        initial_lookup_interval: u64,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
@@ -115,6 +117,7 @@ impl DiscoveryServer {
             udp_socket,
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
+            initial_lookup_interval,
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -261,17 +264,45 @@ impl DiscoveryServer {
     }
 
     async fn prune(&mut self) -> Result<(), DiscoveryServerError> {
+        let interval = self.get_lookup_interval().await.as_micros();
+        let rate = if interval == 0 {
+            0
+        } else {
+            1_000_000 / interval
+        } as f64;
+        tracing::info!(
+            "Current lookup interval: {:?}, {} per second",
+            interval,
+            rate
+        );
         self.peer_table.prune().await?;
         Ok(())
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        if !self.peer_table.target_reached().await.unwrap_or(false) {
-            INITIAL_LOOKUP_INTERVAL
+        let peer_completion = self
+            .peer_table
+            .target_peers_completion()
+            .await
+            .unwrap_or_default();
+        let value = if peer_completion < 0.5 {
+            4.0 * peer_completion.powf(3.0)
         } else {
-            trace!("Reached target number of peers or contacts. Using longer lookup interval.");
-            LOOKUP_INTERVAL
-        }
+            1.0 - ((-2.0 * peer_completion + 2.0).powf(3.0)) / 2.0
+        };
+        let indexed = (1000f64
+            * (value * (LOOKUP_INTERVAL_MS - self.initial_lookup_interval) as f64
+                + self.initial_lookup_interval as f64))
+            .round() as u64;
+        //tracing::info!("Peer count {} - progress {} - value {} - indexed {}", peer_count, peer_completion, value, indexed);
+        Duration::from_micros(indexed)
+
+        // if !self.peer_table.target_reached().await.unwrap_or(false) {
+        //     INITIAL_LOOKUP_INTERVAL
+        // } else {
+        //     trace!("Reached target number of peers or contacts. Using longer lookup interval.");
+        //     LOOKUP_INTERVAL
+        // }
     }
 
     async fn enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {

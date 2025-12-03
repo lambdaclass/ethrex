@@ -12,7 +12,9 @@ use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis};
 use ethrex_p2p::{
-    discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
+    discv4::{peer_table::TARGET_PEERS, server::INITIAL_LOOKUP_INTERVAL_MS},
+    sync::SyncMode,
+    tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -244,6 +246,14 @@ pub struct Options {
     )]
     pub target_peers: usize,
     #[arg(
+        long = "p2p.lookup-interval",
+        default_value_t = INITIAL_LOOKUP_INTERVAL_MS,
+        value_name = "INITIAL_LOOKUP_INTERVAL",
+        help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
+        help_heading = "P2P options"
+    )]
+    pub lookup_interval: u64,
+    #[arg(
         long = "builder.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
@@ -330,6 +340,7 @@ impl Default for Options {
             mempool_max_size: Default::default(),
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
+            lookup_interval: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
