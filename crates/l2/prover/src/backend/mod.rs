@@ -18,7 +18,7 @@ pub mod zisk;
 #[cfg(feature = "openvm")]
 pub mod openvm;
 
-#[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum)]
+#[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum, PartialEq)]
 pub enum Backend {
     #[default]
     Exec,
