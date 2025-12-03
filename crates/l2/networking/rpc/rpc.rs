@@ -1,7 +1,8 @@
 use crate::l2::batch::{BatchNumberRequest, GetBatchByBatchNumberRequest};
 use crate::l2::execution_witness::handle_execution_witness;
 use crate::l2::fees::{
-    GetBaseFeeVaultAddress, GetL1BlobBaseFeeRequest, GetOperatorFee, GetOperatorFeeVaultAddress,
+    GetBaseFeeVaultAddress, GetL1BlobBaseFeeRequest, GetL1FeeVaultAddress, GetOperatorFee,
+    GetOperatorFeeVaultAddress,
 };
 use crate::l2::l1_message::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
@@ -76,8 +77,8 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
-    syncer: SyncManager,
-    peer_handler: PeerHandler,
+    syncer: Option<Arc<SyncManager>>,
+    peer_handler: Option<PeerHandler>,
     client_version: String,
     valid_delegation_addresses: Vec<Address>,
     sponsor_pk: SecretKey,
@@ -94,7 +95,7 @@ pub async fn start_api(
             storage,
             blockchain,
             active_filters: active_filters.clone(),
-            syncer: Arc::new(syncer),
+            syncer,
             peer_handler,
             node_data: NodeData {
                 jwt_secret,
@@ -232,6 +233,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         "ethrex_getBaseFeeVaultAddress" => GetBaseFeeVaultAddress::call(req, context).await,
         "ethrex_getOperatorFeeVaultAddress" => GetOperatorFeeVaultAddress::call(req, context).await,
         "ethrex_getOperatorFee" => GetOperatorFee::call(req, context).await,
+        "ethrex_getL1FeeVaultAddress" => GetL1FeeVaultAddress::call(req, context).await,
         "ethrex_getL1BlobBaseFee" => GetL1BlobBaseFeeRequest::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())

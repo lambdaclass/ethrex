@@ -124,6 +124,11 @@ async fn periodically_check_version_update() {
 async fn main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
+    rayon::ThreadPoolBuilder::default()
+        .thread_name(|i| format!("rayon-worker-{i}"))
+        .build_global()
+        .expect("failed to build rayon threadpool");
+
     if let Some(subcommand) = command {
         return subcommand.run(&opts).await;
     }

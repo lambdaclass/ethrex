@@ -1,5 +1,3 @@
-#[cfg(any(test, feature = "test-utils"))]
-use crate::discv4::peer_table::TARGET_PEERS;
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     discv4::peer_table::{PeerData, PeerTable, PeerTableError},
@@ -7,12 +5,9 @@ use crate::{
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
-        eth::{
-            blocks::{
-                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
-                HashOrNumber,
-            },
-            receipts::GetReceipts,
+        eth::blocks::{
+            BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+            HashOrNumber,
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
@@ -31,7 +26,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, H256, U256,
-    types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
+    types::{AccountState, BlockBody, BlockHeader, validate_block_body},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
@@ -152,14 +147,6 @@ impl PeerHandler {
             peer_table,
             initiator,
         }
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
-    /// This should only be used in tests as it won't be able to interact with the node's connected peers
-    pub async fn dummy() -> PeerHandler {
-        let peer_table = PeerTable::spawn(TARGET_PEERS);
-        PeerHandler::new(peer_table.clone(), RLPxInitiator::dummy(peer_table).await)
     }
 
     async fn make_request(
@@ -568,28 +555,12 @@ impl PeerHandler {
         }
     }
 
-    /// Requests block bodies from any suitable peer given their block hashes
-    /// Returns the block bodies or None if:
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_block_bodies(
-        &mut self,
-        block_hashes: &[H256],
-    ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            if let Some((block_bodies, _)) = self.request_block_bodies_inner(block_hashes).await? {
-                return Ok(Some(block_bodies));
-            }
-        }
-        Ok(None)
-    }
-
     /// Requests block bodies from any suitable peer given their block headers and validates them
     /// Returns the requested block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
-    pub async fn request_and_validate_block_bodies(
+    pub async fn request_block_bodies(
         &mut self,
         block_headers: &[BlockHeader],
     ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
@@ -617,46 +588,6 @@ impl PeerHandler {
             // Retry on validation failure
             if validation_success {
                 return Ok(Some(res));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
-    /// Returns the lists of receipts or None if:
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_receipts(
-        &mut self,
-        block_hashes: Vec<H256>,
-    ) -> Result<Option<Vec<Vec<Receipt>>>, PeerHandlerError> {
-        let block_hashes_len = block_hashes.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetReceipts(GetReceipts {
-                id: request_id,
-                block_hashes: block_hashes.clone(),
-            });
-            match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
-                None => return Ok(None),
-                Some((peer_id, mut connection)) => {
-                    if let Some(receipts) =
-                        match PeerHandler::make_request(&mut self.peer_table, peer_id, &mut connection, request, PEER_REPLY_TIMEOUT).await {
-                            Ok(RLPxMessage::Receipts68(res)) => {
-                                Some(res.get_receipts())
-                            }
-                            Ok(RLPxMessage::Receipts69(res)) => {
-                                Some(res.receipts.clone())
-                            }
-                            _ => None
-                        }
-                    .and_then(|receipts|
-                        // Check that the response is not empty and does not contain more bodies than the ones requested
-                        (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
-                    {
-                        return Ok(Some(receipts));
-                    }
-                }
             }
         }
         Ok(None)
