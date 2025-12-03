@@ -25,12 +25,17 @@ pub async fn get_batch(
     commit_tx: Option<H256>,
     blobs_bundle: BlobsBundle,
 ) -> Result<Batch, UtilsError> {
+    let chain_id = store.get_chain_config().chain_id;
     let privileged_transactions: Vec<PrivilegedL2Transaction> = batch
         .iter()
         .flat_map(|block| {
             block.body.transactions.iter().filter_map(|tx| {
                 if let Transaction::PrivilegedL2Transaction(tx) = tx {
-                    Some(tx.clone())
+                    if tx.chain_id == chain_id {
+                        Some(tx.clone())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
