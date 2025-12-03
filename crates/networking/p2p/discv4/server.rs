@@ -276,29 +276,7 @@ impl DiscoveryServer {
 
     async fn enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self.peer_table.get_contact_for_enr_lookup().await? {
-            let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
-            let enr_request = Message::ENRRequest(ENRRequestMessage { expiration });
-
-            let mut buf = Vec::new();
-            enr_request.encode_with_header(&mut buf, &self.signer);
-            let enr_request_hash: [u8; 32] = buf[..32]
-                .try_into()
-                .expect("first 32 bytes are the message hash");
-
-            if self.udp_socket.send_to(&buf, contact.node.udp_addr())
-                .await
-                .inspect_err( |e| error!(sending = "ENRRequest", addr = ?&contact.node.udp_addr(), to = %format!("{:#x}", contact.node.public_key), err=?e, "Error sending message"),)
-                .is_err()
-            {
-                self.peer_table
-                    .set_disposable(&contact.node.node_id())
-                    .await?;
-                METRICS.record_new_discarded_node().await;
-            }
-
-            self.peer_table
-                .record_enr_request_sent(&contact.node.node_id(), H256::from(enr_request_hash))
-                .await?;
+            self.send_enr_request(&contact.node).await?;
         }
         Ok(())
     }
@@ -381,6 +359,33 @@ impl DiscoveryServer {
 
         debug!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
 
+        Ok(())
+    }
+
+    async fn send_enr_request(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
+        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+        let enr_request = Message::ENRRequest(ENRRequestMessage { expiration });
+
+        let mut buf = Vec::new();
+        enr_request.encode_with_header(&mut buf, &self.signer);
+        let enr_request_hash: [u8; 32] = buf[..32]
+            .try_into()
+            .expect("first 32 bytes are the message hash");
+
+        if self.udp_socket.send_to(&buf, node.udp_addr())
+                .await
+                .inspect_err( |e| error!(sending = "ENRRequest", addr = ?node.udp_addr(), to = %format!("{:#x}", node.public_key), err=?e, "Error sending message"),)
+                .is_err()
+            {
+                self.peer_table
+                    .set_disposable(&node.node_id())
+                    .await?;
+                METRICS.record_new_discarded_node().await;
+            }
+
+        self.peer_table
+            .record_enr_request_sent(&node.node_id(), H256::from(enr_request_hash))
+            .await?;
         Ok(())
     }
 
