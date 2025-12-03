@@ -412,6 +412,7 @@ pub async fn init_l1(
             "Incompatible DB version. Please run `ethrex removedb` and restart node"
         ));
     }
+    store.set_store_schema_version().await?;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;

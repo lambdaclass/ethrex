@@ -288,7 +288,6 @@ impl Syncer {
 
         store.clear_snap_state().await?;
         self.snap_enabled.store(false, Ordering::Relaxed);
-        store.set_store_schema_version().await?;
 
         Ok(())
     }
