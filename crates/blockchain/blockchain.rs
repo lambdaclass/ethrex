@@ -42,6 +42,7 @@ use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, Mutex, RwLock,
@@ -130,6 +131,7 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 enum MerklizationRequest {
+    Load(Option<H256>),
     Merklize {
         prefix: Option<H256>,
         key: H256,
@@ -137,7 +139,7 @@ enum MerklizationRequest {
         delete_all: bool,
     },
     Collect {
-        tx: Sender<(Option<H256>, u8, Node, Vec<TrieNode>)>,
+        tx: Sender<(Option<H256>, u8, Option<Node>, Vec<TrieNode>)>,
     },
 }
 
@@ -341,20 +343,28 @@ impl Blockchain {
             for update in updates {
                 account_updates.push(update.clone());
                 let prefix = keccak(update.address);
+                for tx in &workers_tx {
+                    tx.send(MerklizationRequest::Load(Some(prefix))).unwrap();
+                }
                 for (key, value) in update.added_storage {
                     let hashed_key = keccak(key);
-                    let bucket = hashed_key.as_fixed_bytes()[0];
+                    let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
                     workers_tx[bucket as usize]
                         .send(MerklizationRequest::Merklize {
                             prefix: Some(prefix),
                             key: hashed_key,
-                            value: value.encode_to_vec(),
+                            value: if value.is_zero() {
+                                vec![]
+                            } else {
+                                value.encode_to_vec()
+                            },
                             delete_all: update.removed_storage,
                         })
                         .unwrap();
                 }
             }
         }
+
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &workers_tx {
             tx.send(MerklizationRequest::Collect {
@@ -362,6 +372,7 @@ impl Blockchain {
             })
             .unwrap();
         }
+        drop(gatherer_tx);
 
         let mut storage_state: FxHashMap<H256, (BranchNode, Vec<TrieNode>)> = Default::default();
         for (prefix, index, subroot, nodes) in gatherer_rx {
@@ -372,20 +383,19 @@ impl Blockchain {
             };
             let (root, node_list) = storage_state.entry(prefix).or_default();
             node_list.extend(nodes);
-            root.choices[index as usize] = subroot.into();
-        }
-        for (root, nodes) in storage_state.values_mut() {
-            if let Some(root) = collapse_root_node(root.clone()) {
-                nodes.push((Nibbles::default(), root.encode_to_vec()));
-            } else {
-                nodes.push((Nibbles::default(), vec![]));
-            }
+            root.choices[index as usize] = subroot.map(NodeRef::from).unwrap_or_default();
         }
 
         let mut storage_roots: FxHashMap<H256, H256> = Default::default();
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
-        for (hashed_account, (root, nodes)) in storage_state {
-            storage_roots.insert(hashed_account, root.compute_hash().finalize());
+        for (hashed_account, (root, mut nodes)) in storage_state {
+            if let Some(root) = collapse_root_node(root.clone()) {
+                nodes.push((Nibbles::default(), root.encode_to_vec()));
+                storage_roots.insert(hashed_account, root.compute_hash().finalize());
+            } else {
+                nodes.push((Nibbles::default(), vec![]));
+                storage_roots.insert(hashed_account, *EMPTY_TRIE_HASH);
+            }
             storage_updates.push((hashed_account, nodes));
         }
 
@@ -393,6 +403,9 @@ impl Blockchain {
         let mut account_state: FxHashMap<H256, Option<AccountState>> = Default::default();
         let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
 
+        for tx in &workers_tx {
+            tx.send(MerklizationRequest::Load(None)).unwrap();
+        }
         for update in account_updates {
             let hashed_address = keccak(update.address);
             let mut state = match account_state.get(&hashed_address) {
@@ -422,15 +435,20 @@ impl Blockchain {
             } else {
                 account_state.insert(hashed_address, Some(state.clone()));
             }
-            workers_tx[hashed_address.as_fixed_bytes()[0] as usize]
+            workers_tx[hashed_address.as_fixed_bytes()[0] as usize >> 4]
                 .send(MerklizationRequest::Merklize {
                     prefix: None,
                     key: hashed_address,
-                    value: state.encode_to_vec(),
+                    value: if update.removed {
+                        vec![]
+                    } else {
+                        state.encode_to_vec()
+                    },
                     delete_all: update.removed,
                 })
                 .unwrap();
         }
+
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &workers_tx {
             tx.send(MerklizationRequest::Collect {
@@ -438,14 +456,14 @@ impl Blockchain {
             })
             .unwrap();
         }
+        drop(gatherer_tx);
 
         let mut root = BranchNode::new(BranchNode::EMPTY_CHOICES);
         let mut state_updates = Vec::new();
         for (_prefix, index, subroot, nodes) in gatherer_rx {
             state_updates.extend(nodes);
-            root.choices[index as usize] = subroot.into();
+            root.choices[index as usize] = subroot.map(NodeRef::from).unwrap_or_default();
         }
-        state_updates.push((Nibbles::default(), root.encode_to_vec()));
         let state_trie_hash = if let Some(root) = collapse_root_node(root) {
             state_updates.push((Nibbles::default(), root.encode_to_vec()));
             root.compute_hash().finalize()
@@ -462,13 +480,12 @@ impl Blockchain {
         })
     }
 
-    fn load_trie_for_merkelization(
+    fn load_trie(
         &self,
         parent_header: &BlockHeader,
         prefix: Option<H256>,
-        index: u8,
     ) -> Result<Trie, StoreError> {
-        let mut trie = match prefix {
+        Ok(match prefix {
             Some(account_hash) => {
                 let trie = self.storage.open_storage_trie(
                     account_hash,
@@ -484,21 +501,25 @@ impl Blockchain {
                     .open_storage_trie(account_hash, root, parent_header.state_root)?
             }
             None => self.storage.open_state_trie(parent_header.state_root)?,
-        };
+        })
+    }
 
-        if !trie
-            .root_node()?
-            .is_some_and(|node| matches!(node.as_ref(), Node::Branch(_)))
-        {
-            // force the trie into having a branch node in the root
-            // to avoid interfering with the given merkelization task, we insert
-            // fake values to paths whose first nibble isn't the one we're processing
-            let mut path = vec![index; 32];
-            path[0] = path[0].wrapping_add(16); // increase high nibble
-            trie.insert(path.clone(), vec![0xf; 64])?;
-            path[0] = path[0].wrapping_add(16);
-            trie.insert(path, vec![0xf; 64])?;
-        }
+    fn load_trie_for_merkelization(
+        &self,
+        parent_header: &BlockHeader,
+        prefix: Option<H256>,
+        index: u8,
+    ) -> Result<Trie, StoreError> {
+        let mut trie = self.load_trie(parent_header, prefix)?;
+
+        // force the trie into having a branch node in the root
+        // to avoid interfering with the given merkelization task, we insert
+        // fake values to paths whose first nibble isn't the one we're processing
+        let mut path = vec![index << 4; 32];
+        path[0] = path[0].wrapping_add(16); // increase high nibble
+        trie.insert(path.clone(), vec![0xf; 64])?;
+        path[0] = path[0].wrapping_add(16);
+        trie.insert(path, vec![0xf; 64])?;
 
         Ok(trie)
     }
@@ -512,6 +533,12 @@ impl Blockchain {
         let mut tree: FxHashMap<Option<H256>, Trie> = Default::default();
         for msg in rx {
             match msg {
+                MerklizationRequest::Load(prefix) => {
+                    tree.insert(
+                        prefix,
+                        self.load_trie_for_merkelization(parent_header, prefix, index)?,
+                    );
+                }
                 MerklizationRequest::Merklize {
                     prefix,
                     key,
@@ -527,12 +554,44 @@ impl Blockchain {
                             self.load_trie_for_merkelization(parent_header, prefix, index)?,
                         ),
                     };
-                    trie.insert(key.as_bytes().to_vec(), value)?;
+                    if value.is_empty() {
+                        trie.remove(&key.as_bytes().to_vec())?;
+                    } else {
+                        trie.insert(key.as_bytes().to_vec(), value)?;
+                    }
                 }
                 MerklizationRequest::Collect { tx } => {
                     for (prefix, mut trie) in tree.drain() {
-                        let (_, nodes) = trie.collect_changes_since_last_hash();
-                        let subroot = Node::decode(&trie.get_node(&vec![index])?)?;
+                        let Some(Node::Branch(subroot)) =
+                            trie.root_node()?.map(Arc::unwrap_or_clone)
+                        else {
+                            panic!(); //unreachable
+                        };
+                        let subrootref = &subroot.choices[index as usize];
+                        let subroot = if subrootref.is_valid() {
+                            subrootref
+                                .get_node(trie.db(), Nibbles::from_hex(vec![index]))?
+                                .map(Arc::unwrap_or_clone)
+                        } else {
+                            None
+                        };
+                        if prefix == None {
+                            println!(
+                                "PAR {index} {:x} {subroot:?}",
+                                subroot
+                                    .as_ref()
+                                    .map(|n| n.compute_hash().finalize())
+                                    .unwrap_or_default()
+                            );
+                        }
+                        let (_, mut nodes) = trie.collect_changes_since_last_hash();
+                        nodes.retain(|(nib, _)| {
+                            if nib.len() == 32 {
+                                nib.as_ref()[0] >> 4 == index
+                            } else {
+                                nib.as_ref()[0] == index
+                            }
+                        });
                         tx.send((prefix, index, subroot, nodes)).unwrap();
                     }
                 }
