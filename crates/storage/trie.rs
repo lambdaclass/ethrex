@@ -15,22 +15,57 @@ pub struct BackendTrieDB {
     db: Arc<dyn StorageBackend>,
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
+    nodes_table: &'static str,
+    fkv_table: &'static str,
     /// Storage trie address prefix (for storage tries)
     /// None for state tries, Some(address) for storage tries
     address_prefix: Option<H256>,
 }
 
 impl BackendTrieDB {
-    pub fn new(
+    /// Create a new BackendTrieDB for the account trie
+    pub fn new_for_accounts(
         db: Arc<dyn StorageBackend>,
-        address_prefix: Option<H256>,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
             db,
             last_computed_flatkeyvalue,
-            address_prefix,
+            nodes_table: ACCOUNT_TRIE_NODES,
+            fkv_table: ACCOUNT_FLATKEYVALUE,
+            address_prefix: None,
+        })
+    }
+
+    /// Create a new BackendTrieDB for the storage tries
+    pub fn new_for_storages(
+        db: Arc<dyn StorageBackend>,
+        last_written: Vec<u8>,
+    ) -> Result<Self, StoreError> {
+        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
+        Ok(Self {
+            db,
+            last_computed_flatkeyvalue,
+            nodes_table: STORAGE_TRIE_NODES,
+            fkv_table: STORAGE_FLATKEYVALUE,
+            address_prefix: None,
+        })
+    }
+
+    /// Create a new BackendTrieDB for a specific storage trie
+    pub fn new_for_account_storage(
+        db: Arc<dyn StorageBackend>,
+        address_prefix: H256,
+        last_written: Vec<u8>,
+    ) -> Result<Self, StoreError> {
+        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
+        Ok(Self {
+            db,
+            last_computed_flatkeyvalue,
+            nodes_table: STORAGE_TRIE_NODES,
+            fkv_table: STORAGE_FLATKEYVALUE,
+            address_prefix: Some(address_prefix),
         })
     }
 
@@ -41,17 +76,10 @@ impl BackendTrieDB {
     /// Key might be for an account or storage slot
     fn table_for_key(&self, key: &[u8]) -> &'static str {
         let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
         if is_leaf {
-            if is_account {
-                ACCOUNT_FLATKEYVALUE
-            } else {
-                STORAGE_FLATKEYVALUE
-            }
-        } else if is_account {
-            ACCOUNT_TRIE_NODES
+            self.fkv_table
         } else {
-            STORAGE_TRIE_NODES
+            self.nodes_table
         }
     }
 }

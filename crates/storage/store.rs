@@ -2259,7 +2259,7 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_backend(
+            db: Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
@@ -2273,7 +2273,7 @@ impl Store {
     /// Used for internal store operations
     pub fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         Ok(Trie::open(
-            Box::new(state_trie_backend(
+            Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
@@ -2316,7 +2316,7 @@ impl Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_backend(
+            db: Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
@@ -2333,7 +2333,7 @@ impl Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         Ok(Trie::open(
-            Box::new(storage_trie_backend(
+            Box::new(BackendTrieDB::new_for_account_storage(
                 self.backend.clone(),
                 account_hash,
                 self.last_written()?,
@@ -2642,7 +2642,10 @@ fn flatkeyvalue_generator(
         let mut ctr = 0;
         let mut write_txn = backend.begin_write()?;
         let mut iter = Trie::open(
-            Box::new(state_trie_backend(backend.clone(), last_written.clone())?),
+            Box::new(BackendTrieDB::new_for_accounts(
+                backend.clone(),
+                last_written.clone(),
+            )?),
             state_root,
         )
         .into_iter();
@@ -2668,7 +2671,7 @@ fn flatkeyvalue_generator(
             }
 
             let mut iter_inner = Trie::open(
-                Box::new(storage_trie_backend(
+                Box::new(BackendTrieDB::new_for_account_storage(
                     backend.clone(),
                     account_hash,
                     path.as_ref().to_vec(),
@@ -2742,22 +2745,6 @@ fn fkv_check_for_stop_msg(
         Err(TryRecvError::Empty) => {}
     }
     Ok(())
-}
-
-fn storage_trie_backend(
-    backend: Arc<dyn StorageBackend>,
-    hashed_address: H256,
-    last_written: Vec<u8>,
-) -> Result<BackendTrieDB, StoreError> {
-    BackendTrieDB::new(backend, Some(hashed_address), last_written)
-}
-
-fn state_trie_backend(
-    backend: Arc<dyn StorageBackend>,
-    last_written: Vec<u8>,
-) -> Result<BackendTrieDB, StoreError> {
-    // No address prefix for state trie
-    BackendTrieDB::new(backend, None, last_written)
 }
 
 fn state_trie_locked_backend(
