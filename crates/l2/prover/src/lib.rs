@@ -5,6 +5,7 @@ pub mod config;
 use config::ProverConfig;
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::input::ProgramInput;
+use std::time::Duration;
 use tracing::warn;
 
 use crate::backend::{Backend, ProveOutput};
@@ -29,6 +30,24 @@ pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std:
     }
 }
 
+/// Execute a program using the specified backend and measure the duration.
+pub fn execute_timed(
+    backend: Backend,
+    input: ProgramInput,
+) -> Result<Duration, Box<dyn std::error::Error>> {
+    match backend {
+        Backend::Exec => backend::exec::execute_timed(input),
+        #[cfg(feature = "sp1")]
+        Backend::SP1 => backend::sp1::execute_timed(input),
+        #[cfg(feature = "risc0")]
+        Backend::RISC0 => backend::risc0::execute_timed(input),
+        #[cfg(feature = "zisk")]
+        Backend::ZisK => backend::zisk::execute_timed(input),
+        #[cfg(feature = "openvm")]
+        Backend::OpenVM => backend::openvm::execute_timed(input),
+    }
+}
+
 /// Generate a proof using the specified backend.
 pub fn prove(
     backend: Backend,
@@ -45,6 +64,30 @@ pub fn prove(
         Backend::ZisK => backend::zisk::prove(input, format).map(ProveOutput::ZisK),
         #[cfg(feature = "openvm")]
         Backend::OpenVM => backend::openvm::prove(input, format).map(ProveOutput::OpenVM),
+    }
+}
+
+/// Generate a proof using the specified backend and measure the duration.
+pub fn prove_timed(
+    backend: Backend,
+    input: ProgramInput,
+    format: ProofFormat,
+) -> Result<(ProveOutput, Duration), Box<dyn std::error::Error>> {
+    match backend {
+        Backend::Exec => backend::exec::prove_timed(input, format)
+            .map(|(output, duration)| (ProveOutput::Exec(output), duration)),
+        #[cfg(feature = "sp1")]
+        Backend::SP1 => backend::sp1::prove_timed(input, format)
+            .map(|(output, duration)| (ProveOutput::SP1(output), duration)),
+        #[cfg(feature = "risc0")]
+        Backend::RISC0 => backend::risc0::prove_timed(input, format)
+            .map(|(receipt, duration)| (ProveOutput::RISC0(receipt), duration)),
+        #[cfg(feature = "zisk")]
+        Backend::ZisK => backend::zisk::prove_timed(input, format)
+            .map(|(proof, duration)| (ProveOutput::ZisK(proof), duration)),
+        #[cfg(feature = "openvm")]
+        Backend::OpenVM => backend::openvm::prove_timed(input, format)
+            .map(|(proof, duration)| (ProveOutput::OpenVM(proof), duration)),
     }
 }
 
