@@ -1175,6 +1175,7 @@ checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
 dependencies = [
  "funty",
  "radium",
+ "serde",
  "tap",
  "wyz",
 ]
@@ -3646,6 +3647,7 @@ dependencies = [
 name = "ethrex-common"
 version = "7.0.0"
 dependencies = [
+ "bitvec",
  "bytes",
  "crc32fast",
  "ethereum-types 0.15.1",
@@ -3831,7 +3833,6 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
- "bitvec",
  "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
  "bytes",
  "colored",
@@ -3961,6 +3962,7 @@ dependencies = [
 name = "ethrex-rlp"
 version = "7.0.0"
 dependencies = [
+ "bitvec",
  "bytes",
  "ethereum-types 0.15.1",
  "hex",

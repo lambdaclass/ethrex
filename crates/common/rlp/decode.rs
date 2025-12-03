@@ -2,6 +2,7 @@ use super::{
     constants::{RLP_EMPTY_LIST, RLP_NULL},
     error::RLPDecodeError,
 };
+use bitvec::{order::Lsb0, vec::BitVec};
 use bytes::{Bytes, BytesMut};
 use ethereum_types::{
     Address, Bloom, H32, H64, H128, H160, H256, H264, H512, H520, Signature, U256,
@@ -136,6 +137,13 @@ impl RLPDecode for BytesMut {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (decoded, rest) = decode_bytes(rlp)?;
         Ok((BytesMut::from(decoded), rest))
+    }
+}
+
+impl RLPDecode for BitVec<usize, Lsb0> {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let (decoded, rest): (Vec<usize>, _) = RLPDecode::decode_unfinished(rlp)?;
+        Ok((BitVec::from_slice(&decoded), rest))
     }
 }
 
