@@ -48,6 +48,7 @@ services:
       --authrpc.jwtsecret /secrets/jwt.hex
       --syncmode snap
       --datadir /data
+      --log.dir /data/logs
     ulimits:
       nofile: 1000000
     depends_on:
