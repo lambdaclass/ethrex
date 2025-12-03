@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::Trie;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use sha3::{Digest as _, Keccak256};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -22,15 +22,33 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
+    // hash is only used for bytecodes stored in the DB, either for reading it from the DB
+    // or with the CODEHASH opcode, which needs an account address as argument and
+    // thus only accessed persisted bytecodes.
+    // We use a bogus H256::zero() value for initcodes as there is no way for the VM or
+    // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u16]> (needs to enable serde rc feature)
-    pub jump_targets: Vec<u16>,
+    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
+    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
+    // this does not apply to previous forks. This is tested in the EEST tests, which would
+    // panic in debug mode.
+    pub jump_targets: Vec<u32>,
 }
 
 impl Code {
-    // TODO: also add `from_hashed_bytecode` to optimize the download pipeline,
-    // where hash is already known and checked.
+    // SAFETY: hash will be stored as-is, so it either needs to match
+    // the real code hash (i.e. it was precomputed and we're reusing)
+    // or never be read (e.g. for initcode).
+    pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
+        let jump_targets = Self::compute_jump_targets(&code);
+        Self {
+            hash,
+            bytecode: code,
+            jump_targets,
+        }
+    }
+
     pub fn from_bytecode(code: Bytes) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
         Self {
@@ -40,8 +58,8 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u16> {
-        debug_assert!(code.len() <= u16::MAX as usize);
+    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+        debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = Vec::new();
         let mut i = 0;
         while i < code.len() {
@@ -49,7 +67,7 @@ impl Code {
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    targets.push(i as u16);
+                    targets.push(i as u32);
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
@@ -61,6 +79,21 @@ impl Code {
             i += 1;
         }
         targets
+    }
+
+    /// Estimates the size of the Code struct in bytes
+    /// (including stack size and heap allocation).
+    ///
+    /// Note: This is an estimation and may not be exact.
+    ///
+    /// # Returns
+    ///
+    /// usize - Estimated size in bytes
+    pub fn size(&self) -> usize {
+        let hash_size = size_of::<H256>();
+        let bytes_size = size_of::<Bytes>();
+        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        hash_size + bytes_size + vec_size
     }
 }
 
@@ -125,13 +158,14 @@ impl Default for Code {
 
 impl From<GenesisAccount> for Account {
     fn from(genesis: GenesisAccount) -> Self {
+        let code = Code::from_bytecode(genesis.code);
         Self {
             info: AccountInfo {
-                code_hash: code_hash(&genesis.code),
+                code_hash: code.hash,
                 balance: genesis.balance,
                 nonce: genesis.nonce,
             },
-            code: Code::from_bytecode(genesis.code),
+            code,
             storage: genesis
                 .storage
                 .iter()
@@ -200,10 +234,7 @@ impl RLPDecode for AccountState {
 
 pub fn compute_storage_root(storage: &HashMap<U256, U256>) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((
-            Keccak256::digest(k.to_big_endian()).to_vec(),
-            v.encode_to_vec(),
-        ))
+        (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
     });
     Trie::compute_hash_from_unsorted_iter(iter)
 }

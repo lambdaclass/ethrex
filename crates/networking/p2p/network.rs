@@ -11,7 +11,6 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
-        initiator::RLPxInitiator,
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
@@ -112,6 +111,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     );
 
     DiscoveryServer::spawn(
+        context.storage.clone(),
         context.local_node.clone(),
         context.signer,
         udp_socket.clone(),
@@ -122,8 +122,6 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     .inspect_err(|e| {
         error!("Failed to start discovery server: {e}");
     })?;
-
-    RLPxInitiator::spawn(context.clone()).await;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
