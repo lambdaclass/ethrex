@@ -29,7 +29,10 @@ impl MetricsP2P {
             )
             .expect("Failed to create peer_clients metric"),
             disconnections: IntCounterVec::new(
-                Opts::new("ethrex_p2p_disconnections", "Total number of peer disconnections"),
+                Opts::new(
+                    "ethrex_p2p_disconnections",
+                    "Total number of peer disconnections",
+                ),
                 &["reason"],
             )
             .expect("Failed to create disconnections metric"),
