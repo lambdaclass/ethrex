@@ -10,7 +10,7 @@
 
 **Checklist**
 
-- [ ] Updated `STORE_SCHEMA_VERSION` if the PR includes breaking changed to the `Store`.
+- [ ] Updated `STORE_SCHEMA_VERSION` if the PR includes breaking changed to the `Store` requiring a re-sync.
 
 Closes #issue_number
 
