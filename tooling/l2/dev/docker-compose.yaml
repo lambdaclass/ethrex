@@ -441,11 +441,38 @@ services:
       sh -c "
         echo inserting commitBatch signature
         psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
-        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (0x3db97de8, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"commitBatch\",\"inputs\":[{\"name\":\"batchNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"newStateRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"withdrawalsLogsMerkleRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"processedPrivilegedTransactionsRollingHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"lastBlockHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
+        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'3db97de8')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"commitBatch\",\"inputs\":[{\"name\":\"batchNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"newStateRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"withdrawalsLogsMerkleRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"processedPrivilegedTransactionsRollingHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"lastBlockHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
       EOF
+        echo inserting verifyBatch signature
         psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
-        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (0x1ebed24e, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"verifyBatch\",\"inputs\":[{\"name\":\"batchNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"risc0BlockProof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"risc0Journal\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"sp1PublicValues\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"sp1ProofBytes\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"tdxPublicValues\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"tdxSignature\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
+        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'1ebed24e')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"verifyBatch\",\"inputs\":[{\"name\":\"batchNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"risc0BlockProof\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"risc0Journal\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"sp1PublicValues\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"sp1ProofBytes\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"tdxPublicValues\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"tdxSignature\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
       EOF
+        echo inserting verifyBatchesAligned signature
+        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
+        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'c285ae54')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"verifyBatchesAligned\",\"inputs\":[{\"name\":\"firstBatchNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"publicInputsList\",\"type\":\"bytes[]\",\"internalType\":\"bytes[]\"},{\"name\":\"sp1MerkleProofsList\",\"type\":\"bytes32[][]\",\"internalType\":\"bytes32[][]\"},{\"name\":\"risc0MerkleProofsList\",\"type\":\"bytes32[][]\",\"internalType\":\"bytes32[][]\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
+      EOF
+
+        echo inserting claimWithdrawal signature
+        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
+        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'972217da')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"claimWithdrawal\",\"inputs\":[{\"name\":\"claimedAmount\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"withdrawalBatchNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"withdrawalMessageId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"withdrawalProof\",\"type\":\"bytes32[]\",\"internalType\":\"bytes32[]\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
+      EOF
+        echo inserting claimWithdrawalERC20 signature
+        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
+        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'fe184fd8')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"claimWithdrawalERC20\",\"inputs\":[{\"name\":\"tokenL1\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"tokenL2\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"claimedAmount\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"withdrawalBatchNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"withdrawalMessageId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"withdrawalProof\",\"type\":\"bytes32[]\",\"internalType\":\"bytes32[]\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
+      EOF
+        echo inserting sendToL2 signature
+        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
+        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'327091d3')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"sendToL2\",\"inputs\":[{\"name\":\"sendValues\",\"type\":\"tuple\",\"internalType\":\"struct ICommonBridge.SendValues\",\"components\":[{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"gasLimit\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"value\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"data\",\"type\":\"bytes\",\"internalType\":\"bytes\"}]}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
+      EOF
+        echo inserting deposit signature
+        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
+        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'f340fa01')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"deposit\",\"inputs\":[{\"name\":\"l2Recipient\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"payable\"}');
+      EOF
+        echo inserting depositERC20 signature
+        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
+        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES (((x'9943b6e0')::bit(32))::int, '', NOW(), NOW(), '{\"type\":\"function\",\"name\":\"depositERC20\",\"inputs\":[{\"name\":\"tokenL1\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"tokenL2\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"destination\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"amount\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"}');
+      EOF
+
         echo done
       "
 
