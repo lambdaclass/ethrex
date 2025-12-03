@@ -174,7 +174,7 @@ impl StateUpdater {
     }
 
     /// Reverts state to the last committed batch if known.
-    async fn revert_uncommitted_state(&mut self) -> Result<(), StateUpdaterError> {
+    async fn revert_uncommitted_state(&self) -> Result<(), StateUpdaterError> {
         let last_l2_committed_batch =
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 

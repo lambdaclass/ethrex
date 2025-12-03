@@ -224,7 +224,6 @@ impl Store {
         db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         db_options.set_advise_random_on_open(false);
         db_options.set_compression_type(rocksdb::DBCompressionType::None);
-        db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
         // db_options.enable_statistics();
         // db_options.set_stats_dump_period_sec(600);
@@ -248,6 +247,14 @@ impl Store {
             CF_ACCOUNT_FLATKEYVALUE,
             CF_STORAGE_FLATKEYVALUE,
             CF_MISC_VALUES,
+        ];
+        let compressible_cfs = [
+            CF_BLOCK_NUMBERS,
+            CF_HEADERS,
+            CF_BODIES,
+            CF_RECEIPTS,
+            CF_TRANSACTION_LOCATIONS,
+            CF_FULLSYNC_HEADERS,
         ];
 
         // Get existing column families to know which ones to drop later
@@ -286,7 +293,12 @@ impl Store {
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
-            cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+            if compressible_cfs.contains(&cf_name.as_str()) {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            } else {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+            }
 
             match cf_name.as_str() {
                 CF_HEADERS | CF_BODIES => {
@@ -436,7 +448,7 @@ impl Store {
         };
         let store_clone = store.clone();
         std::thread::spawn(move || {
-            let mut rx = fkv_rx;
+            let rx = fkv_rx;
             loop {
                 match rx.recv() {
                     Ok(FKVGeneratorControlMessage::Continue) => break,
@@ -448,7 +460,7 @@ impl Store {
                 }
             }
             info!("Generation of FlatKeyValue started.");
-            match store_clone.flatkeyvalue_generator(&mut rx) {
+            match store_clone.flatkeyvalue_generator(&rx) {
                 Ok(_) => info!("FlatKeyValue generation finished."),
                 Err(err) => error!("Error while generating FlatKeyValue: {err}"),
             }
@@ -639,7 +651,7 @@ impl Store {
 
     fn flatkeyvalue_generator(
         &self,
-        control_rx: &mut std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+        control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
     ) -> Result<(), StoreError> {
         let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
         let cf_accounts_fkv = self.cf_handle(CF_ACCOUNT_FLATKEYVALUE)?;
