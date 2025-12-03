@@ -73,6 +73,7 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Migrations](./l2/migrations.md)
 
 # Ethrex for developers
 

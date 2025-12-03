@@ -165,16 +165,18 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
 }
 
 pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
-    let mut acc: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
-    for m in messages {
-        if m.to == BRIDGE_ADDRESS && m.from == BRIDGE_ADDRESS {
+    let mut balance_diffs: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
+    for message in messages {
+        if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
             continue;
         }
-        let entry = acc.entry(m.chain_id).or_insert(BalanceDiff {
-            chain_id: m.chain_id,
-            value: U256::zero(),
-        });
-        entry.value += m.value;
+        let entry = balance_diffs
+            .entry(message.chain_id)
+            .or_insert(BalanceDiff {
+                chain_id: message.chain_id,
+                value: U256::zero(),
+            });
+        entry.value += message.value;
     }
-    acc.into_values().collect()
+    balance_diffs.into_values().collect()
 }
