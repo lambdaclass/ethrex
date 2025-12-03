@@ -159,7 +159,7 @@ impl DiscoveryServer {
                     sender_public_key,
                 );
 
-                let _ = self.handle_ping(hash, node).await.inspect_err(|e| {
+                let _ = self.handle_ping(ping_message, hash, sender_public_key, node).await.inspect_err(|e| {
                     error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e, "Error handling message");
                 });
             }
@@ -403,11 +403,34 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn handle_ping(&mut self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
+    async fn handle_ping(
+        &mut self,
+        ping_message: PingMessage,
+        hash: H256,
+        sender_public_key: H512,
+        node: Node,
+    ) -> Result<(), DiscoveryServerError> {
         self.send_pong(hash, &node).await?;
 
         if self.peer_table.insert_if_new(&node).await.unwrap_or(false) {
             self.send_ping(&node).await?;
+        } else {
+            // If the contact has stale ENR then request the updated one.
+            let node_id = node_id(&sender_public_key);
+            let stored_enr_seq = self
+                .peer_table
+                .get_contact(node_id)
+                .await?
+                .and_then(|c| c.record)
+                .map(|r| r.seq);
+
+            let received_enr_seq = ping_message.enr_seq;
+
+            if let (Some(received), Some(stored)) = (received_enr_seq, stored_enr_seq)
+                && received > stored
+            {
+                self.send_enr_request(&node).await?;
+            }
         }
         Ok(())
     }
@@ -417,9 +440,25 @@ impl DiscoveryServer {
         message: PongMessage,
         node_id: H256,
     ) -> Result<(), DiscoveryServerError> {
+        let Some(contact) = self.peer_table.get_contact(node_id).await? else {
+            return Ok(());
+        };
+
+        // If the contact doesn't exist then there is nothing to record.
+        // So we do it after making sure that the contact exists.
         self.peer_table
             .record_pong_received(&node_id, message.ping_hash)
             .await?;
+
+        // If the contact has stale ENR then request the updated one.
+        let stored_enr_seq = contact.record.map(|r| r.seq);
+        let received_enr_seq = message.enr_seq;
+        if let (Some(received), Some(stored)) = (received_enr_seq, stored_enr_seq)
+            && received > stored
+        {
+            self.send_enr_request(&contact.node).await?;
+        }
+
         Ok(())
     }
 
