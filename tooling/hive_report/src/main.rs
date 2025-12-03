@@ -320,11 +320,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut grouped_results: Vec<CategoryResults> = Vec::new();
     for result in results {
-        if let Some(last) = grouped_results.last_mut() {
-            if last.name == result.category {
-                last.tests.push(result);
-                continue;
-            }
+        if let Some(last) = grouped_results
+            .last_mut()
+            .filter(|last| last.name == result.category)
+        {
+            last.tests.push(result);
+            continue;
         }
 
         let name = result.category.clone();
