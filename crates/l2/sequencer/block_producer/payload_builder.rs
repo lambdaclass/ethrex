@@ -99,8 +99,9 @@ pub async fn fill_transactions(
     let VMType::L2(fee_config) = context.vm.vm_type else {
         return Err(BlockProducerError::Custom("invalid VM type".to_string()));
     };
-    let mut acc_encoded_size = context.payload.encode_to_vec().len();
+    let mut acc_encoded_size = context.payload.length();
     let fee_config_len = fee_config.to_vec().len();
+    let chain_config = store.get_chain_config();
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
@@ -152,7 +153,7 @@ pub async fn fill_transactions(
 
         // Check if we have enough blob space to add this transaction
         let tx: Transaction = head_tx.clone().into();
-        let tx_size = tx.encode_to_vec().len();
+        let tx_size = tx.length();
         if acc_encoded_size + fee_config_len + tx_size > SAFE_BYTES_PER_BLOB {
             debug!("No more blob space to run transactions");
             break;
@@ -175,6 +176,16 @@ pub async fn fill_transactions(
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
         let tx_hash = head_tx.tx.hash();
+
+        // Check whether the tx is replay-protected
+        if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
+            // Ignore replay protected tx & all txs from the sender
+            // Pull transaction from the mempool
+            debug!("Ignoring replay-protected transaction: {}", tx_hash);
+            txs.pop();
+            blockchain.remove_transaction_from_pool(&tx_hash)?;
+            continue;
+        }
 
         let maybe_sender_acc_info = store
             .get_account_info(latest_block_number, head_tx.tx.sender())

@@ -62,6 +62,7 @@ debug = []
 sp1 = ["dep:substrate-bn"]
 risc0 = ["dep:substrate-bn", "c-kzg"]
 zisk = ["dep:substrate-bn"]
+openvm = ["ethrex-common/openvm"]
 
 [lints.rust]
 unsafe_code = "warn"
