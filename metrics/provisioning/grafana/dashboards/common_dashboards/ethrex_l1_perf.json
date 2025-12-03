@@ -2966,7 +2966,10 @@
             "legend": {
               "displayMode": "list",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "values": [
+                "percent"
+              ]
             },
             "pieType": "pie",
             "reduceOptions": {
@@ -3191,7 +3194,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "increase(ethrex_p2p_disconnections{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval])",
+              "expr": "sum by (reason) (increase(ethrex_p2p_disconnections{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
               "legendFormat": "{{reason}}",
               "range": true,
               "refId": "A"
