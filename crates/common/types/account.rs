@@ -59,26 +59,24 @@ impl Code {
     }
 
     fn compute_jump_targets(code: &[u8]) -> BitVec<usize, Lsb0> {
-        const OP_SIZES: [u8; 256] = {
-            let mut table = [1u8; 256];
-            let mut i = 0x60;
-            // Fill PUSH1 (0x60) to PUSH32 (0x7F)
-            while i <= 0x7F {
-                table[i] = (i - 0x5F) as u8 + 1;
-                i += 1;
-            }
-            table
-        };
-
+        debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = bitvec![usize, Lsb0; 0; code.len()];
         let mut i = 0;
         while i < code.len() {
-            let op = code[i];
-            if op == 0x5B {
+            // TODO: we don't use the constants from the vm module to avoid a circular dependency
+            match code[i] {
                 // OP_JUMPDEST
-                targets.set(i, true);
+                0x5B => {
+                    targets.set(i, true);
+                }
+                // OP_PUSH1..32
+                c @ 0x60..0x80 => {
+                    // OP_PUSH0
+                    i += (c - 0x5F) as usize;
+                }
+                _ => (),
             }
-            i += OP_SIZES[op as usize] as usize;
+            i += 1;
         }
         targets
     }
