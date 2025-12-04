@@ -523,12 +523,16 @@ impl Blockchain {
         let mut tree: FxHashMap<Option<H256>, Trie> = Default::default();
         for msg in rx {
             match msg {
-                MerklizationRequest::Load(prefix) => {
-                    tree.insert(
-                        prefix,
-                        self.load_trie_for_merkelization(parent_header, prefix, index)?,
-                    );
-                }
+                MerklizationRequest::Load(prefix) => match tree.entry(prefix) {
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(self.load_trie_for_merkelization(
+                            parent_header,
+                            prefix,
+                            index,
+                        )?);
+                    }
+                },
                 MerklizationRequest::Merklize {
                     prefix,
                     key,
@@ -567,9 +571,6 @@ impl Blockchain {
                         } else {
                             None
                         };
-                        if prefix == None {
-                            //println!("PAR {index} {subroot:?}");
-                        }
                         let (_, mut nodes) = trie.collect_changes_since_last_hash();
                         nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
 
