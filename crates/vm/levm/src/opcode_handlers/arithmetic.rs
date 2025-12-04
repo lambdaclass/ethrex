@@ -187,15 +187,34 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let product = multiplicand.full_mul(multiplier);
+        #[cfg(feature = "zisk")]
+        let product_mod = {
+            use ziskos::zisklib::mulmod256_ptr;
+            let mut product_mod = U256::zero();
+            unsafe {
+                mulmod256_ptr(
+                    multiplicand.0.as_ptr(),
+                    multiplier.0.as_ptr(),
+                    modulus.0.as_ptr(),
+                    product_mod.0.as_mut_ptr(),
+                );
+            }
+            product_mod
+        };
 
-        #[allow(clippy::arithmetic_side_effects, reason = "modulus isn't zero")]
-        let product_mod = product % modulus;
+        #[cfg(not(feature = "zisk"))]
+        let product_mod = {
+            let product = multiplicand.full_mul(multiplier);
 
-        #[allow(clippy::expect_used, reason = "modulus is a U256, so result fits")]
-        let product_mod: U256 = product_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
+            #[allow(clippy::arithmetic_side_effects, reason = "modulus isn't zero")]
+            let product_mod = product % modulus;
+
+            #[allow(clippy::expect_used, reason = "modulus is a U256, so result fits")]
+            let product_mod: U256 = product_mod
+                .try_into()
+                .expect("can't fail because we applied % mod where mod is a U256 value");
+            product_mod
+        };
 
         current_call_frame.stack.push(product_mod)?;
 
