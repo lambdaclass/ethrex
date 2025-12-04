@@ -27,7 +27,7 @@ use spawned_concurrency::{
     },
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tokio::net::UdpSocket;
+use tokio::{net::UdpSocket, sync::RwLock};
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
@@ -80,7 +80,7 @@ pub enum OutMessage {
 #[derive(Debug)]
 pub struct DiscoveryServer {
     local_node: Node,
-    local_node_record: NodeRecord,
+    local_node_record: Arc<RwLock<NodeRecord>>,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
     peer_table: PeerTable,
@@ -91,8 +91,9 @@ pub struct DiscoveryServer {
 
 impl DiscoveryServer {
     pub async fn spawn(
-        storage: Store,
+        _storage: Store,
         local_node: Node,
+        local_node_record: Arc<RwLock<NodeRecord>>,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
         mut peer_table: PeerTable,
@@ -100,13 +101,13 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
-        let mut local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
-            .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
-            local_node_record
-                .set_fork_id(fork_id, &signer)
-                .expect("Failed to set fork_id on local node record");
-        }
+        // let mut local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
+        //     .expect("Failed to create local node record");
+        // if let Ok(fork_id) = storage.get_fork_id().await {
+        //     local_node_record
+        //         .set_fork_id(fork_id, &signer)
+        //         .expect("Failed to set fork_id on local node record");
+        // }
 
         let mut discovery_server = Self {
             local_node: local_node.clone(),
@@ -334,7 +335,7 @@ impl DiscoveryServer {
             udp_port: node.udp_port,
             tcp_port: node.tcp_port,
         };
-        let enr_seq = self.local_node_record.seq;
+        let enr_seq = self.local_node_record.read().await.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
         ping.encode_with_header(&mut buf, &self.signer);
         let ping_hash: [u8; 32] = buf[..32]
@@ -356,7 +357,7 @@ impl DiscoveryServer {
             tcp_port: node.tcp_port,
         };
 
-        let enr_seq = self.local_node_record.seq;
+        let enr_seq = self.local_node_record.read().await.seq;
 
         let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
 
@@ -391,7 +392,7 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         let node_record = &self.local_node_record;
 
-        let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.clone()));
+        let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.read().await.clone()));
 
         self.send(msg, from).await?;
 

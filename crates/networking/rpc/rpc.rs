@@ -71,6 +71,7 @@ use std::{
     time::Duration,
 };
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use tokio::sync::{
     Mutex as TokioMutex,
     mpsc::{UnboundedSender, unbounded_channel},
@@ -182,7 +183,7 @@ pub struct RpcApiContext {
 pub struct NodeData {
     pub jwt_secret: Bytes,
     pub local_p2p_node: Node,
-    pub local_node_record: NodeRecord,
+    pub local_node_record: Arc<RwLock<NodeRecord>>,
     pub client_version: String,
     pub extra_data: Bytes,
 }
@@ -274,7 +275,7 @@ pub async fn start_api(
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    local_node_record: Arc<RwLock<NodeRecord>>,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: String,
@@ -614,7 +615,7 @@ pub async fn map_admin_requests(
     mut context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
+        "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data).await,
         "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
         "admin_addPeer" => admin::add_peer(&mut context, req).await,
@@ -700,7 +701,7 @@ mod tests {
         let context = default_context_with_storage(storage).await;
         let local_p2p_node = context.node_data.local_p2p_node.clone();
 
-        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
+        let enr_url = context.node_data.local_node_record.read().await.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({

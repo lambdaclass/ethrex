@@ -15,7 +15,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::Node,
+    types::{Node, NodeRecord},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -27,7 +27,7 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
-use tokio::net::{TcpListener, TcpSocket, UdpSocket};
+use tokio::{net::{TcpListener, TcpSocket, UdpSocket}, sync::RwLock};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 
@@ -42,6 +42,7 @@ pub struct P2PContext {
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
+    pub local_node_record: Arc<RwLock<NodeRecord>>,
     pub client_version: String,
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
@@ -52,6 +53,7 @@ impl P2PContext {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         local_node: Node,
+        local_node_record: Arc<RwLock<NodeRecord>>,
         tracker: TaskTracker,
         signer: SecretKey,
         peer_table: PeerTable,
@@ -81,6 +83,7 @@ impl P2PContext {
 
         Ok(P2PContext {
             local_node,
+            local_node_record,
             tracker,
             signer,
             table: peer_table,
@@ -113,6 +116,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     DiscoveryServer::spawn(
         context.storage.clone(),
         context.local_node.clone(),
+        context.local_node_record.clone(),
         context.signer,
         udp_socket.clone(),
         context.table.clone(),
