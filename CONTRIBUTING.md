@@ -19,11 +19,10 @@ All PR titles must follow the enforced semantic format:
 - **Allowed types:** `feat`, `fix`, `perf`, `refactor`, `revert`, `deps`, `build`, `ci`, `test`, `style`, `chore`, `docs`
 - **Allowed scopes:** `l1`, `l2`, `levm` (multiple scopes can be used, separated by commas)
 - **Scope(s) are required**
-- **Subject must not start with an uppercase character**
 
 **Examples:**
 - `fix(l1,levm): handle edge case in snap sync`
-- `docs(l2): update documentation for L2`
+- `docs(l2): Update documentation for L2`
 
 An exclamation mark may be added before the colon to indicate breaking changes, for example `perf(l1)!: change database schema`
 
