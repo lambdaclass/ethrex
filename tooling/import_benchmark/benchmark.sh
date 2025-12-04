@@ -31,7 +31,7 @@ BENCHMARKS_DIR=$(
 )
 
 # Go to ethrex/tooling/import_benchmark
-cd $BENCHMARKS_DIR
+cd "$BENCHMARKS_DIR"
 
 # Create directory for benchmark results, if it doesn't exist
 mkdir -p bench_results
