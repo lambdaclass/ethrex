@@ -42,7 +42,6 @@ use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
-use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, Mutex, RwLock,
@@ -358,7 +357,7 @@ impl Blockchain {
                             } else {
                                 value.encode_to_vec()
                             },
-                            delete_all: update.removed_storage,
+                            delete_all: update.removed_storage | update.removed,
                         })
                         .unwrap();
                 }
@@ -426,10 +425,9 @@ impl Blockchain {
                 state.nonce = info.nonce;
                 state.code_hash = info.code_hash;
             }
-            state.storage_root = storage_roots
-                .get(&hashed_address)
-                .cloned()
-                .unwrap_or(*EMPTY_TRIE_HASH);
+            if let Some(storage_root) = storage_roots.get(&hashed_address) {
+                state.storage_root = *storage_root;
+            }
             if update.removed {
                 account_state.insert(hashed_address, None);
             } else {
@@ -545,9 +543,6 @@ impl Blockchain {
                     value,
                     delete_all,
                 } => {
-                    if delete_all {
-                        tree.remove(&prefix);
-                    }
                     let trie = match tree.entry(prefix.clone()) {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                         Entry::Vacant(vacant_entry) => vacant_entry.insert(
@@ -558,6 +553,9 @@ impl Blockchain {
                         trie.remove(&key.as_bytes().to_vec())?;
                     } else {
                         trie.insert(key.as_bytes().to_vec(), value)?;
+                    }
+                    if delete_all {
+                        tree.insert(prefix, Trie::new_temp());
                     }
                 }
                 MerklizationRequest::Collect { tx } => {
@@ -575,23 +573,11 @@ impl Blockchain {
                         } else {
                             None
                         };
-                        if prefix == None {
-                            println!(
-                                "PAR {index} {:x} {subroot:?}",
-                                subroot
-                                    .as_ref()
-                                    .map(|n| n.compute_hash().finalize())
-                                    .unwrap_or_default()
-                            );
-                        }
                         let (_, mut nodes) = trie.collect_changes_since_last_hash();
                         nodes.retain(|(nib, _)| {
-                            if nib.len() == 32 {
-                                nib.as_ref()[0] >> 4 == index
-                            } else {
-                                nib.as_ref()[0] == index
-                            }
+                            nib.as_ref().first() == Some(&index)
                         });
+
                         tx.send((prefix, index, subroot, nodes)).unwrap();
                     }
                 }
