@@ -18,7 +18,7 @@ use ethrex_p2p::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use tokio_util::sync::CancellationToken;
-use tracing::{Level, info, warn};
+use tracing::{error, info, warn, Level};
 
 use crate::{
     initializers::{
@@ -796,7 +796,7 @@ pub async fn export_blocks(
     init_datadir(datadir);
     let store = match load_store(datadir).await {
         Err(err) => {
-            warn!("Failed to load Store due to: {err}");
+            error!("Failed to load Store due to: {err}");
             return;
         }
         Ok(store) => store,
