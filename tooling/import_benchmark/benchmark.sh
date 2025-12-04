@@ -24,9 +24,6 @@ NUM_REPETITIONS=$2
 # as the current `bench_id` (the script will increment it before the first run).
 START_BENCH_ID=${3:-}
 
-# Move to repo root
-cd ../..
-
 if [ -n "$START_BENCH_ID" ]; then
     if ! [[ "$START_BENCH_ID" =~ ^[0-9]+$ ]]; then
         echo "Error: START_BENCH_ID must be a non-negative integer" >&2
@@ -39,6 +36,8 @@ else
     # When no START_BENCH_ID is supplied, start from the next available id
     bench_id=$((bench_id + 1))
 fi
+
+cd ../..
 
 for i in $(seq 1 $NUM_REPETITIONS); do
     rm -rf ~/.local/share/temp
