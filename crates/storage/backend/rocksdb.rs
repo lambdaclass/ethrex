@@ -4,7 +4,8 @@ use crate::api::tables::{
     STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageReadTx, StorageWriteTx, tables::TABLES,
+    PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
+    tables::TABLES,
 };
 use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
@@ -221,13 +222,13 @@ impl StorageBackend for RocksDBBackend {
             .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageReadTx + '_>, StoreError> {
+    fn begin_read(&self) -> Result<Box<dyn StorageReadView + '_>, StoreError> {
         Ok(Box::new(RocksDBReadTx {
             db: self.db.clone(),
         }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn StorageWriteTx + 'static>, StoreError> {
+    fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
         let batch = WriteBatch::default();
 
         Ok(Box::new(RocksDBWriteTx {
@@ -236,7 +237,10 @@ impl StorageBackend for RocksDBBackend {
         }))
     }
 
-    fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError> {
+    fn begin_locked(
+        &self,
+        table_name: &'static str,
+    ) -> Result<Box<dyn StorageLockedView>, StoreError> {
         let db = Box::leak(Box::new(self.db.clone()));
         let lock = db.snapshot();
         let cf = db
@@ -260,13 +264,12 @@ impl StorageBackend for RocksDBBackend {
     }
 }
 
-/// Read-only transaction for RocksDB
+/// Read-only view for RocksDB
 pub struct RocksDBReadTx {
-    /// Transaction
     db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
-impl StorageReadTx for RocksDBReadTx {
+impl StorageReadView for RocksDBReadTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
             .db
@@ -295,7 +298,7 @@ impl StorageReadTx for RocksDBReadTx {
     }
 }
 
-/// Write transaction for RocksDB
+/// Write batch for RocksDB
 pub struct RocksDBWriteTx {
     /// Database reference for writing
     db: Arc<DBWithThreadMode<MultiThreaded>>,
@@ -303,7 +306,7 @@ pub struct RocksDBWriteTx {
     batch: WriteBatch,
 }
 
-impl StorageWriteTx for RocksDBWriteTx {
+impl StorageWriteBatch for RocksDBWriteTx {
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .db
@@ -361,7 +364,7 @@ pub struct RocksDBLocked {
     cf: Arc<rocksdb::BoundColumnFamily<'static>>,
 }
 
-impl StorageLocked for RocksDBLocked {
+impl StorageLockedView for RocksDBLocked {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         self.lock
             .get_cf(&self.cf, key)

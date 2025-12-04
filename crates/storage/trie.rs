@@ -1,14 +1,14 @@
 use crate::api::tables::{
     ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
 };
-use crate::api::{StorageBackend, StorageLocked};
+use crate::api::{StorageBackend, StorageLockedView};
 use crate::error::StoreError;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::sync::Arc;
 
-/// StorageWriteTx implementation for the TrieDB trait
+/// StorageWriteBatch implementation for the TrieDB trait
 /// Wraps a transaction to allow multiple trie operations on the same transaction
 pub struct BackendTrieDB {
     /// Reference to the storage backend
@@ -117,10 +117,10 @@ impl TrieDB for BackendTrieDB {
 
 /// Read-only version with persistent locked transaction/snapshot for batch reads
 pub struct BackendTrieDBLocked {
-    account_trie_tx: Box<dyn StorageLocked>,
-    storage_trie_tx: Box<dyn StorageLocked>,
-    account_fkv_tx: Box<dyn StorageLocked>,
-    storage_fkv_tx: Box<dyn StorageLocked>,
+    account_trie_tx: Box<dyn StorageLockedView>,
+    storage_trie_tx: Box<dyn StorageLockedView>,
+    account_fkv_tx: Box<dyn StorageLockedView>,
+    storage_fkv_tx: Box<dyn StorageLockedView>,
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
 }
@@ -142,7 +142,7 @@ impl BackendTrieDBLocked {
     }
 
     /// Key is already prefixed
-    fn tx_for_key(&self, key: &Nibbles) -> &dyn StorageLocked {
+    fn tx_for_key(&self, key: &Nibbles) -> &dyn StorageLockedView {
         let is_leaf = key.len() == 65 || key.len() == 131;
         let is_account = key.len() <= 65;
         if is_leaf {

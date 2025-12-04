@@ -1,6 +1,6 @@
 #![expect(clippy::unwrap_used)]
 use crate::{
-    api::{StorageBackend, StorageLocked, StorageReadTx, StorageWriteTx, tables::TABLES},
+    api::{StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch, tables::TABLES},
     error::StoreError,
 };
 use fjall::{Config, Keyspace, PartitionCreateOptions, PartitionHandle, Snapshot, WriteBatch};
@@ -42,15 +42,15 @@ impl StorageBackend for FjallBackend {
         Ok(())
     }
 
-    fn begin_read(&self) -> Result<Box<dyn crate::api::StorageReadTx + '_>, StoreError> {
+    fn begin_read(&self) -> Result<Box<dyn crate::api::StorageReadView + '_>, StoreError> {
         let backend = self.clone();
-        Ok(Box::new(FjallReadTx { backend }))
+        Ok(Box::new(FjallReadView { backend }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn crate::api::StorageWriteTx + 'static>, StoreError> {
+    fn begin_write(&self) -> Result<Box<dyn crate::api::StorageWriteBatch + 'static>, StoreError> {
         let backend = self.clone();
         let write_batch = self.keyspace.batch();
-        Ok(Box::new(FjallWriteTx {
+        Ok(Box::new(FjallWriteBatch {
             backend,
             write_batch,
         }))
@@ -59,9 +59,9 @@ impl StorageBackend for FjallBackend {
     fn begin_locked(
         &self,
         table_name: &'static str,
-    ) -> Result<Box<dyn crate::api::StorageLocked>, StoreError> {
+    ) -> Result<Box<dyn crate::api::StorageLockedView>, StoreError> {
         let snapshot = self.get_partition(table_name)?.snapshot();
-        Ok(Box::new(FjallLockedTx { snapshot }))
+        Ok(Box::new(FjallLockedView { snapshot }))
     }
 
     fn create_checkpoint(&self, _path: &Path) -> Result<(), StoreError> {
@@ -86,11 +86,11 @@ impl FjallBackend {
     }
 }
 
-struct FjallReadTx {
+struct FjallReadView {
     backend: FjallBackend,
 }
 
-impl StorageReadTx for FjallReadTx {
+impl StorageReadView for FjallReadView {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let partition = self.backend.get_partition(table).unwrap();
         // NOTE: we prepend a 0 to avoid keys being empty, since that triggers a panic in put_batch
@@ -118,12 +118,12 @@ impl StorageReadTx for FjallReadTx {
     }
 }
 
-struct FjallWriteTx {
+struct FjallWriteBatch {
     backend: FjallBackend,
     write_batch: WriteBatch,
 }
 
-impl StorageWriteTx for FjallWriteTx {
+impl StorageWriteBatch for FjallWriteBatch {
     fn put_batch(
         &mut self,
         table: &'static str,
@@ -159,11 +159,11 @@ impl StorageWriteTx for FjallWriteTx {
     }
 }
 
-struct FjallLockedTx {
+struct FjallLockedView {
     snapshot: Snapshot,
 }
 
-impl StorageLocked for FjallLockedTx {
+impl StorageLockedView for FjallLockedView {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         // NOTE: we prepend a 0 to avoid keys being empty, since that triggers a panic in put_batch
         let mut key = key.to_vec();
