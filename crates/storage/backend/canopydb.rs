@@ -6,7 +6,8 @@ use canopydb::{
 };
 
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageReadTx, StorageWriteTx, tables::TABLES,
+    PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
+    tables::TABLES,
 };
 use crate::error::StoreError;
 use std::collections::HashMap;
@@ -61,21 +62,24 @@ impl StorageBackend for CanopyDBBackend {
         Ok(())
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageReadTx + '_>, StoreError> {
-        Ok(Box::new(CanopyDBReadTx {
+    fn begin_read(&self) -> Result<Box<dyn StorageReadView + '_>, StoreError> {
+        Ok(Box::new(CanopyDBReadView {
             dbs: self.dbs.clone(),
         }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn StorageWriteTx + 'static>, StoreError> {
-        Ok(Box::new(CanopyDBWriteTx {
+    fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
+        Ok(Box::new(CanopyDBWriteBatch {
             env: self.env.clone(),
             dbs: self.dbs.clone(),
             write_txs: Default::default(),
         }))
     }
 
-    fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError> {
+    fn begin_locked(
+        &self,
+        table_name: &'static str,
+    ) -> Result<Box<dyn StorageLockedView>, StoreError> {
         let db = self.dbs.get(table_name).unwrap();
         // The transaction takes a snapshot of the database
         // TODO: please remove this hack
@@ -84,7 +88,7 @@ impl StorageBackend for CanopyDBBackend {
         let read_txs = std::iter::repeat_with(|| Mutex::new(db.begin_read().unwrap()))
             .take(16)
             .collect();
-        Ok(Box::new(CanopyDBLocked { read_txs }))
+        Ok(Box::new(CanopyDBLockedView { read_txs }))
     }
 
     fn create_checkpoint(&self, _path: &Path) -> Result<(), StoreError> {
@@ -93,11 +97,11 @@ impl StorageBackend for CanopyDBBackend {
 }
 
 /// Read-only transaction for CanopyDB
-pub struct CanopyDBReadTx {
+pub struct CanopyDBReadView {
     dbs: Arc<HashMap<&'static str, canopydb::Database>>,
 }
 
-impl StorageReadTx for CanopyDBReadTx {
+impl StorageReadView for CanopyDBReadView {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
             .dbs
@@ -141,7 +145,7 @@ impl StorageReadTx for CanopyDBReadTx {
 }
 
 /// Read-write transaction for CanopyDB
-pub struct CanopyDBWriteTx {
+pub struct CanopyDBWriteBatch {
     /// Database reference for writing
     env: Environment,
     /// Map of table names to databases
@@ -150,7 +154,7 @@ pub struct CanopyDBWriteTx {
     write_txs: HashMap<&'static str, WriteTransaction>,
 }
 
-impl StorageReadTx for CanopyDBWriteTx {
+impl StorageReadView for CanopyDBWriteBatch {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self
             .dbs
@@ -176,7 +180,7 @@ impl StorageReadTx for CanopyDBWriteTx {
     }
 }
 
-impl StorageWriteTx for CanopyDBWriteTx {
+impl StorageWriteBatch for CanopyDBWriteBatch {
     /// Stores multiple key-value pairs in different tables using WriteBatch.
     /// Changes are accumulated in the batch and written atomically on commit.
     fn put_batch(
@@ -223,12 +227,12 @@ impl StorageWriteTx for CanopyDBWriteTx {
 
 /// Locked snapshot for CanopyDB
 /// This is used for batch read operations in snap sync
-pub struct CanopyDBLocked {
+pub struct CanopyDBLockedView {
     /// Snapshot/locked transaction
     read_txs: Vec<Mutex<ReadTransaction>>,
 }
 
-impl StorageLocked for CanopyDBLocked {
+impl StorageLockedView for CanopyDBLockedView {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let opt_read_tx = self.read_txs.iter().find_map(|tx| tx.try_lock().ok());
         let read_tx = opt_read_tx

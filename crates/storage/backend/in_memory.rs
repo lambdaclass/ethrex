@@ -1,4 +1,6 @@
-use crate::api::{PrefixResult, StorageBackend, StorageLocked, StorageReadTx, StorageWriteTx};
+use crate::api::{
+    PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
+};
 use crate::error::StoreError;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -33,19 +35,22 @@ impl StorageBackend for InMemoryBackend {
         Ok(())
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageReadTx + '_>, StoreError> {
+    fn begin_read(&self) -> Result<Box<dyn StorageReadView + '_>, StoreError> {
         Ok(Box::new(InMemoryReadTx {
             backend: &self.inner,
         }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn StorageWriteTx + 'static>, StoreError> {
+    fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
         Ok(Box::new(InMemoryWriteTx {
             backend: self.inner.clone(),
         }))
     }
 
-    fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError> {
+    fn begin_locked(
+        &self,
+        table_name: &'static str,
+    ) -> Result<Box<dyn StorageLockedView>, StoreError> {
         Ok(Box::new(InMemoryLocked {
             backend: self.inner.clone(),
             table_name,
@@ -76,7 +81,7 @@ impl Iterator for InMemoryPrefixIter {
     }
 }
 
-impl StorageLocked for InMemoryLocked {
+impl StorageLockedView for InMemoryLocked {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
             .backend
@@ -93,7 +98,7 @@ pub struct InMemoryReadTx<'a> {
     backend: &'a RwLock<Database>,
 }
 
-impl<'a> StorageReadTx for InMemoryReadTx<'a> {
+impl<'a> StorageReadView for InMemoryReadTx<'a> {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
             .backend
@@ -136,7 +141,7 @@ pub struct InMemoryWriteTx {
     backend: Arc<RwLock<Database>>,
 }
 
-impl StorageWriteTx for InMemoryWriteTx {
+impl StorageWriteBatch for InMemoryWriteTx {
     fn put_batch(
         &mut self,
         table: &'static str,
