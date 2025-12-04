@@ -10,7 +10,7 @@
 
 **Checklist**
 
-- [ ] Updated `STORE_SCHEMA_VERSION` if the PR includes breaking changes to the `Store` requiring a re-sync.
+- [ ] Updated `STORE_SCHEMA_VERSION` (crates/storage/lib.rs) if the PR includes breaking changes to the `Store` requiring a re-sync.
 
 Closes #issue_number
 
