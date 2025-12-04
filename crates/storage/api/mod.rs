@@ -11,9 +11,11 @@
 //!
 //! The API differentiates between three types of database access:
 //!
-//! - Read transactions ([`StorageReadTx`])
-//! - Write transactions ([`StorageWriteTx`])
-//! - Locked snapshots ([`StorageLocked`]): Persistent read-only views, right now it's
+//! - Read transactions ([`StorageReadTx`]): Read-only views of the database,
+//!   with no atomicity guarantees between operations.
+//! - Write transactions ([`StorageWriteTx`]): Write batch functionality, with
+//!   atomicity guarantees at commit time.
+//! - Locked snapshots ([`StorageLocked`]): Read-only views of a point in time, right now it's
 //!   only used in snapsync stage.
 
 use crate::error::StoreError;
