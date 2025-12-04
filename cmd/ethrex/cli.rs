@@ -18,7 +18,7 @@ use ethrex_p2p::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn, Level};
+use tracing::{Level, error, info, warn};
 
 use crate::{
     initializers::{
