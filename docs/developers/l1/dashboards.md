@@ -190,8 +190,12 @@ Timeseries view of peer counts by client type over time. Useful for tracking how
 ### Peer Disconnection Events
 Bar chart showing disconnection events grouped by reason. Helps identify patterns in peer churn and diagnose whether disconnections are due to protocol errors, timeouts, or other causes.
 
+![Peer Disconnection Events](img/peer_disconnection_events.png)
+
 ### Disconnections Details
 Table providing a detailed breakdown of disconnections by client type and reason over the selected time range. Useful for investigating which clients are disconnecting most frequently and why.
+
+![Disconnections Details](img/disconnections_details.png)
 
 ## Process and server info
 
