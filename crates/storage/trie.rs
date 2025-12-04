@@ -8,7 +8,7 @@ use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::sync::Arc;
 
-/// StorageRwTx implementation for the TrieDB trait
+/// StorageWriteTx implementation for the TrieDB trait
 /// Wraps a transaction to allow multiple trie operations on the same transaction
 pub struct BackendTrieDB {
     /// Reference to the storage backend

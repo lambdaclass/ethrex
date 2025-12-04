@@ -1,4 +1,4 @@
-use crate::api::{PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx};
+use crate::api::{PrefixResult, StorageBackend, StorageLocked, StorageReadTx, StorageWriteTx};
 use crate::error::StoreError;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -33,14 +33,14 @@ impl StorageBackend for InMemoryBackend {
         Ok(())
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
-        Ok(Box::new(InMemoryRoTx {
+    fn begin_read(&self) -> Result<Box<dyn StorageReadTx + '_>, StoreError> {
+        Ok(Box::new(InMemoryReadTx {
             backend: &self.inner,
         }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError> {
-        Ok(Box::new(InMemoryRwTx {
+    fn begin_write(&self) -> Result<Box<dyn StorageWriteTx + 'static>, StoreError> {
+        Ok(Box::new(InMemoryWriteTx {
             backend: self.inner.clone(),
         }))
     }
@@ -89,11 +89,11 @@ impl StorageLocked for InMemoryLocked {
     }
 }
 
-pub struct InMemoryRoTx<'a> {
+pub struct InMemoryReadTx<'a> {
     backend: &'a RwLock<Database>,
 }
 
-impl<'a> StorageRoTx for InMemoryRoTx<'a> {
+impl<'a> StorageReadTx for InMemoryReadTx<'a> {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
             .backend
@@ -132,11 +132,11 @@ impl<'a> StorageRoTx for InMemoryRoTx<'a> {
     }
 }
 
-pub struct InMemoryRwTx {
+pub struct InMemoryWriteTx {
     backend: Arc<RwLock<Database>>,
 }
 
-impl StorageRwTx for InMemoryRwTx {
+impl StorageWriteTx for InMemoryWriteTx {
     fn put_batch(
         &mut self,
         table: &'static str,

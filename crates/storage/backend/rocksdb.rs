@@ -4,7 +4,7 @@ use crate::api::tables::{
     STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, tables::TABLES,
+    PrefixResult, StorageBackend, StorageLocked, StorageReadTx, StorageWriteTx, tables::TABLES,
 };
 use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
@@ -221,16 +221,16 @@ impl StorageBackend for RocksDBBackend {
             .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
-        Ok(Box::new(RocksDBRoTx {
+    fn begin_read(&self) -> Result<Box<dyn StorageReadTx + '_>, StoreError> {
+        Ok(Box::new(RocksDBReadTx {
             db: self.db.clone(),
         }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError> {
+    fn begin_write(&self) -> Result<Box<dyn StorageWriteTx + 'static>, StoreError> {
         let batch = WriteBatch::default();
 
-        Ok(Box::new(RocksDBRwTx {
+        Ok(Box::new(RocksDBWriteTx {
             db: self.db.clone(),
             batch,
         }))
@@ -261,12 +261,12 @@ impl StorageBackend for RocksDBBackend {
 }
 
 /// Read-only transaction for RocksDB
-pub struct RocksDBRoTx {
+pub struct RocksDBReadTx {
     /// Transaction
     db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
-impl StorageRoTx for RocksDBRoTx {
+impl StorageReadTx for RocksDBReadTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
             .db
@@ -296,14 +296,14 @@ impl StorageRoTx for RocksDBRoTx {
 }
 
 /// Write transaction for RocksDB
-pub struct RocksDBRwTx {
+pub struct RocksDBWriteTx {
     /// Database reference for writing
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Write batch for accumulating changes
     batch: WriteBatch,
 }
 
-impl StorageRwTx for RocksDBRwTx {
+impl StorageWriteTx for RocksDBWriteTx {
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .db
