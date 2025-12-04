@@ -501,15 +501,28 @@ impl DiscoveryServer {
             return Err(DiscoveryServerError::InvalidContact);
         }
 
-        let pairs = enr_response_message.node_record.decode_pairs();
-
         self.peer_table
             .record_enr_response_received(
                 &node_id,
                 enr_response_message.request_hash,
-                enr_response_message.node_record,
+                enr_response_message.node_record.clone(),
             )
             .await?;
+
+        self.validate_enr_fork_id(node_id, sender_public_key, enr_response_message.node_record)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Validates the fork id of the given ENR is valid, saving it to the peer_table.
+    async fn validate_enr_fork_id(
+        &mut self,
+        node_id: H256,
+        sender_public_key: H512,
+        node_record: NodeRecord,
+    ) -> Result<(), DiscoveryServerError> {
+        let pairs = node_record.decode_pairs();
 
         let Some(remote_fork_id) = pairs.eth else {
             self.peer_table
