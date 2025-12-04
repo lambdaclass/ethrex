@@ -30,7 +30,7 @@ for block in bench.values():
 
 
 print("Blocks tested", len(bench))
-print("Mean ggas accross multiple runs:", total / count)
+print("Mean ggas across multiple runs:", total / count)
 for run_count, run in bench_around.items():
     print("Mean ggas in run:", run_count, sum(run.values()) / len(run.values()))
 
