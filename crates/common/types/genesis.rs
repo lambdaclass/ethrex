@@ -489,13 +489,9 @@ impl ChainConfig {
 
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
         let current_fork = self.get_fork(block_timestamp);
-        if (current_fork as usize) < FORKS.len() {
-            FORKS
-                .into_iter()
-                .find(|fork| *fork > current_fork && self.fork_activation_time(*fork).is_some())
-        } else {
-            None
-        }
+        FORKS
+            .into_iter()
+            .find(|fork| *fork > current_fork && self.fork_activation_time(*fork).is_some())
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
