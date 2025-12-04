@@ -239,9 +239,6 @@ impl Metrics {
             use ethrex_metrics::p2p::METRICS_P2P;
             METRICS_P2P.inc_peer_count();
             METRICS_P2P.inc_peer_client(client_type);
-            for reason in DisconnectReason::all() {
-                METRICS_P2P.init_disconnection(&reason.to_string(), client_type);
-            }
         }
 
         self.update_rate(&mut events, &self.new_connection_establishments_rate)
@@ -251,7 +248,17 @@ impl Metrics {
         clients
             .entry(client_type.to_string())
             .and_modify(|count| *count += 1)
-            .or_insert(1);
+            .or_insert_with(|| {
+                // First time seeing this client type, initialize disconnection metrics
+                #[cfg(feature = "metrics")]
+                {
+                    use ethrex_metrics::p2p::METRICS_P2P;
+                    for reason in DisconnectReason::all() {
+                        METRICS_P2P.init_disconnection(&reason.to_string(), client_type);
+                    }
+                }
+                1
+            });
     }
 
     pub async fn record_ping_sent(&self) {
