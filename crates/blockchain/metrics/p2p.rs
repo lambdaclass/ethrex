@@ -61,6 +61,12 @@ impl MetricsP2P {
             .inc();
     }
 
+    pub fn init_disconnection(&self, reason: &str, client_name: &str) {
+        self.disconnections
+            .with_label_values(&[reason, client_name])
+            .inc_by(0);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 

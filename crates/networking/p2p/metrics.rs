@@ -229,15 +229,18 @@ impl Metrics {
 
         self.peers.fetch_add(1, Ordering::Relaxed);
 
+        let client_type = client_version
+            .split('/')
+            .next()
+            .unwrap_or("unknown");
+
         #[cfg(feature = "metrics")]
         {
             use ethrex_metrics::p2p::METRICS_P2P;
             METRICS_P2P.inc_peer_count();
-            let split = client_version.split('/').collect::<Vec<&str>>();
-            if let Some(client_type) = split.first() {
-                METRICS_P2P.inc_peer_client(client_type);
-            } else {
-                METRICS_P2P.inc_peer_client("unknown");
+            METRICS_P2P.inc_peer_client(client_type);
+            for reason in DisconnectReason::all() {
+                METRICS_P2P.init_disconnection(&reason.to_string(), client_type);
             }
         }
 
@@ -245,9 +248,6 @@ impl Metrics {
             .await;
 
         let mut clients = self.peers_by_client_type.lock().await;
-        let split = client_version.split('/').collect::<Vec<&str>>();
-        let client_type = split.first().expect("Split always returns 1 element");
-
         clients
             .entry(client_type.to_string())
             .and_modify(|count| *count += 1)
@@ -271,23 +271,20 @@ impl Metrics {
     ) {
         self.peers.fetch_sub(1, Ordering::Relaxed);
 
+        let client_type = client_version
+            .split('/')
+            .next()
+            .unwrap_or("unknown");
+
         #[cfg(feature = "metrics")]
         {
             use ethrex_metrics::p2p::METRICS_P2P;
             METRICS_P2P.dec_peer_count();
-            let split = client_version.split('/').collect::<Vec<&str>>();
-            if let Some(client_type) = split.first() {
-                METRICS_P2P.dec_peer_client(client_type);
-                METRICS_P2P.inc_disconnection(&reason.to_string(), client_type);
-            } else {
-                METRICS_P2P.dec_peer_client("unknown");
-                METRICS_P2P.inc_disconnection(&reason.to_string(), "unknown");
-            }
+            METRICS_P2P.dec_peer_client(client_type);
+            METRICS_P2P.inc_disconnection(&reason.to_string(), client_type);
         }
 
         let mut clients = self.peers_by_client_type.lock().await;
-        let split = client_version.split('/').collect::<Vec<&str>>();
-        let client_type = split.first().expect("Split always returns 1 element");
 
         let mut disconnection_by_client = self.disconnections_by_client_type.lock().await;
         disconnection_by_client
