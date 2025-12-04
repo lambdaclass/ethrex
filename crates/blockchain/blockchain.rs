@@ -132,11 +132,11 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 
 enum MerklizationRequest {
     Load(Option<H256>),
+    Delete(H256),
     Merklize {
         prefix: Option<H256>,
         key: H256,
         value: Vec<u8>,
-        delete_all: bool,
     },
     Collect {
         tx: Sender<(Option<H256>, u8, Option<Node>, Vec<TrieNode>)>,
@@ -346,6 +346,11 @@ impl Blockchain {
                 for tx in &workers_tx {
                     tx.send(MerklizationRequest::Load(Some(prefix))).unwrap();
                 }
+                if update.removed_storage | update.removed {
+                    for tx in &workers_tx {
+                        tx.send(MerklizationRequest::Delete(prefix)).unwrap();
+                    }
+                }
                 for (key, value) in update.added_storage {
                     let hashed_key = keccak(key);
                     let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
@@ -358,7 +363,6 @@ impl Blockchain {
                             } else {
                                 value.encode_to_vec()
                             },
-                            delete_all: update.removed_storage | update.removed,
                         })
                         .unwrap();
                 }
@@ -443,7 +447,6 @@ impl Blockchain {
                     } else {
                         state.encode_to_vec()
                     },
-                    delete_all: false,
                 })
                 .unwrap();
         }
@@ -533,17 +536,12 @@ impl Blockchain {
                         )?);
                     }
                 },
-                MerklizationRequest::Merklize {
-                    prefix,
-                    key,
-                    value,
-                    delete_all,
-                } => {
-                    if delete_all {
-                        let mut trie = Trie::new_temp();
-                        fatten_trie(&mut trie, index)?;
-                        tree.insert(prefix, trie);
-                    }
+                MerklizationRequest::Delete(prefix) => {
+                    let mut trie = Trie::new_temp();
+                    fatten_trie(&mut trie, index)?;
+                    tree.insert(Some(prefix), trie);
+                }
+                MerklizationRequest::Merklize { prefix, key, value } => {
                     let trie = match tree.entry(prefix.clone()) {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                         Entry::Vacant(vacant_entry) => vacant_entry.insert(
