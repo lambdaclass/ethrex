@@ -80,6 +80,6 @@ ethrex l2 \
 > - Replace `L2_COINBASE_ADDRESS` with the address that will collect L2 block fees. To access these funds on L1, you'll need to withdraw them (see the Withdrawals section for details).
 > - Replace `L1_PROOF_SENDER_PRIVATE_KEY` and `L1_COMMITTER_PRIVATE_KEY` with the private keys for the `L1_PROOF_SENDER_ADDRESS` and `L1_COMMITTER_ADDRESS` from the deployment step.
 > - Replace `L1_RPC_URL` and `PATH_TO_L2_GENESIS_FILE` with the same values used in the deployment step.
-> - To tune L2 block and batch gas caps, see [Configuring gas limits](./gas_limit.md).
+> - Tune throughput with the gas caps: `--block-producer.block-gas-limit` (`ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT`, default `30000000`) sets the gas per L2 block; `--committer.batch-gas-limit` (`ETHREX_COMMITTER_BATCH_GAS_LIMIT`) sets the gas per batch sent to L1—keep it at or above the block limit. You can either use the env variables or the flags.
 
 That's it! You now have a vanilla ethrex L2 up and running. However, one key component is still missing: state proving. The L2 state is considered final only after a batch execution ZK proof is successfully verified on-chain. Generating these proofs requires running a dedicated prover, which is covered in the Run an ethrex L2 Prover section.
