@@ -32,27 +32,29 @@ Ensure you have the following installed on your system:
     cd ethrex
     ```
 
-2. Build the binary:
+2. Install the binary to your `$PATH`:
 
     ```shell
     # For SP1 CPU proving (very slow, not recommended)
-    cargo build --release --bin ethrex --features l2,l2-sql,sp1
+    cargo install --path . --bin ethrex --features l2,l2-sql,sp1
 
     # For RISC0 CPU proving (very slow, not recommended)
-    cargo build --release --bin ethrex --features l2,l2-sql,risc0
+    cargo install --path . --bin ethrex --features l2,l2-sql,risc0
 
     # For SP1 and RISC0 CPU proving (very slow, not recommended)
-    cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0
+    cargo install --path . --bin ethrex --features l2,l2-sql,sp1,risc0
 
     # For SP1 GPU proving
-    cargo build --release --bin ethrex --features l2,l2-sql,sp1,gpu
+    cargo install --path . --bin ethrex --features l2,l2-sql,sp1,gpu
 
     # For RISC0 GPU proving
-    cargo build --release --bin ethrex --features l2,l2-sql,risc0,gpu
+    cargo install --path . --bin ethrex --features l2,l2-sql,risc0,gpu
 
     # For SP1 and RISC0 GPU proving
-    cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
+    cargo install --path . --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
     ```
+
+    `cargo install` places the binary at `~/.cargo/bin/ethrex`; ensure that directory is on your `$PATH`. Add `--force` if you need to reinstall.
 
 > [!WARNING]
 > If you want your verifying keys generation to be reproducible, prepend `PROVER_REPRODUCIBLE_BUILD=true` to the above command.
@@ -60,5 +62,8 @@ Ensure you have the following installed on your system:
 > Example:
 >
 > ```shell
-> PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo b -r --bin ethrex -F l2,l2-sql,sp1,risc0,gpu
+> PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo install --path . --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
 > ```
+
+> [!IMPORTANT]
+> Building with both `sp1` and `risc0` features enabled means settlement on Ethereum will require proofs generated with both systems.

@@ -30,34 +30,42 @@ Ensure you have the following installed on your system:
     cd ethrex
     ```
 
-2. Build the binary:
+2. Install the binary to your `$PATH`:
 
     ```shell
     # For dummy proving
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql
+    COMPILE_CONTRACTS=true cargo install --path . --bin ethrex --features l2,l2-sql
 
     # For SP1 CPU proving (very slow, not recommended)
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1
+    COMPILE_CONTRACTS=true cargo install --path . --bin ethrex --features l2,l2-sql,sp1
 
     # For RISC0 CPU proving (very slow, not recommended)
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,risc0
+    COMPILE_CONTRACTS=true cargo install --path . --bin ethrex --features l2,l2-sql,risc0
 
     # For SP1 and RISC0 CPU proving (very slow, not recommended)
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0
+    COMPILE_CONTRACTS=true cargo install --path . --bin ethrex --features l2,l2-sql,sp1,risc0
 
     # For SP1 GPU proving
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,gpu
+    COMPILE_CONTRACTS=true cargo install --path . --bin ethrex --features l2,l2-sql,sp1,gpu
 
     # For RISC0 GPU proving
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,risc0,gpu
+    COMPILE_CONTRACTS=true cargo install --path . --bin ethrex --features l2,l2-sql,risc0,gpu
 
     # For SP1 and RISC0 GPU proving
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
+    COMPILE_CONTRACTS=true cargo install --path . --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
     ```
+
+    By default `cargo install` places the binary at `~/.cargo/bin/ethrex` (make sure that directory is on your `$PATH`). Add `--force` to the commands above if you need to overwrite a previous installation.
 
 > [!WARNING]
 > If you want your verifying keys generation to be reproducible, prepend `PROVER_REPRODUCIBLE_BUILD=true` to the above command:
 >
 > ```shell
-> PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo b -r --bin ethrex -F l2,l2-sql,sp1,risc0,gpu
+> PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo install --path . --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
 > ```
+
+> [!IMPORTANT]
+> If you compile with both `sp1` and `risc0` features enabled (`--features l2,l2-sql,sp1,risc0,...`), the settlement flow will require proving with both systems before batches are considered finalized on Ethereum.
+
+> [!TIP]
+> To tune the block or batch gas limits for your deployment, see [Configuring gas limits](./gas_limit.md).
