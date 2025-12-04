@@ -325,7 +325,7 @@ impl GenServer for PeerConnectionServer {
                     trace!(
                         peer=%established_state.node,
                         %message,
-                        "Received incomming message",
+                        "Received incoming message",
                     );
                     handle_incoming_message(established_state, message).await
                 }
@@ -629,9 +629,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
     Ok(())
 }
 
-async fn should_send_block_range_update(
-    state: &mut Established,
-) -> Result<bool, PeerConnectionError> {
+async fn should_send_block_range_update(state: &Established) -> Result<bool, PeerConnectionError> {
     let latest_block = state.storage.get_latest_block_number().await?;
     if latest_block < state.last_block_range_update_block
         || latest_block - state.last_block_range_update_block >= 32
