@@ -2918,7 +2918,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0-16764329129",
+          "pluginVersion": "12.2.1",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
@@ -2988,7 +2988,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0-16764329129",
+          "pluginVersion": "12.2.1",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
@@ -3089,7 +3089,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0-16764329129",
+          "pluginVersion": "12.2.1",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
@@ -3189,7 +3189,7 @@
               "sort": "none"
             }
           },
-          "pluginVersion": "12.2.0-16764329129",
+          "pluginVersion": "12.2.1",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
@@ -3205,7 +3205,7 @@
               "refId": "A"
             }
           ],
-          "title": "Peer Disconnections - $instance",
+          "title": "Peer Disconnection Events - $instance",
           "type": "timeseries"
         },
         {
@@ -3267,7 +3267,7 @@
               }
             ]
           },
-          "pluginVersion": "12.2.0-16764329129",
+          "pluginVersion": "12.2.1",
           "repeat": "instance",
           "repeatDirection": "v",
           "targets": [
